@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 2,
+  "kind": "plan",
+  "artifactId": "delete-two-example-plans-20260828-090240",
+  "title": "Kế hoạch mẫu: xóa hai plan artifact cũ",
+  "createdAt": "2026-08-28T09:02:40.104Z",
+  "operation": "create",
+  "location": {
+    "workspaceRoot": "D:/workspace/my-projects/agent-plus"
+  },
+  "origin": {
+    "threadId": "01a04794-6c74-7930-ad3b-a4bf81689ab6",
+    "turnId": "01a0479b-1192-73d2-99aa-c7907f690eb7",
+    "codexCwd": "D:\\workspace\\my-projects\\agent-plus"
+  }
+}

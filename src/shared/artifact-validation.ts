@@ -1,0 +1,91 @@
+import path from "node:path";
+import {
+  ARTIFACT_SCHEMA_VERSION,
+  artifactManifestSchema,
+  commentsDocumentSchema,
+  reviewSubmissionSchema,
+  type ArtifactManifest,
+  type CommentsDocument,
+  type ReviewSubmission,
+} from "./contracts";
+
+export function parseArtifactManifest(rawArtifact: unknown): ArtifactManifest {
+  if (
+    !rawArtifact
+    || typeof rawArtifact !== "object"
+    || !("schemaVersion" in rawArtifact)
+    || rawArtifact.schemaVersion !== ARTIFACT_SCHEMA_VERSION
+  ) {
+    throw new Error(
+      `Unsupported artifact schema version. Codex Artifacts requires version ${ARTIFACT_SCHEMA_VERSION}.`,
+    );
+  }
+  return artifactManifestSchema.parse(rawArtifact);
+}
+
+export function sameFilesystemPath(left: string, right: string): boolean {
+  const a = path.resolve(left);
+  const b = path.resolve(right);
+  return process.platform === "win32" ? a.toLowerCase() === b.toLowerCase() : a === b;
+}
+
+export function assertArtifactDirectory(
+  artifact: ArtifactManifest,
+  artifactDirectory: string,
+): string {
+  const workspaceRoot = artifact.location.workspaceRoot;
+  if (!path.isAbsolute(workspaceRoot)) {
+    throw new Error("The artifact workspace root must be an absolute path.");
+  }
+  const expectedDirectory = path.join(
+    path.resolve(workspaceRoot),
+    ".codex-artifacts",
+    "plans",
+    artifact.artifactId,
+  );
+  if (!sameFilesystemPath(artifactDirectory, expectedDirectory)) {
+    throw new Error("The artifact directory does not match its declared workspace root and id.");
+  }
+  return path.resolve(workspaceRoot);
+}
+
+export type ArtifactBinding = {
+  artifactId: string;
+  planSha256: string;
+};
+
+export type ReviewSubmissionBinding = ArtifactBinding & {
+  threadId: string | undefined;
+  commentsSha256: string;
+};
+
+export function parseBoundCommentsDocument(
+  rawComments: unknown,
+  binding: ArtifactBinding,
+): CommentsDocument {
+  const comments = commentsDocumentSchema.parse(rawComments);
+  if (comments.artifactId !== binding.artifactId) {
+    throw new Error("comments.json does not belong to this artifact.");
+  }
+  if (comments.planSha256 !== binding.planSha256) {
+    throw new Error("plan.md changed after comments were created. Create a new artifact revision.");
+  }
+  return comments;
+}
+
+export function parseBoundReviewSubmission(
+  rawSubmission: unknown,
+  binding: ReviewSubmissionBinding,
+): ReviewSubmission {
+  const submission = reviewSubmissionSchema.parse(rawSubmission);
+  if (submission.artifactId !== binding.artifactId || submission.threadId !== binding.threadId) {
+    throw new Error("review-submission.json does not belong to this artifact lifecycle.");
+  }
+  if (
+    submission.planSha256 !== binding.planSha256
+    || submission.commentsSha256 !== binding.commentsSha256
+  ) {
+    throw new Error("The plan or comments changed after this review was submitted.");
+  }
+  return submission;
+}

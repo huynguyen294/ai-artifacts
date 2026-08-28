@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -7,17 +7,20 @@ import { ArtifactStore } from "../src/extension/artifact-store";
 const temporaryDirectories: string[] = [];
 
 async function fixture(): Promise<{ directory: string; store: ArtifactStore }> {
-  const directory = await mkdtemp(path.join(tmpdir(), "agent-plus-store-"));
-  temporaryDirectories.push(directory);
+  const workspaceRoot = await mkdtemp(path.join(tmpdir(), "agent-plus-store-"));
+  temporaryDirectories.push(workspaceRoot);
+  const directory = path.join(workspaceRoot, ".codex-artifacts", "plans", "plan-001");
+  await mkdir(directory, { recursive: true });
   await writeFile(path.join(directory, "plan.md"), "# Plan\n\nBuild the review view.\n", "utf8");
   await writeFile(path.join(directory, "artifact.json"), JSON.stringify({
-    schemaVersion: 1,
+    schemaVersion: 2,
     kind: "plan",
     artifactId: "plan-001",
     title: "Plan",
     createdAt: new Date().toISOString(),
     operation: "create",
-    origin: { cwd: directory, threadId: "thread-001" },
+    location: { workspaceRoot },
+    origin: { codexCwd: workspaceRoot, threadId: "thread-001" },
   }), "utf8");
   return { directory, store: new ArtifactStore(path.join(directory, "plan.md")) };
 }
@@ -27,6 +30,14 @@ afterEach(async () => {
 });
 
 describe("ArtifactStore", () => {
+  it("rejects legacy schema version 1 artifacts", async () => {
+    const { directory, store } = await fixture();
+    const manifestPath = path.join(directory, "artifact.json");
+    const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+    await writeFile(manifestPath, JSON.stringify({ ...manifest, schemaVersion: 1 }), "utf8");
+    await expect(store.load()).rejects.toThrow("requires version 2");
+  });
+
   it("creates comments.json and persists a block-bound comment", async () => {
     const { directory, store } = await fixture();
     const initial = await store.load(true);

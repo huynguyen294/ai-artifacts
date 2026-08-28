@@ -6,6 +6,20 @@ Lịch sử phát hành được chuẩn hóa và bắt đầu ghi nhận lại 
 
 ---
 
+## [0.3.0] - 2026-08-28
+
+### Breaking changes
+- Chuyển toàn bộ artifact protocol sang `schemaVersion: 2`; artifact phiên bản 1 không còn được hỗ trợ hoặc tự động migrate.
+- Tách `location.workspaceRoot` khỏi `origin.codexCwd`, cho phép Codex tạo và review artifact trong bất kỳ root phù hợp của multi-root workspace.
+- Chuẩn hóa việc tạo `artifact.json` và `plan.md` bằng một lần `apply_patch`; Hook xác minh exact path từ patch thay vì scan theo Codex `cwd`.
+- Hook chỉ xử lý `apply_patch`; MCP và replacement lifecycle xác minh artifact luôn thuộc workspace root đã khai báo.
+
+### Build & integration
+- Skill yêu cầu Codex chọn target root theo context và hỏi người dùng khi mơ hồ.
+- Cài đặt, verify và legacy cleanup xử lý toàn bộ workspace roots đang mở thay vì root đầu tiên.
+
+---
+
 ## [0.2.7] - 2026-08-28
 
 ### 🐛 Sửa lỗi

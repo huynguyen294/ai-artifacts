@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { constants, promises as fs } from "node:fs";
 import path from "node:path";
 import {
-  artifactManifestSchema,
+  ARTIFACT_SCHEMA_VERSION,
   commentsDocumentSchema,
   reviewSubmissionSchema,
   type CommentDraft,
@@ -12,6 +12,12 @@ import {
   type ReviewState,
   type ReviewSubmission,
 } from "../shared/contracts";
+import {
+  assertArtifactDirectory,
+  parseArtifactManifest,
+  parseBoundCommentsDocument,
+  parseBoundReviewSubmission,
+} from "../shared/artifact-validation";
 import { parseMarkdownBlocks } from "../shared/markdown-blocks";
 
 function sha256(value: string): string {
@@ -40,7 +46,8 @@ export class ArtifactStore {
       fs.readFile(this.planPath, "utf8"),
       readJson(this.manifestPath),
     ]);
-    const artifact = artifactManifestSchema.parse(rawManifest);
+    const artifact = parseArtifactManifest(rawManifest);
+    assertArtifactDirectory(artifact, this.artifactDirectory);
     if (requireOrigin && !artifact.origin.threadId) {
       throw new Error("This artifact is not linked to its originating Codex chat yet.");
     }
@@ -48,11 +55,14 @@ export class ArtifactStore {
     const planSha256 = sha256(plan);
     let comments: CommentsDocument;
     try {
-      comments = commentsDocumentSchema.parse(await readJson(this.commentsPath));
+      comments = parseBoundCommentsDocument(await readJson(this.commentsPath), {
+        artifactId: artifact.artifactId,
+        planSha256,
+      });
     } catch (error) {
       if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
       comments = {
-        schemaVersion: 1,
+        schemaVersion: ARTIFACT_SCHEMA_VERSION,
         artifactId: artifact.artifactId,
         planSha256,
         comments: [],
@@ -60,27 +70,18 @@ export class ArtifactStore {
       await this.writeComments(comments);
     }
 
-    if (comments.artifactId !== artifact.artifactId) {
-      throw new Error("comments.json does not belong to this artifact.");
-    }
-    if (comments.planSha256 !== planSha256) {
-      throw new Error("plan.md changed after comments were created. Create a new artifact revision.");
-    }
-
     let submission: ReviewSubmission | undefined;
     try {
-      submission = reviewSubmissionSchema.parse(await readJson(this.submissionPath));
+      const rawSubmission = await readJson(this.submissionPath);
+      const commentsRaw = await fs.readFile(this.commentsPath, "utf8");
+      submission = parseBoundReviewSubmission(rawSubmission, {
+        artifactId: artifact.artifactId,
+        threadId: artifact.origin.threadId,
+        planSha256,
+        commentsSha256: sha256(commentsRaw),
+      });
     } catch (error) {
       if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
-    }
-    if (submission) {
-      const commentsRaw = await fs.readFile(this.commentsPath, "utf8");
-      if (submission.artifactId !== artifact.artifactId || submission.threadId !== artifact.origin.threadId) {
-        throw new Error("review-submission.json does not belong to this artifact lifecycle.");
-      }
-      if (submission.planSha256 !== planSha256 || submission.commentsSha256 !== sha256(commentsRaw)) {
-        throw new Error("The plan or comments changed after this review was submitted.");
-      }
     }
 
     return { artifact, comments, blocks: parseMarkdownBlocks(plan), markdown: plan, ...(submission ? { submission } : {}) };
@@ -140,7 +141,7 @@ export class ArtifactStore {
       fs.readFile(this.commentsPath, "utf8"),
     ]);
     const submission = reviewSubmissionSchema.parse({
-      schemaVersion: 1,
+      schemaVersion: ARTIFACT_SCHEMA_VERSION,
       artifactId: state.artifact.artifactId,
       threadId,
       submittedAt: new Date().toISOString(),

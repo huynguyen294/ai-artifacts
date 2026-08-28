@@ -4,7 +4,7 @@ import {
   LEGACY_AGENT_PLUS_HOOK_MARKER,
 } from "./hook-config";
 
-export type IntegrationStatus = "trusted" | "untrusted" | "disabled" | "missing" | "unknown";
+export type IntegrationStatus = "trusted" | "untrusted" | "disabled" | "missing" | "outdated" | "unknown";
 
 export type IntegrationCheck = {
   status: IntegrationStatus;

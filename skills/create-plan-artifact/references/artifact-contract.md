@@ -16,23 +16,26 @@ Write `artifact.json` as UTF-8 JSON:
 
 ```json
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "kind": "plan",
   "artifactId": "plan-auth-20260827-01",
   "title": "Authentication rollout plan",
   "createdAt": "2026-08-27T08:00:00.000Z",
   "operation": "create",
-  "origin": {
-    "cwd": "D:/workspace/example"
-  }
+  "location": {
+    "workspaceRoot": "D:/workspace/example"
+  },
+  "origin": {}
 }
 ```
 
 Requirements:
 
 - Make `artifactId` match its directory name and use only letters, digits, `.`, `_`, or `-`.
-- Use an absolute workspace path for `origin.cwd`.
-- Omit `origin.threadId` and `origin.turnId`; the hook supplies them.
+- Use an existing absolute workspace-root path for `location.workspaceRoot`.
+- The artifact directory must be exactly `<location.workspaceRoot>/.codex-artifacts/plans/<artifact-id>`.
+- Create `artifact.json` and `plan.md` at absolute paths in one `apply_patch` call. The hook only registers artifacts created through this patch contract.
+- Leave `origin` empty; the hook supplies `threadId`, `turnId`, and `codexCwd`.
 - Use a valid UTC ISO-8601 timestamp for `createdAt`.
 
 ## Replacement manifest
@@ -47,6 +50,8 @@ For a revision, use the same complete schema with these fields:
 ```
 
 Never reuse the old artifact ID.
+
+The replacement must use the same `location.workspaceRoot` as the artifact it replaces. Cross-root replacement is invalid.
 
 ## Plan Markdown
 

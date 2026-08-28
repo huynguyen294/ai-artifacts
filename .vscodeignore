@@ -9,7 +9,6 @@ src/**
 test/**
 plans/**
 docs/**
-integration/hooks.json.example
 .tmp-skill-validator/**
 releases/**
 tsconfig.json

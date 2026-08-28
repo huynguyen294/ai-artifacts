@@ -1,24 +1,37 @@
 import { z } from "zod";
 
+export const ARTIFACT_SCHEMA_VERSION = 2 as const;
+export const artifactIdSchema = z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/);
+
 export const artifactManifestSchema = z.object({
-  schemaVersion: z.literal(1),
+  schemaVersion: z.literal(ARTIFACT_SCHEMA_VERSION),
   kind: z.literal("plan"),
-  artifactId: z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/),
+  artifactId: artifactIdSchema,
   title: z.string().min(1),
   createdAt: z.string().datetime(),
   operation: z.enum(["create", "replace"]),
-  replacesArtifactId: z.string().nullable().optional(),
+  replacesArtifactId: artifactIdSchema.optional(),
+  location: z.object({
+    workspaceRoot: z.string().min(1),
+  }).strict(),
   origin: z.object({
     threadId: z.string().min(1).optional(),
     turnId: z.string().min(1).optional(),
-    cwd: z.string().min(1),
-  }),
-}).superRefine((manifest, context) => {
+    codexCwd: z.string().min(1).optional(),
+  }).strict(),
+}).strict().superRefine((manifest, context) => {
   if (manifest.operation === "replace" && !manifest.replacesArtifactId) {
     context.addIssue({
       code: "custom",
       path: ["replacesArtifactId"],
       message: "A replacement artifact must identify the artifact it replaces.",
+    });
+  }
+  if (manifest.operation === "create" && manifest.replacesArtifactId) {
+    context.addIssue({
+      code: "custom",
+      path: ["replacesArtifactId"],
+      message: "A create artifact cannot replace another artifact.",
     });
   }
 });
@@ -42,7 +55,7 @@ export const reviewCommentSchema = z.object({
 });
 
 export const commentsDocumentSchema = z.object({
-  schemaVersion: z.literal(1),
+  schemaVersion: z.literal(ARTIFACT_SCHEMA_VERSION),
   artifactId: z.string().min(1),
   planSha256: z.string().regex(/^[a-f0-9]{64}$/),
   comments: z.array(reviewCommentSchema),
@@ -51,8 +64,8 @@ export const commentsDocumentSchema = z.object({
 export const reviewDecisionSchema = z.enum(["revise", "approve", "save"]);
 
 export const reviewSubmissionSchema = z.object({
-  schemaVersion: z.literal(1),
-  artifactId: z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/),
+  schemaVersion: z.literal(ARTIFACT_SCHEMA_VERSION),
+  artifactId: artifactIdSchema,
   threadId: z.string().min(1),
   submittedAt: z.string().datetime(),
   decision: reviewDecisionSchema,

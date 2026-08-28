@@ -58,8 +58,6 @@ Setup reports ready only after App Server `hooks/list` returns `trustStatus: tru
 
 Start a new chat after setup or after trusting an updated hook. Ask Codex:
 
-> **Workspace limitation:** Codex Artifacts currently supports single-folder workspaces only. In a multi-root workspace, artifacts are associated with the first workspace folder and `.codex-artifacts/` is created there, even if a file or folder from another workspace root is currently selected.
-
 ```text
 Create a plan artifact for this authentication feature.
 ```
@@ -78,6 +76,8 @@ Codex creates:
   plan.md
   comments.json
 ```
+
+In a multi-root workspace, Codex resolves the workspace root relevant to the request and creates the artifact there. If more than one root is plausible, Codex asks which root should own the artifact instead of defaulting to the first folder.
 
 ### 5. Review the plan
 
@@ -112,7 +112,8 @@ Run **Codex Artifacts: Install Global Codex Integration**, restart the Codex ext
 ## Behavior
 
 - Plans live at `.codex-artifacts/plans/<artifact-id>/`.
-- Multi-root workspaces are not currently supported; when more than one folder is open, `.codex-artifacts/` is created in the first workspace folder.
+- Every artifact declares an absolute `location.workspaceRoot` and remains in that root for its full lifecycle.
+- Multi-root workspaces are supported. Ambiguous requests require the user to choose the target root.
 - `plan.md` opens automatically in the Plan Review custom editor when `agentPlus.autoOpenPlanReview` is enabled.
 - A selection must stay inside one rendered Markdown block.
 - Comments are persisted beside the plan in `comments.json`.
@@ -150,15 +151,16 @@ Example manifest before the hook stamps the origin:
 
 ```json
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "kind": "plan",
   "artifactId": "plan-auth-20260827-01",
   "title": "Authentication rollout plan",
   "createdAt": "2026-08-27T08:00:00.000Z",
   "operation": "create",
-  "origin": {
-    "cwd": "D:/workspace/example"
-  }
+  "location": {
+    "workspaceRoot": "D:/workspace/example"
+  },
+  "origin": {}
 }
 ```
 

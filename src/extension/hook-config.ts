@@ -11,7 +11,7 @@ export type HooksFile = { description?: string; hooks?: Record<string, HookGroup
 
 export const CODEX_ARTIFACTS_HOOK_MARKER = "codex-artifacts-stamp-origin.mjs";
 export const LEGACY_AGENT_PLUS_HOOK_MARKER = "agent-plus-stamp-origin.mjs";
-export const CODEX_ARTIFACTS_TOOL_MATCHER = "Bash|exec|apply_patch|Edit|Write";
+export const CODEX_ARTIFACTS_TOOL_MATCHER = "apply_patch";
 
 function isCodexArtifactsHandler(handler: HookHandler): boolean {
   const commands = [handler.command, handler.commandWindows ?? ""];

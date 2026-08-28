@@ -1,9 +1,0 @@
-{
-  "schemaVersion": 1,
-  "artifactId": "example-health-check-review-test-20260827-162659",
-  "threadId": "01a0440a-3570-7b80-82c9-70f7f536ffc6",
-  "submittedAt": "2026-08-27T16:27:25.354Z",
-  "decision": "approve",
-  "planSha256": "7467442c4ecfe17a8ee0b73da6643535376f0922f4c215b4f032edb5d77092be",
-  "commentsSha256": "f8fffb9747d4ac296f95f6d0ae2082b711b254e1afda51c186fdaabd7ce079dd"
-}

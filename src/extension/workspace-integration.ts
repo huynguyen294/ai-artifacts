@@ -27,6 +27,72 @@ function commandFor(scriptPath: string): string {
     : `node '${scriptPath.replaceAll("'", "'\\''")}'`;
 }
 
+type IntegrationPaths = {
+  targetDirectory: string;
+  targetScript: string;
+  targetMcpScript: string;
+  targetSkill: string;
+  hooksPath: string;
+  configPath: string;
+  sourceScript: string;
+  sourceMcpScript: string;
+  sourceSkill: string;
+};
+
+function integrationPaths(context: vscode.ExtensionContext): IntegrationPaths {
+  const home = os.homedir();
+  const globalCodexDirectory = codexHome();
+  const targetDirectory = path.join(globalCodexDirectory, "codex-artifacts");
+  return {
+    targetDirectory,
+    targetScript: path.join(targetDirectory, CODEX_ARTIFACTS_HOOK_MARKER),
+    targetMcpScript: path.join(targetDirectory, "codex-artifacts-review-mcp.mjs"),
+    targetSkill: path.join(home, ".agents", "skills", "create-plan-artifact"),
+    hooksPath: path.join(globalCodexDirectory, "hooks.json"),
+    configPath: path.join(globalCodexDirectory, "config.toml"),
+    sourceScript: vscode.Uri.joinPath(
+      context.extensionUri,
+      "dist",
+      "integration",
+      CODEX_ARTIFACTS_HOOK_MARKER,
+    ).fsPath,
+    sourceMcpScript: vscode.Uri.joinPath(
+      context.extensionUri,
+      "dist",
+      "integration",
+      "codex-artifacts-review-mcp.mjs",
+    ).fsPath,
+    sourceSkill: vscode.Uri.joinPath(context.extensionUri, "skills", "create-plan-artifact").fsPath,
+  };
+}
+
+async function sameFile(left: string, right: string): Promise<boolean> {
+  try {
+    const [leftContents, rightContents] = await Promise.all([fs.readFile(left), fs.readFile(right)]);
+    return leftContents.equals(rightContents);
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") return false;
+    throw error;
+  }
+}
+
+async function installedAssetsAreCurrent(paths: IntegrationPaths): Promise<boolean> {
+  const skillFiles = [
+    "SKILL.md",
+    path.join("references", "artifact-contract.md"),
+    path.join("agents", "openai.yaml"),
+  ];
+  const checks = [
+    sameFile(paths.sourceScript, paths.targetScript),
+    sameFile(paths.sourceMcpScript, paths.targetMcpScript),
+    ...skillFiles.map((relativePath) => sameFile(
+      path.join(paths.sourceSkill, relativePath),
+      path.join(paths.targetSkill, relativePath),
+    )),
+  ];
+  return (await Promise.all(checks)).every(Boolean);
+}
+
 async function readHooksFile(hooksPath: string): Promise<HooksFile> {
   try {
     return JSON.parse(await fs.readFile(hooksPath, "utf8")) as HooksFile;
@@ -90,10 +156,15 @@ async function migrateCurrentWorkspace(
 }
 
 export async function checkGlobalIntegration(
+  context: vscode.ExtensionContext,
   appServer: CodexAppServerClient,
-  cwd: string,
+  cwds: readonly string[],
 ): Promise<IntegrationCheck> {
-  return classifyGlobalIntegration(await appServer.listHooks(cwd));
+  const status = classifyGlobalIntegration(await appServer.listHooks(cwds));
+  if (status.status === "trusted" && !await installedAssetsAreCurrent(integrationPaths(context))) {
+    return { status: "outdated", ...(status.hook ? { hook: status.hook } : {}) };
+  }
+  return status;
 }
 
 export async function installGlobalIntegration(
@@ -101,16 +172,17 @@ export async function installGlobalIntegration(
   appServer: CodexAppServerClient,
 ): Promise<IntegrationCheck> {
   const home = os.homedir();
-  const globalCodexDirectory = codexHome();
-  const targetDirectory = path.join(globalCodexDirectory, "codex-artifacts");
-  const targetScript = path.join(targetDirectory, CODEX_ARTIFACTS_HOOK_MARKER);
-  const targetMcpScript = path.join(targetDirectory, "codex-artifacts-review-mcp.mjs");
-  const targetSkill = path.join(home, ".agents", "skills", "create-plan-artifact");
-  const hooksPath = path.join(globalCodexDirectory, "hooks.json");
-  const configPath = path.join(globalCodexDirectory, "config.toml");
-  const sourceScript = vscode.Uri.joinPath(context.extensionUri, "integration", "stamp-origin.mjs").fsPath;
-  const sourceMcpScript = vscode.Uri.joinPath(context.extensionUri, "integration", "review-wait-mcp.mjs").fsPath;
-  const sourceSkill = vscode.Uri.joinPath(context.extensionUri, "skills", "create-plan-artifact").fsPath;
+  const {
+    targetDirectory,
+    targetScript,
+    targetMcpScript,
+    targetSkill,
+    hooksPath,
+    configPath,
+    sourceScript,
+    sourceMcpScript,
+    sourceSkill,
+  } = integrationPaths(context);
 
   await fs.mkdir(targetDirectory, { recursive: true });
   await fs.copyFile(sourceScript, targetScript);
@@ -130,7 +202,9 @@ export async function installGlobalIntegration(
   }
   await writeTextFile(configPath, upsertCodexArtifactsMcp(codexConfig, targetMcpScript));
 
-  const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-  if (workspaceRoot) await migrateCurrentWorkspace(workspaceRoot, hooksPath, targetSkill);
-  return checkGlobalIntegration(appServer, workspaceRoot ?? home);
+  const workspaceRoots = vscode.workspace.workspaceFolders?.map((folder) => folder.uri.fsPath) ?? [];
+  await Promise.all(
+    workspaceRoots.map((workspaceRoot) => migrateCurrentWorkspace(workspaceRoot, hooksPath, targetSkill)),
+  );
+  return checkGlobalIntegration(context, appServer, workspaceRoots.length > 0 ? workspaceRoots : [home]);
 }

@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { createInterface } from "node:readline";
@@ -32,7 +32,7 @@ function reviewComment(id: string, body: string): Record<string, unknown> {
 
 function commentsDocument(comments: Record<string, unknown>[]): Record<string, unknown> {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     artifactId: "plan-mcp-001",
     planSha256: sha256(planMarkdown),
     comments,
@@ -52,20 +52,21 @@ async function artifactFixture(): Promise<{
     reviewComment("00000000-0000-4000-8000-000000000001", "Add recovery behavior."),
   ]), null, 2)}\n`;
   await writeFile(path.join(artifactDirectory, "artifact.json"), `${JSON.stringify({
-    schemaVersion: 1,
+    schemaVersion: 2,
     kind: "plan",
     artifactId,
     title: "MCP bridge",
     createdAt: new Date().toISOString(),
     operation: "create",
-    origin: { cwd: workspace, threadId: "thread-mcp-001" },
+    location: { workspaceRoot: workspace },
+    origin: { codexCwd: path.dirname(workspace), threadId: "thread-mcp-001" },
   }, null, 2)}\n`, "utf8");
   await writeFile(path.join(artifactDirectory, "plan.md"), planMarkdown, "utf8");
   await writeFile(path.join(artifactDirectory, "comments.json"), comments, "utf8");
   return {
     artifactDirectory,
     submission: {
-      schemaVersion: 1,
+      schemaVersion: 2,
       artifactId,
       threadId: "thread-mcp-001",
       submittedAt: new Date().toISOString(),
@@ -80,7 +81,7 @@ function startClient(): {
   request: (method: string, params?: Record<string, unknown>) => Promise<any>;
   notify: (method: string, params?: Record<string, unknown>) => void;
 } {
-  const script = path.resolve("integration", "review-wait-mcp.mjs");
+  const script = path.resolve("dist", "integration", "codex-artifacts-review-mcp.mjs");
   const processHandle = spawn(process.execPath, [script], { stdio: ["pipe", "pipe", "pipe"] });
   processes.push(processHandle);
   let nextId = 1;
@@ -142,6 +143,7 @@ describe("review wait MCP server", () => {
     const result = await waiting;
     expect(result.structuredContent).toMatchObject({
       artifactId: "plan-mcp-001",
+      workspaceRoot: path.dirname(path.dirname(path.dirname(fixture.artifactDirectory))),
       threadId: "thread-mcp-001",
       decision: "revise",
     });
@@ -167,7 +169,7 @@ describe("review wait MCP server", () => {
     await writeFile(path.join(fixture.artifactDirectory, "comments.json"), updatedComments, "utf8");
 
     const saveSubmission = {
-      schemaVersion: 1,
+      schemaVersion: 2,
       artifactId: "plan-mcp-001",
       threadId: "thread-mcp-001",
       submittedAt: new Date().toISOString(),
@@ -192,7 +194,7 @@ describe("review wait MCP server", () => {
 
   it("rejects comments that become invalid while waiting even when the submission hash matches", async () => {
     const invalidDocuments: Record<string, unknown>[] = [
-      { ...commentsDocument([]), schemaVersion: 2 },
+      { ...commentsDocument([]), schemaVersion: 1 },
       { ...commentsDocument([]), artifactId: "another-artifact" },
       commentsDocument([{ id: "not-a-valid-comment" }]),
     ];
@@ -226,13 +228,17 @@ describe("review wait MCP server", () => {
     }
   });
 
-  it("rejects artifact directories outside the manifest origin", async () => {
+  it("rejects an artifact directory outside its declared workspace root", async () => {
     const fixture = await artifactFixture();
+    const manifestPath = path.join(fixture.artifactDirectory, "artifact.json");
+    const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+    manifest.location.workspaceRoot = path.join(path.dirname(manifest.location.workspaceRoot), "another-root");
+    await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
     const client = startClient();
     await client.request("initialize", { protocolVersion: "2025-06-18" });
     const result = await client.request("tools/call", {
       name: "wait_for_plan_review",
-      arguments: { artifactDirectory: path.dirname(fixture.artifactDirectory) },
+      arguments: { artifactDirectory: fixture.artifactDirectory },
     });
     expect(result.isError).toBe(true);
   });

@@ -7,8 +7,9 @@ import {
 } from "./workspace-integration";
 import type { IntegrationCheck } from "./global-integration-status";
 
-function integrationCwd(): string {
-  return vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd();
+function integrationCwds(): string[] {
+  const workspaceRoots = vscode.workspace.workspaceFolders?.map((folder) => folder.uri.fsPath) ?? [];
+  return workspaceRoots.length > 0 ? workspaceRoots : [process.cwd()];
 }
 
 async function showIntegrationStatus(status: IntegrationCheck, codexCommand: string): Promise<void> {
@@ -18,13 +19,20 @@ async function showIntegrationStatus(status: IntegrationCheck, codexCommand: str
     );
     return;
   }
+  if (status.status === "outdated") {
+    void vscode.window.showWarningMessage(
+      "Codex Artifacts global integration is older than this extension. Run Install Global Codex Integration, trust the updated hook if prompted, restart the Codex extension, and start a new chat.",
+    );
+    return;
+  }
   if (status.status === "untrusted") {
     const choice = await vscode.window.showWarningMessage(
       "Codex Artifacts is installed globally, but Codex will skip its hook until you trust it. Open Codex, run /hooks, and trust Codex Artifacts; then run Verify Codex Integration.",
       "Open Codex terminal",
     );
     if (choice === "Open Codex terminal") {
-      const terminal = vscode.window.createTerminal({ name: "Codex Artifacts setup", cwd: integrationCwd() });
+      const terminalCwd = integrationCwds()[0] ?? process.cwd();
+      const terminal = vscode.window.createTerminal({ name: "Codex Artifacts setup", cwd: terminalCwd });
       terminal.show();
       terminal.sendText(codexCommand, true);
       void vscode.window.showInformationMessage("In the Codex terminal, run /hooks and trust the Codex Artifacts hook.");
@@ -41,7 +49,7 @@ async function showIntegrationStatus(status: IntegrationCheck, codexCommand: str
 
 export function activate(context: vscode.ExtensionContext): void {
   const codexCommand = vscode.workspace.getConfiguration("agentPlus").get<string>("codexCommand", "codex");
-  const extensionVersion = String(context.extension.packageJSON.version ?? "0.2.7");
+  const extensionVersion = String(context.extension.packageJSON.version ?? "0.3.0");
   const appServer = new CodexAppServerClient(codexCommand, extensionVersion);
   const provider = new PlanReviewProvider(context);
 
@@ -90,7 +98,10 @@ export function activate(context: vscode.ExtensionContext): void {
     }),
     vscode.commands.registerCommand("agentPlus.verifyGlobalIntegration", async () => {
       try {
-        await showIntegrationStatus(await checkGlobalIntegration(appServer, integrationCwd()), codexCommand);
+        await showIntegrationStatus(
+          await checkGlobalIntegration(context, appServer, integrationCwds()),
+          codexCommand,
+        );
       } catch (error) {
         void vscode.window.showErrorMessage(error instanceof Error ? error.message : String(error));
       }

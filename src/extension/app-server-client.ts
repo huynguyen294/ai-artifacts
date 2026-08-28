@@ -100,9 +100,9 @@ export class CodexAppServerClient {
     private readonly clientVersion = "0.1.0",
   ) {}
 
-  async listHooks(cwd: string): Promise<CodexHookDescriptor[]> {
+  async listHooks(cwds: readonly string[]): Promise<CodexHookDescriptor[]> {
     await this.ensureInitialized();
-    return parseHookListResult(await this.request("hooks/list", { cwds: [cwd] }));
+    return parseHookListResult(await this.request("hooks/list", { cwds: [...cwds] }));
   }
 
   dispose(): void {

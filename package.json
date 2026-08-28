@@ -3,7 +3,7 @@
   "displayName": "Codex Artifacts",
   "publisher": "agent-plus-local",
   "description": "Review Codex plan artifacts and send annotated feedback to the originating Codex conversation.",
-  "version": "0.2.7",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "license": "MIT",
@@ -68,11 +68,12 @@
     }
   },
   "scripts": {
-    "build": "npm run build:extension && npm run build:webview",
+    "build": "npm run build:extension && npm run build:webview && npm run build:integration",
     "build:extension": "esbuild src/extension/extension.ts --bundle --minify --platform=node --format=cjs --external:vscode --outfile=dist/extension.cjs",
     "build:webview": "vite build",
+    "build:integration": "esbuild src/integration/stamp-origin.ts --bundle --minify --platform=node --format=esm --outfile=dist/integration/codex-artifacts-stamp-origin.mjs && esbuild src/integration/review-wait-mcp.ts --bundle --minify --platform=node --format=esm --outfile=dist/integration/codex-artifacts-review-mcp.mjs",
     "check": "tsc --noEmit",
-    "test": "vitest run --configLoader native",
+    "test": "npm run build:integration && vitest run --configLoader native",
     "package": "npm run build && vsce package --allow-missing-repository --out releases/ && vsce package --allow-missing-repository --out releases/codex-artifacts.vsix",
     "pack": "npm run package"
   },
