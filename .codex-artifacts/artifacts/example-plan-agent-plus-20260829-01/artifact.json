@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 3,
+  "kind": "implementation-plan",
+  "artifactId": "example-plan-agent-plus-20260829-01",
+  "title": "Example plan cho luồng Artifact Review",
+  "createdAt": "2026-08-29T07:38:34.078Z",
+  "updatedAt": "2026-08-29T07:42:06.991Z",
+  "reviewRound": 2,
+  "location": {
+    "workspaceRoot": "D:/workspace/my-projects/agent-plus"
+  },
+  "origin": {
+    "threadId": "01a04c73-a577-77c1-ba99-cc34ea153155",
+    "turnId": "01a04c73-e3c6-78a3-8fbf-8acc1e08d72d",
+    "codexCwd": "D:\\workspace\\my-projects\\script-runner"
+  }
+}

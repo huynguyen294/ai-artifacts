@@ -4,62 +4,66 @@
 
 ```text
 Codex chat
-   │ creates artifact, then calls wait_for_plan_review
+   │ creates schema-v3 artifact, then waits
    ▼
-Global user hook ── stamps origin and finalizes replacement lifecycle
+Global hook ── validates creation, stamps origin, creates round-one comments
    │
    ▼
-.codex-artifacts/plans/<id>/{artifact.json,plan.md,comments.json,review-submission.json}
+.codex-artifacts/artifacts/<id>/{artifact.json,artifact.md,comments.json,review-submission.json}
    │
    ▼
 VS Code custom editor
-   ├─ extension host: validation and immutable review submission
-   └─ React webview: rendering, selection, comment and decision UI
+   ├─ extension host: validation, comments, immutable round submission
+   └─ React webview: rendering, selection, decisions
                          │
                          ▼
-Codex Artifacts MCP ── returns revise/approve/save to the waiting native Codex turn
+Codex Artifacts MCP
+   ├─ wait_for_artifact_review: returns Review/Proceed/Just save to the same turn
+   └─ update_artifact: commits the next round on the same artifact
 ```
 
-`src/shared` is the only message and file-contract boundary. Zod validates data entering the extension host; TypeScript types are reused by the React webview.
+`src/shared` is the only file/message contract boundary. Hook, MCP, extension host, and webview reuse the same TypeScript/Zod schemas.
 
-The hook and MCP sources also import these shared schemas. The build bundles each integration entry point into a standalone `.mjs`, so the globally installed scripts keep their independent runtime roles without duplicating the artifact contract.
+## Artifact identity and review rounds
 
-Artifacts use schema version 2. Each manifest declares an absolute `location.workspaceRoot`; `origin.codexCwd` records the Codex runtime directory separately. The hook discovers newly added `artifact.json` and `plan.md` paths from the single required `apply_patch` call, validates their declared root, and never defaults artifact placement to the first VS Code workspace folder.
+One independent request owns one directory and one `artifactId`. `artifact.json.reviewRound` starts at 1 and increments only through `update_artifact`.
 
-## Global Codex integration
+`comments.json` binds the current round to the SHA-256 of `artifact.md`. `review-submission.json` additionally binds the decision to the origin thread and comments hash. A submission is create-once for its round.
 
-The extension installs one user-scoped integration instead of modifying every repository:
+On Review, `wait_for_artifact_review` issues an in-memory, one-time update token bound to the artifact, origin, and round. `update_artifact` validates the token and submitted state, stages the next manifest/Markdown/comments, replaces the current files, removes the previous submission, and discards temporary backups after success. A failure rolls back the current round.
+
+No revision directory or history is retained.
+
+## Global integration
+
+The extension installs one user-scoped integration:
 
 ```text
-~/.agents/skills/create-plan-artifact/
+~/.agents/skills/create-review-artifact/
 ~/.codex/codex-artifacts/codex-artifacts-stamp-origin.mjs
 ~/.codex/codex-artifacts/codex-artifacts-review-mcp.mjs
 ~/.codex/hooks.json
 ~/.codex/config.toml
 ```
 
-The hook remains a non-managed Codex hook. The installer checks it through App Server `hooks/list` and reports ready only when `trustStatus` is `trusted`. Trust is an explicit user action in Codex `/hooks`; a changed hook hash requires trust again.
+The hook is non-managed and requires explicit trust through Codex `/hooks`. The installer verifies current skill/hook/MCP assets and reports outdated integration when their contents differ.
 
-When upgrading from Agent Plus, setup removes the legacy hook entry and generated skill from every open workspace root. It preserves unrelated workspace and user hooks.
+## Ownership boundaries
+
+- The skill decides whether the current request triggers an artifact, creates the initial files, and orchestrates review decisions.
+- The hook only handles creation: exact Add File paths, workspace ownership, real session origin, and initial comments.
+- The extension owns comments and create-once submissions for the active round.
+- The MCP owns the in-place round transition; the skill never edits review state files.
+- `location.workspaceRoot` defines project ownership; `origin.codexCwd` only records where Codex ran.
+- Workspace ownership is resolved in strict order: explicit message path/link/mention/attachment; concrete IDE-context file path; conversation-named repository verified by a project file; otherwise a user question.
+- Codex cwd, environment context, workspace order, and the first visible repository never establish active/selected workspace state.
 
 ## Safety decisions
 
-- Markdown is converted to controlled text blocks; artifact HTML is never injected into the webview.
-- Webview scripts use a nonce-based content security policy.
-- Selection coordinates are checked again in the extension host against parsed block text.
-- Comment writes use a temporary file followed by rename.
-- Review submission is create-once and binds the artifact, origin thread, plan hash, and comments hash.
-- A replacement must exist and validate before the prior artifact leaves the active plan directory.
-- A replacement must stay in the same declared workspace root as the artifact it replaces.
-- The prior artifact is moved to `.trash` in the MVP, making cleanup recoverable.
-- The extension never resumes the thread through a second App Server process and never redirects feedback to another chat.
-
-## Review decision sequence
-
-1. The skill creates and validates an artifact, then calls MCP `wait_for_plan_review` without ending the Codex turn.
-2. React posts `submitReview` with `revise`, `approve`, or `save` to the extension host.
-3. The store reloads and validates all artifact files.
-4. The extension atomically creates `review-submission.json`.
-5. The MCP file watcher validates the artifact ID, origin thread ID, and content hashes.
-6. The pending MCP tool call returns the decision to the same Codex turn.
-7. On `revise`, Codex creates a replacement artifact and waits again. On `approve`, Codex applies any remaining comments and starts implementation. On `save`, Codex asks for a workspace destination, saves the plan, and finishes without implementing it.
+- Markdown is rendered as controlled text blocks; HTML is not injected.
+- Webview scripts use a nonce-based CSP.
+- Selection coordinates are revalidated in the extension host.
+- Writes use temporary files; round updates use staged commit/rollback.
+- Wrong schema, directory, root, round, origin, hash, or token fails closed.
+- The extension never resumes another thread, redirects feedback, or creates hidden turns.
+- Schema-v2 artifacts remain separate and are not auto-migrated.

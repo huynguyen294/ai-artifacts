@@ -1,6 +1,6 @@
 import * as vscode from "vscode";
 import { CodexAppServerClient } from "./app-server-client";
-import { PlanReviewProvider } from "./plan-review-provider";
+import { ArtifactReviewProvider } from "./artifact-review-provider";
 import {
   checkGlobalIntegration,
   installGlobalIntegration,
@@ -49,45 +49,45 @@ async function showIntegrationStatus(status: IntegrationCheck, codexCommand: str
 
 export function activate(context: vscode.ExtensionContext): void {
   const codexCommand = vscode.workspace.getConfiguration("agentPlus").get<string>("codexCommand", "codex");
-  const extensionVersion = String(context.extension.packageJSON.version ?? "0.3.0");
+  const extensionVersion = String(context.extension.packageJSON.version ?? "0.4.3");
   const appServer = new CodexAppServerClient(codexCommand, extensionVersion);
-  const provider = new PlanReviewProvider(context);
+  const provider = new ArtifactReviewProvider(context);
 
   const artifactReadyWatcher = vscode.workspace.createFileSystemWatcher(
-    "**/.codex-artifacts/plans/**/comments.json",
+    "**/.codex-artifacts/artifacts/**/comments.json",
     false,
     true,
     true,
   );
   artifactReadyWatcher.onDidCreate(async (commentsUri) => {
-    const autoOpen = vscode.workspace.getConfiguration("agentPlus").get<boolean>("autoOpenPlanReview", true);
+    const autoOpen = vscode.workspace.getConfiguration("agentPlus").get<boolean>("autoOpenArtifactReview", true);
     if (!autoOpen) return;
 
-    const planUri = vscode.Uri.joinPath(commentsUri, "..", "plan.md");
+    const artifactUri = vscode.Uri.joinPath(commentsUri, "..", "artifact.md");
     try {
-      await vscode.workspace.fs.stat(planUri);
-      await vscode.commands.executeCommand("vscode.openWith", planUri, PlanReviewProvider.viewType);
+      await vscode.workspace.fs.stat(artifactUri);
+      await vscode.commands.executeCommand("vscode.openWith", artifactUri, ArtifactReviewProvider.viewType);
     } catch (error) {
-      console.error("Auto-opening plan review failed:", error);
+      console.error("Auto-opening artifact review failed:", error);
     }
   });
 
   context.subscriptions.push(
     artifactReadyWatcher,
-    vscode.window.registerCustomEditorProvider(PlanReviewProvider.viewType, provider, {
+    vscode.window.registerCustomEditorProvider(ArtifactReviewProvider.viewType, provider, {
       webviewOptions: { retainContextWhenHidden: true },
       supportsMultipleEditorsPerDocument: false,
     }),
-    vscode.commands.registerCommand("agentPlus.openPlanReview", async () => {
+    vscode.commands.registerCommand("agentPlus.openArtifactReview", async () => {
       const activeUri = vscode.window.activeTextEditor?.document.uri;
-      const selected = activeUri?.fsPath.endsWith("plan.md")
+      const selected = activeUri?.fsPath.endsWith("artifact.md")
         ? activeUri
         : (await vscode.window.showOpenDialog({
             canSelectMany: false,
-            filters: { "Codex plan": ["md"] },
-            openLabel: "Open plan review",
+            filters: { "Codex artifact": ["md"] },
+            openLabel: "Open artifact review",
           }))?.[0];
-      if (selected) await vscode.commands.executeCommand("vscode.openWith", selected, PlanReviewProvider.viewType);
+      if (selected) await vscode.commands.executeCommand("vscode.openWith", selected, ArtifactReviewProvider.viewType);
     }),
     vscode.commands.registerCommand("agentPlus.installWorkspaceIntegration", async () => {
       try {

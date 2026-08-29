@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 3,
+  "kind": "implementation-plan",
+  "artifactId": "artifact-review-demo-20260829-01",
+  "title": "Add an artifact review demo flow",
+  "createdAt": "2026-08-29T07:29:05.129Z",
+  "updatedAt": "2026-08-29T07:32:33.202Z",
+  "reviewRound": 2,
+  "location": {
+    "workspaceRoot": "D:\\workspace\\my-projects\\agent-plus"
+  },
+  "origin": {
+    "threadId": "01a04c65-34b9-72b0-bc4e-240fcb8b0805",
+    "turnId": "01a04c6b-7659-7850-a8e6-e382651d8b14",
+    "codexCwd": "D:\\workspace\\my-projects\\script-runner"
+  }
+}

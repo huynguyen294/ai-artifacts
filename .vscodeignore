@@ -9,6 +9,7 @@ src/**
 test/**
 plans/**
 docs/**
+skills/create-plan-artifact/**
 .tmp-skill-validator/**
 releases/**
 tsconfig.json

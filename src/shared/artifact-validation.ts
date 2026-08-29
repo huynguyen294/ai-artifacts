@@ -8,6 +8,14 @@ import {
   type CommentsDocument,
   type ReviewSubmission,
 } from "./contracts";
+import {
+  ARTIFACTS_DIRECTORY,
+  ARTIFACT_COLLECTION_DIRECTORY,
+  ARTIFACT_MANIFEST_FILE,
+  ARTIFACT_MARKDOWN_FILE,
+  COMMENTS_FILE,
+  REVIEW_SUBMISSION_FILE,
+} from "./artifact-files";
 
 export function parseArtifactManifest(rawArtifact: unknown): ArtifactManifest {
   if (
@@ -39,8 +47,8 @@ export function assertArtifactDirectory(
   }
   const expectedDirectory = path.join(
     path.resolve(workspaceRoot),
-    ".codex-artifacts",
-    "plans",
+    ARTIFACTS_DIRECTORY,
+    ARTIFACT_COLLECTION_DIRECTORY,
     artifact.artifactId,
   );
   if (!sameFilesystemPath(artifactDirectory, expectedDirectory)) {
@@ -51,7 +59,8 @@ export function assertArtifactDirectory(
 
 export type ArtifactBinding = {
   artifactId: string;
-  planSha256: string;
+  reviewRound: number;
+  artifactSha256: string;
 };
 
 export type ReviewSubmissionBinding = ArtifactBinding & {
@@ -67,8 +76,11 @@ export function parseBoundCommentsDocument(
   if (comments.artifactId !== binding.artifactId) {
     throw new Error("comments.json does not belong to this artifact.");
   }
-  if (comments.planSha256 !== binding.planSha256) {
-    throw new Error("plan.md changed after comments were created. Create a new artifact revision.");
+  if (comments.reviewRound !== binding.reviewRound) {
+    throw new Error("comments.json does not belong to the current artifact review round.");
+  }
+  if (comments.artifactSha256 !== binding.artifactSha256) {
+    throw new Error("artifact.md changed outside the artifact review update protocol.");
   }
   return comments;
 }
@@ -78,14 +90,32 @@ export function parseBoundReviewSubmission(
   binding: ReviewSubmissionBinding,
 ): ReviewSubmission {
   const submission = reviewSubmissionSchema.parse(rawSubmission);
-  if (submission.artifactId !== binding.artifactId || submission.threadId !== binding.threadId) {
+  if (
+    submission.artifactId !== binding.artifactId
+    || submission.reviewRound !== binding.reviewRound
+    || submission.threadId !== binding.threadId
+  ) {
     throw new Error("review-submission.json does not belong to this artifact lifecycle.");
   }
   if (
-    submission.planSha256 !== binding.planSha256
+    submission.artifactSha256 !== binding.artifactSha256
     || submission.commentsSha256 !== binding.commentsSha256
   ) {
     throw new Error("The plan or comments changed after this review was submitted.");
   }
   return submission;
+}
+
+export function artifactPaths(artifactDirectory: string): {
+  manifestPath: string;
+  artifactPath: string;
+  commentsPath: string;
+  submissionPath: string;
+} {
+  return {
+    manifestPath: path.join(artifactDirectory, ARTIFACT_MANIFEST_FILE),
+    artifactPath: path.join(artifactDirectory, ARTIFACT_MARKDOWN_FILE),
+    commentsPath: path.join(artifactDirectory, COMMENTS_FILE),
+    submissionPath: path.join(artifactDirectory, REVIEW_SUBMISSION_FILE),
+  };
 }

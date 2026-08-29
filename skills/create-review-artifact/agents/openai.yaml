@@ -1,0 +1,4 @@
+interface:
+  display_name: "Create Review Artifact"
+  short_description: "Create reviewable plans and Markdown artifacts"
+  default_prompt: "Use $create-review-artifact to create a reviewable plan or artifact for this task."

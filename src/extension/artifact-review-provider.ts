@@ -1,4 +1,3 @@
-/* Legacy source retained for source compatibility; the extension uses ArtifactReviewProvider.
 import * as vscode from "vscode";
 import { webviewToExtensionMessageSchema, type ExtensionToWebviewMessage } from "../shared/contracts";
 import { ArtifactStore } from "./artifact-store";
@@ -7,16 +6,11 @@ function nonce(): string {
   const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
   return Array.from({ length: 32 }, () => alphabet[Math.floor(Math.random() * alphabet.length)]).join("");
 }
-*/
-export { ArtifactReviewProvider as PlanReviewProvider } from "./artifact-review-provider";
 
-/*
-export class PlanReviewProvider implements vscode.CustomTextEditorProvider {
-  static readonly viewType = "agentPlus.planReview";
+export class ArtifactReviewProvider implements vscode.CustomTextEditorProvider {
+  static readonly viewType = "agentPlus.artifactReview";
 
-  constructor(
-    private readonly context: vscode.ExtensionContext,
-  ) {}
+  constructor(private readonly context: vscode.ExtensionContext) {}
 
   async resolveCustomTextEditor(
     document: vscode.TextDocument,
@@ -58,7 +52,7 @@ export class PlanReviewProvider implements vscode.CustomTextEditorProvider {
           case "submitReview":
             if (sending) return;
             sending = true;
-            await post({ type: "sendState", status: "submitting", message: "Returning this review to the waiting Codex turn…" });
+            await post({ type: "sendState", status: "submitting", message: "Returning this decision to the waiting Codex turn…" });
             try {
               await store.submitReview(message.decision);
               await refresh();
@@ -66,7 +60,7 @@ export class PlanReviewProvider implements vscode.CustomTextEditorProvider {
                 ? "Review comments returned to the waiting Codex turn."
                 : message.decision === "save"
                   ? undefined
-                  : "Plan approved. Return to the Codex chat to continue.";
+                  : "Artifact approved. Return to the Codex chat to continue.";
               await post({
                 type: "sendState",
                 status: "submitted",
@@ -91,9 +85,17 @@ export class PlanReviewProvider implements vscode.CustomTextEditorProvider {
     const documentSubscription = vscode.workspace.onDidChangeTextDocument((event) => {
       if (event.document.uri.toString() === document.uri.toString()) void refresh();
     });
+    const fileWatcher = vscode.workspace.createFileSystemWatcher(
+      new vscode.RelativePattern(store.artifactDirectory, "{artifact.json,artifact.md,comments.json,review-submission.json}"),
+    );
+    fileWatcher.onDidCreate(() => void refresh());
+    fileWatcher.onDidChange(() => void refresh());
+    fileWatcher.onDidDelete(() => void refresh());
+
     panel.onDidDispose(() => {
       messageSubscription.dispose();
       documentSubscription.dispose();
+      fileWatcher.dispose();
     });
   }
 
@@ -108,7 +110,7 @@ export class PlanReviewProvider implements vscode.CustomTextEditorProvider {
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource}; script-src 'nonce-${token}';" />
     <link rel="stylesheet" href="${styleUri}" />
-    <title>Plan Review</title>
+    <title>Artifact Review</title>
   </head>
   <body>
     <div id="root"></div>
@@ -117,4 +119,4 @@ export class PlanReviewProvider implements vscode.CustomTextEditorProvider {
 </html>`;
   }
 }
-*/
+

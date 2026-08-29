@@ -6,6 +6,51 @@ Lịch sử phát hành được chuẩn hóa và bắt đầu ghi nhận lại 
 
 ---
 
+## [0.4.3] - 2026-08-29
+
+- Không còn xem Codex cwd, `environment_context` hoặc workspace folder đầu tiên là folder đang active/được chọn.
+- Bắt buộc có tín hiệu UI/path tường minh và kiểm chứng bằng file dự án liên quan; nếu thiếu phải hỏi người dùng trước khi tạo Artifact.
+- Chuẩn hóa thứ tự xác định workspace: path/file/attachment trong hội thoại; file có path từ IDE context; repository được nhắc đến và kiểm chứng; cuối cùng hỏi người dùng.
+
+## [0.4.2] - 2026-08-29
+
+- Tự động tạo Artifact Review khi người dùng yêu cầu tạo, xem hoặc cập nhật một plan, kể cả khi không nhắc đến từ "artifact".
+- Phân biệt implementation plan (`implementation-plan`) với plan thông thường (`plan`).
+
+## [0.4.1] - 2026-08-29
+
+- Cho phép cập nhật `artifact.md` khi Windows chặn thao tác đổi tên do file đang được mở trong editor.
+- Bắt buộc skill xác định workspace từ bằng chứng cụ thể; không chọn theo thứ tự workspace, kết quả tìm kiếm đầu tiên hoặc chỉ dựa vào cwd.
+- Thêm regression test cho fallback cập nhật file đang mở trên Windows.
+
+## [0.4.0] - 2026-08-28
+
+### Breaking changes
+
+- Chuyển sang `schemaVersion: 3` và cấu trúc `.codex-artifacts/artifacts/<id>/artifact.md`.
+- Một request giữ cùng artifact ID qua nhiều review round; Review cập nhật cùng file thay vì tạo replacement artifact.
+- Bỏ runtime `operation: replace`, `replacesArtifactId` và `.trash` cho artifact mới.
+- Đổi skill thành `create-review-artifact` và MCP tools thành `wait_for_artifact_review`/`update_artifact`.
+- Không tự migrate review schema v2 đang tồn tại.
+
+### Artifact lifecycle
+
+- Thêm `reviewRound`, `updatedAt` và round-aware bindings cho comments/submission.
+- MCP cấp update token dùng một lần và commit Markdown/manifest/comments theo transaction có rollback.
+- Review reset comments/submission trên cùng artifact; Proceed và Just save kết thúc lifecycle.
+
+### Extension và skill
+
+- Generic hóa Plan Review thành Artifact Review và hỗ trợ `kind` tổng quát.
+- Chặn lifecycle actions khi có comment draft chưa lưu.
+- Chỉ auto-trigger implementation plan; các artifact kind khác yêu cầu explicit user request.
+- Installer thay skill cũ ở user scope và verify bộ asset mới.
+
+### Verification
+
+- Thêm regression test nhiều review round trên cùng directory/ID và token không reuse được.
+- Cập nhật hook, store, MCP, multi-root và invalid-binding tests cho schema v3.
+
 ## [0.3.0] - 2026-08-28
 
 ### Breaking changes

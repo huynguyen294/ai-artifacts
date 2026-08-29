@@ -47,7 +47,7 @@ function integrationPaths(context: vscode.ExtensionContext): IntegrationPaths {
     targetDirectory,
     targetScript: path.join(targetDirectory, CODEX_ARTIFACTS_HOOK_MARKER),
     targetMcpScript: path.join(targetDirectory, "codex-artifacts-review-mcp.mjs"),
-    targetSkill: path.join(home, ".agents", "skills", "create-plan-artifact"),
+    targetSkill: path.join(home, ".agents", "skills", "create-review-artifact"),
     hooksPath: path.join(globalCodexDirectory, "hooks.json"),
     configPath: path.join(globalCodexDirectory, "config.toml"),
     sourceScript: vscode.Uri.joinPath(
@@ -62,7 +62,7 @@ function integrationPaths(context: vscode.ExtensionContext): IntegrationPaths {
       "integration",
       "codex-artifacts-review-mcp.mjs",
     ).fsPath,
-    sourceSkill: vscode.Uri.joinPath(context.extensionUri, "skills", "create-plan-artifact").fsPath,
+    sourceSkill: vscode.Uri.joinPath(context.extensionUri, "skills", "create-review-artifact").fsPath,
   };
 }
 
@@ -145,12 +145,16 @@ async function migrateCurrentWorkspace(
   await writeHooksFile(legacyHooksPath, migration.config);
 
   const legacySkillPath = path.join(workspaceRoot, ".agents", "skills", "create-plan-artifact");
+  const currentSkillPath = path.join(workspaceRoot, ".agents", "skills", "create-review-artifact");
   const removals: Promise<void>[] = [
     fs.rm(path.join(workspaceRoot, ".codex", "hooks", LEGACY_AGENT_PLUS_HOOK_MARKER), { force: true }),
     fs.rm(path.join(workspaceRoot, ".codex", "hooks", CODEX_ARTIFACTS_HOOK_MARKER), { force: true }),
   ];
   if (path.resolve(legacySkillPath) !== path.resolve(globalSkillPath)) {
     removals.push(fs.rm(legacySkillPath, { recursive: true, force: true }));
+  }
+  if (path.resolve(currentSkillPath) !== path.resolve(globalSkillPath)) {
+    removals.push(fs.rm(currentSkillPath, { recursive: true, force: true }));
   }
   await Promise.all(removals);
 }
@@ -189,6 +193,7 @@ export async function installGlobalIntegration(
   await fs.copyFile(sourceMcpScript, targetMcpScript);
   await fs.mkdir(path.dirname(targetSkill), { recursive: true });
   await fs.cp(sourceSkill, targetSkill, { recursive: true, force: true });
+  await fs.rm(path.join(home, ".agents", "skills", "create-plan-artifact"), { recursive: true, force: true });
 
   const existingConfig = await readHooksFile(hooksPath);
   existingConfig.description ??= "User lifecycle hooks, including Codex Artifacts.";

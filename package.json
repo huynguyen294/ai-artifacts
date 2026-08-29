@@ -2,8 +2,8 @@
   "name": "codex-artifacts",
   "displayName": "Codex Artifacts",
   "publisher": "agent-plus-local",
-  "description": "Review Codex plan artifacts and send annotated feedback to the originating Codex conversation.",
-  "version": "0.3.0",
+  "description": "Review Codex Markdown artifacts and send annotated feedback to the originating Codex conversation.",
+  "version": "0.4.3",
   "private": true,
   "type": "module",
   "license": "MIT",
@@ -18,8 +18,8 @@
   ],
   "activationEvents": [
     "onStartupFinished",
-    "onCustomEditor:agentPlus.planReview",
-    "onCommand:agentPlus.openPlanReview",
+    "onCustomEditor:agentPlus.artifactReview",
+    "onCommand:agentPlus.openArtifactReview",
     "onCommand:agentPlus.installWorkspaceIntegration",
     "onCommand:agentPlus.verifyGlobalIntegration"
   ],
@@ -27,8 +27,8 @@
   "contributes": {
     "commands": [
       {
-        "command": "agentPlus.openPlanReview",
-        "title": "Codex Artifacts: Open Plan Review"
+        "command": "agentPlus.openArtifactReview",
+        "title": "Codex Artifacts: Open Artifact Review"
       },
       {
         "command": "agentPlus.installWorkspaceIntegration",
@@ -41,11 +41,11 @@
     ],
     "customEditors": [
       {
-        "viewType": "agentPlus.planReview",
-        "displayName": "Plan Review",
+        "viewType": "agentPlus.artifactReview",
+        "displayName": "Artifact Review",
         "selector": [
           {
-            "filenamePattern": "**/.codex-artifacts/plans/**/plan.md"
+            "filenamePattern": "**/.codex-artifacts/artifacts/**/artifact.md"
           }
         ],
         "priority": "default"
@@ -54,10 +54,10 @@
     "configuration": {
       "title": "Codex Artifacts",
       "properties": {
-        "agentPlus.autoOpenPlanReview": {
+        "agentPlus.autoOpenArtifactReview": {
           "type": "boolean",
           "default": true,
-          "description": "Automatically open a Plan Review after Codex finishes creating a plan artifact."
+          "description": "Automatically open Artifact Review after Codex finishes creating a Markdown artifact."
         },
         "agentPlus.codexCommand": {
           "type": "string",
@@ -71,7 +71,7 @@
     "build": "npm run build:extension && npm run build:webview && npm run build:integration",
     "build:extension": "esbuild src/extension/extension.ts --bundle --minify --platform=node --format=cjs --external:vscode --outfile=dist/extension.cjs",
     "build:webview": "vite build",
-    "build:integration": "esbuild src/integration/stamp-origin.ts --bundle --minify --platform=node --format=esm --outfile=dist/integration/codex-artifacts-stamp-origin.mjs && esbuild src/integration/review-wait-mcp.ts --bundle --minify --platform=node --format=esm --outfile=dist/integration/codex-artifacts-review-mcp.mjs",
+    "build:integration": "esbuild src/integration/stamp-origin.ts --bundle --minify --platform=node --format=esm --outfile=dist/integration/codex-artifacts-stamp-origin.mjs && esbuild src/integration/artifact-review-mcp.ts --bundle --minify --platform=node --format=esm --outfile=dist/integration/codex-artifacts-review-mcp.mjs",
     "check": "tsc --noEmit",
     "test": "npm run build:integration && vitest run --configLoader native",
     "package": "npm run build && vsce package --allow-missing-repository --out releases/ && vsce package --allow-missing-repository --out releases/codex-artifacts.vsix",

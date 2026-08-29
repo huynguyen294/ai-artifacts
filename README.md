@@ -1,20 +1,16 @@
+> This project was built through vibe coding with AI.
+
 # Codex Artifacts
 
-Codex Artifacts is a VS Code extension for reviewing Codex-generated plans as first-class artifacts. You can read a rendered plan, select text inside a Markdown block, add comments, and send the review back to the Codex conversation that created the plan.
+Codex Artifacts is a VS Code extension for reviewing Codex-generated Markdown as a first-class artifact. Read a rendered document, select text inside a Markdown block, add comments, and return an explicit decision to the Codex turn that created it.
+
+One user request owns one artifact. Selecting **Review** updates the same `artifact.md` and starts a new review round; it does not create a revision directory or retain old content.
 
 ## Getting started
 
-The VS Code extension and its Codex integration are each installed once per user. Repositories only contain generated `.codex-artifacts/` data.
-
 ### 1. Install the extension
 
-In VS Code:
-
-1. Open the **Extensions** view.
-2. Select the `...` menu.
-3. Select **Install from VSIX...**.
-4. Choose `codex-artifacts.vsix`.
-5. Reload VS Code when prompted.
+In VS Code, open **Extensions**, select `...`, choose **Install from VSIX...**, and select `codex-artifacts.vsix`.
 
 From a terminal:
 
@@ -26,102 +22,112 @@ The extension identifier is `agent-plus-local.codex-artifacts`.
 
 ### 2. Install the global Codex integration
 
-1. Open the Command Palette with `Ctrl+Shift+P`.
-2. Run **Codex Artifacts: Install Global Codex Integration**.
-
-The command installs:
+Run **Codex Artifacts: Install Global Codex Integration** from the Command Palette. It installs:
 
 ```text
-~/.agents/skills/create-plan-artifact/
+~/.agents/skills/create-review-artifact/
 ~/.codex/codex-artifacts/codex-artifacts-stamp-origin.mjs
 ~/.codex/codex-artifacts/codex-artifacts-review-mcp.mjs
 ~/.codex/hooks.json
 ~/.codex/config.toml
 ```
 
-If `CODEX_HOME` is configured, the hook script and `hooks.json` are installed there instead of `~/.codex`. Existing unrelated user hooks are preserved.
-
-When run from a workspace that used Agent Plus 0.1.x, setup removes the legacy Agent Plus hook entry and generated local skill from that workspace. It does not touch `.codex-artifacts/` or unrelated hooks.
+If `CODEX_HOME` is configured, Codex files are installed there. Existing unrelated skills, hooks, and MCP configuration are preserved. The installer removes the extension-managed legacy `create-plan-artifact` skill.
 
 ### 3. Trust the hook once
 
-Codex requires explicit trust for non-managed hooks, including user-level hooks:
-
 1. Open Codex in a terminal.
 2. Run `/hooks`.
-3. Select and trust the Codex Artifacts hook.
-4. Return to VS Code and run **Codex Artifacts: Verify Codex Integration**.
+3. Trust the Codex Artifacts hook.
+4. In VS Code, run **Codex Artifacts: Verify Codex Integration**.
 
-Setup reports ready only after App Server `hooks/list` returns `trustStatus: trusted`. A future extension update that changes the hook hash can require trust again. Restart the Codex extension after setup so new chats load the `codex_artifacts` MCP server.
+Restart Codex and start a new chat after installation or an integration upgrade. Existing chats do not load newly installed skills, hooks, or MCP tools.
 
-### 4. Start a new Codex chat
+### 4. Create an artifact
 
-Start a new chat after setup or after trusting an updated hook. Ask Codex:
+The bundled skill is allowed to trigger automatically when Codex prepares a substantive implementation plan that should be reviewed before implementation. You can also request an artifact explicitly:
 
 ```text
-Create a plan artifact for this authentication feature.
+Create a review artifact for this API design.
 ```
 
-You can also invoke the skill explicitly:
+Or invoke the skill directly:
 
 ```text
-Use $create-plan-artifact to create a plan for this task.
+Use $create-review-artifact to create an implementation plan for this task.
 ```
 
 Codex creates:
 
 ```text
-.codex-artifacts/plans/<artifact-id>/
+.codex-artifacts/artifacts/<artifact-id>/
   artifact.json
-  plan.md
+  artifact.md
   comments.json
 ```
 
-In a multi-root workspace, Codex resolves the workspace root relevant to the request and creates the artifact there. If more than one root is plausible, Codex asks which root should own the artifact instead of defaulting to the first folder.
+The extension opens `artifact.md` in **Artifact Review**.
 
-### 5. Review the plan
+#### Workspace resolution
 
-1. The extension automatically opens the generated `plan.md` after the artifact hook finishes.
-2. If auto-open is disabled or the file opens as text, use **Reopen Editor With... → Plan Review**.
-3. Select text inside one paragraph, heading, list item, quote, or code block.
-4. Add a comment in the review panel.
-5. Select **Review** to return saved comments and request a new plan revision, **Proceed** to continue implementation with or without comments, or **Just save** to choose a workspace destination without implementing the plan.
+Before creating an artifact, Codex resolves its owning workspace in this order:
 
-The originating Codex turn stays open in `wait_for_plan_review`. Review comments, approval, and save requests all return to that same turn. Codex Artifacts never starts a hidden background turn.
+1. A path, file link, `@mention`, or attachment explicitly supplied in the conversation.
+2. An active/open file supplied by IDE context with a concrete path.
+3. A repository or folder explicitly named in the conversation, verified against a relevant project file.
+4. A direct question to the user when the preceding evidence does not identify exactly one root.
 
-## Troubleshooting
+Codex cwd, `environment_context`, workspace order, and the first visible repository are hints only. They never establish that a folder is active or selected. Explorer selection is usable only when an integration explicitly supplies it.
 
-### Integration remains untrusted
+### 5. Review the artifact
 
-Installing files does not grant trust. Run `/hooks` in Codex, trust the exact Codex Artifacts hook definition, then run **Codex Artifacts: Verify Codex Integration**. Reinstalling the same files does not bypass this security check.
+1. Select text inside one paragraph, heading, list item, quote, or code block.
+2. Save a comment in the review panel.
+3. Choose an action:
+   - **Review** returns comments and asks Codex to update the same artifact.
+   - **Proceed** approves the artifact and lets Codex continue the original work.
+   - **Just save** asks for a workspace destination and saves Markdown without continuing the work.
+   - **Copy Markdown** copies content locally and does not change the review lifecycle.
 
-### `origin.threadId` or `comments.json` is missing
+An unsaved comment draft disables lifecycle actions until it is saved or cancelled.
 
-The hook did not run. Verify the integration, start a new Codex chat, and create a new artifact. Do not manually backfill a thread ID because it cannot be linked reliably to the originating conversation.
-
-### `wait_for_plan_review` is unavailable
-
-Run **Codex Artifacts: Install Global Codex Integration**, restart the Codex extension, and start a new chat. Existing chats do not automatically load newly installed MCP servers.
-
-### Commands are missing
-
-1. Confirm **Codex Artifacts** is enabled in Extensions.
-2. Run **Developer: Reload Window**.
-3. Search the Command Palette for `Codex Artifacts`.
+The originating Codex turn stays open in `wait_for_artifact_review`. On Review, Codex uses a one-time token with `update_artifact`; the MCP server transactionally updates the same `artifact.md`, increments `reviewRound`, resets comments/submission, and returns the document to review.
 
 ## Behavior
 
-- Plans live at `.codex-artifacts/plans/<artifact-id>/`.
-- Every artifact declares an absolute `location.workspaceRoot` and remains in that root for its full lifecycle.
-- Multi-root workspaces are supported. Ambiguous requests require the user to choose the target root.
-- `plan.md` opens automatically in the Plan Review custom editor when `agentPlus.autoOpenPlanReview` is enabled.
-- A selection must stay inside one rendered Markdown block.
-- Comments are persisted beside the plan in `comments.json`.
-- **Review** requires at least one saved comment and creates an immutable revision request for the same active Codex turn.
-- **Proceed** releases the same wait and continues implementation; any saved comments remain available to Codex.
-- **Just save** releases the same wait so Codex can ask where to copy the plan, then finishes without implementation.
-- The MCP wait defaults to a one-hour tool timeout and is cancelled when the originating turn ends.
-- Revisions are immutable. A valid replacement moves the previous revision to `.codex-artifacts/.trash/`.
+- Artifacts live at `.codex-artifacts/artifacts/<artifact-id>/` and use schema version 3.
+- One independent request keeps one directory and one artifact ID through all review rounds.
+- Review history and old Markdown are not retained.
+- Artifact HTML is never executed; controlled Markdown blocks are rendered with a nonce-based CSP.
+- Comments and submissions are bound to artifact ID, review round, origin thread, and content hashes.
+- Review updates are staged and rolled back if the transaction cannot commit.
+- The extension never redirects feedback to another chat or starts a hidden Codex turn.
+- Generated `.codex-artifacts/` data is operational review state and normally should not be committed.
+- Automatic skill triggering is currently limited to implementation plans; other artifact kinds require an explicit user request.
+
+## Legacy schema v2
+
+Version 0.4.0 does not migrate active schema-v2 reviews from `.codex-artifacts/plans/`. Their replacement/thread semantics cannot be safely converted to live schema-v3 review rounds.
+
+Legacy `plans/` and `.trash/` data is left untouched. Archive or delete it manually after confirming it is no longer needed. The new runtime only creates data under `.codex-artifacts/artifacts/`.
+
+## Troubleshooting
+
+### Integration is untrusted or outdated
+
+Run the install command, use Codex `/hooks` to trust the exact current hook, then run **Verify Codex Integration**. A changed hook hash requires trust again.
+
+### `origin.threadId` or `comments.json` is missing
+
+The creation hook did not run. Verify the integration, restart Codex, start a new chat, and create the artifact again. Never backfill origin manually.
+
+### MCP tools are unavailable
+
+The current chat did not load `wait_for_artifact_review` and `update_artifact`. Reinstall the global integration, restart Codex, and start a new chat.
+
+### A review update token expired
+
+The live review connection was lost or the MCP server restarted. Existing artifact content remains intact, but a fresh live artifact lifecycle is required.
 
 ## Development
 
@@ -134,29 +140,26 @@ npm test
 npm run build
 ```
 
-Press `F5` in VS Code to launch an Extension Development Host.
+Press `F5` to launch an Extension Development Host.
 
-Package and install the extension:
+Package and install:
 
 ```powershell
 npm run package
 code --install-extension releases/codex-artifacts.vsix
 ```
 
-The bundled `create-plan-artifact` skill creates a new directory containing `artifact.json` and `plan.md`. The trusted global hook records Codex `session_id` as `origin.threadId`, creates `comments.json`, and finalizes replacement cleanup. The bundled STDIO MCP server waits for the extension-owned review submission so the original Codex turn remains active.
-
-## Artifact contract
-
-Example manifest before the hook stamps the origin:
+## Schema-v3 manifest example
 
 ```json
 {
-  "schemaVersion": 2,
-  "kind": "plan",
-  "artifactId": "plan-auth-20260827-01",
-  "title": "Authentication rollout plan",
-  "createdAt": "2026-08-27T08:00:00.000Z",
-  "operation": "create",
+  "schemaVersion": 3,
+  "kind": "implementation-plan",
+  "artifactId": "auth-rollout-20260828-01",
+  "title": "Authentication rollout",
+  "createdAt": "2026-08-28T08:00:00.000Z",
+  "updatedAt": "2026-08-28T08:00:00.000Z",
+  "reviewRound": 1,
   "location": {
     "workspaceRoot": "D:/workspace/example"
   },
@@ -164,15 +167,4 @@ Example manifest before the hook stamps the origin:
 }
 ```
 
-For a revision, Codex adds:
-
-```json
-{
-  "operation": "replace",
-  "replacesArtifactId": "plan-auth-20260827-01"
-}
-```
-
-The implementation follows the official [Codex MCP](https://learn.chatgpt.com/docs/extend/mcp) and [Codex hooks](https://learn.chatgpt.com/docs/hooks) contracts.
-
-Development references live in `plans/PLAN.md` and `docs/ARCHITECTURE.md`.
+Development references for system boundaries and product intent live in `docs/ARCHITECTURE.md` and `docs/PHILOSOPHY.md`.

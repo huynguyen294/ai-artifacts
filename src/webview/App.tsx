@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ElementType, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ElementType, type ReactNode } from "react";
 import type {
   ExtensionToWebviewMessage,
   MarkdownBlock,
@@ -125,7 +125,7 @@ function highlightedText(block: MarkdownBlock, comments: ReviewComment[]): React
   return nodes;
 }
 
-function PlanBlock({ block, comments }: { block: MarkdownBlock; comments: ReviewComment[] }): ReactNode {
+function ArtifactBlock({ block, comments }: { block: MarkdownBlock; comments: ReviewComment[] }): ReactNode {
   const content = highlightedText(block, comments);
   const common = { "data-block-id": block.id, className: `plan-block ${block.type}` };
   if (block.type === "heading") {
@@ -146,6 +146,7 @@ export function App(): ReactNode {
   const [body, setBody] = useState("");
   const [sendStatus, setSendStatus] = useState<SendStatus>("idle");
   const [sendMessage, setSendMessage] = useState<string>();
+  const reviewRoundRef = useRef<number | undefined>(undefined);
 
   const [copied, setCopied] = useState(false);
 
@@ -164,6 +165,12 @@ export function App(): ReactNode {
     const listener = (event: MessageEvent<ExtensionToWebviewMessage>): void => {
       const message = event.data;
       if (message.type === "state") {
+        if (reviewRoundRef.current !== undefined && reviewRoundRef.current !== message.state.artifact.reviewRound) {
+          setDraft(null);
+          setBody("");
+          window.getSelection()?.removeAllRanges();
+        }
+        reviewRoundRef.current = message.state.artifact.reviewRound;
         setState(message.state);
         setError(undefined);
         if (message.state.submission) {
@@ -174,7 +181,7 @@ export function App(): ReactNode {
               ? "Review comments returned to the waiting Codex turn."
               : decision === "save"
                 ? undefined
-                : "Plan approved. Return to the Codex chat to continue.",
+                : "Artifact approved. Return to the Codex chat to continue.",
           );
         } else {
           setSendStatus("idle");
@@ -230,17 +237,18 @@ export function App(): ReactNode {
   };
 
   if (!state) {
-    return <main className="loading">{error ?? "Loading plan artifact…"}</main>;
+    return <main className="loading">{error ?? "Loading artifact…"}</main>;
   }
 
   const isSubmitting = sendStatus === "submitting";
   const isSubmitted = Boolean(state.submission) || sendStatus === "submitted";
+  const hasUnsavedComment = Boolean(draft && body.trim());
 
   return (
     <div className="app-shell">
       <header className="topbar">
         <div>
-          <span className="eyebrow">PLAN ARTIFACT</span>
+          <span className="eyebrow">{state.artifact.kind.toUpperCase()} · ROUND {state.artifact.reviewRound}</span>
           <h1>{state.artifact.title}</h1>
         </div>
         <div className="topbar-actions">
@@ -259,21 +267,24 @@ export function App(): ReactNode {
           <span className="comment-count">{state.comments.comments.length} comments</span>
           <button
             className="ghost"
-            disabled={isSubmitting || isSubmitted}
+            disabled={isSubmitting || isSubmitted || hasUnsavedComment}
+            title={hasUnsavedComment ? "Save or cancel the comment draft first." : undefined}
             onClick={() => vscode.postMessage({ type: "submitReview", decision: "save" })}
           >
             Just save
           </button>
           <button
             className="ghost"
-            disabled={isSubmitting || isSubmitted || state.comments.comments.length === 0}
+            disabled={isSubmitting || isSubmitted || hasUnsavedComment || state.comments.comments.length === 0}
+            title={hasUnsavedComment ? "Save or cancel the comment draft first." : undefined}
             onClick={() => vscode.postMessage({ type: "submitReview", decision: "revise" })}
           >
             Review
           </button>
           <button
             className="primary"
-            disabled={isSubmitting || isSubmitted}
+            disabled={isSubmitting || isSubmitted || hasUnsavedComment}
+            title={hasUnsavedComment ? "Save or cancel the comment draft first." : undefined}
             onClick={() => vscode.postMessage({ type: "submitReview", decision: "approve" })}
           >
             {isSubmitting ? "Submitting…" : "Proceed"}
@@ -290,14 +301,14 @@ export function App(): ReactNode {
       <div className="workspace">
         <article className="plan" onMouseUp={isSubmitted ? undefined : beginComment}>
           {state.blocks.map((block) => (
-            <PlanBlock key={block.id} block={block} comments={commentsByBlock.get(block.id) ?? []} />
+            <ArtifactBlock key={block.id} block={block} comments={commentsByBlock.get(block.id) ?? []} />
           ))}
         </article>
 
         <aside className="review-panel">
           <div className="panel-heading">
             <h2>Review</h2>
-            <p>Select text in the plan to add a comment.</p>
+            <p>Select text in the artifact to add a comment.</p>
           </div>
 
           {draft && !isSubmitted && (

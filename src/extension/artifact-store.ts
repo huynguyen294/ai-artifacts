@@ -14,11 +14,13 @@ import {
 } from "../shared/contracts";
 import {
   assertArtifactDirectory,
+  artifactPaths,
   parseArtifactManifest,
   parseBoundCommentsDocument,
   parseBoundReviewSubmission,
 } from "../shared/artifact-validation";
 import { parseMarkdownBlocks } from "../shared/markdown-blocks";
+import { ARTIFACT_UPDATE_LOCK_FILE } from "../shared/artifact-files";
 
 function sha256(value: string): string {
   return createHash("sha256").update(value).digest("hex");
@@ -28,22 +30,38 @@ async function readJson(filePath: string): Promise<unknown> {
   return JSON.parse(await fs.readFile(filePath, "utf8"));
 }
 
+async function waitForArtifactTransaction(artifactDirectory: string): Promise<void> {
+  const lockPath = path.join(artifactDirectory, ARTIFACT_UPDATE_LOCK_FILE);
+  for (let attempt = 0; attempt < 100; attempt++) {
+    try {
+      await fs.access(lockPath);
+    } catch (error) {
+      if (error instanceof Error && "code" in error && error.code === "ENOENT") return;
+      throw error;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error("The artifact is still completing a review update. Try again shortly.");
+}
+
 export class ArtifactStore {
   readonly artifactDirectory: string;
   readonly manifestPath: string;
   readonly commentsPath: string;
   readonly submissionPath: string;
 
-  constructor(readonly planPath: string) {
-    this.artifactDirectory = path.dirname(planPath);
-    this.manifestPath = path.join(this.artifactDirectory, "artifact.json");
-    this.commentsPath = path.join(this.artifactDirectory, "comments.json");
-    this.submissionPath = path.join(this.artifactDirectory, "review-submission.json");
+  constructor(readonly artifactPath: string) {
+    this.artifactDirectory = path.dirname(artifactPath);
+    const files = artifactPaths(this.artifactDirectory);
+    this.manifestPath = files.manifestPath;
+    this.commentsPath = files.commentsPath;
+    this.submissionPath = files.submissionPath;
   }
 
   async load(requireOrigin = false): Promise<ReviewState> {
-    const [plan, rawManifest] = await Promise.all([
-      fs.readFile(this.planPath, "utf8"),
+    await waitForArtifactTransaction(this.artifactDirectory);
+    const [markdown, rawManifest] = await Promise.all([
+      fs.readFile(this.artifactPath, "utf8"),
       readJson(this.manifestPath),
     ]);
     const artifact = parseArtifactManifest(rawManifest);
@@ -52,19 +70,21 @@ export class ArtifactStore {
       throw new Error("This artifact is not linked to its originating Codex chat yet.");
     }
 
-    const planSha256 = sha256(plan);
+    const artifactSha256 = sha256(markdown);
     let comments: CommentsDocument;
     try {
       comments = parseBoundCommentsDocument(await readJson(this.commentsPath), {
         artifactId: artifact.artifactId,
-        planSha256,
+        reviewRound: artifact.reviewRound,
+        artifactSha256,
       });
     } catch (error) {
       if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
       comments = {
         schemaVersion: ARTIFACT_SCHEMA_VERSION,
         artifactId: artifact.artifactId,
-        planSha256,
+        reviewRound: artifact.reviewRound,
+        artifactSha256,
         comments: [],
       };
       await this.writeComments(comments);
@@ -76,20 +96,27 @@ export class ArtifactStore {
       const commentsRaw = await fs.readFile(this.commentsPath, "utf8");
       submission = parseBoundReviewSubmission(rawSubmission, {
         artifactId: artifact.artifactId,
+        reviewRound: artifact.reviewRound,
         threadId: artifact.origin.threadId,
-        planSha256,
+        artifactSha256,
         commentsSha256: sha256(commentsRaw),
       });
     } catch (error) {
       if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
     }
 
-    return { artifact, comments, blocks: parseMarkdownBlocks(plan), markdown: plan, ...(submission ? { submission } : {}) };
+    return {
+      artifact,
+      comments,
+      blocks: parseMarkdownBlocks(markdown),
+      markdown,
+      ...(submission ? { submission } : {}),
+    };
   }
 
   async addComment(draft: CommentDraft): Promise<ReviewState> {
     const state = await this.load();
-    if (state.submission) throw new Error("This plan review was already submitted.");
+    if (state.submission) throw new Error("This artifact review round was already submitted.");
     const block = state.blocks.find((candidate) => candidate.id === draft.blockId);
     if (!block) throw new Error("The selected Markdown block no longer exists.");
     if (!draft.body.trim()) throw new Error("Comment cannot be empty.");
@@ -121,7 +148,7 @@ export class ArtifactStore {
 
   async removeComment(commentId: string): Promise<ReviewState> {
     const state = await this.load();
-    if (state.submission) throw new Error("This plan review was already submitted.");
+    if (state.submission) throw new Error("This artifact review round was already submitted.");
     state.comments.comments = state.comments.comments.filter((comment) => comment.id !== commentId);
     await this.writeComments(state.comments);
     return this.load();
@@ -129,24 +156,25 @@ export class ArtifactStore {
 
   async submitReview(decision: ReviewDecision): Promise<ReviewState> {
     const state = await this.load(true);
-    if (state.submission) throw new Error("This plan review was already submitted.");
+    if (state.submission) throw new Error("This artifact review round was already submitted.");
     if (decision === "revise" && state.comments.comments.length === 0) {
       throw new Error("Add at least one comment before requesting a revision.");
     }
     // "approve" and "save" have no comment constraints — allowed with or without comments.
     const threadId = state.artifact.origin.threadId;
     if (!threadId) throw new Error("This artifact is not linked to its originating Codex chat yet.");
-    const [plan, commentsRaw] = await Promise.all([
-      fs.readFile(this.planPath, "utf8"),
+    const [markdown, commentsRaw] = await Promise.all([
+      fs.readFile(this.artifactPath, "utf8"),
       fs.readFile(this.commentsPath, "utf8"),
     ]);
     const submission = reviewSubmissionSchema.parse({
       schemaVersion: ARTIFACT_SCHEMA_VERSION,
       artifactId: state.artifact.artifactId,
+      reviewRound: state.artifact.reviewRound,
       threadId,
       submittedAt: new Date().toISOString(),
       decision,
-      planSha256: sha256(plan),
+      artifactSha256: sha256(markdown),
       commentsSha256: sha256(commentsRaw),
     });
     await this.createSubmission(submission);
@@ -160,7 +188,7 @@ export class ArtifactStore {
       try {
         await fs.link(temporaryPath, this.submissionPath);
       } catch (error: any) {
-        if (error?.code === "EEXIST") throw new Error("This plan review was already submitted.");
+        if (error?.code === "EEXIST") throw new Error("This artifact review round was already submitted.");
         if (error?.code !== "EPERM" && error?.code !== "EACCES" && error?.code !== "ENOSYS") throw error;
         await fs.copyFile(temporaryPath, this.submissionPath, constants.COPYFILE_EXCL);
       }

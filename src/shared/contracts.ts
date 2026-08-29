@@ -1,16 +1,17 @@
 import { z } from "zod";
 
-export const ARTIFACT_SCHEMA_VERSION = 2 as const;
+export const ARTIFACT_SCHEMA_VERSION = 3 as const;
 export const artifactIdSchema = z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/);
+export const artifactKindSchema = z.string().regex(/^[a-z][a-z0-9-]{0,63}$/);
 
 export const artifactManifestSchema = z.object({
   schemaVersion: z.literal(ARTIFACT_SCHEMA_VERSION),
-  kind: z.literal("plan"),
+  kind: artifactKindSchema,
   artifactId: artifactIdSchema,
   title: z.string().min(1),
   createdAt: z.string().datetime(),
-  operation: z.enum(["create", "replace"]),
-  replacesArtifactId: artifactIdSchema.optional(),
+  updatedAt: z.string().datetime(),
+  reviewRound: z.number().int().positive(),
   location: z.object({
     workspaceRoot: z.string().min(1),
   }).strict(),
@@ -19,22 +20,7 @@ export const artifactManifestSchema = z.object({
     turnId: z.string().min(1).optional(),
     codexCwd: z.string().min(1).optional(),
   }).strict(),
-}).strict().superRefine((manifest, context) => {
-  if (manifest.operation === "replace" && !manifest.replacesArtifactId) {
-    context.addIssue({
-      code: "custom",
-      path: ["replacesArtifactId"],
-      message: "A replacement artifact must identify the artifact it replaces.",
-    });
-  }
-  if (manifest.operation === "create" && manifest.replacesArtifactId) {
-    context.addIssue({
-      code: "custom",
-      path: ["replacesArtifactId"],
-      message: "A create artifact cannot replace another artifact.",
-    });
-  }
-});
+}).strict();
 
 export const reviewCommentSchema = z.object({
   id: z.string().uuid(),
@@ -56,22 +42,24 @@ export const reviewCommentSchema = z.object({
 
 export const commentsDocumentSchema = z.object({
   schemaVersion: z.literal(ARTIFACT_SCHEMA_VERSION),
-  artifactId: z.string().min(1),
-  planSha256: z.string().regex(/^[a-f0-9]{64}$/),
+  artifactId: artifactIdSchema,
+  reviewRound: z.number().int().positive(),
+  artifactSha256: z.string().regex(/^[a-f0-9]{64}$/),
   comments: z.array(reviewCommentSchema),
-});
+}).strict();
 
 export const reviewDecisionSchema = z.enum(["revise", "approve", "save"]);
 
 export const reviewSubmissionSchema = z.object({
   schemaVersion: z.literal(ARTIFACT_SCHEMA_VERSION),
   artifactId: artifactIdSchema,
+  reviewRound: z.number().int().positive(),
   threadId: z.string().min(1),
   submittedAt: z.string().datetime(),
   decision: reviewDecisionSchema,
-  planSha256: z.string().regex(/^[a-f0-9]{64}$/),
+  artifactSha256: z.string().regex(/^[a-f0-9]{64}$/),
   commentsSha256: z.string().regex(/^[a-f0-9]{64}$/),
-});
+}).strict();
 
 export type ArtifactManifest = z.infer<typeof artifactManifestSchema>;
 export type ReviewComment = z.infer<typeof reviewCommentSchema>;

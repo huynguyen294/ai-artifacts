@@ -3,14 +3,18 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import {
   ARTIFACT_SCHEMA_VERSION,
-  artifactIdSchema,
   artifactManifestSchema,
   commentsDocumentSchema,
 } from "../shared/contracts";
 import {
   assertArtifactDirectory,
+  artifactPaths,
   sameFilesystemPath,
 } from "../shared/artifact-validation";
+import {
+  ARTIFACT_MANIFEST_FILE,
+  ARTIFACT_MARKDOWN_FILE,
+} from "../shared/artifact-files";
 
 type HookInput = {
   session_id?: unknown;
@@ -85,7 +89,7 @@ function collectStrings(value: unknown, result: string[]): void {
   }
 }
 
-function addedFilePaths(toolInput: unknown, fileName: "artifact.json" | "plan.md"): string[] {
+function addedFilePaths(toolInput: unknown, fileName: string): string[] {
   const strings: string[] = [];
   collectStrings(toolInput, strings);
   const escapedName = fileName.replace(".", "\\.");
@@ -100,22 +104,6 @@ function addedFilePaths(toolInput: unknown, fileName: "artifact.json" | "plan.md
   return [...result];
 }
 
-async function validReplacementDirectory(
-  oldDirectory: string,
-  oldId: string,
-  workspaceRoot: string,
-): Promise<boolean> {
-  try {
-    const oldManifest = artifactManifestSchema.parse(JSON.parse(
-      await fs.readFile(path.join(oldDirectory, "artifact.json"), "utf8"),
-    ));
-    return oldManifest.artifactId === oldId
-      && sameFilesystemPath(assertArtifactDirectory(oldManifest, oldDirectory), workspaceRoot);
-  } catch {
-    return false;
-  }
-}
-
 async function main(): Promise<void> {
   const input = await stdinJson();
   if (
@@ -128,15 +116,15 @@ async function main(): Promise<void> {
   const sessionId = input.session_id;
   const cwd = input.cwd;
   const toolInput = input.tool_input ?? input.toolInput ?? {};
-  const artifactPaths = addedFilePaths(toolInput, "artifact.json")
+  const manifestPaths = addedFilePaths(toolInput, ARTIFACT_MANIFEST_FILE)
     .map((candidate) => path.resolve(cwd, candidate));
-  const planPaths = addedFilePaths(toolInput, "plan.md")
+  const markdownPaths = addedFilePaths(toolInput, ARTIFACT_MARKDOWN_FILE)
     .map((candidate) => path.resolve(cwd, candidate));
 
-  for (const manifestPath of new Set(artifactPaths)) {
+  for (const manifestPath of new Set(manifestPaths)) {
     const artifactDirectory = path.dirname(manifestPath);
-    const planPath = path.join(artifactDirectory, "plan.md");
-    if (!planPaths.some((candidate) => sameFilesystemPath(candidate, planPath))) continue;
+    const files = artifactPaths(artifactDirectory);
+    if (!markdownPaths.some((candidate) => sameFilesystemPath(candidate, files.artifactPath))) continue;
     let rawManifest: unknown;
     try {
       rawManifest = JSON.parse(await fs.readFile(manifestPath, "utf8"));
@@ -148,24 +136,14 @@ async function main(): Promise<void> {
     if (!parsedManifest.success) continue;
     const manifest = parsedManifest.data;
     if (manifest.origin.threadId) continue;
-    let workspaceRoot: string;
     try {
-      workspaceRoot = assertArtifactDirectory(manifest, artifactDirectory);
+      assertArtifactDirectory(manifest, artifactDirectory);
     } catch {
       continue;
     }
-    const plansRoot = path.resolve(workspaceRoot, ".codex-artifacts", "plans");
-    let replacement: { oldDirectory: string; oldId: string } | undefined;
-    if (manifest.operation === "replace" && manifest.replacesArtifactId) {
-      const oldId = manifest.replacesArtifactId;
-      if (!artifactIdSchema.safeParse(oldId).success || oldId === manifest.artifactId) continue;
-      const oldDirectory = path.resolve(plansRoot, oldId);
-      if (!sameFilesystemPath(path.dirname(oldDirectory), plansRoot)) continue;
-      if (!await validReplacementDirectory(oldDirectory, oldId, workspaceRoot)) continue;
-      replacement = { oldDirectory, oldId };
-    }
+    if (manifest.reviewRound !== 1) continue;
 
-    const plan = await fs.readFile(planPath, "utf8");
+    const markdown = await fs.readFile(files.artifactPath, "utf8");
     const stampedManifest = artifactManifestSchema.parse({
       ...manifest,
       origin: {
@@ -177,26 +155,13 @@ async function main(): Promise<void> {
     });
     await atomicJson(manifestPath, stampedManifest);
 
-    const commentsPath = path.join(artifactDirectory, "comments.json");
-    await createJson(commentsPath, commentsDocumentSchema.parse({
+    await createJson(files.commentsPath, commentsDocumentSchema.parse({
       schemaVersion: ARTIFACT_SCHEMA_VERSION,
       artifactId: stampedManifest.artifactId,
-      planSha256: sha256(plan),
+      reviewRound: stampedManifest.reviewRound,
+      artifactSha256: sha256(markdown),
       comments: [],
     }));
-
-    if (replacement) {
-      const trashRoot = path.resolve(workspaceRoot, ".codex-artifacts", ".trash");
-      await fs.mkdir(trashRoot, { recursive: true });
-      try {
-        await fs.rename(
-          replacement.oldDirectory,
-          path.join(trashRoot, `${replacement.oldId}-${Date.now()}`),
-        );
-      } catch (error) {
-        if (errorCode(error) !== "ENOENT") throw error;
-      }
-    }
   }
 }
 

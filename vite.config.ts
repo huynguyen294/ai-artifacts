@@ -14,7 +14,7 @@ export default defineConfig({
     lib: {
       entry: resolve(import.meta.dirname, "src/webview/main.tsx"),
       formats: ["iife"],
-      name: "CodexArtifactsPlanReview",
+      name: "CodexArtifactsReview",
       fileName: () => "review.js",
     },
     rollupOptions: {

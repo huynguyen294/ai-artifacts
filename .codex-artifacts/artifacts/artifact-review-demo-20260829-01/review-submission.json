@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 3,
+  "artifactId": "artifact-review-demo-20260829-01",
+  "reviewRound": 2,
+  "threadId": "01a04c65-34b9-72b0-bc4e-240fcb8b0805",
+  "submittedAt": "2026-08-29T07:32:53.430Z",
+  "decision": "save",
+  "artifactSha256": "4b87a3b194ffb2b1bac5cfad50c4fc75e4602ace8ddb095fc910cb8ed0853840",
+  "commentsSha256": "6f06082b98967a9dca99f562fb750695cc4078106e1253d020c3478a1ccad24b"
+}

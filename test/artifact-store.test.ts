@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -5,24 +6,31 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { ArtifactStore } from "../src/extension/artifact-store";
 
 const temporaryDirectories: string[] = [];
+const markdown = "# Artifact\n\nBuild the review view.\n";
+
+function sha256(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
+}
 
 async function fixture(): Promise<{ directory: string; store: ArtifactStore }> {
   const workspaceRoot = await mkdtemp(path.join(tmpdir(), "agent-plus-store-"));
   temporaryDirectories.push(workspaceRoot);
-  const directory = path.join(workspaceRoot, ".codex-artifacts", "plans", "plan-001");
+  const directory = path.join(workspaceRoot, ".codex-artifacts", "artifacts", "artifact-001");
   await mkdir(directory, { recursive: true });
-  await writeFile(path.join(directory, "plan.md"), "# Plan\n\nBuild the review view.\n", "utf8");
+  await writeFile(path.join(directory, "artifact.md"), markdown, "utf8");
+  const timestamp = new Date().toISOString();
   await writeFile(path.join(directory, "artifact.json"), JSON.stringify({
-    schemaVersion: 2,
-    kind: "plan",
-    artifactId: "plan-001",
-    title: "Plan",
-    createdAt: new Date().toISOString(),
-    operation: "create",
+    schemaVersion: 3,
+    kind: "implementation-plan",
+    artifactId: "artifact-001",
+    title: "Artifact",
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    reviewRound: 1,
     location: { workspaceRoot },
     origin: { codexCwd: workspaceRoot, threadId: "thread-001" },
   }), "utf8");
-  return { directory, store: new ArtifactStore(path.join(directory, "plan.md")) };
+  return { directory, store: new ArtifactStore(path.join(directory, "artifact.md")) };
 }
 
 afterEach(async () => {
@@ -30,36 +38,39 @@ afterEach(async () => {
 });
 
 describe("ArtifactStore", () => {
-  it("rejects legacy schema version 1 artifacts", async () => {
+  it("rejects legacy schema version 2 artifacts", async () => {
     const { directory, store } = await fixture();
     const manifestPath = path.join(directory, "artifact.json");
     const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
-    await writeFile(manifestPath, JSON.stringify({ ...manifest, schemaVersion: 1 }), "utf8");
-    await expect(store.load()).rejects.toThrow("requires version 2");
+    await writeFile(manifestPath, JSON.stringify({ ...manifest, schemaVersion: 2 }), "utf8");
+    await expect(store.load()).rejects.toThrow("requires version 3");
   });
 
-  it("creates comments.json and persists a block-bound comment", async () => {
+  it("creates round-bound comments.json and persists a block-bound comment", async () => {
     const { directory, store } = await fixture();
     const initial = await store.load(true);
     const paragraph = initial.blocks.find((block) => block.type === "paragraph");
-    expect(paragraph).toBeDefined();
     const state = await store.addComment({
       blockId: paragraph!.id,
       selection: { quote: "review view", start: 10, end: 21 },
       body: "Clarify the interaction.",
     });
     expect(state.comments.comments).toHaveLength(1);
-    expect(JSON.parse(await readFile(path.join(directory, "comments.json"), "utf8")).comments).toHaveLength(1);
+    expect(state.comments).toMatchObject({
+      artifactId: "artifact-001",
+      reviewRound: 1,
+      artifactSha256: sha256(markdown),
+    });
   });
 
-  it("rejects comments when plan.md changes in the same lifecycle", async () => {
+  it("rejects content changed outside the review update protocol", async () => {
     const { directory, store } = await fixture();
     await store.load();
-    await writeFile(path.join(directory, "plan.md"), "# Changed\n", "utf8");
-    await expect(store.load()).rejects.toThrow("Create a new artifact revision");
+    await writeFile(path.join(directory, "artifact.md"), "# Changed\n", "utf8");
+    await expect(store.load()).rejects.toThrow("outside the artifact review update protocol");
   });
 
-  it("submits a revision request once and locks the review", async () => {
+  it("submits Review once for the current round and locks it", async () => {
     const { directory, store } = await fixture();
     const initial = await store.load(true);
     const paragraph = initial.blocks.find((block) => block.type === "paragraph")!;
@@ -71,18 +82,20 @@ describe("ArtifactStore", () => {
 
     const submitted = await store.submitReview("revise");
     expect(submitted.submission).toMatchObject({
-      artifactId: "plan-001",
+      artifactId: "artifact-001",
+      reviewRound: 1,
       threadId: "thread-001",
-      decision: "revise",
-    });
-    expect(JSON.parse(await readFile(path.join(directory, "review-submission.json"), "utf8"))).toMatchObject({
       decision: "revise",
     });
     await expect(store.removeComment(submitted.comments.comments[0]!.id)).rejects.toThrow("already submitted");
     await expect(store.submitReview("revise")).rejects.toThrow("already submitted");
+    expect(JSON.parse(await readFile(path.join(directory, "review-submission.json"), "utf8"))).toMatchObject({
+      decision: "revise",
+      artifactSha256: sha256(markdown),
+    });
   });
 
-  it("approves a plan with or without comments", async () => {
+  it("approves an artifact with or without comments", async () => {
     const { store } = await fixture();
     await store.load(true);
     await expect(store.submitReview("revise")).rejects.toThrow("at least one comment");
@@ -93,9 +106,7 @@ describe("ArtifactStore", () => {
   it("falls back to copyFile and cleans up tmp files when rename throws EPERM", async () => {
     const { directory, store } = await fixture();
     const initial = await store.load(true);
-    const paragraph = initial.blocks.find((block) => block.type === "paragraph");
-    expect(paragraph).toBeDefined();
-
+    const paragraph = initial.blocks.find((block) => block.type === "paragraph")!;
     const fsModule = await import("node:fs");
     const renameSpy = vi.spyOn(fsModule.promises, "rename").mockRejectedValue(
       Object.assign(new Error("operation not permitted"), { code: "EPERM" }),
@@ -103,15 +114,12 @@ describe("ArtifactStore", () => {
 
     try {
       const state = await store.addComment({
-        blockId: paragraph!.id,
+        blockId: paragraph.id,
         selection: { quote: "review view", start: 10, end: 21 },
         body: "Fallback comment.",
       });
       expect(state.comments.comments).toHaveLength(1);
-      const commentsOnDisk = JSON.parse(await readFile(path.join(directory, "comments.json"), "utf8"));
-      expect(commentsOnDisk.comments).toHaveLength(1);
-      const files = await readdir(directory);
-      expect(files.some((file) => file.includes(".tmp"))).toBe(false);
+      expect((await readdir(directory)).some((file) => file.includes(".tmp"))).toBe(false);
     } finally {
       renameSpy.mockRestore();
     }

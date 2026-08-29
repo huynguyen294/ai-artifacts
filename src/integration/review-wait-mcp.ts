@@ -1,3 +1,4 @@
+/* Legacy source retained for source compatibility; the build uses artifact-review-mcp.ts.
 import { createHash } from "node:crypto";
 import { promises as fs, watch as watchFs } from "node:fs";
 import path from "node:path";
@@ -270,3 +271,5 @@ for await (const line of lines) {
   }
 }
 for (const controller of pending.values()) controller.abort();
+*/
+import "./artifact-review-mcp";
