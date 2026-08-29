@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 3,
+  "artifactId": "markdown-viewer-contextual-review-20260829-01",
+  "reviewRound": 2,
+  "threadId": "01a04251-d374-7991-81c5-e366fdec402d",
+  "submittedAt": "2026-08-29T08:13:34.162Z",
+  "decision": "approve",
+  "artifactSha256": "caef4f4d7910a2dfcb18ac08baa39914a361e3a37fc5ff57eb3b066c1ad8fa39",
+  "commentsSha256": "38ec218c3c5cecf64c4d745d06e8997b5b2b56b84f92cc58bd7def72bcc5e698"
+}

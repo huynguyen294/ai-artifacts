@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 3,
+  "kind": "plan",
+  "artifactId": "example-plan-20260829-01",
+  "title": "Example plan",
+  "createdAt": "2026-08-29T08:57:05.905Z",
+  "updatedAt": "2026-08-29T09:01:17.008Z",
+  "reviewRound": 2,
+  "location": {
+    "workspaceRoot": "D:/workspace/my-projects/agent-plus"
+  },
+  "origin": {
+    "threadId": "01a04c73-a577-77c1-ba99-cc34ea153155",
+    "turnId": "01a04cbc-6345-72b1-a140-372a3e7b9bdd",
+    "codexCwd": "D:\\workspace\\my-projects\\script-runner"
+  }
+}

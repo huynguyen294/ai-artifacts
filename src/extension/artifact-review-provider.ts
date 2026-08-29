@@ -49,6 +49,14 @@ export class ArtifactReviewProvider implements vscode.CustomTextEditorProvider {
             await store.removeComment(message.commentId);
             await refresh();
             return;
+          case "openExternal": {
+            const uri = vscode.Uri.parse(message.url, true);
+            if (!new Set(["http", "https", "mailto"]).has(uri.scheme.toLowerCase())) {
+              throw new Error("This link protocol is not allowed in Artifact Review.");
+            }
+            await vscode.env.openExternal(uri);
+            return;
+          }
           case "submitReview":
             if (sending) return;
             sending = true;
@@ -102,21 +110,22 @@ export class ArtifactReviewProvider implements vscode.CustomTextEditorProvider {
   private html(webview: vscode.Webview): string {
     const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, "dist", "webview", "review.js"));
     const styleUri = webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, "dist", "webview", "review.css"));
+    const shikiUri = webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, "dist", "webview", "shiki.js"));
+    const mermaidUri = webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, "dist", "webview", "mermaid.js"));
     const token = nonce();
     return `<!doctype html>
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource}; script-src 'nonce-${token}';" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src ${webview.cspSource} 'nonce-${token}'; script-src 'nonce-${token}';" />
     <link rel="stylesheet" href="${styleUri}" />
     <title>Artifact Review</title>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root" data-style-nonce="${token}" data-shiki-uri="${shikiUri}" data-mermaid-uri="${mermaidUri}"></div>
     <script nonce="${token}" src="${scriptUri}"></script>
   </body>
 </html>`;
   }
 }
-

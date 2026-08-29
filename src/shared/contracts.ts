@@ -27,7 +27,7 @@ export const reviewCommentSchema = z.object({
   createdAt: z.string().datetime(),
   block: z.object({
     id: z.string().min(1),
-    type: z.enum(["heading", "paragraph", "list-item", "quote", "code"]),
+    type: z.enum(["heading", "paragraph", "list-item", "quote", "code", "table-cell"]),
     heading: z.string().nullable(),
   }),
   selection: z.object({
@@ -73,6 +73,8 @@ export type MarkdownBlock = {
   type: ReviewComment["block"]["type"];
   text: string;
   heading: string | null;
+  sourceStart: number;
+  sourceEnd: number;
   level?: number;
   language?: string;
 };
@@ -99,6 +101,7 @@ export const webviewToExtensionMessageSchema = z.discriminatedUnion("type", [
   commentDraftSchema.extend({ type: z.literal("addComment") }),
   z.object({ type: z.literal("removeComment"), commentId: z.string().uuid() }),
   z.object({ type: z.literal("submitReview"), decision: reviewDecisionSchema }),
+  z.object({ type: z.literal("openExternal"), url: z.string().url() }),
   z.object({ type: z.literal("ready") }),
 ]);
 

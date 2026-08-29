@@ -45,6 +45,8 @@ Các trường hợp có thể mở rộng gồm architecture proposal, technica
 
 Đây mới là ý tưởng đã ghi nhận, chưa phải điều kiện auto-trigger. Mỗi loại chỉ nên được bật sau khi xác định rõ khi nào cần review và Proceed có ý nghĩa gì.
 
-## Trạng thái triển khai 0.4.0
+## Trạng thái triển khai 0.5.0
 
-Lifecycle mới đã được triển khai theo triết lý trên: artifact tổng quát dùng `artifact.md`, Review cập nhật cùng artifact qua nhiều round, comment/submission được reset và không tạo revision history hoặc `.trash` mới. Skill chỉ auto-trigger implementation plan hoặc explicit artifact request; các loại mở rộng vẫn là định hướng, chưa tự động kích hoạt.
+Lifecycle vẫn giữ nguyên triết lý: Review cập nhật cùng `artifact.md`, reset trạng thái round và không lưu revision history. Viewer 0.5.0 nâng artifact thành tài liệu CommonMark/GFM dễ đọc, comment ngay cạnh vùng chọn, drawer có thể ẩn và giao diện tự theo theme VS Code; đây vẫn là lớp review tài liệu, không trở thành task manager hay một chat UI khác.
+
+Skill chỉ auto-trigger implementation plan hoặc explicit artifact request; các loại mở rộng vẫn là định hướng, chưa tự động kích hoạt.

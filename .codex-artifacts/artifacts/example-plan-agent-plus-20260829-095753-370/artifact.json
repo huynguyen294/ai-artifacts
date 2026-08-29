@@ -1,10 +1,10 @@
 {
   "schemaVersion": 3,
   "kind": "plan",
-  "artifactId": "example-plan-agent-plus-20260829-01",
+  "artifactId": "example-plan-agent-plus-20260829-095753-370",
   "title": "Example plan for Agent Plus",
-  "createdAt": "2026-08-29T09:56:57.450Z",
-  "updatedAt": "2026-08-29T09:56:57.450Z",
+  "createdAt": "2026-08-29T09:57:53.370Z",
+  "updatedAt": "2026-08-29T09:57:53.370Z",
   "reviewRound": 1,
   "location": {
     "workspaceRoot": "D:/workspace/my-projects/agent-plus"

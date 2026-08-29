@@ -17,3 +17,5 @@ vite.config.ts
 *.vsix
 *.tgz
 debug.log
+ASSESSMENT.md
+HIGHLIGHTS.md

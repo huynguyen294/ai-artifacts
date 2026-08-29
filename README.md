@@ -81,15 +81,20 @@ Codex cwd, `environment_context`, workspace order, and the first visible reposit
 
 ### 5. Review the artifact
 
-1. Select text inside one paragraph, heading, list item, quote, or code block.
-2. Save a comment in the review panel.
-3. Choose an action:
+1. Select text inside one paragraph, heading, list item, quote, code block, or table cell.
+2. Write and save feedback in the comment popover beside the selection.
+3. Open **Comments (N)** to review all saved comments or jump back to a highlighted passage.
+4. Choose an action:
    - **Review** returns comments and asks Codex to update the same artifact.
    - **Proceed** approves the artifact and lets Codex continue the original work.
    - **Just save** asks for a workspace destination and saves Markdown without continuing the work.
    - **Copy Markdown** copies content locally and does not change the review lifecycle.
 
 An unsaved comment draft disables lifecycle actions until it is saved or cancelled.
+
+**Proceed** remains primary throughout the review. **Review (N)** also becomes primary as soon as comments exist. The comments drawer is hidden by default so the document keeps the full editor width.
+
+Artifact Review follows the active VS Code light, dark, or high-contrast theme. CommonMark/GFM features include nested lists, task lists, tables, links, quotes, inline formatting, and fenced code. Syntax highlighting and Mermaid diagrams are loaded only when a document needs them; Mermaid blocks can always switch back to reviewable source.
 
 The originating Codex turn stays open in `wait_for_artifact_review`. On Review, Codex uses a one-time token with `update_artifact`; the MCP server transactionally updates the same `artifact.md`, increments `reviewRound`, resets comments/submission, and returns the document to review.
 
@@ -98,7 +103,9 @@ The originating Codex turn stays open in `wait_for_artifact_review`. On Review, 
 - Artifacts live at `.codex-artifacts/artifacts/<artifact-id>/` and use schema version 3.
 - One independent request keeps one directory and one artifact ID through all review rounds.
 - Review history and old Markdown are not retained.
-- Artifact HTML is never executed; controlled Markdown blocks are rendered with a nonce-based CSP.
+- Markdown is parsed as CommonMark/GFM; raw HTML and executable Markdown content are disabled.
+- External links are restricted to safe protocols and opened by the VS Code extension host. Remote images are not loaded.
+- The webview uses a nonce-based CSP. Shiki and Mermaid run as optional extension-owned bundles, never as artifact-provided scripts.
 - Comments and submissions are bound to artifact ID, review round, origin thread, and content hashes.
 - Review updates are staged and rolled back if the transaction cannot commit.
 - The extension never redirects feedback to another chat or starts a hidden Codex turn.

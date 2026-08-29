@@ -14,7 +14,9 @@ Global hook ── validates creation, stamps origin, creates round-one comments
    ▼
 VS Code custom editor
    ├─ extension host: validation, comments, immutable round submission
-   └─ React webview: rendering, selection, decisions
+   └─ React webview: GFM rendering, contextual comments, decisions
+       ├─ core bundle: react-markdown, Floating UI, theme adapter
+       └─ lazy bundles: Shiki tokenization and strict Mermaid rendering
                          │
                          ▼
 Codex Artifacts MCP
@@ -60,8 +62,12 @@ The hook is non-managed and requires explicit trust through Codex `/hooks`. The 
 
 ## Safety decisions
 
-- Markdown is rendered as controlled text blocks; HTML is not injected.
-- Webview scripts use a nonce-based CSP.
+- Markdown is parsed once into remark AST review blocks with source positions; the renderer maps the same positions back to selectable DOM nodes.
+- `react-markdown` renders CommonMark/GFM with raw HTML disabled. URL policy only allows `http`, `https`, `mailto`, and local fragment links; remote images are placeholders.
+- Comment annotations are React text nodes, not injected HTML, so emphasis, links, inline code, and table structure remain intact.
+- Webview scripts and generated Shiki CSS use a nonce-based CSP. Artifact Markdown cannot supply scripts or styles.
+- Shiki returns token data that React renders as text. Mermaid uses strict mode and its SVG is displayed through a data-image context rather than inserted as live markup.
+- Shiki and Mermaid are separate extension-owned bundles loaded only for matching fenced blocks; high-contrast code uses the plain-code fallback.
 - Selection coordinates are revalidated in the extension host.
 - Writes use temporary files; round updates use staged commit/rollback.
 - Wrong schema, directory, root, round, origin, hash, or token fails closed.

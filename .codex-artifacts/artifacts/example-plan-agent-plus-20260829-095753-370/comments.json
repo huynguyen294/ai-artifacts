@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 3,
+  "artifactId": "example-plan-agent-plus-20260829-095753-370",
+  "reviewRound": 1,
+  "artifactSha256": "03de6c579ba311e74ca6cc43fc810d09253f0eae446a9efd42da94486fc8e744",
+  "comments": [
+    {
+      "id": "8dad034c-d989-4f3e-bf04-eccd9f2993a1",
+      "createdAt": "2026-08-29T10:00:03.865Z",
+      "block": {
+        "id": "block-4-d849271ef557",
+        "type": "list-item",
+        "heading": "Phạm vi mẫu"
+      },
+      "selection": {
+        "quote": "Thêm một tài liệu hướng dẫn ngắn giải thích cách tạo và review artifact.",
+        "start": 0,
+        "end": 72,
+        "prefix": "",
+        "suffix": ""
+      },
+      "body": "alo"
+    }
+  ]
+}

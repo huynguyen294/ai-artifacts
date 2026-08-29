@@ -3,7 +3,7 @@
   "displayName": "Codex Artifacts",
   "publisher": "agent-plus-local",
   "description": "Review Codex Markdown artifacts and send annotated feedback to the originating Codex conversation.",
-  "version": "0.4.3",
+  "version": "0.5.0",
   "private": true,
   "type": "module",
   "license": "MIT",
@@ -68,9 +68,10 @@
     }
   },
   "scripts": {
-    "build": "npm run build:extension && npm run build:webview && npm run build:integration",
+    "build": "npm run build:extension && npm run build:webview && npm run build:enhancements && npm run build:integration",
     "build:extension": "esbuild src/extension/extension.ts --bundle --minify --platform=node --format=cjs --external:vscode --outfile=dist/extension.cjs",
     "build:webview": "vite build",
+    "build:enhancements": "esbuild src/webview/enhancements/shiki-entry.ts --bundle --minify --platform=browser --format=iife --outfile=dist/webview/shiki.js && esbuild src/webview/enhancements/mermaid-entry.ts --bundle --minify --platform=browser --format=iife --outfile=dist/webview/mermaid.js",
     "build:integration": "esbuild src/integration/stamp-origin.ts --bundle --minify --platform=node --format=esm --outfile=dist/integration/codex-artifacts-stamp-origin.mjs && esbuild src/integration/artifact-review-mcp.ts --bundle --minify --platform=node --format=esm --outfile=dist/integration/codex-artifacts-review-mcp.mjs",
     "check": "tsc --noEmit",
     "test": "npm run build:integration && vitest run --configLoader native",
@@ -78,6 +79,8 @@
     "pack": "npm run package"
   },
   "devDependencies": {
+    "@floating-ui/react": "^0.27.20",
+    "@types/mdast": "^4.0.4",
     "@types/node": "^26.4.0",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.5",
@@ -85,9 +88,16 @@
     "@vitejs/plugin-react": "^6.1.0",
     "@vscode/vsce": "^3.9.2",
     "esbuild": "^0.28.2",
+    "mdast-util-to-string": "^4.0.0",
+    "mermaid": "^11.17.2",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
+    "remark-parse": "^11.0.0",
+    "shiki": "^4.4.3",
     "typescript": "^7.0.2",
+    "unified": "^11.0.5",
     "vite": "^8.2.2",
     "vitest": "^4.1.11",
     "zod": "^4.4.3"

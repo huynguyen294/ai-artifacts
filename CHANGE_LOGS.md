@@ -6,6 +6,33 @@ Lịch sử phát hành được chuẩn hóa và bắt đầu ghi nhận lại 
 
 ---
 
+## [0.5.0] - 2026-08-29
+
+### Markdown viewer
+
+- Thay renderer thủ công bằng `react-markdown`, `remark-gfm` và remark AST có source positions dùng chung với comment blocks.
+- Hỗ trợ nested list, task list, table, link, inline formatting, fenced code và Mermaid.
+- Dùng Shiki fine-grained bundle cho syntax highlighting; Shiki và Mermaid chỉ tải khi artifact cần đến.
+- Tự động theo theme light, dark và high contrast của VS Code.
+
+### Contextual review
+
+- Hiển thị comment composer bằng Floating UI popover ngay cạnh vùng chọn.
+- Thay sidebar cố định bằng comments drawer có thể ẩn, điều hướng từ comment về đúng highlight.
+- Nút `Review (N)` hiển thị số comment và trở thành primary khi có feedback; `Proceed` luôn primary trong toàn bộ vòng review.
+- Không còn báo nhầm cross-block khi selection kết thúc tại offset đầu tiên của block kế tiếp hoặc khi click comment highlight.
+- Giảm shadow/backdrop của document, popover và drawer để giao diện phẳng, sát VS Code hơn.
+- Giảm padding hai lớp của workspace/document và compact popover/drawer để tăng diện tích đọc.
+- Chuyển `Comments (N)` khỏi lifecycle control bar xuống utility bar riêng ngay bên dưới.
+- Đổi utility action thành icon + `View comments` + count badge, kèm trạng thái drawer cho accessibility.
+- Giữ nguyên inline Markdown khi highlight comment thay vì biến cả block thành plain text.
+
+### Security và verification
+
+- Tắt raw HTML/MDX execution, chặn unsafe URL và remote image, mở external link qua VS Code host.
+- Giữ nonce-based CSP; Shiki render token bằng React, Mermaid strict SVG chạy trong data-image context.
+- Bổ sung regression tests cho legacy block IDs, GFM/source positions, action state, URL policy, raw HTML và annotation qua inline markup.
+
 ## [0.4.3] - 2026-08-29
 
 - Không còn xem Codex cwd, `environment_context` hoặc workspace folder đầu tiên là folder đang active/được chọn.
