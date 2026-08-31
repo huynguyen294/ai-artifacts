@@ -3,10 +3,14 @@
   "displayName": "Codex Artifacts",
   "publisher": "agent-plus-local",
   "description": "Review Codex Markdown artifacts and send annotated feedback to the originating Codex conversation.",
-  "version": "0.6.1",
+  "version": "0.7.0",
   "private": true,
   "type": "module",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/huynguyen294/vscode-codex-artifacts.git"
+  },
   "engines": {
     "vscode": ">=1.95.0"
   },

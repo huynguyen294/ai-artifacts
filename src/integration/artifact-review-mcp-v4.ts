@@ -32,10 +32,12 @@ import {
 } from "../shared/workspace-registry";
 
 const SERVER_NAME = "codex-artifacts";
-const SERVER_VERSION = "4.1.0";
-const CREATE_AND_WAIT_TOOL_NAME = "create_and_wait_for_artifact";
-const UPDATE_AND_WAIT_TOOL_NAME = "update_and_wait_for_artifact";
-const UPDATE_TOKEN_TTL_MS = 60 * 60 * 1000;
+const SERVER_VERSION = "5.0.0";
+const CREATE_TOOL_NAME = "create_artifact";
+const WAIT_TOOL_NAME = "wait_for_artifact_review";
+const INSPECT_TOOL_NAME = "inspect_artifact_review";
+const ADVANCE_AND_WAIT_TOOL_NAME = "advance_and_wait_for_artifact";
+const ROUND_TOKEN_TTL_MS = 60 * 60 * 1000;
 const MAX_MARKDOWN_BYTES = 2 * 1024 * 1024;
 
 type JsonObject = Record<string, any>;
@@ -67,16 +69,31 @@ type ReviewWaitResult = {
   submittedAt: string;
   artifactPath: string;
   commentsPath: string;
+  submissionSha256: string;
+  nextAction?: {
+    type: "execute-approved-plan";
+    instruction: string;
+  };
 };
 
-type UpdateGrant = {
+type RoundGrant = {
+  source: "submitted-review" | "chat-inspection";
   artifactDirectory: string;
   artifactId: string;
   reviewSessionId: string;
   reviewRound: number;
   artifactSha256: string;
   commentsSha256: string;
+  submissionExpected: boolean;
+  submissionSha256?: string;
   expiresAt: number;
+};
+
+type ActiveArtifactWaiter = {
+  requestKey: string;
+  reviewRound: number;
+  controller: AbortController;
+  settled: Promise<void>;
 };
 
 function errorCode(error: unknown): string | undefined {
@@ -87,6 +104,14 @@ function errorCode(error: unknown): string | undefined {
 
 function sha256(value: string): string {
   return createHash("sha256").update(value).digest("hex");
+}
+
+function approvedPlanAction(kind: string, decision: ReviewDecision): ReviewWaitResult["nextAction"] {
+  if (decision !== "approve" || (kind !== "plan" && kind !== "implementation-plan")) return undefined;
+  return {
+    type: "execute-approved-plan",
+    instruction: "Execute the approved plan immediately in this same turn. Perform all in-scope code, file, workspace, and command actions described by the plan. Do not stop after acknowledging approval and do not ask for another confirmation. Pause only for a genuine blocker or authority outside the approved scope.",
+  };
 }
 
 async function readJson(filePath: string): Promise<unknown> {
@@ -292,9 +317,9 @@ async function loadArtifactContext(rawDirectory: unknown): Promise<ArtifactConte
 }
 
 async function readValidatedSubmission(context: ArtifactContext): Promise<ReviewWaitResult | undefined> {
-  let rawSubmission: unknown;
+  let submissionRaw: string;
   try {
-    rawSubmission = await readJson(context.submissionPath);
+    submissionRaw = await fs.readFile(context.submissionPath, "utf8");
   } catch (error) {
     if (errorCode(error) === "ENOENT") return undefined;
     throw error;
@@ -311,7 +336,7 @@ async function readValidatedSubmission(context: ArtifactContext): Promise<Review
     reviewRound: context.reviewRound,
     artifactSha256: currentArtifactSha256,
   });
-  const submission = parseBoundReviewSubmission(rawSubmission, {
+  const submission = parseBoundReviewSubmission(JSON.parse(submissionRaw), {
     schemaVersion: ARTIFACT_SCHEMA_VERSION,
     artifactId: context.artifactId,
     reviewRound: context.reviewRound,
@@ -324,6 +349,7 @@ async function readValidatedSubmission(context: ArtifactContext): Promise<Review
   if (submission.decision === "revise" && currentComments.comments.length === 0) {
     throw new Error("A review request must include at least one comment.");
   }
+  const nextAction = approvedPlanAction(context.manifest.kind, submission.decision);
   return {
     schemaVersion: ARTIFACT_SCHEMA_VERSION,
     artifactId: context.artifactId,
@@ -337,16 +363,132 @@ async function readValidatedSubmission(context: ArtifactContext): Promise<Review
     submittedAt: submission.submittedAt,
     artifactPath: context.artifactPath,
     commentsPath: context.commentsPath,
+    submissionSha256: sha256(submissionRaw),
+    ...(nextAction === undefined ? {} : { nextAction }),
   };
 }
 
-const activeArtifactWaiters = new Set<string>();
+async function readArtifactInspection(context: ArtifactContext): Promise<{
+  markdown: string;
+  comments: ReturnType<typeof parseBoundCommentsDocument>;
+  artifactSha256: string;
+  commentsSha256: string;
+  submission?: ReturnType<typeof parseBoundReviewSubmission>;
+  submissionSha256?: string;
+}> {
+  const [markdown, commentsRaw] = await Promise.all([
+    fs.readFile(context.artifactPath, "utf8"),
+    fs.readFile(context.commentsPath, "utf8"),
+  ]);
+  const artifactSha256 = sha256(markdown);
+  const commentsSha256 = sha256(commentsRaw);
+  const comments = parseBoundCommentsDocument(JSON.parse(commentsRaw), {
+    schemaVersion: ARTIFACT_SCHEMA_VERSION,
+    artifactId: context.artifactId,
+    reviewRound: context.reviewRound,
+    artifactSha256,
+  });
 
-async function waitForSubmission(context: ArtifactContext, signal: AbortSignal): Promise<ReviewWaitResult> {
-  const key = samePathKey(context.artifactDirectory);
-  if (activeArtifactWaiters.has(key)) throw new Error("ARTIFACT_ALREADY_WAITING: another live tool call owns this artifact.");
-  activeArtifactWaiters.add(key);
+  let submissionRaw: string | undefined;
   try {
+    submissionRaw = await fs.readFile(context.submissionPath, "utf8");
+  } catch (error) {
+    if (errorCode(error) !== "ENOENT") throw error;
+  }
+  if (submissionRaw === undefined) return { markdown, comments, artifactSha256, commentsSha256 };
+
+  const submission = parseBoundReviewSubmission(JSON.parse(submissionRaw), {
+    schemaVersion: ARTIFACT_SCHEMA_VERSION,
+    artifactId: context.artifactId,
+    reviewRound: context.reviewRound,
+    reviewSessionId: context.reviewSessionId,
+    threadId: undefined,
+    artifactSha256,
+    commentsSha256,
+  });
+  if (submission.schemaVersion !== ARTIFACT_SCHEMA_VERSION) {
+    throw new Error("Legacy submissions cannot drive an MCP-owned lifecycle.");
+  }
+  return {
+    markdown,
+    comments,
+    artifactSha256,
+    commentsSha256,
+    submission,
+    submissionSha256: sha256(submissionRaw),
+  };
+}
+
+const activeArtifactWaiters = new Map<string, ActiveArtifactWaiter>();
+const activeArtifactWaiterSettlers = new WeakMap<ActiveArtifactWaiter, () => void>();
+
+function reserveArtifactWaiter(
+  artifactDirectory: string,
+  waiterRequestKey: string,
+  reviewRound: number,
+  controller: AbortController,
+): ActiveArtifactWaiter {
+  const key = samePathKey(artifactDirectory);
+  if (activeArtifactWaiters.has(key)) throw new Error("ARTIFACT_ALREADY_WAITING: another live tool call owns this artifact.");
+  let resolveSettled = (): void => {};
+  const settled = new Promise<void>((resolve) => { resolveSettled = resolve; });
+  const waiter: ActiveArtifactWaiter = {
+    requestKey: waiterRequestKey,
+    reviewRound,
+    controller,
+    settled,
+  };
+  activeArtifactWaiterSettlers.set(waiter, resolveSettled);
+  activeArtifactWaiters.set(key, waiter);
+  return waiter;
+}
+
+function releaseArtifactWaiter(artifactDirectory: string, waiter: ActiveArtifactWaiter): void {
+  const key = samePathKey(artifactDirectory);
+  if (activeArtifactWaiters.get(key) === waiter) activeArtifactWaiters.delete(key);
+  activeArtifactWaiterSettlers.get(waiter)?.();
+  activeArtifactWaiterSettlers.delete(waiter);
+}
+
+async function detachActiveArtifactWaiter(artifactDirectory: string): Promise<void> {
+  const waiter = activeArtifactWaiters.get(samePathKey(artifactDirectory));
+  if (!waiter) return;
+  waiter.controller.abort();
+  await waiter.settled;
+}
+
+async function detachArtifactWaiterByRequestKey(waiterRequestKey: string): Promise<void> {
+  for (const waiter of activeArtifactWaiters.values()) {
+    if (waiter.requestKey !== waiterRequestKey) continue;
+    waiter.controller.abort();
+    await waiter.settled;
+    return;
+  }
+  pending.get(waiterRequestKey)?.abort();
+}
+
+async function waitForSubmission(
+  context: ArtifactContext,
+  waiterRequestKey: string,
+  controller: AbortController,
+  takeover = false,
+  reservedWaiter?: ActiveArtifactWaiter,
+): Promise<ReviewWaitResult> {
+  const key = samePathKey(context.artifactDirectory);
+  if (takeover) await detachActiveArtifactWaiter(context.artifactDirectory);
+  const waiter = reservedWaiter ?? reserveArtifactWaiter(
+    context.artifactDirectory,
+    waiterRequestKey,
+    context.reviewRound,
+    controller,
+  );
+  if (activeArtifactWaiters.get(key) !== waiter || waiter.reviewRound !== context.reviewRound) {
+    throw new Error("ARTIFACT_WAITER_MISMATCH: waiter ownership does not match the validated artifact round.");
+  }
+  try {
+    if (controller.signal.aborted) {
+      throw Object.assign(new Error("Artifact review wait was cancelled."), { name: "AbortError" });
+    }
     const existing = await readValidatedSubmission(context);
     if (existing) return existing;
     return await new Promise((resolve, reject) => {
@@ -357,7 +499,7 @@ async function waitForSubmission(context: ArtifactContext, signal: AbortSignal):
         settled = true;
         watcher.close();
         clearInterval(interval);
-        signal.removeEventListener("abort", onAbort);
+        controller.signal.removeEventListener("abort", onAbort);
         if (error) reject(error);
         else if (value) resolve(value);
       };
@@ -379,11 +521,11 @@ async function waitForSubmission(context: ArtifactContext, signal: AbortSignal):
       });
       watcher.on("error", (error) => finish(error));
       const interval = setInterval(() => void check(), 1000);
-      signal.addEventListener("abort", onAbort, { once: true });
-      if (signal.aborted) onAbort();
+      controller.signal.addEventListener("abort", onAbort, { once: true });
+      if (controller.signal.aborted) onAbort();
     });
   } finally {
-    activeArtifactWaiters.delete(key);
+    releaseArtifactWaiter(context.artifactDirectory, waiter);
   }
 }
 
@@ -504,27 +646,53 @@ async function commitReviewRound(
 }
 
 const pending = new Map<string, AbortController>();
-const updateGrants = new Map<string, UpdateGrant>();
+const roundGrants = new Map<string, RoundGrant>();
+const claimedRoundTokens = new Set<string>();
 
-function pruneUpdateGrants(): void {
+function pruneRoundGrants(): void {
   const now = Date.now();
-  for (const [token, grant] of updateGrants) if (grant.expiresAt <= now) updateGrants.delete(token);
+  for (const [token, grant] of roundGrants) if (grant.expiresAt <= now) roundGrants.delete(token);
 }
 
-function grantUpdate(context: ArtifactContext, result: ReviewWaitResult): ReviewWaitResult & { updateToken?: string } {
+function grantSubmittedRound(context: ArtifactContext, result: ReviewWaitResult): ReviewWaitResult & { roundToken?: string } {
   if (result.decision !== "revise") return result;
-  pruneUpdateGrants();
-  const updateToken = randomUUID();
-  updateGrants.set(updateToken, {
+  pruneRoundGrants();
+  const roundToken = randomUUID();
+  roundGrants.set(roundToken, {
+    source: "submitted-review",
     artifactDirectory: context.artifactDirectory,
     artifactId: context.artifactId,
     reviewSessionId: context.reviewSessionId,
     reviewRound: context.reviewRound,
     artifactSha256: result.artifactSha256,
     commentsSha256: result.commentsSha256,
-    expiresAt: Date.now() + UPDATE_TOKEN_TTL_MS,
+    submissionExpected: true,
+    submissionSha256: result.submissionSha256,
+    expiresAt: Date.now() + ROUND_TOKEN_TTL_MS,
   });
-  return { ...result, updateToken };
+  return { ...result, roundToken };
+}
+
+function grantInspectedRound(
+  context: ArtifactContext,
+  inspection: Awaited<ReturnType<typeof readArtifactInspection>>,
+): string | undefined {
+  if (inspection.comments.comments.length === 0 && !inspection.submission) return undefined;
+  pruneRoundGrants();
+  const roundToken = randomUUID();
+  roundGrants.set(roundToken, {
+    source: "chat-inspection",
+    artifactDirectory: context.artifactDirectory,
+    artifactId: context.artifactId,
+    reviewSessionId: context.reviewSessionId,
+    reviewRound: context.reviewRound,
+    artifactSha256: inspection.artifactSha256,
+    commentsSha256: inspection.commentsSha256,
+    submissionExpected: inspection.submission !== undefined,
+    ...(inspection.submissionSha256 === undefined ? {} : { submissionSha256: inspection.submissionSha256 }),
+    expiresAt: Date.now() + ROUND_TOKEN_TTL_MS,
+  });
+  return roundToken;
 }
 
 function write(message: JsonObject): void {
@@ -554,37 +722,120 @@ function toolError(error: unknown): JsonObject {
   };
 }
 
-async function handleCreateAndWaitTool(id: unknown, args: JsonObject | undefined): Promise<void> {
-  const controller = new AbortController();
-  pending.set(requestKey(id), controller);
+function artifactHandle(context: ArtifactContext): JsonObject {
+  return {
+    artifactDirectory: context.artifactDirectory,
+    artifactId: context.artifactId,
+    artifactPath: context.artifactPath,
+    reviewSessionId: context.reviewSessionId,
+    reviewRound: context.reviewRound,
+    artifactSha256: context.artifactSha256,
+    kind: context.manifest.kind,
+    workspaceRoot: context.workspaceRoot,
+  };
+}
+
+function parseExpectedReviewRound(args: JsonObject | undefined): number {
+  const expectedReviewRound = args?.expectedReviewRound;
+  if (!Number.isInteger(expectedReviewRound) || expectedReviewRound < 1) {
+    throw new Error("expectedReviewRound must be a positive integer.");
+  }
+  return expectedReviewRound;
+}
+
+async function handleCreateTool(id: unknown, args: JsonObject | undefined): Promise<void> {
   try {
     const context = await createArtifact(args);
-    const result = await waitForSubmission(context, controller.signal);
-    respond(id, toolResult(grantUpdate(context, result)));
+    respond(id, toolResult(artifactHandle(context)));
+  } catch (error) {
+    respond(id, toolError(error));
+  }
+}
+
+async function handleWaitTool(id: unknown, args: JsonObject | undefined): Promise<void> {
+  const controller = new AbortController();
+  pending.set(requestKey(id), controller);
+  let reservedWaiter: ActiveArtifactWaiter | undefined;
+  let artifactDirectory: string | undefined;
+  try {
+    const expectedReviewRound = parseExpectedReviewRound(args);
+    artifactDirectory = args?.artifactDirectory;
+    if (typeof artifactDirectory !== "string" || !path.isAbsolute(artifactDirectory)) {
+      throw new Error("artifactDirectory must be an absolute path.");
+    }
+    if (args?.takeover === true) await detachActiveArtifactWaiter(artifactDirectory);
+    reservedWaiter = reserveArtifactWaiter(
+      artifactDirectory,
+      requestKey(id),
+      expectedReviewRound,
+      controller,
+    );
+    const context = await loadArtifactContext(artifactDirectory);
+    if (context.reviewRound !== expectedReviewRound) {
+      throw new Error(`The artifact is at review round ${context.reviewRound}, not ${expectedReviewRound}.`);
+    }
+    const result = await waitForSubmission(
+      context,
+      requestKey(id),
+      controller,
+      false,
+      reservedWaiter,
+    );
+    reservedWaiter = undefined;
+    respond(id, toolResult(grantSubmittedRound(context, result)));
   } catch (error) {
     respond(id, toolError(error));
   } finally {
+    if (reservedWaiter && artifactDirectory) releaseArtifactWaiter(artifactDirectory, reservedWaiter);
     pending.delete(requestKey(id));
   }
 }
 
-async function handleUpdateAndWaitTool(id: unknown, args: JsonObject | undefined): Promise<void> {
+async function handleInspectTool(id: unknown, args: JsonObject | undefined): Promise<void> {
+  try {
+    const artifactDirectory = args?.artifactDirectory;
+    if (typeof artifactDirectory !== "string" || !path.isAbsolute(artifactDirectory)) {
+      throw new Error("artifactDirectory must be an absolute path.");
+    }
+    if (args?.takeover === true) await detachActiveArtifactWaiter(artifactDirectory);
+    const context = await loadArtifactContext(artifactDirectory);
+    const inspection = await readArtifactInspection(context);
+    const roundToken = grantInspectedRound(context, inspection);
+    respond(id, toolResult({
+      ...artifactHandle(context),
+      manifest: context.manifest,
+      markdown: inspection.markdown,
+      comments: inspection.comments,
+      commentsSha256: inspection.commentsSha256,
+      submission: inspection.submission,
+      submissionSha256: inspection.submissionSha256,
+      roundToken,
+    }));
+  } catch (error) {
+    respond(id, toolError(error));
+  }
+}
+
+async function handleAdvanceAndWaitTool(id: unknown, args: JsonObject | undefined): Promise<void> {
   const controller = new AbortController();
   pending.set(requestKey(id), controller);
+  let claimedToken: string | undefined;
   try {
-    pruneUpdateGrants();
-    const artifactDirectory = args?.artifactDirectory;
-    const expectedReviewRound = args?.expectedReviewRound;
-    const updateToken = args?.updateToken;
+    pruneRoundGrants();
+    const expectedReviewRound = parseExpectedReviewRound(args);
+    const roundToken = args?.roundToken;
     const markdown = args?.markdown;
-    if (typeof updateToken !== "string" || !updateToken) throw new Error("updateToken is required.");
-    if (!Number.isInteger(expectedReviewRound) || expectedReviewRound < 1) {
-      throw new Error("expectedReviewRound must be a positive integer.");
+    if (typeof roundToken !== "string" || !roundToken) throw new Error("roundToken is required.");
+    if (markdown !== undefined && (typeof markdown !== "string" || !markdown.trim())) {
+      throw new Error("markdown must be non-empty when supplied.");
     }
-    if (typeof markdown !== "string" || !markdown.trim()) throw new Error("markdown must be non-empty.");
-    const grant = updateGrants.get(updateToken);
-    if (!grant) throw new Error("The artifact update token is invalid or expired.");
-    const context = await loadArtifactContext(artifactDirectory);
+    if (claimedRoundTokens.has(roundToken)) throw new Error("The artifact round token is already in use.");
+    const grant = roundGrants.get(roundToken);
+    if (!grant) throw new Error("The artifact round token is invalid or expired.");
+    claimedRoundTokens.add(roundToken);
+    claimedToken = roundToken;
+
+    const context = await loadArtifactContext(args?.artifactDirectory);
     if (
       samePathKey(context.artifactDirectory) !== samePathKey(grant.artifactDirectory)
       || context.artifactId !== grant.artifactId
@@ -592,26 +843,39 @@ async function handleUpdateAndWaitTool(id: unknown, args: JsonObject | undefined
       || context.reviewRound !== grant.reviewRound
       || context.reviewRound !== expectedReviewRound
     ) {
-      throw new Error("The artifact update token does not match the current review round.");
+      throw new Error("The artifact round token does not match the current review round.");
     }
-    const submission = await readValidatedSubmission(context);
-    if (!submission || submission.decision !== "revise") {
+    const inspection = await readArtifactInspection(context);
+    if (
+      inspection.artifactSha256 !== grant.artifactSha256
+      || inspection.commentsSha256 !== grant.commentsSha256
+      || (inspection.submission !== undefined) !== grant.submissionExpected
+      || inspection.submissionSha256 !== grant.submissionSha256
+    ) {
+      throw new Error("The artifact round token no longer matches the inspected content.");
+    }
+    if (grant.source === "submitted-review" && inspection.submission?.decision !== "revise") {
       throw new Error("The current artifact round was not submitted for Review.");
     }
-    if (
-      submission.artifactSha256 !== grant.artifactSha256
-      || submission.commentsSha256 !== grant.commentsSha256
-    ) {
-      throw new Error("The artifact update token no longer matches the reviewed content.");
+    if (activeArtifactWaiters.has(samePathKey(context.artifactDirectory))) {
+      throw new Error("ARTIFACT_ALREADY_WAITING: detach the live waiter before advancing this artifact.");
     }
-    await commitReviewRound(context, markdown);
-    updateGrants.delete(updateToken);
+    if (controller.signal.aborted) {
+      throw Object.assign(new Error("Artifact review advance was cancelled before commit."), { name: "AbortError" });
+    }
+
+    await commitReviewRound(context, markdown ?? inspection.markdown);
+    roundGrants.delete(roundToken);
+    claimedRoundTokens.delete(roundToken);
+    claimedToken = undefined;
+
     const updatedContext = await loadArtifactContext(context.artifactDirectory);
-    const result = await waitForSubmission(updatedContext, controller.signal);
-    respond(id, toolResult(grantUpdate(updatedContext, result)));
+    const result = await waitForSubmission(updatedContext, requestKey(id), controller);
+    respond(id, toolResult(grantSubmittedRound(updatedContext, result)));
   } catch (error) {
     respond(id, toolError(error));
   } finally {
+    if (claimedToken) claimedRoundTokens.delete(claimedToken);
     pending.delete(requestKey(id));
   }
 }
@@ -624,7 +888,7 @@ async function handleRequest(message: JsonObject): Promise<void> {
       protocolVersion,
       capabilities: { tools: { listChanged: false } },
       serverInfo: { name: SERVER_NAME, version: SERVER_VERSION },
-      instructions: "Create reviewable Markdown with create_and_wait_for_artifact only after supplying typed workspace evidence; project markers, cwd, and folder order are not evidence. On Review, replace Review responses with answers only for the immediately preceding comment round, then use the returned one-time token with update_and_wait_for_artifact. When Proceed returns approve for kind implementation-plan, implement the approved plan immediately in the same turn. Both lifecycle tools keep the originating Codex turn waiting for the next user decision.",
+      instructions: "Create reviewable Markdown with create_artifact after supplying typed workspace evidence, retain its exact artifactDirectory handle, then call wait_for_artifact_review. A cancelled waiter never ends or deletes the artifact. Treat comments returned by a Review submission and comments read through inspect_artifact_review with the same policy: answer questions visibly in chat before calling advance_and_wait_for_artifact, update Markdown only for requested changes, and omit markdown for question-only feedback. Do not add Review responses to the artifact. For chat escape, inspect the exact handle with takeover=true. If inspection has no comments or submission, reattach with wait_for_artifact_review without advancing. When Proceed returns approve for kind plan or implementation-plan, obey nextAction and execute the complete approved plan immediately in the same turn; do not stop at acknowledgement or ask for another confirmation. Proceed ends only the review round, not the authorized execution. Just save ends the round without execution. Reconnect later by explicitly inspecting, advancing without markdown, and waiting again; reconnect must not repeat an already executed action. Never select the latest artifact from a workspace or infer an artifact handle from cwd.",
     });
     return;
   }
@@ -635,9 +899,9 @@ async function handleRequest(message: JsonObject): Promise<void> {
   if (method === "tools/list") {
     respond(id, { tools: [
       {
-        name: CREATE_AND_WAIT_TOOL_NAME,
-        title: "Create and wait for artifact review",
-        description: "Create a secure Markdown artifact inside a currently registered VS Code workspace folder after validating typed ownership evidence, then wait for Review, Proceed, or Just save in the same Codex turn.",
+        name: CREATE_TOOL_NAME,
+        title: "Create artifact",
+        description: "Create a secure schema-v4 Markdown artifact inside a currently registered VS Code workspace folder and return its exact persistent handle without waiting.",
         inputSchema: {
           type: "object",
           properties: {
@@ -691,18 +955,49 @@ async function handleRequest(message: JsonObject): Promise<void> {
         annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
       },
       {
-        name: UPDATE_AND_WAIT_TOOL_NAME,
-        title: "Update and wait for artifact review",
-        description: "Transactionally update the same reviewed artifact with a one-time token, advance its round, then wait for the next decision in the same Codex turn.",
+        name: WAIT_TOOL_NAME,
+        title: "Wait for artifact review",
+        description: "Attach one transient waiter to an exact artifact round. Return an existing submission immediately, or wait for Review, Proceed, or Just save. An approved plan returns an explicit execute-approved-plan next action. Takeover safely detaches the previous waiter.",
         inputSchema: {
           type: "object",
           properties: {
             artifactDirectory: { type: "string" },
             expectedReviewRound: { type: "integer", minimum: 1 },
-            updateToken: { type: "string" },
+            takeover: { type: "boolean", default: false },
+          },
+          required: ["artifactDirectory", "expectedReviewRound"],
+          additionalProperties: false,
+        },
+        annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+      },
+      {
+        name: INSPECT_TOOL_NAME,
+        title: "Inspect artifact review",
+        description: "Read the current manifest, Markdown, comments, optional submission, and validated hashes for an exact artifact. Takeover first cancels and drains its current waiter. Returns a one-time round token when the round can be consumed.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            artifactDirectory: { type: "string" },
+            takeover: { type: "boolean", default: false },
+          },
+          required: ["artifactDirectory"],
+          additionalProperties: false,
+        },
+        annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+      },
+      {
+        name: ADVANCE_AND_WAIT_TOOL_NAME,
+        title: "Advance and wait for artifact review",
+        description: "Consume a validated one-time round token, optionally replace the complete Markdown, advance and reset the artifact round transactionally, then attach a waiter. Omitting markdown preserves the artifact bytes and SHA.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            artifactDirectory: { type: "string" },
+            expectedReviewRound: { type: "integer", minimum: 1 },
+            roundToken: { type: "string" },
             markdown: { type: "string", minLength: 1, maxLength: MAX_MARKDOWN_BYTES },
           },
-          required: ["artifactDirectory", "expectedReviewRound", "updateToken", "markdown"],
+          required: ["artifactDirectory", "expectedReviewRound", "roundToken"],
           additionalProperties: false,
         },
         annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
@@ -711,12 +1006,20 @@ async function handleRequest(message: JsonObject): Promise<void> {
     return;
   }
   if (method === "tools/call") {
-    if (params?.name === CREATE_AND_WAIT_TOOL_NAME) {
-      await handleCreateAndWaitTool(id, params?.arguments);
+    if (params?.name === CREATE_TOOL_NAME) {
+      await handleCreateTool(id, params?.arguments);
       return;
     }
-    if (params?.name === UPDATE_AND_WAIT_TOOL_NAME) {
-      await handleUpdateAndWaitTool(id, params?.arguments);
+    if (params?.name === WAIT_TOOL_NAME) {
+      await handleWaitTool(id, params?.arguments);
+      return;
+    }
+    if (params?.name === INSPECT_TOOL_NAME) {
+      await handleInspectTool(id, params?.arguments);
+      return;
+    }
+    if (params?.name === ADVANCE_AND_WAIT_TOOL_NAME) {
+      await handleAdvanceAndWaitTool(id, params?.arguments);
       return;
     }
     respond(id, toolError(new Error(`Unknown tool: ${String(params?.name)}`)));
@@ -729,7 +1032,7 @@ function handleMessage(message: unknown): void {
   if (!message || typeof message !== "object") return;
   const request = message as JsonObject;
   if (request.method === "notifications/cancelled") {
-    pending.get(requestKey(request.params?.requestId))?.abort();
+    void detachArtifactWaiterByRequestKey(requestKey(request.params?.requestId));
     return;
   }
   if (request.id === undefined) return;

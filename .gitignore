@@ -1,9 +1,8 @@
 node_modules/
 dist/
 *.tmp
-*.vsix
 .vscode-test/
 coverage/
 .tmp-skill-validator/
-releases/*.vsix
+# releases/*.vsix
 .codex-artifacts/

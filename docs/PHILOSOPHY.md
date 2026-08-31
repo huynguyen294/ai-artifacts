@@ -1,55 +1,64 @@
 # Triết lý Codex Artifacts
 
-## Vòng đời của một artifact
+## Artifact là dữ liệu bền vững, waiter chỉ là kết nối
 
-```mermaid
-flowchart TD
-    A[Người dùng gửi yêu cầu] --> B{Có kích hoạt artifact?}
-    B -->|Người dùng yêu cầu tạo hoặc cập nhật artifact| C[AI tạo artifact]
-    B -->|Không| Z[Tiếp tục xử lý bình thường]
-    C --> D[Extension mở artifact]
-    D --> E[Người dùng đọc và comment]
-    E --> F{Người dùng quyết định}
-    F -->|Review| G[AI cập nhật artifact.md hiện tại]
-    G --> H[Reset trạng thái review]
-    H --> D
-    F -->|Proceed| I[AI thực hiện hành động đã duyệt]
-    F -->|Just save| J[Lưu bản Markdown]
-    I --> K[Kết thúc vòng đời]
-    J --> K
+Nguyên tắc vòng đời cốt lõi là:
+
+```text
+artifact lifetime > waiter lifetime > chat-turn lifetime
 ```
 
-Codex Artifacts là lớp review cho nội dung do AI tạo ra. AI quyết định khi nào cần artifact trong phạm vi được cho phép; người dùng đọc, comment và chọn hành động tiếp theo.
+Artifact đại diện cho một yêu cầu cần review và tồn tại trong workspace cho đến khi người dùng chủ động xử lý nó. Waiter chỉ là kết nối tạm thời giữa một MCP request và một review round. Chat turn còn ngắn hơn nữa.
 
-Một artifact đại diện cho một yêu cầu cần review, không đại diện cho từng phiên bản nội dung. Nhiều lần Review chỉ tạo nhiều vòng review trên cùng artifact:
+Vì vậy, cancellation, takeover, kết thúc chat turn hoặc MCP restart không được xóa hay kết thúc artifact. Chúng chỉ làm mất waiter hoặc token đang nằm trong memory. AI có thể inspect đúng artifact đã biết, lấy token mới từ trạng thái đã validate và reconnect về sau.
 
-1. **Review:** AI dùng comment để cập nhật `artifact.md` hiện tại, reset trạng thái và bắt đầu vòng review mới. Không giữ bản cũ.
-2. **Proceed:** chấp thuận artifact và cho phép AI thực hiện hành động tiếp theo.
-3. **Just save:** lưu Markdown vào vị trí người dùng chọn mà không tiếp tục công việc.
-4. **Copy Markdown:** chỉ sao chép nội dung, không gửi dữ liệu cho AI và không thay đổi vòng đời artifact.
+## Hai cách đối thoại cùng một artifact
 
-## Mục tiêu
+Luồng mặc định vẫn giữ trải nghiệm quen thuộc:
 
-Codex Artifacts biến Markdown do AI tạo ra thành một artifact dễ đọc, dễ comment và có thể gửi phản hồi về đúng cuộc hội thoại Codex đã tạo nó.
+```mermaid
+flowchart LR
+    A[AI tạo artifact] --> B[AI attach waiter]
+    B --> C[Người dùng review]
+    C --> D{Decision}
+    D -->|Review| E[AI cập nhật và mở round mới]
+    E --> B
+    D -->|Proceed| F[Thực hiện hành động đã duyệt]
+    D -->|Just save| G[Lưu Markdown]
+```
 
-Ứng dụng là công cụ review tài liệu, không thay thế Codex chat và không phải task manager.
+Luồng chat escape cho phép người dùng lưu comment rồi nhắn “hãy xem review” mà không cần bấm Review. Waiter cũ được hủy an toàn; AI inspect đúng artifact handle, đọc comment và:
 
-## Phạm vi tạo artifact hiện tại
+- Trả lời câu hỏi trực tiếp trong chat.
+- Sửa artifact nếu comment yêu cầu thay đổi.
+- Vừa trả lời vừa sửa nếu feedback là hỗn hợp.
+- Hỏi lại và chưa consume round nếu feedback chưa rõ.
 
-Skill hiện chỉ tạo artifact khi người dùng **yêu cầu rõ ràng việc tạo hoặc cập nhật một artifact**. Yêu cầu tạo plan, implementation plan hoặc các loại tài liệu khác không tự động kích hoạt artifact nếu người dùng không nói rõ rằng nội dung đó cần được tạo dưới dạng artifact.
+Sau khi xử lý xong, AI mở round mới và tự chờ lại. Nếu chỉ có câu hỏi, round vẫn tăng nhưng bytes và SHA của `artifact.md` được giữ nguyên. Nếu không có comment hoặc submission đã lưu, AI attach lại waiter cho cùng round và không tăng round.
 
-## Các trường hợp mở rộng đã ghi nhận
+## Ý nghĩa của các quyết định
 
-Các trường hợp có thể mở rộng gồm architecture proposal, technical design, feature specification, API contract, data migration, refactoring proposal, test strategy, investigation report, security review và documentation draft.
+1. **Review:** gửi submission `revise`. AI xử lý batch comment bằng cùng policy với chat escape: trả lời câu hỏi trực tiếp trong chat, chỉ cập nhật `artifact.md` khi có yêu cầu sửa, reset trạng thái và bắt đầu round mới. Question-only giữ nguyên Markdown/SHA. Không giữ revision history hoặc chèn câu trả lời hội thoại vào artifact.
+2. **Proceed:** kết thúc round hiện tại. Với `plan` và `implementation-plan`, đây là quyền thực thi toàn bộ plan đã duyệt ngay trong cùng turn; MCP trả runtime directive `execute-approved-plan`, và AI không được dừng ở bước xác nhận, mô tả việc sẽ làm hoặc hỏi lại quyền triển khai. Không tự mở round mới.
+3. **Just save:** kết thúc round hiện tại, lưu Markdown theo yêu cầu và không thực hiện công việc được đề xuất. Không tự mở round mới.
+4. **Copy Markdown:** chỉ sao chép nội dung, không gửi decision và không thay đổi lifecycle.
 
-Đây mới là ý tưởng đã ghi nhận, chưa phải điều kiện auto-trigger. Mỗi loại chỉ nên được bật sau khi xác định rõ khi nào cần review và Proceed có ý nghĩa gì.
+Proceed và Just save kết thúc round, không “kill” artifact. Người dùng có thể yêu cầu reconnect rõ ràng về sau. Reconnect chỉ mở round mới; nó không được thực thi lại hành động Proceed/Just save trước đó.
 
-## Trạng thái triển khai 0.6.1
+## Exact handle, không suy đoán artifact
 
-Lifecycle vẫn giữ nguyên triết lý: Review cập nhật cùng `artifact.md`, reset trạng thái round và không lưu revision history. MCP sở hữu cả thao tác tạo lẫn cập nhật artifact, vì vậy phản hồi quay lại đúng tool call đang chờ mà không cần hook hoặc gắn `threadId`. Extension chỉ công bố các workspace đang thực sự mở, hiển thị tài liệu và ghi nhận quyết định của người dùng.
+AI phải dùng chính xác `artifactDirectory` được trả về khi tạo artifact hoặc được giữ từ waiter vừa bị ngắt trong cùng conversation. Không được chọn “artifact mới nhất”, quét workspace để đoán, hoặc suy luận từ cwd. Nếu context không còn một handle duy nhất, AI phải hỏi người dùng artifact path.
 
-Trong multi-root workspace, root phải đến từ bằng chứng người dùng/IDE có kiểu rõ ràng; project marker không được dùng để tự chọn root. Mục `Review responses` chỉ phản hồi batch comment ngay trước đó và được thay mới ở round kế tiếp, không trở thành lịch sử tích lũy.
+Quy tắc này quan trọng hơn sự tiện lợi: kết nối nhầm artifact có thể khiến comment, nội dung và quyền thực hiện hành động bị gắn sai cuộc đối thoại.
 
-Viewer tiếp tục trình bày artifact như tài liệu CommonMark/GFM dễ đọc, cho phép comment ngay cạnh vùng chọn, ẩn drawer và theo theme VS Code. Ứng dụng vẫn là lớp review tài liệu, không trở thành task manager hay một chat UI khác.
+## Mục tiêu sản phẩm
 
-Skill không tự động kích hoạt theo loại tài liệu. Implementation plan và các loại mở rộng chỉ đi qua lifecycle này khi người dùng yêu cầu rõ ràng việc tạo hoặc cập nhật artifact.
+Codex Artifacts là lớp review cho Markdown do AI tạo ra. Nó giúp người dùng đọc, comment và điều khiển vòng phản hồi mà không biến ứng dụng thành task manager hoặc một chat UI thứ hai. Câu trả lời hội thoại vẫn thuộc Codex chat; webview tập trung vào tài liệu và annotation.
+
+Skill chỉ kích hoạt khi người dùng yêu cầu rõ ràng việc tạo/cập nhật artifact, đọc feedback đã lưu, hoặc reconnect lifecycle đã biết. Loại tài liệu tự nó không phải điều kiện auto-trigger.
+
+## Trạng thái triển khai 0.7.0
+
+Phiên bản 0.7.0 dùng MCP server 5.0.0 với bốn thao tác tách biệt: create, wait, inspect và advance-and-wait. Việc tách artifact persistence khỏi waiter ownership cho phép chat escape và reconnect mà không thay schema-v4, webview, provider, Artifact Store, renderer hoặc workspace registry.
+
+Round token vẫn là capability in-memory, single-use và hết hạn sau một giờ, nhưng được bind vào toàn bộ trạng thái đã inspect: artifact, session, round, artifact hash, comments hash và submission presence/hash. Token chỉ bị consume sau commit thành công. Schema-v3 tiếp tục chỉ đọc.

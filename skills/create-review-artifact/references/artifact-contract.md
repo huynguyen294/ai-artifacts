@@ -2,24 +2,23 @@
 
 ## Tools
 
-`create_and_wait_for_artifact` accepts:
+`create_artifact` accepts a verified absolute `workspaceRoot`, typed `workspaceEvidence`, `title`, lowercase `kind`, and complete `markdown`. It creates schema-v4 lifecycle files and immediately returns the exact persistent artifact handle.
 
-- `workspaceRoot`: an absolute, verified VS Code workspace folder.
-- `workspaceEvidence`: one of `single-workspace`, `active-file`, `explicit-user-path`, or `explicit-user-folder` with the fields required by the tool schema.
-- `title`: a concise human-readable title.
-- `kind`: a lowercase slug.
-- `markdown`: the complete review document.
+`wait_for_artifact_review` accepts `artifactDirectory`, `expectedReviewRound`, and optional `takeover`. It returns an existing submission immediately or owns the single transient waiter until Review, Proceed, Just save, cancellation, or takeover. A `revise` result includes a one-time `roundToken`.
 
-The server validates both the root and its typed evidence against the live VS Code registry, generates the artifact ID, creates schema-v4 lifecycle files, opens review through the extension, and waits for a decision.
+For an `approve` result whose artifact kind is `plan` or `implementation-plan`, the result includes `nextAction.type: "execute-approved-plan"` and an explicit instruction to execute the approved plan immediately in the same turn. Treat this as execution authorization, not an acknowledgement request.
 
-`update_and_wait_for_artifact` accepts:
+`inspect_artifact_review` accepts the exact `artifactDirectory` and optional `takeover`. It immediately returns the validated manifest, Markdown, comments, optional submission, round, and hashes. It returns a `roundToken` when saved comments or a submission make the round consumable; a chat-inspection token does not require a Review submission.
 
-- `artifactDirectory`: the absolute directory returned by the create tool.
-- `expectedReviewRound`: the returned current round.
-- `updateToken`: the one-time token returned only for `revise`.
-- `markdown`: the complete replacement document.
+`advance_and_wait_for_artifact` accepts the exact `artifactDirectory`, `expectedReviewRound`, and `roundToken`, plus optional complete replacement `markdown`. It transactionally advances the same artifact and waits for the next round. Omitting Markdown preserves the exact `artifact.md` bytes and SHA while still resetting handled comments and removing the old submission.
 
-The server transactionally replaces `artifact.md`, advances the round, resets review state, and waits again in the same tool call.
+## Lifetime model
+
+```text
+artifact lifetime > waiter lifetime > chat-turn lifetime
+```
+
+The artifact is persistent workspace data. A waiter is only an in-memory connection owned by one MCP request. Cancellation, takeover, completion of a chat turn, or MCP restart may detach the waiter but never deletes or ends the artifact. Proceed and Just save end only the submitted round; the exact artifact may be explicitly inspected, advanced, and reconnected later.
 
 ## Directory
 
@@ -31,27 +30,27 @@ The server transactionally replaces `artifact.md`, advances the round, resets re
   review-submission.json  # present only after submission
 ```
 
-All lifecycle files are server- or extension-owned. Codex may read the Markdown and returned comments, but must not create, update, or repair lifecycle files directly.
+All lifecycle files are server- or extension-owned. Codex must not create, update, or repair them directly. Schema-v3 artifacts remain viewable but read-only.
 
-## Workspace ownership
+## Workspace and handle ownership
 
-Resolve artifact ownership in this order and use the first verified, unambiguous root:
+For creation, resolve ownership in this order: an explicit user path/link/attachment, a concrete active file from IDE context, an explicitly named repository verified against relevant source, or a user clarification. Cwd, workspace ordering, the first visible repository, and matching folder names are hints only.
 
-1. A path, file link, `@mention`, or attachment explicitly supplied in the user's messages.
-2. An active/open file supplied by IDE context with a concrete path.
-3. A repository or folder explicitly named in the conversation, after resolving it and inspecting a relevant project marker, document, or source path.
-4. Ask the user when the preceding evidence does not yield exactly one verified root.
+For wait, inspection, advance, and reconnect, use only the exact `artifactDirectory` returned by creation or retained from the interrupted waiter in the same conversation. Never select “the latest artifact” in a workspace. If the handle is missing or ambiguous, ask the user for the artifact path.
 
-Codex/session cwd, `environment_context`, workspace ordering, the first visible repository, and a matching directory name are orientation hints only. They do not prove UI selection or artifact ownership. Explorer selection counts only when an actual UI/integration signal reports it.
+## Round tokens
 
-The MCP server independently requires the canonical root to appear in a fresh registry snapshot published by the installed VS Code extension. `single-workspace` requires exactly one unique registered root; `active-file` must match the focused window snapshot; explicit user evidence must resolve to exactly one registered root. Ambiguous or mismatched evidence fails before artifact storage is created.
+A token is in-memory, single-use, expires after one hour, and is bound to the exact artifact, session, round, artifact hash, comments hash, and submission presence/hash. Any intervening change rejects it. A submitted-review token additionally requires `revise`. A chat-inspection token may consume saved comments without `review-submission.json`. Tokens are consumed only after a successful round commit. After MCP restart, a validated inspection can issue a fresh token.
 
-## Decisions
+## Decisions and chat feedback
 
-- `revise`: read all comments from `commentsPath`. Apply change requests and replace `## Review responses` with answers only to questions from that submitted round, then use the returned one-time token with `update_and_wait_for_artifact`. Do not carry responses from older rounds forward.
-- `approve`: for an `implementation-plan`, **Proceed** authorizes immediate implementation of the approved plan in the current turn; do not merely report approval or request another confirmation. For other kinds, continue only with the action already implied by the original request.
-- `save`: ask where to copy the current Markdown and stop without continuing the proposed work.
-
-An update token is bound to one artifact, one review session, one round, and one content hash. It cannot be reused. Updating preserves the artifact path and does not retain old revisions.
-
-Schema-v3 artifacts created by the former hook lifecycle remain viewable but are read-only and cannot be resumed through these tools.
+- Review (`revise`) and chat-inspected feedback use the same classification and response policy. Their internal token source differs, but their user-visible result does not.
+- Question-only: answer visibly in chat before advancing without Markdown, preserving artifact bytes and SHA.
+- Change-only: advance with complete replacement Markdown.
+- Mixed: answer visibly in chat, then advance with complete replacement Markdown.
+- Needs clarification: ask in chat and leave the round unconsumed.
+- No saved feedback: reattach a waiter to the same round without advancing.
+- Do not create or update `## Review responses`; conversational answers belong in chat. Remove a previously generated response section when producing a replacement document that contains one.
+- Proceed (`approve`): for `plan` and `implementation-plan`, execute the complete approved plan immediately in the same turn according to `nextAction`; do not stop at acknowledgement, summarize future work, or request another confirmation. For other artifact kinds, perform only the follow-up already implied by the request. Do not auto-advance.
+- Just save (`save`): save as requested and do not auto-advance.
+- Explicit reconnect after Proceed/Just save: inspect, advance without Markdown, and wait. Never repeat the prior command merely because the artifact was reconnected.

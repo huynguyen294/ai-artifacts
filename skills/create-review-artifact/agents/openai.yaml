@@ -1,4 +1,4 @@
 interface:
   display_name: "Create Review Artifact"
-  short_description: "Create explicitly requested review artifacts"
-  default_prompt: "Use $create-review-artifact to create the reviewable Markdown artifact explicitly requested for this task."
+  short_description: "Create and reconnect review artifacts"
+  default_prompt: "Use $create-review-artifact to coordinate the explicitly requested review artifact and its review lifecycle."

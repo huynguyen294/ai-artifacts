@@ -6,6 +6,44 @@ Lịch sử phát hành được chuẩn hóa và bắt đầu ghi nhận lại 
 
 ---
 
+## [0.7.0] - 2026-08-31
+
+### Breaking MCP API
+
+- Xóa hoàn toàn `create_and_wait_for_artifact` và `update_and_wait_for_artifact`; thay bằng bốn tool tách biệt: `create_artifact`, `wait_for_artifact_review`, `inspect_artifact_review` và `advance_and_wait_for_artifact`.
+- Nâng extension lên `0.7.0` và MCP server lên `5.0.0`. Sau khi nâng cấp, người dùng phải chạy lại **Codex Artifacts: Install Global Codex Integration**, restart Codex và bắt đầu chat mới.
+- Giữ nguyên artifact schema v4 nên artifact hiện có không cần migration; schema v3 tiếp tục chỉ đọc.
+
+### Chat escape và reconnect
+
+- Tách dữ liệu artifact bền vững khỏi waiter tạm thời theo nguyên tắc `artifact lifetime > waiter lifetime > chat-turn lifetime`.
+- Cho phép người dùng lưu comment rồi nhắn “hãy xem review” hoặc yêu cầu tương đương mà không cần bấm **Review**. Skill hủy waiter cũ bằng takeover, inspect đúng artifact handle, trả lời câu hỏi trong chat, áp dụng yêu cầu sửa và mở round mới.
+- Nút **Review** và chat “hãy xem review” dùng chung một feedback policy: question-only trả lời trong chat rồi advance không đổi Markdown; change-only cập nhật artifact; mixed vừa trả lời chat vừa cập nhật; feedback chưa rõ được hỏi lại trước khi consume round.
+- Không còn tạo hoặc cập nhật mục `Review responses` trong artifact; câu trả lời hội thoại luôn thuộc Codex chat.
+- Question-only feedback vẫn tăng round và reset comment đã xử lý nhưng giữ nguyên bytes và SHA của `artifact.md`.
+- **Proceed** và **Just save** chỉ kết thúc round hiện tại, không kill artifact và không tự mở round mới. Với `plan` và `implementation-plan`, Proceed trả thêm runtime directive `execute-approved-plan`, bắt buộc AI thực thi toàn bộ plan đã duyệt ngay trong cùng turn thay vì chỉ xác nhận. Artifact có thể được reconnect rõ ràng về sau mà không thực thi lại hành động cũ.
+- Bắt buộc reconnect bằng exact `artifactDirectory` còn trong conversation hoặc path do người dùng cung cấp; không chọn “artifact mới nhất” và không suy luận từ cwd.
+
+### Waiter ownership và round token
+
+- Thay active-waiter `Set` bằng registry có request key, review round, `AbortController` và settled state; ownership được reserve trước I/O để loại bỏ race giữa wait và chat takeover.
+- JSON-RPC cancellation và takeover dùng chung cơ chế detach, chỉ đóng watcher/timer và giải phóng ownership, không sửa lifecycle files.
+- Tổng quát hóa update token thành round token in-memory, single-use, hết hạn sau một giờ và bind vào artifact/session/round, artifact hash, comments hash cùng submission presence/hash.
+- Inspection có thể cấp token từ comment đã lưu khi chưa có `review-submission.json`; MCP restart làm mất token/waiter nhưng inspection có thể cấp token mới từ persistent state đã validate.
+- Token chỉ bị consume sau transaction commit thành công. Cancellation sau commit để lại round mới hợp lệ ở trạng thái detached và có thể reconnect.
+
+### Skill, integration và tài liệu
+
+- Cập nhật bundled skill cho default create → wait, chat escape, mixed/question-only feedback, no-comment reattach, exact-handle resolution và reconnect sau Proceed/Just save.
+- Managed `config.toml` cấp approval cho đúng bốn tool mới.
+- Cập nhật `README.md`, `ARCHITECTURE.md`, `PHILOSOPHY.md`, `COMPONENTS.md`, project instructions và artifact contract theo lifetime/ownership mới; không thay đổi webview, provider, Artifact Store, renderer hoặc workspace registry.
+- Hoàn thiện README onboarding và phân phối VSIX: bổ sung prerequisite, đường dẫn cài đặt, phạm vi `CODEX_HOME`, auto-open setting, UI labels, Just save, schema-v3 compatibility, contributor commands và các liên kết tài liệu; bổ sung repository metadata để VSCE resolve các link tương đối, không thay đổi runtime/API/schema behavior.
+
+### Verification
+
+- Bổ sung regression coverage cho create detached, default Review flow, cancellation/reattach, takeover không race, inspect trước submission, question-only SHA preservation, exact-state token rejection, MCP restart, concurrent consumption, reconnect sau Just save, rollback và Windows editor-lock fallback.
+- `npm.cmd run check`, toàn bộ 57 tests và `npm.cmd run build` đều pass.
+
 ## [0.6.1] - 2026-08-29
 
 - Khôi phục workspace evidence gate chặt từ trước migration MCP; `package.json`, project contents, cwd và folder order không còn được dùng để tự chọn root.
