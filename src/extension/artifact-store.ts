@@ -3,8 +3,11 @@ import { constants, promises as fs } from "node:fs";
 import path from "node:path";
 import {
   ARTIFACT_SCHEMA_VERSION,
+  LEGACY_ARTIFACT_SCHEMA_VERSION,
   commentsDocumentSchema,
+  legacyCommentsDocumentSchema,
   reviewSubmissionSchema,
+  type ArtifactManifest,
   type CommentDraft,
   type CommentsDocument,
   type ReviewDecision,
@@ -58,7 +61,7 @@ export class ArtifactStore {
     this.submissionPath = files.submissionPath;
   }
 
-  async load(requireOrigin = false): Promise<ReviewState> {
+  async load(): Promise<ReviewState> {
     await waitForArtifactTransaction(this.artifactDirectory);
     const [markdown, rawManifest] = await Promise.all([
       fs.readFile(this.artifactPath, "utf8"),
@@ -66,38 +69,48 @@ export class ArtifactStore {
     ]);
     const artifact = parseArtifactManifest(rawManifest);
     assertArtifactDirectory(artifact, this.artifactDirectory);
-    if (requireOrigin && !artifact.origin.threadId) {
-      throw new Error("This artifact is not linked to its originating Codex chat yet.");
-    }
-
     const artifactSha256 = sha256(markdown);
-    let comments: CommentsDocument;
+    let comments: ReviewState["comments"];
     try {
       comments = parseBoundCommentsDocument(await readJson(this.commentsPath), {
+        schemaVersion: artifact.schemaVersion,
         artifactId: artifact.artifactId,
         reviewRound: artifact.reviewRound,
         artifactSha256,
       });
     } catch (error) {
       if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
-      comments = {
-        schemaVersion: ARTIFACT_SCHEMA_VERSION,
-        artifactId: artifact.artifactId,
-        reviewRound: artifact.reviewRound,
-        artifactSha256,
-        comments: [],
-      };
-      await this.writeComments(comments);
+      if (artifact.schemaVersion === ARTIFACT_SCHEMA_VERSION) {
+        const createdComments = commentsDocumentSchema.parse({
+            schemaVersion: ARTIFACT_SCHEMA_VERSION,
+            artifactId: artifact.artifactId,
+            reviewRound: artifact.reviewRound,
+            artifactSha256,
+            comments: [],
+          });
+        await this.writeComments(createdComments);
+        comments = createdComments;
+      } else {
+        comments = legacyCommentsDocumentSchema.parse({
+            schemaVersion: LEGACY_ARTIFACT_SCHEMA_VERSION,
+            artifactId: artifact.artifactId,
+            reviewRound: artifact.reviewRound,
+            artifactSha256,
+            comments: [],
+          });
+      }
     }
 
-    let submission: ReviewSubmission | undefined;
+    let submission: ReviewState["submission"];
     try {
       const rawSubmission = await readJson(this.submissionPath);
       const commentsRaw = await fs.readFile(this.commentsPath, "utf8");
       submission = parseBoundReviewSubmission(rawSubmission, {
+        schemaVersion: artifact.schemaVersion,
         artifactId: artifact.artifactId,
         reviewRound: artifact.reviewRound,
-        threadId: artifact.origin.threadId,
+        reviewSessionId: artifact.schemaVersion === ARTIFACT_SCHEMA_VERSION ? artifact.reviewSessionId : undefined,
+        threadId: artifact.schemaVersion === LEGACY_ARTIFACT_SCHEMA_VERSION ? artifact.origin.threadId : undefined,
         artifactSha256,
         commentsSha256: sha256(commentsRaw),
       });
@@ -110,12 +123,19 @@ export class ArtifactStore {
       comments,
       blocks: parseMarkdownBlocks(markdown),
       markdown,
+      lifecycle: artifact.schemaVersion === ARTIFACT_SCHEMA_VERSION
+        ? { readOnly: false }
+        : {
+            readOnly: true,
+            message: "This schema-v3 artifact is available for reading only. Start a new MCP-owned artifact to review it.",
+          },
       ...(submission ? { submission } : {}),
     };
   }
 
   async addComment(draft: CommentDraft): Promise<ReviewState> {
     const state = await this.load();
+    this.assertWritableState(state);
     if (state.submission) throw new Error("This artifact review round was already submitted.");
     const block = state.blocks.find((candidate) => candidate.id === draft.blockId);
     if (!block) throw new Error("The selected Markdown block no longer exists.");
@@ -148,6 +168,7 @@ export class ArtifactStore {
 
   async removeComment(commentId: string): Promise<ReviewState> {
     const state = await this.load();
+    this.assertWritableState(state);
     if (state.submission) throw new Error("This artifact review round was already submitted.");
     state.comments.comments = state.comments.comments.filter((comment) => comment.id !== commentId);
     await this.writeComments(state.comments);
@@ -155,14 +176,13 @@ export class ArtifactStore {
   }
 
   async submitReview(decision: ReviewDecision): Promise<ReviewState> {
-    const state = await this.load(true);
+    const state = await this.load();
+    this.assertWritableState(state);
     if (state.submission) throw new Error("This artifact review round was already submitted.");
     if (decision === "revise" && state.comments.comments.length === 0) {
       throw new Error("Add at least one comment before requesting a revision.");
     }
     // "approve" and "save" have no comment constraints — allowed with or without comments.
-    const threadId = state.artifact.origin.threadId;
-    if (!threadId) throw new Error("This artifact is not linked to its originating Codex chat yet.");
     const [markdown, commentsRaw] = await Promise.all([
       fs.readFile(this.artifactPath, "utf8"),
       fs.readFile(this.commentsPath, "utf8"),
@@ -171,14 +191,26 @@ export class ArtifactStore {
       schemaVersion: ARTIFACT_SCHEMA_VERSION,
       artifactId: state.artifact.artifactId,
       reviewRound: state.artifact.reviewRound,
-      threadId,
+      reviewSessionId: state.artifact.reviewSessionId,
       submittedAt: new Date().toISOString(),
       decision,
       artifactSha256: sha256(markdown),
       commentsSha256: sha256(commentsRaw),
     });
     await this.createSubmission(submission);
-    return this.load(true);
+    return this.load();
+  }
+
+  private assertWritableState(state: ReviewState): asserts state is ReviewState & {
+    artifact: ArtifactManifest;
+    comments: CommentsDocument;
+  } {
+    if (state.artifact.schemaVersion !== ARTIFACT_SCHEMA_VERSION || state.lifecycle.readOnly) {
+      throw new Error(state.lifecycle.message ?? "This artifact is read-only.");
+    }
+    if (state.comments.schemaVersion !== ARTIFACT_SCHEMA_VERSION) {
+      throw new Error("This artifact uses legacy comment state and is read-only.");
+    }
   }
 
   private async createSubmission(submission: ReviewSubmission): Promise<void> {

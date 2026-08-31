@@ -237,12 +237,17 @@ export function App(): ReactNode {
     isSubmitting,
     isSubmitted,
     hasUnsavedComment,
+    lifecycleReadOnly: state.lifecycle.readOnly,
     ...(submittingDecision ? { submittingDecision } : {}),
   });
   const selectedComment = activeComment
     ? comments.find((comment) => comment.id === activeComment.id)
     : undefined;
-  const blockedTitle = hasUnsavedComment ? "Save or cancel the comment draft first." : undefined;
+  const blockedTitle = state.lifecycle.readOnly
+    ? state.lifecycle.message
+    : hasUnsavedComment
+      ? "Save or cancel the comment draft first."
+      : undefined;
 
   return (
     <div className="app-shell">
@@ -261,7 +266,7 @@ export function App(): ReactNode {
         </div>
       </header>
 
-      {(error || sendMessage) && <div className={`notice ${sendStatus === "error" || error ? "error" : sendStatus}`}>{error ?? sendMessage}</div>}
+      {(error || sendMessage || state.lifecycle.message) && <div className={`notice ${sendStatus === "error" || error ? "error" : sendStatus}`}>{error ?? sendMessage ?? state.lifecycle.message}</div>}
 
       <nav className="review-utility-bar" aria-label="Artifact review tools">
         <button
@@ -280,7 +285,7 @@ export function App(): ReactNode {
       </nav>
 
       <main className="document-workspace">
-        <article className="artifact-document" onMouseUp={isSubmitted ? undefined : beginComment}>
+        <article className="artifact-document" onMouseUp={isSubmitted || state.lifecycle.readOnly ? undefined : beginComment}>
           <MarkdownRenderer
             markdown={state.markdown}
             blocks={state.blocks}
@@ -290,7 +295,7 @@ export function App(): ReactNode {
         </article>
       </main>
 
-      {draft && !isSubmitted && (
+      {draft && !isSubmitted && !state.lifecycle.readOnly && (
         <SelectionCommentPopover
           draft={draft}
           body={body}
@@ -303,7 +308,7 @@ export function App(): ReactNode {
         <CommentDetailPopover
           comment={selectedComment}
           anchor={activeComment.anchor}
-          submitted={isSubmitted}
+          submitted={isSubmitted || state.lifecycle.readOnly}
           onClose={() => setActiveComment(undefined)}
           onRemove={() => removeComment(selectedComment.id)}
         />
@@ -311,7 +316,7 @@ export function App(): ReactNode {
       <CommentsDrawer
         open={drawerOpen}
         comments={comments}
-        submitted={isSubmitted}
+        submitted={isSubmitted || state.lifecycle.readOnly}
         onClose={() => setDrawerOpen(false)}
         onJump={jumpToComment}
         onRemove={removeComment}

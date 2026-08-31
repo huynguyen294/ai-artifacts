@@ -36,7 +36,22 @@ export function upsertCodexArtifactsMcp(config: string, serverScriptPath: string
     `args = [${tomlString(serverScriptPath)}]`,
     `tool_timeout_sec = ${CODEX_ARTIFACTS_MCP_TIMEOUT_SECONDS}`,
     'default_tools_approval_mode = "approve"',
+    "",
+    `[mcp_servers.${CODEX_ARTIFACTS_MCP_NAME}.tools.create_and_wait_for_artifact]`,
+    'approval_mode = "approve"',
+    "",
+    `[mcp_servers.${CODEX_ARTIFACTS_MCP_NAME}.tools.update_and_wait_for_artifact]`,
+    'approval_mode = "approve"',
     END_MARKER,
   ].join("\n");
   return base ? `${base.trimEnd()}\n\n${block}\n` : `${block}\n`;
+}
+
+export function hasManagedCodexArtifactsMcp(config: string, serverScriptPath: string): boolean {
+  const begin = config.indexOf(BEGIN_MARKER);
+  const end = config.indexOf(END_MARKER);
+  if (begin === -1 || end === -1 || end < begin) return false;
+  const block = config.slice(begin, end + END_MARKER.length).replaceAll("\r\n", "\n").trim();
+  const expected = upsertCodexArtifactsMcp("", serverScriptPath).replaceAll("\r\n", "\n").trim();
+  return block === expected;
 }

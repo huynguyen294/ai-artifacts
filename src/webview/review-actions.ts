@@ -11,11 +11,15 @@ type ReviewActionsInput = {
   isSubmitting: boolean;
   isSubmitted: boolean;
   hasUnsavedComment: boolean;
+  lifecycleReadOnly?: boolean;
   submittingDecision?: ReviewDecision;
 };
 
 export function deriveReviewActions(input: ReviewActionsInput): Record<ReviewDecision, ReviewActionState> {
-  const lifecycleLocked = input.isSubmitting || input.isSubmitted || input.hasUnsavedComment;
+  const lifecycleLocked = Boolean(input.lifecycleReadOnly)
+    || input.isSubmitting
+    || input.isSubmitted
+    || input.hasUnsavedComment;
   const hasComments = input.commentCount > 0;
   const sending = (decision: ReviewDecision, fallback: string): string =>
     input.isSubmitting && input.submittingDecision === decision ? "Sending…" : fallback;

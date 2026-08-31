@@ -12,5 +12,9 @@
     "jsx": "react-jsx",
     "types": ["node", "vscode", "vitest/globals"]
   },
-  "include": ["src/**/*.ts", "src/**/*.tsx", "test/**/*.ts", "vite.config.ts"]
+  "include": ["src/**/*.ts", "src/**/*.tsx", "test/**/*.ts", "vite.config.ts"],
+  "exclude": [
+    "src/integration/review-wait-mcp.ts",
+    "src/integration/stamp-origin.ts"
+  ]
 }

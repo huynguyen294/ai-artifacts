@@ -1,12 +1,13 @@
 import path from "node:path";
 import {
   ARTIFACT_SCHEMA_VERSION,
-  artifactManifestSchema,
-  commentsDocumentSchema,
-  reviewSubmissionSchema,
-  type ArtifactManifest,
-  type CommentsDocument,
-  type ReviewSubmission,
+  LEGACY_ARTIFACT_SCHEMA_VERSION,
+  anyArtifactManifestSchema,
+  anyCommentsDocumentSchema,
+  anyReviewSubmissionSchema,
+  type AnyArtifactManifest,
+  type AnyCommentsDocument,
+  type AnyReviewSubmission,
 } from "./contracts";
 import {
   ARTIFACTS_DIRECTORY,
@@ -17,18 +18,19 @@ import {
   REVIEW_SUBMISSION_FILE,
 } from "./artifact-files";
 
-export function parseArtifactManifest(rawArtifact: unknown): ArtifactManifest {
+export function parseArtifactManifest(rawArtifact: unknown): AnyArtifactManifest {
   if (
     !rawArtifact
     || typeof rawArtifact !== "object"
     || !("schemaVersion" in rawArtifact)
-    || rawArtifact.schemaVersion !== ARTIFACT_SCHEMA_VERSION
+    || (rawArtifact.schemaVersion !== ARTIFACT_SCHEMA_VERSION
+      && rawArtifact.schemaVersion !== LEGACY_ARTIFACT_SCHEMA_VERSION)
   ) {
     throw new Error(
-      `Unsupported artifact schema version. Codex Artifacts requires version ${ARTIFACT_SCHEMA_VERSION}.`,
+      `Unsupported artifact schema version. Codex Artifacts supports versions ${LEGACY_ARTIFACT_SCHEMA_VERSION} and ${ARTIFACT_SCHEMA_VERSION}.`,
     );
   }
-  return artifactManifestSchema.parse(rawArtifact);
+  return anyArtifactManifestSchema.parse(rawArtifact);
 }
 
 export function sameFilesystemPath(left: string, right: string): boolean {
@@ -38,7 +40,7 @@ export function sameFilesystemPath(left: string, right: string): boolean {
 }
 
 export function assertArtifactDirectory(
-  artifact: ArtifactManifest,
+  artifact: AnyArtifactManifest,
   artifactDirectory: string,
 ): string {
   const workspaceRoot = artifact.location.workspaceRoot;
@@ -58,12 +60,14 @@ export function assertArtifactDirectory(
 }
 
 export type ArtifactBinding = {
+  schemaVersion: typeof ARTIFACT_SCHEMA_VERSION | typeof LEGACY_ARTIFACT_SCHEMA_VERSION;
   artifactId: string;
   reviewRound: number;
   artifactSha256: string;
 };
 
 export type ReviewSubmissionBinding = ArtifactBinding & {
+  reviewSessionId: string | undefined;
   threadId: string | undefined;
   commentsSha256: string;
 };
@@ -71,8 +75,11 @@ export type ReviewSubmissionBinding = ArtifactBinding & {
 export function parseBoundCommentsDocument(
   rawComments: unknown,
   binding: ArtifactBinding,
-): CommentsDocument {
-  const comments = commentsDocumentSchema.parse(rawComments);
+): AnyCommentsDocument {
+  const comments = anyCommentsDocumentSchema.parse(rawComments);
+  if (comments.schemaVersion !== binding.schemaVersion) {
+    throw new Error("comments.json uses a different artifact schema version.");
+  }
   if (comments.artifactId !== binding.artifactId) {
     throw new Error("comments.json does not belong to this artifact.");
   }
@@ -88,12 +95,16 @@ export function parseBoundCommentsDocument(
 export function parseBoundReviewSubmission(
   rawSubmission: unknown,
   binding: ReviewSubmissionBinding,
-): ReviewSubmission {
-  const submission = reviewSubmissionSchema.parse(rawSubmission);
+): AnyReviewSubmission {
+  const submission = anyReviewSubmissionSchema.parse(rawSubmission);
   if (
+    submission.schemaVersion !== binding.schemaVersion
+    || (submission.schemaVersion === ARTIFACT_SCHEMA_VERSION
+      ? submission.reviewSessionId !== binding.reviewSessionId
+      : submission.threadId !== binding.threadId)
+    ||
     submission.artifactId !== binding.artifactId
     || submission.reviewRound !== binding.reviewRound
-    || submission.threadId !== binding.threadId
   ) {
     throw new Error("review-submission.json does not belong to this artifact lifecycle.");
   }

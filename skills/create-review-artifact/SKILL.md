@@ -1,24 +1,25 @@
 ---
 name: create-review-artifact
-description: Create or update a reviewable Markdown artifact and wait for the user's decision in the same Codex turn. Use automatically when preparing a substantive implementation plan, whenever the user explicitly asks to create, draft, show, revise, or update a plan even without saying "artifact", or when the user explicitly requests another artifact. Do not auto-trigger non-plan artifacts, casual outlines not requested as plans, status updates, or straightforward implementation that needs no review checkpoint.
+description: Create or update a reviewable Markdown artifact and wait for the user's decision in the same Codex turn. Use only when the user explicitly asks to create or update an artifact.
 ---
 
 # Create Review Artifact
 
-Create one reviewable Markdown artifact for one user request. Read [references/artifact-contract.md](references/artifact-contract.md) before writing files.
+Create one reviewable Markdown artifact for one user request. Read [references/artifact-contract.md](references/artifact-contract.md) before calling the MCP tools.
 
 ## Trigger policy
 
-- Auto-trigger for a substantive implementation plan that should be reviewed before code changes begin. Use `kind: "implementation-plan"`.
-- Auto-trigger whenever the user explicitly asks to create, draft, show, revise, or update a plan, even if they do not mention artifacts. Use `kind: "implementation-plan"` when the plan directly guides code changes; otherwise use `kind: "plan"`.
-- Trigger for any artifact kind when the user explicitly requests an artifact. Choose a short lowercase slug for `kind`.
-- Do not auto-trigger architecture, specification, API, migration, report, security, test, documentation, outline, checklist, or status artifacts unless the user explicitly requests an artifact or calls the requested document a plan.
+- Trigger only when the user explicitly asks to create or update an artifact.
+
+## Artifact kind
+
+- For a plan artifact, use `kind: "implementation-plan"` when it directly guides code changes; otherwise use `kind: "plan"`.
+- For any other artifact, choose a short lowercase slug for `kind`.
 
 ## Workflow
 
-1. Verify the trusted Codex Artifacts hook is installed and the `codex_artifacts` MCP server exposes both `wait_for_artifact_review` and `update_artifact`. If unavailable, stop and ask the user to run **Codex Artifacts: Install Global Codex Integration**, trust the hook through `/hooks`, restart Codex, and start a new chat.
-2. Pass the workspace evidence gate before any artifact filesystem operation:
-   Resolve candidates in this order and stop at the first verified, unambiguous root:
+1. Require the `codex_artifacts` MCP server to expose `create_and_wait_for_artifact` and `update_and_wait_for_artifact`. If unavailable, ask the user to run **Codex Artifacts: Install Global Codex Integration**, restart Codex, and start a new chat. Hook trust is not required.
+2. Pass the workspace evidence gate before any artifact filesystem operation. Resolve candidates in this order and stop at the first verified, unambiguous root:
    1. A path, file link, `@mention`, or attachment explicitly supplied in the user's messages.
    2. An active/open file supplied by IDE context with a concrete path.
    3. A repository or folder explicitly named in the conversation, after resolving it and inspecting at least one relevant project marker, document, or source path.
@@ -26,22 +27,20 @@ Create one reviewable Markdown artifact for one user request. Read [references/a
    - Treat Codex/session cwd, `environment_context`, workspace-folder order, the first visible repository, and the first search result as orientation hints only. Never describe any of them as the active or selected workspace.
    - Require an existing absolute directory and evidence that the requested work belongs there. A matching directory name alone is insufficient.
    - Do not inspect unrelated roots, create files, or call artifact tools until the root is verified and unambiguous.
-3. Generate a unique filesystem-safe artifact ID. Create these absolute paths in one `apply_patch` call:
-   - `<workspace-root>/.codex-artifacts/artifacts/<artifact-id>/artifact.json`
-   - `<workspace-root>/.codex-artifacts/artifacts/<artifact-id>/artifact.md`
-4. Use schema version 3, `reviewRound: 1`, identical initial `createdAt`/`updatedAt` values, the exact absolute workspace root, and an empty `origin`. Do not create comments or submission files.
-5. Reload the manifest and verify the hook supplied `origin.threadId` and `origin.codexCwd`; verify `comments.json` exists for round 1. Never invent origin values.
-6. Immediately call `wait_for_artifact_review` with the absolute artifact directory. Do not end the turn first.
-7. Handle the result:
-   - `decision: "revise"`: read every comment, produce one complete updated Markdown document, and call `update_artifact` with the returned artifact directory, review round, one-time update token, and Markdown. Verify the same artifact ID/path now has the next round, then call `wait_for_artifact_review` again.
-   - `decision: "approve"`: read remaining comments and perform the action intended by the original request. If the original request only asked to create/review an artifact, acknowledge approval and finish without inventing work.
-   - `decision: "save"`: ask for a destination in the workspace, copy the current artifact Markdown there, and finish without performing the proposed work.
-8. If wait/update is cancelled, expires, or loses its token, keep the current artifact intact and explain that a fresh live review lifecycle is required. Do not reconnect by guessing a thread.
+3. Map the verified source to `workspaceEvidence`: `explicit-user-path` with the existing absolute path and exact user text; `active-file` with the concrete IDE path; `explicit-user-folder` with exact user text naming one folder; or `single-workspace` only when available workspace context proves exactly one registered folder. Never invent or paraphrase user evidence.
+4. Write one complete Markdown document. Call `create_and_wait_for_artifact` with the verified absolute `workspaceRoot`, `workspaceEvidence`, `title`, `kind`, and `markdown`. If it returns `AMBIGUOUS_WORKSPACE` or `WORKSPACE_EVIDENCE_MISMATCH`, ask the user; do not retry another inferred root. Do not create or edit lifecycle files with filesystem tools.
+5. Handle the returned decision:
+   - `revise`: read every comment from the returned `commentsPath` and classify it as a requested change, a question, or both. Apply requested changes to the document. Replace any existing `## Review responses` section with answers only to question comments from the immediately preceding review round; include a concise identifying quote and a direct answer. Do not retain responses from older rounds, and omit the section when the latest round asked no questions. Then immediately call `update_and_wait_for_artifact` with the returned artifact directory, review round, one-time update token, and complete replacement Markdown.
+   - `approve`: read any remaining comments before acting. For `kind: "implementation-plan"`, **Proceed** is explicit authorization to implement the approved plan immediately in the current turn, including applicable remaining comments. Do not stop after acknowledging approval and do not ask for another implementation confirmation. Pause only when implementation needs new authority outside the approved scope or encounters a genuine blocker. For other artifact kinds, continue only with the action implied by the original request; if no action was requested, acknowledge approval and finish.
+   - `save`: ask for a destination in the workspace, copy the current Markdown there, and finish without performing the proposed work.
+6. Repeat step 5 after every update. Keep the same artifact directory for the entire request.
+7. If a tool is unavailable, cancelled, loses its token, rejects the workspace, or reports another live waiter, preserve the current artifact and explain the recovery action. Never invent a session or bypass the MCP with direct writes.
 
 ## Lifecycle rules
 
-- One independent user request owns one artifact directory and one artifact ID.
-- Review updates the same `artifact.md`; never create a replacement directory or revision history.
-- Never edit `comments.json` or `review-submission.json` and never manually increment `reviewRound`.
-- Only `update_artifact` may commit a new review round and reset its state.
+- One independent user request owns one artifact directory and artifact ID.
+- Review replaces the same `artifact.md` and starts the next review round; it does not create revision history.
+- Review comments are reset between rounds. The replacement Markdown carries responses for the immediately preceding round only, not a cumulative response history.
+- Only the MCP server creates artifacts, advances rounds, resets comments, consumes update tokens, and writes lifecycle metadata.
+- Never edit `artifact.json`, `comments.json`, or `review-submission.json`.
 - Write a coherent artifact, not a patch, changelog, task tracker, or progress report.

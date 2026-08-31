@@ -20,7 +20,7 @@ async function fixture(): Promise<{ directory: string; store: ArtifactStore }> {
   await writeFile(path.join(directory, "artifact.md"), markdown, "utf8");
   const timestamp = new Date().toISOString();
   await writeFile(path.join(directory, "artifact.json"), JSON.stringify({
-    schemaVersion: 3,
+    schemaVersion: 4,
     kind: "implementation-plan",
     artifactId: "artifact-001",
     title: "Artifact",
@@ -28,7 +28,7 @@ async function fixture(): Promise<{ directory: string; store: ArtifactStore }> {
     updatedAt: timestamp,
     reviewRound: 1,
     location: { workspaceRoot },
-    origin: { codexCwd: workspaceRoot, threadId: "thread-001" },
+    reviewSessionId: "11111111-1111-4111-8111-111111111111",
   }), "utf8");
   return { directory, store: new ArtifactStore(path.join(directory, "artifact.md")) };
 }
@@ -38,17 +38,17 @@ afterEach(async () => {
 });
 
 describe("ArtifactStore", () => {
-  it("rejects legacy schema version 2 artifacts", async () => {
+  it("rejects unsupported schema version 2 artifacts", async () => {
     const { directory, store } = await fixture();
     const manifestPath = path.join(directory, "artifact.json");
     const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
     await writeFile(manifestPath, JSON.stringify({ ...manifest, schemaVersion: 2 }), "utf8");
-    await expect(store.load()).rejects.toThrow("requires version 3");
+    await expect(store.load()).rejects.toThrow("supports versions 3 and 4");
   });
 
   it("creates round-bound comments.json and persists a block-bound comment", async () => {
     const { directory, store } = await fixture();
-    const initial = await store.load(true);
+    const initial = await store.load();
     const paragraph = initial.blocks.find((block) => block.type === "paragraph");
     const state = await store.addComment({
       blockId: paragraph!.id,
@@ -72,7 +72,7 @@ describe("ArtifactStore", () => {
 
   it("submits Review once for the current round and locks it", async () => {
     const { directory, store } = await fixture();
-    const initial = await store.load(true);
+    const initial = await store.load();
     const paragraph = initial.blocks.find((block) => block.type === "paragraph")!;
     await store.addComment({
       blockId: paragraph.id,
@@ -84,7 +84,7 @@ describe("ArtifactStore", () => {
     expect(submitted.submission).toMatchObject({
       artifactId: "artifact-001",
       reviewRound: 1,
-      threadId: "thread-001",
+      reviewSessionId: "11111111-1111-4111-8111-111111111111",
       decision: "revise",
     });
     await expect(store.removeComment(submitted.comments.comments[0]!.id)).rejects.toThrow("already submitted");
@@ -97,7 +97,7 @@ describe("ArtifactStore", () => {
 
   it("approves an artifact with or without comments", async () => {
     const { store } = await fixture();
-    await store.load(true);
+    await store.load();
     await expect(store.submitReview("revise")).rejects.toThrow("at least one comment");
     const approved = await store.submitReview("approve");
     expect(approved.submission?.decision).toBe("approve");
@@ -105,7 +105,7 @@ describe("ArtifactStore", () => {
 
   it("falls back to copyFile and cleans up tmp files when rename throws EPERM", async () => {
     const { directory, store } = await fixture();
-    const initial = await store.load(true);
+    const initial = await store.load();
     const paragraph = initial.blocks.find((block) => block.type === "paragraph")!;
     const fsModule = await import("node:fs");
     const renameSpy = vi.spyOn(fsModule.promises, "rename").mockRejectedValue(
@@ -123,5 +123,22 @@ describe("ArtifactStore", () => {
     } finally {
       renameSpy.mockRestore();
     }
+  });
+
+  it("opens schema-v3 artifacts as read-only", async () => {
+    const { directory, store } = await fixture();
+    const manifestPath = path.join(directory, "artifact.json");
+    const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+    await writeFile(manifestPath, JSON.stringify({
+      ...manifest,
+      schemaVersion: 3,
+      origin: { codexCwd: manifest.location.workspaceRoot, threadId: "thread-001" },
+      reviewSessionId: undefined,
+    }), "utf8");
+    await rm(path.join(directory, "comments.json"), { force: true });
+
+    const state = await store.load();
+    expect(state.lifecycle.readOnly).toBe(true);
+    await expect(store.submitReview("approve")).rejects.toThrow("reading only");
   });
 });

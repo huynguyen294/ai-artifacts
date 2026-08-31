@@ -3,7 +3,7 @@
   "displayName": "Codex Artifacts",
   "publisher": "agent-plus-local",
   "description": "Review Codex Markdown artifacts and send annotated feedback to the originating Codex conversation.",
-  "version": "0.5.0",
+  "version": "0.6.1",
   "private": true,
   "type": "module",
   "license": "MIT",
@@ -58,11 +58,6 @@
           "type": "boolean",
           "default": true,
           "description": "Automatically open Artifact Review after Codex finishes creating a Markdown artifact."
-        },
-        "agentPlus.codexCommand": {
-          "type": "string",
-          "default": "codex",
-          "description": "Codex CLI executable used to start the App Server."
         }
       }
     }
@@ -72,7 +67,7 @@
     "build:extension": "esbuild src/extension/extension.ts --bundle --minify --platform=node --format=cjs --external:vscode --outfile=dist/extension.cjs",
     "build:webview": "vite build",
     "build:enhancements": "esbuild src/webview/enhancements/shiki-entry.ts --bundle --minify --platform=browser --format=iife --outfile=dist/webview/shiki.js && esbuild src/webview/enhancements/mermaid-entry.ts --bundle --minify --platform=browser --format=iife --outfile=dist/webview/mermaid.js",
-    "build:integration": "esbuild src/integration/stamp-origin.ts --bundle --minify --platform=node --format=esm --outfile=dist/integration/codex-artifacts-stamp-origin.mjs && esbuild src/integration/artifact-review-mcp.ts --bundle --minify --platform=node --format=esm --outfile=dist/integration/codex-artifacts-review-mcp.mjs",
+    "build:integration": "esbuild src/integration/artifact-review-mcp-v4.ts --bundle --minify --platform=node --format=esm --outfile=dist/integration/codex-artifacts-review-mcp.mjs",
     "check": "tsc --noEmit",
     "test": "npm run build:integration && vitest run --configLoader native",
     "package": "npm run build && vsce package --allow-missing-repository --out releases/ && vsce package --allow-missing-repository --out releases/codex-artifacts.vsix",

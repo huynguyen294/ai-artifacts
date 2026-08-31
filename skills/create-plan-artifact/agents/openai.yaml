@@ -1,4 +1,0 @@
-interface:
-  display_name: "Create Plan Artifact"
-  short_description: "Create reviewable plans for Codex Artifacts"
-  default_prompt: "Use $create-plan-artifact to create a reviewable plan artifact for this task."

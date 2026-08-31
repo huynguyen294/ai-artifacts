@@ -1,0 +1,255 @@
+import { randomUUID } from "node:crypto";
+import { promises as fs } from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { z } from "zod";
+import { sameFilesystemPath } from "./artifact-validation";
+
+export const WORKSPACE_REGISTRY_SCHEMA_VERSION = 2 as const;
+export const WORKSPACE_REGISTRY_HEARTBEAT_MS = 15_000;
+export const WORKSPACE_REGISTRY_TTL_MS = 45_000;
+
+export const workspaceRegistrySnapshotSchema = z.object({
+  schemaVersion: z.literal(WORKSPACE_REGISTRY_SCHEMA_VERSION),
+  instanceId: z.string().uuid(),
+  processId: z.number().int().positive(),
+  workspaceFile: z.string().nullable(),
+  focused: z.boolean(),
+  folders: z.array(z.object({
+    path: z.string().min(1),
+    realPath: z.string().min(1),
+  }).strict()),
+  activeFile: z.object({
+    path: z.string().min(1),
+    workspaceRoot: z.string().min(1),
+  }).strict().nullable(),
+  updatedAt: z.string().datetime(),
+  expiresAt: z.string().datetime(),
+}).strict();
+
+export type WorkspaceRegistrySnapshot = z.infer<typeof workspaceRegistrySnapshotSchema>;
+
+export const workspaceEvidenceSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("single-workspace") }).strict(),
+  z.object({
+    kind: z.literal("active-file"),
+    filePath: z.string().min(1),
+  }).strict(),
+  z.object({
+    kind: z.literal("explicit-user-path"),
+    path: z.string().min(1),
+    userText: z.string().min(1).max(500),
+  }).strict(),
+  z.object({
+    kind: z.literal("explicit-user-folder"),
+    userText: z.string().min(1).max(500),
+  }).strict(),
+]);
+
+export type WorkspaceEvidence = z.infer<typeof workspaceEvidenceSchema>;
+
+export function codexArtifactsDataDirectory(): string {
+  const codexDirectory = process.env.CODEX_HOME?.trim()
+    ? path.resolve(process.env.CODEX_HOME)
+    : path.join(os.homedir(), ".codex");
+  return path.join(codexDirectory, "codex-artifacts");
+}
+
+export function workspaceRegistryDirectory(): string {
+  const override = process.env.CODEX_ARTIFACTS_REGISTRY_DIRECTORY?.trim();
+  return override ? path.resolve(override) : path.join(codexArtifactsDataDirectory(), "workspaces");
+}
+
+export function createWorkspaceInstanceId(): string {
+  return randomUUID();
+}
+
+function snapshotPath(instanceId: string, directory = workspaceRegistryDirectory()): string {
+  return path.join(directory, `${instanceId}.json`);
+}
+
+async function atomicWrite(filePath: string, contents: string): Promise<void> {
+  await fs.mkdir(path.dirname(filePath), { recursive: true });
+  const temporaryPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
+  await fs.writeFile(temporaryPath, contents, { encoding: "utf8", flag: "wx" });
+  try {
+    await fs.rename(temporaryPath, filePath);
+  } catch (error) {
+    const code = error instanceof Error && "code" in error ? error.code : undefined;
+    if (code !== "EPERM" && code !== "EACCES" && code !== "EBUSY" && code !== "EXDEV") throw error;
+    await fs.copyFile(temporaryPath, filePath);
+  } finally {
+    await fs.rm(temporaryPath, { force: true }).catch(() => {});
+  }
+}
+
+export async function publishWorkspaceSnapshot(
+  snapshot: WorkspaceRegistrySnapshot,
+  directory = workspaceRegistryDirectory(),
+): Promise<void> {
+  const validated = workspaceRegistrySnapshotSchema.parse(snapshot);
+  await atomicWrite(snapshotPath(validated.instanceId, directory), `${JSON.stringify(validated, null, 2)}\n`);
+}
+
+export async function removeWorkspaceSnapshot(
+  instanceId: string,
+  directory = workspaceRegistryDirectory(),
+): Promise<void> {
+  await fs.rm(snapshotPath(instanceId, directory), { force: true });
+}
+
+export async function canonicalWorkspaceFolder(folderPath: string): Promise<{ path: string; realPath: string }> {
+  if (!path.isAbsolute(folderPath)) throw new Error("Workspace folder paths must be absolute.");
+  const resolved = path.resolve(folderPath);
+  return { path: resolved, realPath: await fs.realpath(resolved) };
+}
+
+export async function readFreshWorkspaceSnapshots(
+  directory = workspaceRegistryDirectory(),
+  now = Date.now(),
+): Promise<WorkspaceRegistrySnapshot[]> {
+  let entries: string[];
+  try {
+    entries = await fs.readdir(directory);
+  } catch (error) {
+    const code = error instanceof Error && "code" in error ? error.code : undefined;
+    if (code === "ENOENT") return [];
+    throw error;
+  }
+  const snapshots = await Promise.all(entries
+    .filter((entry) => entry.endsWith(".json"))
+    .map(async (entry): Promise<WorkspaceRegistrySnapshot | undefined> => {
+      try {
+        const parsed = workspaceRegistrySnapshotSchema.parse(JSON.parse(
+          await fs.readFile(path.join(directory, entry), "utf8"),
+        ));
+        return Date.parse(parsed.expiresAt) > now ? parsed : undefined;
+      } catch {
+        return undefined;
+      }
+    }));
+  return snapshots.filter((snapshot): snapshot is WorkspaceRegistrySnapshot => Boolean(snapshot));
+}
+
+export async function resolveRegisteredWorkspaceRoot(
+  requestedRoot: string,
+  directory = workspaceRegistryDirectory(),
+  now = Date.now(),
+): Promise<string> {
+  if (!path.isAbsolute(requestedRoot)) {
+    throw new Error("WORKSPACE_NOT_REGISTERED: workspaceRoot must be an absolute path.");
+  }
+  let requestedRealPath: string;
+  try {
+    requestedRealPath = await fs.realpath(path.resolve(requestedRoot));
+  } catch {
+    throw new Error("WORKSPACE_NOT_REGISTERED: the requested workspace folder does not exist.");
+  }
+  const snapshots = await readFreshWorkspaceSnapshots(directory, now);
+  for (const snapshot of snapshots) {
+    const match = snapshot.folders.find((folder) => (
+      sameFilesystemPath(folder.path, requestedRoot)
+      && sameFilesystemPath(folder.realPath, requestedRealPath)
+    ));
+    if (match) return requestedRealPath;
+  }
+  throw new Error(
+    "WORKSPACE_NOT_REGISTERED: open or add the target folder in VS Code, then retry after Codex Artifacts refreshes its workspace registry.",
+  );
+}
+
+function uniqueRegisteredFolders(snapshots: readonly WorkspaceRegistrySnapshot[]): Array<{
+  path: string;
+  realPath: string;
+}> {
+  const unique = new Map<string, { path: string; realPath: string }>();
+  for (const snapshot of snapshots) {
+    for (const folder of snapshot.folders) {
+      const key = process.platform === "win32" ? folder.realPath.toLowerCase() : folder.realPath;
+      unique.set(key, folder);
+    }
+  }
+  return [...unique.values()];
+}
+
+function isPathInside(parent: string, candidate: string): boolean {
+  const relative = path.relative(parent, candidate);
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+function textMentionsFolder(userText: string, folderPath: string): boolean {
+  const name = path.basename(folderPath).trim().toLocaleLowerCase();
+  return Boolean(name) && userText.toLocaleLowerCase().includes(name);
+}
+
+export async function resolveWorkspaceRootForArtifactCreation(
+  requestedRoot: string,
+  evidence: WorkspaceEvidence,
+  directory = workspaceRegistryDirectory(),
+  now = Date.now(),
+): Promise<string> {
+  const registeredRoot = await resolveRegisteredWorkspaceRoot(requestedRoot, directory, now);
+  const snapshots = await readFreshWorkspaceSnapshots(directory, now);
+  const focusedSnapshots = snapshots.filter((snapshot) => snapshot.focused);
+  const relevantSnapshots = focusedSnapshots.length > 0 ? focusedSnapshots : snapshots;
+  const folders = uniqueRegisteredFolders(relevantSnapshots);
+  if (!folders.some((folder) => sameFilesystemPath(folder.realPath, registeredRoot))) {
+    throw new Error(
+      "WORKSPACE_EVIDENCE_MISMATCH: the requested workspace is not registered by the focused VS Code window.",
+    );
+  }
+
+  if (evidence.kind === "single-workspace") {
+    if (folders.length !== 1) {
+      throw new Error(
+        `AMBIGUOUS_WORKSPACE: ${folders.length} workspace folders are currently registered. Ask the user which workspace owns the artifact.`,
+      );
+    }
+    return registeredRoot;
+  }
+
+  if (evidence.kind === "active-file") {
+    const match = relevantSnapshots.some((snapshot) => (
+      snapshot.focused
+      && snapshot.activeFile !== null
+      && sameFilesystemPath(snapshot.activeFile.path, evidence.filePath)
+      && sameFilesystemPath(snapshot.activeFile.workspaceRoot, registeredRoot)
+    ));
+    if (!match) {
+      throw new Error(
+        "WORKSPACE_EVIDENCE_MISMATCH: the supplied file is not the active file of the requested workspace in a focused VS Code window.",
+      );
+    }
+    return registeredRoot;
+  }
+
+  if (evidence.kind === "explicit-user-path") {
+    if (!path.isAbsolute(evidence.path)) {
+      throw new Error("WORKSPACE_EVIDENCE_MISMATCH: an explicit user path must be absolute.");
+    }
+    let evidenceRealPath: string;
+    try {
+      evidenceRealPath = await fs.realpath(path.resolve(evidence.path));
+    } catch {
+      throw new Error("WORKSPACE_EVIDENCE_MISMATCH: the explicit user path does not exist.");
+    }
+    if (!isPathInside(registeredRoot, evidenceRealPath)) {
+      throw new Error("WORKSPACE_EVIDENCE_MISMATCH: the explicit user path does not belong to the requested workspace.");
+    }
+    const evidenceName = path.basename(evidence.path).trim().toLocaleLowerCase();
+    if (!evidenceName || !evidence.userText.toLocaleLowerCase().includes(evidenceName)) {
+      throw new Error(
+        "WORKSPACE_EVIDENCE_MISMATCH: the quoted user message does not mention the supplied path.",
+      );
+    }
+    return registeredRoot;
+  }
+
+  const mentioned = folders.filter((folder) => textMentionsFolder(evidence.userText, folder.path));
+  if (mentioned.length !== 1 || !sameFilesystemPath(mentioned[0]!.realPath, registeredRoot)) {
+    throw new Error(
+      "WORKSPACE_EVIDENCE_MISMATCH: the quoted user message does not identify exactly one registered workspace folder.",
+    );
+  }
+  return registeredRoot;
+}

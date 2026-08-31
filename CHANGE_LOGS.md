@@ -6,6 +6,39 @@ Lịch sử phát hành được chuẩn hóa và bắt đầu ghi nhận lại 
 
 ---
 
+## [0.6.1] - 2026-08-29
+
+- Khôi phục workspace evidence gate chặt từ trước migration MCP; `package.json`, project contents, cwd và folder order không còn được dùng để tự chọn root.
+- Nâng workspace registry lên schema v2 với focused-window và active-file context.
+- Bắt buộc `workspaceEvidence` có kiểu; MCP fail closed trước filesystem mutation khi multi-root mơ hồ hoặc evidence không khớp.
+- `Review responses` chỉ chứa phản hồi cho comment round ngay trước đó và được thay thế ở lần Review kế tiếp, không tích lũy toàn bộ lịch sử.
+- Thêm regression tests cho multi-root ambiguity, active-file evidence, explicit user path/folder, focused-window scoping và skill contract.
+
+## [0.6.0] - 2026-08-29
+
+### MCP-owned lifecycle
+
+- Thay creation hook và App Server trust flow bằng hai MCP tool `create_and_wait_for_artifact` và `update_and_wait_for_artifact`.
+- MCP tạo artifact ID/session, ghi schema v4, chờ quyết định và cập nhật cùng `artifact.md` trong đúng tool call gốc.
+- Dùng update token in-memory, một lần, gắn với artifact/session/round; giữ transaction rollback và Windows editor-lock fallback.
+
+### Workspace boundary
+
+- Extension công bố registry heartbeat cho toàn bộ `workspaceFolders` thực sự đang mở; MCP chỉ chấp nhận exact canonical root còn hiệu lực.
+- Chặn workspace stale/unregistered, nested root không được đăng ký, path escape và artifact storage qua symlink/junction.
+- Skill vẫn bắt buộc xác định workspace từ bằng chứng trong yêu cầu/IDE/hội thoại và không chọn folder đầu tiên.
+
+### Migration
+
+- Installer chỉ cài MCP + skill, không cần `/hooks` trust, đồng thời gỡ an toàn các hook/skill legacy do extension quản lý.
+- Artifact schema v3 vẫn mở được ở chế độ read-only; schema v4 là lifecycle duy nhất được phép review/update.
+- Bổ sung test end-to-end create → Review → update-and-wait → Proceed, registry TTL, token replay, rollback và legacy read-only.
+
+### Review semantics
+
+- **Proceed** trên `implementation-plan` là quyền triển khai plan đã duyệt ngay trong cùng turn, không chỉ xác nhận approve hoặc yêu cầu thêm một lần xác nhận.
+- Khi comment là câu hỏi, Codex trả lời trực tiếp trong mục `Review responses` ở cuối artifact mới để câu trả lời tồn tại và tiếp tục được review ở round kế tiếp.
+
 ## [0.5.0] - 2026-08-29
 
 ### Markdown viewer

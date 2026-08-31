@@ -36,4 +36,15 @@ describe("deriveReviewActions", () => {
     expect(actions.approve.label).toBe("Proceed");
     expect(Object.values(actions).every((action) => action.disabled)).toBe(true);
   });
+
+  it("locks all review actions for a legacy read-only artifact", () => {
+    const actions = deriveReviewActions({
+      commentCount: 2,
+      isSubmitting: false,
+      isSubmitted: false,
+      hasUnsavedComment: false,
+      lifecycleReadOnly: true,
+    });
+    expect(Object.values(actions).every((action) => action.disabled)).toBe(true);
+  });
 });

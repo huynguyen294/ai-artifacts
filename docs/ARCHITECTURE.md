@@ -1,75 +1,49 @@
 # Architecture
 
-## Boundaries
-
 ```text
-Codex chat
-   │ creates schema-v3 artifact, then waits
+Codex skill
+   │ create_and_wait_for_artifact / update_and_wait_for_artifact
    ▼
-Global hook ── validates creation, stamps origin, creates round-one comments
+Codex Artifacts MCP ── validates workspace registry, creates artifacts, and advances rounds
+   │
+   ├─ .codex-artifacts/artifacts/<id>/
+   │     artifact.json + artifact.md + comments.json + optional submission
    │
    ▼
-.codex-artifacts/artifacts/<id>/{artifact.json,artifact.md,comments.json,review-submission.json}
+VS Code extension ── publishes workspace heartbeat and opens the custom editor
    │
    ▼
-VS Code custom editor
-   ├─ extension host: validation, comments, immutable round submission
-   └─ React webview: GFM rendering, contextual comments, decisions
-       ├─ core bundle: react-markdown, Floating UI, theme adapter
-       └─ lazy bundles: Shiki tokenization and strict Mermaid rendering
-                         │
-                         ▼
-Codex Artifacts MCP
-   ├─ wait_for_artifact_review: returns Review/Proceed/Just save to the same turn
-   └─ update_artifact: commits the next round on the same artifact
+React webview ── renders Markdown, anchors comments, and submits a decision
 ```
-
-`src/shared` is the only file/message contract boundary. Hook, MCP, extension host, and webview reuse the same TypeScript/Zod schemas.
-
-## Artifact identity and review rounds
-
-One independent request owns one directory and one `artifactId`. `artifact.json.reviewRound` starts at 1 and increments only through `update_artifact`.
-
-`comments.json` binds the current round to the SHA-256 of `artifact.md`. `review-submission.json` additionally binds the decision to the origin thread and comments hash. A submission is create-once for its round.
-
-On Review, `wait_for_artifact_review` issues an in-memory, one-time update token bound to the artifact, origin, and round. `update_artifact` validates the token and submitted state, stages the next manifest/Markdown/comments, replaces the current files, removes the previous submission, and discards temporary backups after success. A failure rolls back the current round.
-
-No revision directory or history is retained.
-
-## Global integration
-
-The extension installs one user-scoped integration:
-
-```text
-~/.agents/skills/create-review-artifact/
-~/.codex/codex-artifacts/codex-artifacts-stamp-origin.mjs
-~/.codex/codex-artifacts/codex-artifacts-review-mcp.mjs
-~/.codex/hooks.json
-~/.codex/config.toml
-```
-
-The hook is non-managed and requires explicit trust through Codex `/hooks`. The installer verifies current skill/hook/MCP assets and reports outdated integration when their contents differ.
 
 ## Ownership boundaries
 
-- The skill decides whether the current request triggers an artifact, creates the initial files, and orchestrates review decisions.
-- The hook only handles creation: exact Add File paths, workspace ownership, real session origin, and initial comments.
-- The extension owns comments and create-once submissions for the active round.
-- The MCP owns the in-place round transition; the skill never edits review state files.
-- `location.workspaceRoot` defines project ownership; `origin.codexCwd` only records where Codex ran.
-- Workspace ownership is resolved in strict order: explicit message path/link/mention/attachment; concrete IDE-context file path; conversation-named repository verified by a project file; otherwise a user question.
-- Codex cwd, environment context, workspace order, and the first visible repository never establish active/selected workspace state.
+- The skill chooses when an artifact is appropriate, resolves workspace evidence, writes complete Markdown, and reacts to decisions.
+- The MCP server exclusively creates schema-v4 artifacts and advances their review rounds. It generates IDs and review sessions, validates paths, serializes waiters, issues one-time tokens, and commits round transitions transactionally.
+- The extension host publishes fresh canonical workspace roots plus focused-window/active-file context, performs trusted local file access, validates bindings, and writes user comments/submissions.
+- The webview renders sanitized CommonMark/GFM and sends typed messages to the extension host. It has no direct filesystem or process access.
+- `src/shared` is the single contract boundary used by the MCP, extension host, and webview.
 
-## Safety decisions
+## Lifecycle
 
-- Markdown is parsed once into remark AST review blocks with source positions; the renderer maps the same positions back to selectable DOM nodes.
-- `react-markdown` renders CommonMark/GFM with raw HTML disabled. URL policy only allows `http`, `https`, `mailto`, and local fragment links; remote images are placeholders.
-- Comment annotations are React text nodes, not injected HTML, so emphasis, links, inline code, and table structure remain intact.
-- Webview scripts and generated Shiki CSS use a nonce-based CSP. Artifact Markdown cannot supply scripts or styles.
-- Shiki returns token data that React renders as text. Mermaid uses strict mode and its SVG is displayed through a data-image context rather than inserted as live markup.
-- Shiki and Mermaid are separate extension-owned bundles loaded only for matching fenced blocks; high-contrast code uses the plain-code fallback.
-- Selection coordinates are revalidated in the extension host.
-- Writes use temporary files; round updates use staged commit/rollback.
-- Wrong schema, directory, root, round, origin, hash, or token fails closed.
-- The extension never resumes another thread, redirects feedback, or creates hidden turns.
-- Schema-v2 artifacts remain separate and are not auto-migrated.
+`create_and_wait_for_artifact` validates an exact folder from the VS Code registry, creates one schema-v4 artifact, then waits for its submission. **Review** returns a token bound to the artifact, `reviewSessionId`, round, and current content. `update_and_wait_for_artifact` consumes that token, replaces the same Markdown, advances the round, resets comments/submission, and waits again in the same call.
+
+Only one waiter may own an artifact. Tokens are in-memory, single-use, and expire. MCP restart or cancellation preserves files but ends the live lifecycle.
+
+## Workspace registry
+
+Each running extension window writes an atomic snapshot under `~/.codex/codex-artifacts/workspaces/` (or `CODEX_HOME`) and refreshes it every 15 seconds. Schema-v2 snapshots expire after 45 seconds and contain canonical `workspaceFolders`, focus state, and the active file/root when available.
+
+Create requires typed evidence: `single-workspace`, `active-file`, `explicit-user-path`, or `explicit-user-folder`. The MCP scopes candidates to the focused window, validates the evidence, and fails before filesystem mutation when ownership is ambiguous. Project markers may verify an evidenced root but cannot establish ownership. Updates keep using the artifact's already-bound registered root.
+
+## Filesystem safety
+
+- Artifact IDs are generated by the server and directories are created exclusively beneath `.codex-artifacts/artifacts/`.
+- Canonical containment is checked before mutation; linked artifact storage paths are rejected.
+- Create rollback may remove only the exact newly allocated directory.
+- Update stages the next round and restores the prior files if commit fails. A narrow in-place fallback handles Windows editor locks.
+- Installer cleanup recognizes only extension-managed MCP blocks, hook entries, scripts, and legacy skill directories. Unrelated user configuration is preserved.
+
+## Compatibility
+
+Schema v4 is the only writable lifecycle. Schema-v3 hook-owned artifacts are parsed for read-only viewing. Schema v2 and older plan/replacement formats are not migrated into live review sessions.

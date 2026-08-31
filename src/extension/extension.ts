@@ -1,57 +1,45 @@
 import * as vscode from "vscode";
-import { CodexAppServerClient } from "./app-server-client";
 import { ArtifactReviewProvider } from "./artifact-review-provider";
 import {
   checkGlobalIntegration,
   installGlobalIntegration,
-} from "./workspace-integration";
+} from "./workspace-integration-v4";
 import type { IntegrationCheck } from "./global-integration-status";
+import { WorkspaceRegistryPublisher } from "./workspace-registry-publisher";
 
-function integrationCwds(): string[] {
-  const workspaceRoots = vscode.workspace.workspaceFolders?.map((folder) => folder.uri.fsPath) ?? [];
-  return workspaceRoots.length > 0 ? workspaceRoots : [process.cwd()];
-}
-
-async function showIntegrationStatus(status: IntegrationCheck, codexCommand: string): Promise<void> {
-  if (status.status === "trusted") {
+async function showIntegrationStatus(status: IntegrationCheck): Promise<void> {
+  if (status.status === "ready") {
     void vscode.window.showInformationMessage(
-      "Codex Artifacts hook and review MCP are installed. Restart the Codex extension, then start a new chat before creating a plan artifact.",
+      "Codex Artifacts MCP and skill are installed and current.",
+    );
+    return;
+  }
+  if (status.status === "restart-required") {
+    void vscode.window.showInformationMessage(
+      "Codex Artifacts MCP and skill were installed. Restart the Codex extension, then start a new chat to load the integration.",
     );
     return;
   }
   if (status.status === "outdated") {
     void vscode.window.showWarningMessage(
-      "Codex Artifacts global integration is older than this extension. Run Install Global Codex Integration, trust the updated hook if prompted, restart the Codex extension, and start a new chat.",
+      "Codex Artifacts global integration is older than this extension. Run Install Global Codex Integration, then restart Codex.",
     );
     return;
   }
-  if (status.status === "untrusted") {
-    const choice = await vscode.window.showWarningMessage(
-      "Codex Artifacts is installed globally, but Codex will skip its hook until you trust it. Open Codex, run /hooks, and trust Codex Artifacts; then run Verify Codex Integration.",
-      "Open Codex terminal",
+  if (status.status === "configuration-conflict") {
+    void vscode.window.showErrorMessage(
+      status.detail ?? "Codex config.toml contains a conflicting codex_artifacts MCP definition.",
     );
-    if (choice === "Open Codex terminal") {
-      const terminalCwd = integrationCwds()[0] ?? process.cwd();
-      const terminal = vscode.window.createTerminal({ name: "Codex Artifacts setup", cwd: terminalCwd });
-      terminal.show();
-      terminal.sendText(codexCommand, true);
-      void vscode.window.showInformationMessage("In the Codex terminal, run /hooks and trust the Codex Artifacts hook.");
-    }
     return;
   }
-  const message = status.status === "disabled"
-    ? "The Codex Artifacts hook is disabled. Open Codex, run /hooks, and enable it."
-    : status.status === "missing"
-      ? "Codex could not discover the global Codex Artifacts hook. Run the install command again and inspect Codex /hooks."
-      : "Codex Artifacts was installed, but its trust status could not be verified. Inspect Codex /hooks before creating artifacts.";
-  void vscode.window.showWarningMessage(message);
+  void vscode.window.showWarningMessage(
+    "Codex Artifacts MCP is not installed. Run Codex Artifacts: Install Global Codex Integration.",
+  );
 }
 
 export function activate(context: vscode.ExtensionContext): void {
-  const codexCommand = vscode.workspace.getConfiguration("agentPlus").get<string>("codexCommand", "codex");
-  const extensionVersion = String(context.extension.packageJSON.version ?? "0.4.3");
-  const appServer = new CodexAppServerClient(codexCommand, extensionVersion);
   const provider = new ArtifactReviewProvider(context);
+  const workspaceRegistryPublisher = new WorkspaceRegistryPublisher();
 
   const artifactReadyWatcher = vscode.workspace.createFileSystemWatcher(
     "**/.codex-artifacts/artifacts/**/comments.json",
@@ -74,6 +62,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
   context.subscriptions.push(
     artifactReadyWatcher,
+    workspaceRegistryPublisher,
     vscode.window.registerCustomEditorProvider(ArtifactReviewProvider.viewType, provider, {
       webviewOptions: { retainContextWhenHidden: true },
       supportsMultipleEditorsPerDocument: false,
@@ -91,22 +80,18 @@ export function activate(context: vscode.ExtensionContext): void {
     }),
     vscode.commands.registerCommand("agentPlus.installWorkspaceIntegration", async () => {
       try {
-        await showIntegrationStatus(await installGlobalIntegration(context, appServer), codexCommand);
+        await showIntegrationStatus(await installGlobalIntegration(context));
       } catch (error) {
         void vscode.window.showErrorMessage(error instanceof Error ? error.message : String(error));
       }
     }),
     vscode.commands.registerCommand("agentPlus.verifyGlobalIntegration", async () => {
       try {
-        await showIntegrationStatus(
-          await checkGlobalIntegration(context, appServer, integrationCwds()),
-          codexCommand,
-        );
+        await showIntegrationStatus(await checkGlobalIntegration(context));
       } catch (error) {
         void vscode.window.showErrorMessage(error instanceof Error ? error.message : String(error));
       }
     }),
-    { dispose: () => appServer.dispose() },
   );
 }
 

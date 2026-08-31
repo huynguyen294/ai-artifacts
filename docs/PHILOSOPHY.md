@@ -5,8 +5,7 @@
 ```mermaid
 flowchart TD
     A[Người dùng gửi yêu cầu] --> B{Có kích hoạt artifact?}
-    B -->|Implementation plan| C[AI tạo artifact]
-    B -->|Người dùng yêu cầu artifact| C
+    B -->|Người dùng yêu cầu tạo hoặc cập nhật artifact| C[AI tạo artifact]
     B -->|Không| Z[Tiếp tục xử lý bình thường]
     C --> D[Extension mở artifact]
     D --> E[Người dùng đọc và comment]
@@ -37,7 +36,7 @@ Codex Artifacts biến Markdown do AI tạo ra thành một artifact dễ đọc
 
 ## Phạm vi tạo artifact hiện tại
 
-Skill hiện chỉ tạo artifact khi AI cần một **implementation plan** để người dùng review, hoặc khi người dùng **yêu cầu tạo artifact** rõ ràng. Các loại khác chưa được tự động kích hoạt để tránh tạo artifact ngoài mong đợi.
+Skill hiện chỉ tạo artifact khi người dùng **yêu cầu rõ ràng việc tạo hoặc cập nhật một artifact**. Yêu cầu tạo plan, implementation plan hoặc các loại tài liệu khác không tự động kích hoạt artifact nếu người dùng không nói rõ rằng nội dung đó cần được tạo dưới dạng artifact.
 
 ## Các trường hợp mở rộng đã ghi nhận
 
@@ -45,8 +44,12 @@ Các trường hợp có thể mở rộng gồm architecture proposal, technica
 
 Đây mới là ý tưởng đã ghi nhận, chưa phải điều kiện auto-trigger. Mỗi loại chỉ nên được bật sau khi xác định rõ khi nào cần review và Proceed có ý nghĩa gì.
 
-## Trạng thái triển khai 0.5.0
+## Trạng thái triển khai 0.6.1
 
-Lifecycle vẫn giữ nguyên triết lý: Review cập nhật cùng `artifact.md`, reset trạng thái round và không lưu revision history. Viewer 0.5.0 nâng artifact thành tài liệu CommonMark/GFM dễ đọc, comment ngay cạnh vùng chọn, drawer có thể ẩn và giao diện tự theo theme VS Code; đây vẫn là lớp review tài liệu, không trở thành task manager hay một chat UI khác.
+Lifecycle vẫn giữ nguyên triết lý: Review cập nhật cùng `artifact.md`, reset trạng thái round và không lưu revision history. MCP sở hữu cả thao tác tạo lẫn cập nhật artifact, vì vậy phản hồi quay lại đúng tool call đang chờ mà không cần hook hoặc gắn `threadId`. Extension chỉ công bố các workspace đang thực sự mở, hiển thị tài liệu và ghi nhận quyết định của người dùng.
 
-Skill chỉ auto-trigger implementation plan hoặc explicit artifact request; các loại mở rộng vẫn là định hướng, chưa tự động kích hoạt.
+Trong multi-root workspace, root phải đến từ bằng chứng người dùng/IDE có kiểu rõ ràng; project marker không được dùng để tự chọn root. Mục `Review responses` chỉ phản hồi batch comment ngay trước đó và được thay mới ở round kế tiếp, không trở thành lịch sử tích lũy.
+
+Viewer tiếp tục trình bày artifact như tài liệu CommonMark/GFM dễ đọc, cho phép comment ngay cạnh vùng chọn, ẩn drawer và theo theme VS Code. Ứng dụng vẫn là lớp review tài liệu, không trở thành task manager hay một chat UI khác.
+
+Skill không tự động kích hoạt theo loại tài liệu. Implementation plan và các loại mở rộng chỉ đi qua lifecycle này khi người dùng yêu cầu rõ ràng việc tạo hoặc cập nhật artifact.

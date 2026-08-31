@@ -2,9 +2,9 @@
 
 # Codex Artifacts
 
-Codex Artifacts is a VS Code extension for reviewing Codex-generated Markdown as a first-class artifact. Read a rendered document, select text inside a Markdown block, add comments, and return an explicit decision to the Codex turn that created it.
+Codex Artifacts is a VS Code extension for reviewing Codex-generated Markdown as a first-class artifact. It renders the document, lets you comment on selected text, and returns **Review**, **Proceed**, or **Just save** to the exact Codex tool call that created it.
 
-One user request owns one artifact. Selecting **Review** updates the same `artifact.md` and starts a new review round; it does not create a revision directory or retain old content.
+One request owns one artifact. **Review** replaces the same `artifact.md` and starts another review round; old Markdown and revision directories are not retained.
 
 ## Getting started
 
@@ -12,133 +12,108 @@ One user request owns one artifact. Selecting **Review** updates the same `artif
 
 In VS Code, open **Extensions**, select `...`, choose **Install from VSIX...**, and select `codex-artifacts.vsix`.
 
-From a terminal:
+Or run:
 
 ```powershell
 code --install-extension releases/codex-artifacts.vsix
 ```
 
-The extension identifier is `agent-plus-local.codex-artifacts`.
-
-### 2. Install the global Codex integration
+### 2. Install the Codex integration
 
 Run **Codex Artifacts: Install Global Codex Integration** from the Command Palette. It installs:
 
 ```text
 ~/.agents/skills/create-review-artifact/
-~/.codex/codex-artifacts/codex-artifacts-stamp-origin.mjs
 ~/.codex/codex-artifacts/codex-artifacts-review-mcp.mjs
-~/.codex/hooks.json
 ~/.codex/config.toml
 ```
 
-If `CODEX_HOME` is configured, Codex files are installed there. Existing unrelated skills, hooks, and MCP configuration are preserved. The installer removes the extension-managed legacy `create-plan-artifact` skill.
+If `CODEX_HOME` is set, Codex-owned files use that directory. Existing unrelated MCP configuration, skills, and hooks are preserved. The installer removes only legacy Codex Artifacts hook entries/assets that it recognizes.
 
-### 3. Trust the hook once
+No `/hooks` trust step is required. Restart the Codex extension and start a new chat after installation or an upgrade because existing chats do not load newly installed MCP tools or skills.
 
-1. Open Codex in a terminal.
-2. Run `/hooks`.
-3. Trust the Codex Artifacts hook.
-4. In VS Code, run **Codex Artifacts: Verify Codex Integration**.
+Run **Codex Artifacts: Verify Codex Integration** to check the installed MCP, skill, and configuration.
 
-Restart Codex and start a new chat after installation or an integration upgrade. Existing chats do not load newly installed skills, hooks, or MCP tools.
+### 3. Create an artifact
 
-### 4. Create an artifact
-
-The bundled skill is allowed to trigger automatically when Codex prepares a substantive implementation plan that should be reviewed before implementation. You can also request an artifact explicitly:
+The bundled skill triggers only when you explicitly ask Codex to create or update an artifact. Asking for a plan alone does not activate the artifact lifecycle:
 
 ```text
 Create a review artifact for this API design.
+Use $create-review-artifact to draft a plan for this change.
 ```
 
-Or invoke the skill directly:
+The MCP server creates:
 
 ```text
-Use $create-review-artifact to create an implementation plan for this task.
-```
-
-Codex creates:
-
-```text
-.codex-artifacts/artifacts/<artifact-id>/
+.codex-artifacts/artifacts/<server-generated-id>/
   artifact.json
   artifact.md
   comments.json
 ```
 
-The extension opens `artifact.md` in **Artifact Review**.
+The extension automatically opens `artifact.md` in **Artifact Review**, while the originating MCP tool call remains waiting.
 
 #### Workspace resolution
 
-Before creating an artifact, Codex resolves its owning workspace in this order:
+Codex must establish exactly one owning workspace from an explicit user path, IDE-provided active file, an explicitly named workspace folder, or verified single-folder context. Cwd, `environment_context`, workspace ordering, project contents, and name similarity are hints only. Files such as `package.json` may verify a root already identified by user/IDE evidence; they cannot select a root.
 
-1. A path, file link, `@mention`, or attachment explicitly supplied in the conversation.
-2. An active/open file supplied by IDE context with a concrete path.
-3. A repository or folder explicitly named in the conversation, verified against a relevant project file.
-4. A direct question to the user when the preceding evidence does not identify exactly one root.
+The extension publishes focused-window and active-file signals with each registry heartbeat. The MCP requires typed `workspaceEvidence`, validates it against the focused window, and rejects ambiguous multi-root requests before creating storage. Unregistered, stale, nested, escaped, and unsafe linked paths are also rejected.
 
-Codex cwd, `environment_context`, workspace order, and the first visible repository are hints only. They never establish that a folder is active or selected. Explorer selection is usable only when an integration explicitly supplies it.
-
-### 5. Review the artifact
+### 4. Review the artifact
 
 1. Select text inside one paragraph, heading, list item, quote, code block, or table cell.
-2. Write and save feedback in the comment popover beside the selection.
-3. Open **Comments (N)** to review all saved comments or jump back to a highlighted passage.
-4. Choose an action:
-   - **Review** returns comments and asks Codex to update the same artifact.
-   - **Proceed** approves the artifact and lets Codex continue the original work.
-   - **Just save** asks for a workspace destination and saves Markdown without continuing the work.
-   - **Copy Markdown** copies content locally and does not change the review lifecycle.
+2. Save feedback in the nearby comment popover.
+3. Use **Comments (N)** to inspect comments or jump to a highlighted passage.
+4. Choose:
+   - **Review**: return comments and ask Codex to replace the current artifact content. **Review responses** contains answers for only the immediately preceding comment round and is replaced on the next revision.
+   - **Proceed**: approve the artifact. For an implementation plan, this explicitly tells Codex to implement the approved plan immediately in the same turn.
+   - **Just save**: ask Codex to save the Markdown without performing the proposed work.
+   - **Copy Markdown**: copy locally without changing the review lifecycle.
 
-An unsaved comment draft disables lifecycle actions until it is saved or cancelled.
+On **Review**, Codex receives a one-time update token and calls `update_and_wait_for_artifact`. The MCP transaction advances `reviewRound`, replaces the same `artifact.md`, clears the previous review state, and waits again. On **Proceed** or **Just save**, no update token is granted.
 
-**Proceed** remains primary throughout the review. **Review (N)** also becomes primary as soon as comments exist. The comments drawer is hidden by default so the document keeps the full editor width.
+## Behavior and security
 
-Artifact Review follows the active VS Code light, dark, or high-contrast theme. CommonMark/GFM features include nested lists, task lists, tables, links, quotes, inline formatting, and fenced code. Syntax highlighting and Mermaid diagrams are loaded only when a document needs them; Mermaid blocks can always switch back to reviewable source.
+- New artifacts use schema version 4 and an MCP-generated `reviewSessionId`; no chat thread ID or creation hook is needed.
+- Lifecycle files are owned by the MCP server and extension. The skill never creates or repairs them directly.
+- Comments and submissions bind the artifact ID, review session, round, and content hashes.
+- Update tokens are in-memory, one-time, round-bound, and expire after one hour.
+- Each artifact permits one live waiter. Concurrent or replayed lifecycle calls fail closed.
+- Updates are transactional and roll back if a round cannot commit, including Windows editor-lock fallback behavior.
+- Markdown uses CommonMark/GFM. Raw HTML, artifact scripts, remote images, and unsafe external protocols are disabled.
+- `.codex-artifacts/` is operational review state and normally should not be committed.
+- Artifact creation always requires an explicit request to create or update an artifact; document kind alone does not trigger it.
 
-The originating Codex turn stays open in `wait_for_artifact_review`. On Review, Codex uses a one-time token with `update_artifact`; the MCP server transactionally updates the same `artifact.md`, increments `reviewRound`, resets comments/submission, and returns the document to review.
+### Legacy artifacts
 
-## Behavior
-
-- Artifacts live at `.codex-artifacts/artifacts/<artifact-id>/` and use schema version 3.
-- One independent request keeps one directory and one artifact ID through all review rounds.
-- Review history and old Markdown are not retained.
-- Markdown is parsed as CommonMark/GFM; raw HTML and executable Markdown content are disabled.
-- External links are restricted to safe protocols and opened by the VS Code extension host. Remote images are not loaded.
-- The webview uses a nonce-based CSP. Shiki and Mermaid run as optional extension-owned bundles, never as artifact-provided scripts.
-- Comments and submissions are bound to artifact ID, review round, origin thread, and content hashes.
-- Review updates are staged and rolled back if the transaction cannot commit.
-- The extension never redirects feedback to another chat or starts a hidden Codex turn.
-- Generated `.codex-artifacts/` data is operational review state and normally should not be committed.
-- Automatic skill triggering is currently limited to implementation plans; other artifact kinds require an explicit user request.
-
-## Legacy schema v2
-
-Version 0.4.0 does not migrate active schema-v2 reviews from `.codex-artifacts/plans/`. Their replacement/thread semantics cannot be safely converted to live schema-v3 review rounds.
-
-Legacy `plans/` and `.trash/` data is left untouched. Archive or delete it manually after confirming it is no longer needed. The new runtime only creates data under `.codex-artifacts/artifacts/`.
+Schema-v3 artifacts from the former hook lifecycle remain readable in Artifact Review, but are read-only. Start a new MCP-owned artifact to continue reviewing. Older `.codex-artifacts/plans/` data is left untouched for manual archival or removal.
 
 ## Troubleshooting
 
-### Integration is untrusted or outdated
-
-Run the install command, use Codex `/hooks` to trust the exact current hook, then run **Verify Codex Integration**. A changed hook hash requires trust again.
-
-### `origin.threadId` or `comments.json` is missing
-
-The creation hook did not run. Verify the integration, restart Codex, start a new chat, and create the artifact again. Never backfill origin manually.
-
 ### MCP tools are unavailable
 
-The current chat did not load `wait_for_artifact_review` and `update_artifact`. Reinstall the global integration, restart Codex, and start a new chat.
+Run **Install Global Codex Integration**, restart the Codex extension, and start a new chat. The current chat cannot load tools installed after it began.
 
-### A review update token expired
+### `WORKSPACE_NOT_REGISTERED`
 
-The live review connection was lost or the MCP server restarted. Existing artifact content remains intact, but a fresh live artifact lifecycle is required.
+Open or add the exact target folder in the VS Code window running Codex Artifacts. Wait briefly for the registry heartbeat and retry. Do not substitute the first workspace folder or create the artifact directly.
+
+### `AMBIGUOUS_WORKSPACE` or `WORKSPACE_EVIDENCE_MISMATCH`
+
+Name the target workspace folder/path explicitly, or focus a concrete file inside it and retry. Project markers and search results do not count as selection evidence.
+
+### An update token expired or the MCP restarted
+
+The existing content remains intact, but the disconnected lifecycle cannot be resumed by guessing state. Create a fresh MCP-owned artifact.
+
+### A configuration conflict is reported
+
+Remove or rename the unmanaged `[mcp_servers.codex_artifacts]` entry in `config.toml`, then run the installer again. The extension does not overwrite MCP configuration it does not own.
 
 ## Development
 
-Requirements: Node.js 20+ and a working Codex CLI login.
+Requirements: Node.js 20+.
 
 ```powershell
 npm install
@@ -147,31 +122,11 @@ npm test
 npm run build
 ```
 
-Press `F5` to launch an Extension Development Host.
-
-Package and install:
+Press `F5` to launch an Extension Development Host. Package and install with:
 
 ```powershell
 npm run package
 code --install-extension releases/codex-artifacts.vsix
 ```
 
-## Schema-v3 manifest example
-
-```json
-{
-  "schemaVersion": 3,
-  "kind": "implementation-plan",
-  "artifactId": "auth-rollout-20260828-01",
-  "title": "Authentication rollout",
-  "createdAt": "2026-08-28T08:00:00.000Z",
-  "updatedAt": "2026-08-28T08:00:00.000Z",
-  "reviewRound": 1,
-  "location": {
-    "workspaceRoot": "D:/workspace/example"
-  },
-  "origin": {}
-}
-```
-
-Development references for system boundaries and product intent live in `docs/ARCHITECTURE.md` and `docs/PHILOSOPHY.md`.
+Development boundaries and product intent are documented in `docs/ARCHITECTURE.md` and `docs/PHILOSOPHY.md`.

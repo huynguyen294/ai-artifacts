@@ -55,4 +55,19 @@ describe("Codex Artifacts hook config", () => {
       hooks: [{ type: "command", command: "node /hooks/other.mjs" }],
     }]);
   });
+
+  it("does not mark an unrelated workspace hook configuration as managed", () => {
+    const config: HooksFile = {
+      hooks: {
+        PostToolUse: [{
+          matcher: "Bash",
+          hooks: [{ type: "command", command: "node /hooks/other.mjs" }],
+        }],
+      },
+    };
+
+    const removed = removeCodexArtifactsHooks(config);
+    expect(removed.changed).toBe(false);
+    expect(removed.config).toEqual(config);
+  });
 });

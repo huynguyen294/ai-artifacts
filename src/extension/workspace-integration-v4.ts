@@ -2,7 +2,6 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import * as vscode from "vscode";
-import type { CodexAppServerClient } from "./app-server-client";
 import {
   classifyGlobalIntegration,
   type IntegrationCheck,
@@ -11,51 +10,42 @@ import {
   CODEX_ARTIFACTS_HOOK_MARKER,
   LEGACY_AGENT_PLUS_HOOK_MARKER,
   removeCodexArtifactsHooks,
-  upsertCodexArtifactsHook,
   type HooksFile,
 } from "./hook-config";
-import { upsertCodexArtifactsMcp } from "./mcp-config";
+import {
+  hasManagedCodexArtifactsMcp,
+  upsertCodexArtifactsMcp,
+} from "./mcp-config";
 
 function codexHome(): string {
   const configured = process.env.CODEX_HOME?.trim();
   return configured ? path.resolve(configured) : path.join(os.homedir(), ".codex");
 }
 
-function commandFor(scriptPath: string): string {
-  return process.platform === "win32"
-    ? `node "${scriptPath.replaceAll('"', '\\"')}"`
-    : `node '${scriptPath.replaceAll("'", "'\\''")}'`;
-}
-
 type IntegrationPaths = {
   targetDirectory: string;
-  targetScript: string;
   targetMcpScript: string;
+  targetLegacyHookScript: string;
   targetSkill: string;
+  targetLegacySkill: string;
   hooksPath: string;
   configPath: string;
-  sourceScript: string;
   sourceMcpScript: string;
   sourceSkill: string;
 };
 
 function integrationPaths(context: vscode.ExtensionContext): IntegrationPaths {
-  const home = os.homedir();
   const globalCodexDirectory = codexHome();
   const targetDirectory = path.join(globalCodexDirectory, "codex-artifacts");
+  const agentSkillsDirectory = path.join(os.homedir(), ".agents", "skills");
   return {
     targetDirectory,
-    targetScript: path.join(targetDirectory, CODEX_ARTIFACTS_HOOK_MARKER),
     targetMcpScript: path.join(targetDirectory, "codex-artifacts-review-mcp.mjs"),
-    targetSkill: path.join(home, ".agents", "skills", "create-review-artifact"),
+    targetLegacyHookScript: path.join(targetDirectory, CODEX_ARTIFACTS_HOOK_MARKER),
+    targetSkill: path.join(agentSkillsDirectory, "create-review-artifact"),
+    targetLegacySkill: path.join(agentSkillsDirectory, "create-plan-artifact"),
     hooksPath: path.join(globalCodexDirectory, "hooks.json"),
     configPath: path.join(globalCodexDirectory, "config.toml"),
-    sourceScript: vscode.Uri.joinPath(
-      context.extensionUri,
-      "dist",
-      "integration",
-      CODEX_ARTIFACTS_HOOK_MARKER,
-    ).fsPath,
     sourceMcpScript: vscode.Uri.joinPath(
       context.extensionUri,
       "dist",
@@ -83,7 +73,6 @@ async function installedAssetsAreCurrent(paths: IntegrationPaths): Promise<boole
     path.join("agents", "openai.yaml"),
   ];
   const checks = [
-    sameFile(paths.sourceScript, paths.targetScript),
     sameFile(paths.sourceMcpScript, paths.targetMcpScript),
     ...skillFiles.map((relativePath) => sameFile(
       path.join(paths.sourceSkill, relativePath),
@@ -93,17 +82,18 @@ async function installedAssetsAreCurrent(paths: IntegrationPaths): Promise<boole
   return (await Promise.all(checks)).every(Boolean);
 }
 
-async function readHooksFile(hooksPath: string): Promise<HooksFile> {
+async function readTextFile(filePath: string): Promise<string> {
   try {
-    return JSON.parse(await fs.readFile(hooksPath, "utf8")) as HooksFile;
+    return await fs.readFile(filePath, "utf8");
   } catch (error) {
-    if (error instanceof Error && "code" in error && error.code === "ENOENT") return {};
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") return "";
     throw error;
   }
 }
 
-async function writeHooksFile(hooksPath: string, config: HooksFile): Promise<void> {
-  await writeTextFile(hooksPath, `${JSON.stringify(config, null, 2)}\n`);
+async function readHooksFile(hooksPath: string): Promise<HooksFile> {
+  const contents = await readTextFile(hooksPath);
+  return contents ? JSON.parse(contents) as HooksFile : {};
 }
 
 async function writeTextFile(filePath: string, contents: string): Promise<void> {
@@ -111,7 +101,7 @@ async function writeTextFile(filePath: string, contents: string): Promise<void> 
   const temporaryPath = `${filePath}.codex-artifacts-${process.pid}-${Date.now()}.tmp`;
   await fs.writeFile(temporaryPath, contents, "utf8");
   try {
-    for (let attempt = 0; attempt < 3; attempt++) {
+    for (let attempt = 0; attempt < 3; attempt += 1) {
       try {
         await fs.rename(temporaryPath, filePath);
         return;
@@ -132,84 +122,87 @@ async function writeTextFile(filePath: string, contents: string): Promise<void> 
   }
 }
 
-async function migrateCurrentWorkspace(
+async function removeManagedHooks(hooksPath: string): Promise<boolean> {
+  const existing = await readHooksFile(hooksPath);
+  const migration = removeCodexArtifactsHooks(existing);
+  if (migration.changed) {
+    await writeTextFile(hooksPath, `${JSON.stringify(migration.config, null, 2)}\n`);
+  }
+  return migration.changed;
+}
+
+async function removeWorkspaceLegacyIntegration(
   workspaceRoot: string,
   globalHooksPath: string,
   globalSkillPath: string,
 ): Promise<void> {
-  const legacyHooksPath = path.join(workspaceRoot, ".codex", "hooks.json");
-  if (path.resolve(legacyHooksPath) === path.resolve(globalHooksPath)) return;
-  const config = await readHooksFile(legacyHooksPath);
-  const migration = removeCodexArtifactsHooks(config);
-  if (!migration.changed) return;
-  await writeHooksFile(legacyHooksPath, migration.config);
+  const workspaceHooksPath = path.join(workspaceRoot, ".codex", "hooks.json");
+  if (path.resolve(workspaceHooksPath) === path.resolve(globalHooksPath)) return;
+  const hadManagedWorkspaceHook = await removeManagedHooks(workspaceHooksPath);
+  if (!hadManagedWorkspaceHook) return;
 
-  const legacySkillPath = path.join(workspaceRoot, ".agents", "skills", "create-plan-artifact");
-  const currentSkillPath = path.join(workspaceRoot, ".agents", "skills", "create-review-artifact");
+  const workspaceCurrentSkill = path.join(workspaceRoot, ".agents", "skills", "create-review-artifact");
   const removals: Promise<void>[] = [
     fs.rm(path.join(workspaceRoot, ".codex", "hooks", LEGACY_AGENT_PLUS_HOOK_MARKER), { force: true }),
     fs.rm(path.join(workspaceRoot, ".codex", "hooks", CODEX_ARTIFACTS_HOOK_MARKER), { force: true }),
+    fs.rm(path.join(workspaceRoot, ".agents", "skills", "create-plan-artifact"), { recursive: true, force: true }),
   ];
-  if (path.resolve(legacySkillPath) !== path.resolve(globalSkillPath)) {
-    removals.push(fs.rm(legacySkillPath, { recursive: true, force: true }));
-  }
-  if (path.resolve(currentSkillPath) !== path.resolve(globalSkillPath)) {
-    removals.push(fs.rm(currentSkillPath, { recursive: true, force: true }));
+  if (path.resolve(workspaceCurrentSkill) !== path.resolve(globalSkillPath)) {
+    removals.push(fs.rm(workspaceCurrentSkill, { recursive: true, force: true }));
   }
   await Promise.all(removals);
 }
 
+function configurationConflict(config: string): string | undefined {
+  const withoutManaged = config.replace(
+    /# >>> Codex Artifacts review MCP >>>[\s\S]*?# <<< Codex Artifacts review MCP <<</g,
+    "",
+  );
+  return /^\s*\[mcp_servers\.codex_artifacts\]\s*$/m.test(withoutManaged)
+    ? "config.toml defines mcp_servers.codex_artifacts outside the extension-managed block."
+    : undefined;
+}
+
 export async function checkGlobalIntegration(
   context: vscode.ExtensionContext,
-  appServer: CodexAppServerClient,
-  cwds: readonly string[],
 ): Promise<IntegrationCheck> {
-  const status = classifyGlobalIntegration(await appServer.listHooks(cwds));
-  if (status.status === "trusted" && !await installedAssetsAreCurrent(integrationPaths(context))) {
-    return { status: "outdated", ...(status.hook ? { hook: status.hook } : {}) };
-  }
-  return status;
+  const paths = integrationPaths(context);
+  const config = await readTextFile(paths.configPath);
+  const conflict = configurationConflict(config);
+  return classifyGlobalIntegration({
+    configured: hasManagedCodexArtifactsMcp(config, paths.targetMcpScript),
+    assetsCurrent: await installedAssetsAreCurrent(paths),
+    ...(conflict ? { configurationConflict: conflict } : {}),
+  });
 }
 
 export async function installGlobalIntegration(
   context: vscode.ExtensionContext,
-  appServer: CodexAppServerClient,
 ): Promise<IntegrationCheck> {
-  const home = os.homedir();
-  const {
-    targetDirectory,
-    targetScript,
-    targetMcpScript,
-    targetSkill,
-    hooksPath,
-    configPath,
-    sourceScript,
-    sourceMcpScript,
-    sourceSkill,
-  } = integrationPaths(context);
+  const paths = integrationPaths(context);
+  const existingConfig = await readTextFile(paths.configPath);
+  const conflict = configurationConflict(existingConfig);
+  if (conflict) return classifyGlobalIntegration({ configured: false, assetsCurrent: false, configurationConflict: conflict });
 
-  await fs.mkdir(targetDirectory, { recursive: true });
-  await fs.copyFile(sourceScript, targetScript);
-  await fs.copyFile(sourceMcpScript, targetMcpScript);
-  await fs.mkdir(path.dirname(targetSkill), { recursive: true });
-  await fs.cp(sourceSkill, targetSkill, { recursive: true, force: true });
-  await fs.rm(path.join(home, ".agents", "skills", "create-plan-artifact"), { recursive: true, force: true });
+  await fs.mkdir(paths.targetDirectory, { recursive: true });
+  await fs.copyFile(paths.sourceMcpScript, paths.targetMcpScript);
+  await fs.mkdir(path.dirname(paths.targetSkill), { recursive: true });
+  await fs.cp(paths.sourceSkill, paths.targetSkill, { recursive: true, force: true });
+  await writeTextFile(paths.configPath, upsertCodexArtifactsMcp(existingConfig, paths.targetMcpScript));
 
-  const existingConfig = await readHooksFile(hooksPath);
-  existingConfig.description ??= "User lifecycle hooks, including Codex Artifacts.";
-  const config = upsertCodexArtifactsHook(existingConfig, commandFor(targetScript));
-  await writeHooksFile(hooksPath, config);
-  let codexConfig = "";
-  try {
-    codexConfig = await fs.readFile(configPath, "utf8");
-  } catch (error) {
-    if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
-  }
-  await writeTextFile(configPath, upsertCodexArtifactsMcp(codexConfig, targetMcpScript));
+  await removeManagedHooks(paths.hooksPath);
+  await Promise.all([
+    fs.rm(paths.targetLegacyHookScript, { force: true }),
+    fs.rm(paths.targetLegacySkill, { recursive: true, force: true }),
+  ]);
 
   const workspaceRoots = vscode.workspace.workspaceFolders?.map((folder) => folder.uri.fsPath) ?? [];
-  await Promise.all(
-    workspaceRoots.map((workspaceRoot) => migrateCurrentWorkspace(workspaceRoot, hooksPath, targetSkill)),
-  );
-  return checkGlobalIntegration(context, appServer, workspaceRoots.length > 0 ? workspaceRoots : [home]);
+  await Promise.all(workspaceRoots.map((workspaceRoot) => removeWorkspaceLegacyIntegration(
+    workspaceRoot,
+    paths.hooksPath,
+    paths.targetSkill,
+  )));
+
+  const installed = await checkGlobalIntegration(context);
+  return installed.status === "ready" ? { status: "restart-required" } : installed;
 }
