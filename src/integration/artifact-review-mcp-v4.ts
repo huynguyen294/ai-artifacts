@@ -32,7 +32,7 @@ import {
 } from "../shared/workspace-registry";
 
 const SERVER_NAME = "codex-artifacts";
-const SERVER_VERSION = "5.0.0";
+const SERVER_VERSION = "5.1.0";
 const CREATE_TOOL_NAME = "create_artifact";
 const WAIT_TOOL_NAME = "wait_for_artifact_review";
 const INSPECT_TOOL_NAME = "inspect_artifact_review";
@@ -77,7 +77,7 @@ type ReviewWaitResult = {
 };
 
 type RoundGrant = {
-  source: "submitted-review" | "chat-inspection";
+  source: "submitted-review" | "chat-inspection" | "chat-update";
   artifactDirectory: string;
   artifactId: string;
   reviewSessionId: string;
@@ -654,7 +654,7 @@ function pruneRoundGrants(): void {
   for (const [token, grant] of roundGrants) if (grant.expiresAt <= now) roundGrants.delete(token);
 }
 
-function grantSubmittedRound(context: ArtifactContext, result: ReviewWaitResult): ReviewWaitResult & { roundToken?: string } {
+function grantSubmittedRound(context: ArtifactContext, result: ReviewWaitResult): ReviewWaitResult & { roundToken?: string; roundTokenSource?: "submitted-review" } {
   if (result.decision !== "revise") return result;
   pruneRoundGrants();
   const roundToken = randomUUID();
@@ -670,14 +670,35 @@ function grantSubmittedRound(context: ArtifactContext, result: ReviewWaitResult)
     submissionSha256: result.submissionSha256,
     expiresAt: Date.now() + ROUND_TOKEN_TTL_MS,
   });
-  return { ...result, roundToken };
+  return { ...result, roundToken, roundTokenSource: "submitted-review" };
 }
 
 function grantInspectedRound(
   context: ArtifactContext,
   inspection: Awaited<ReturnType<typeof readArtifactInspection>>,
-): string | undefined {
-  if (inspection.comments.comments.length === 0 && !inspection.submission) return undefined;
+  intent?: string,
+): { roundToken?: string; roundTokenSource?: "chat-inspection" | "chat-update" } {
+  if (intent === "explicit-chat-update") {
+    if (inspection.comments.comments.length > 0 || inspection.submission) {
+      throw new Error("explicit-chat-update requires an empty review round without saved comments or a submission.");
+    }
+    pruneRoundGrants();
+    const roundToken = randomUUID();
+    roundGrants.set(roundToken, {
+      source: "chat-update",
+      artifactDirectory: context.artifactDirectory,
+      artifactId: context.artifactId,
+      reviewSessionId: context.reviewSessionId,
+      reviewRound: context.reviewRound,
+      artifactSha256: inspection.artifactSha256,
+      commentsSha256: inspection.commentsSha256,
+      submissionExpected: inspection.submission !== undefined,
+      ...(inspection.submissionSha256 === undefined ? {} : { submissionSha256: inspection.submissionSha256 }),
+      expiresAt: Date.now() + ROUND_TOKEN_TTL_MS,
+    });
+    return { roundToken, roundTokenSource: "chat-update" };
+  }
+  if (inspection.comments.comments.length === 0 && !inspection.submission) return {};
   pruneRoundGrants();
   const roundToken = randomUUID();
   roundGrants.set(roundToken, {
@@ -692,7 +713,7 @@ function grantInspectedRound(
     ...(inspection.submissionSha256 === undefined ? {} : { submissionSha256: inspection.submissionSha256 }),
     expiresAt: Date.now() + ROUND_TOKEN_TTL_MS,
   });
-  return roundToken;
+  return { roundToken, roundTokenSource: "chat-inspection" };
 }
 
 function write(message: JsonObject): void {
@@ -797,10 +818,36 @@ async function handleInspectTool(id: unknown, args: JsonObject | undefined): Pro
     if (typeof artifactDirectory !== "string" || !path.isAbsolute(artifactDirectory)) {
       throw new Error("artifactDirectory must be an absolute path.");
     }
-    if (args?.takeover === true) await detachActiveArtifactWaiter(artifactDirectory);
-    const context = await loadArtifactContext(artifactDirectory);
+    const intent = args?.intent;
+    if (intent !== undefined && intent !== "explicit-chat-update") {
+      throw new Error(`Invalid intent: ${String(intent)}.`);
+    }
+    if (intent === "explicit-chat-update" && args?.expectedReviewRound === undefined) {
+      throw new Error("expectedReviewRound is required when intent is explicit-chat-update.");
+    }
+    const expectedReviewRound = args?.expectedReviewRound !== undefined
+      ? parseExpectedReviewRound(args)
+      : undefined;
+
+    let context = await loadArtifactContext(artifactDirectory);
+    if (expectedReviewRound !== undefined && context.reviewRound !== expectedReviewRound) {
+      throw new Error(`The artifact is at review round ${context.reviewRound}, not ${expectedReviewRound}.`);
+    }
+    if (intent === "explicit-chat-update" && args?.takeover === true) {
+      const preTakeoverInspection = await readArtifactInspection(context);
+      if (preTakeoverInspection.comments.comments.length > 0 || preTakeoverInspection.submission) {
+        throw new Error("explicit-chat-update requires an empty review round without saved comments or a submission.");
+      }
+    }
+    if (args?.takeover === true) {
+      await detachActiveArtifactWaiter(artifactDirectory);
+      context = await loadArtifactContext(artifactDirectory);
+      if (expectedReviewRound !== undefined && context.reviewRound !== expectedReviewRound) {
+        throw new Error(`The artifact is at review round ${context.reviewRound}, not ${expectedReviewRound}.`);
+      }
+    }
     const inspection = await readArtifactInspection(context);
-    const roundToken = grantInspectedRound(context, inspection);
+    const { roundToken, roundTokenSource } = grantInspectedRound(context, inspection, intent);
     respond(id, toolResult({
       ...artifactHandle(context),
       manifest: context.manifest,
@@ -810,6 +857,7 @@ async function handleInspectTool(id: unknown, args: JsonObject | undefined): Pro
       submission: inspection.submission,
       submissionSha256: inspection.submissionSha256,
       roundToken,
+      ...(roundTokenSource ? { roundTokenSource } : {}),
     }));
   } catch (error) {
     respond(id, toolError(error));
@@ -854,6 +902,14 @@ async function handleAdvanceAndWaitTool(id: unknown, args: JsonObject | undefine
     ) {
       throw new Error("The artifact round token no longer matches the inspected content.");
     }
+    if (grant.source === "chat-update") {
+      if (markdown === undefined) {
+        throw new Error("markdown is required when advancing with a chat-update token.");
+      }
+      if (sha256(markdown) === grant.artifactSha256) {
+        throw new Error("The updated markdown must differ from the current artifact content.");
+      }
+    }
     if (grant.source === "submitted-review" && inspection.submission?.decision !== "revise") {
       throw new Error("The current artifact round was not submitted for Review.");
     }
@@ -888,7 +944,7 @@ async function handleRequest(message: JsonObject): Promise<void> {
       protocolVersion,
       capabilities: { tools: { listChanged: false } },
       serverInfo: { name: SERVER_NAME, version: SERVER_VERSION },
-      instructions: "Create reviewable Markdown with create_artifact after supplying typed workspace evidence, retain its exact artifactDirectory handle, then call wait_for_artifact_review. A cancelled waiter never ends or deletes the artifact. Treat comments returned by a Review submission and comments read through inspect_artifact_review with the same policy: answer questions visibly in chat before calling advance_and_wait_for_artifact, update Markdown only for requested changes, and omit markdown for question-only feedback. Do not add Review responses to the artifact. For chat escape, inspect the exact handle with takeover=true. If inspection has no comments or submission, reattach with wait_for_artifact_review without advancing. When Proceed returns approve for kind plan or implementation-plan, obey nextAction and execute the complete approved plan immediately in the same turn; do not stop at acknowledgement or ask for another confirmation. Proceed ends only the review round, not the authorized execution. Just save ends the round without execution. Reconnect later by explicitly inspecting, advancing without markdown, and waiting again; reconnect must not repeat an already executed action. Never select the latest artifact from a workspace or infer an artifact handle from cwd.",
+      instructions: "Create reviewable Markdown with create_artifact after supplying typed workspace evidence, retain its exact artifactDirectory handle, then call wait_for_artifact_review. A cancelled waiter never ends or deletes the artifact. Treat comments returned by a Review submission and comments read through inspect_artifact_review with the same policy: answer questions visibly in chat before calling advance_and_wait_for_artifact, update Markdown only for requested changes, and omit markdown for question-only feedback. Do not add Review responses to the artifact. For chat escape, inspect the exact handle with takeover=true. If inspection has no comments or submission, reattach with wait_for_artifact_review without advancing. When updating an artifact directly from chat on an empty round, inspect with takeover=true, expectedReviewRound, and intent=explicit-chat-update, then advance with replacement markdown. When Proceed returns approve for kind plan or implementation-plan, obey nextAction and execute the complete approved plan immediately in the same turn; do not stop at acknowledgement or ask for another confirmation. Proceed ends only the review round, not the authorized execution. Just save ends the round without execution. Reconnect later by explicitly inspecting, advancing without markdown, and waiting again; reconnect must not repeat an already executed action. Never select the latest artifact from a workspace or infer an artifact handle from cwd.",
     });
     return;
   }
@@ -973,12 +1029,18 @@ async function handleRequest(message: JsonObject): Promise<void> {
       {
         name: INSPECT_TOOL_NAME,
         title: "Inspect artifact review",
-        description: "Read the current manifest, Markdown, comments, optional submission, and validated hashes for an exact artifact. Takeover first cancels and drains its current waiter. Returns a one-time round token when the round can be consumed.",
+        description: "Read the current manifest, Markdown, comments, optional submission, and validated hashes for an exact artifact. Takeover first cancels and drains its current waiter. Returns a one-time round token when saved feedback is present or when intent is explicit-chat-update.",
         inputSchema: {
           type: "object",
           properties: {
             artifactDirectory: { type: "string" },
+            expectedReviewRound: { type: "integer", minimum: 1, description: "Expected current review round. Required when intent is explicit-chat-update." },
             takeover: { type: "boolean", default: false },
+            intent: {
+              type: "string",
+              enum: ["explicit-chat-update"],
+              description: "Specify explicit-chat-update when the user explicitly requests changes in chat on a round without saved comments.",
+            },
           },
           required: ["artifactDirectory"],
           additionalProperties: false,

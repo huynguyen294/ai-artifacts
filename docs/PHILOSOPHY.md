@@ -34,7 +34,7 @@ Luồng chat escape cho phép người dùng lưu comment rồi nhắn “hãy x
 - Vừa trả lời vừa sửa nếu feedback là hỗn hợp.
 - Hỏi lại và chưa consume round nếu feedback chưa rõ.
 
-Sau khi xử lý xong, AI mở round mới và tự chờ lại. Nếu chỉ có câu hỏi, round vẫn tăng nhưng bytes và SHA của `artifact.md` được giữ nguyên. Nếu không có comment hoặc submission đã lưu, AI attach lại waiter cho cùng round và không tăng round.
+Sau khi xử lý xong, AI mở round mới và tự chờ lại. Nếu chỉ có câu hỏi, round vẫn tăng nhưng bytes và SHA của `artifact.md` được giữ nguyên. Nếu không có comment hoặc submission đã lưu, AI attach lại waiter cho cùng round và không tăng round, trừ khi người dùng yêu cầu sửa trực tiếp qua chat (explicit chat update với `intent: "explicit-chat-update"`), khi đó AI cập nhật Markdown mới và mở round tiếp theo.
 
 ## Ý nghĩa của các quyết định
 
@@ -57,8 +57,8 @@ Codex Artifacts là lớp review cho Markdown do AI tạo ra. Nó giúp người
 
 Skill chỉ kích hoạt khi người dùng yêu cầu rõ ràng việc tạo/cập nhật artifact, đọc feedback đã lưu, hoặc reconnect lifecycle đã biết. Loại tài liệu tự nó không phải điều kiện auto-trigger.
 
-## Trạng thái triển khai 0.7.0
+## Trạng thái triển khai 0.8.0
 
-Phiên bản 0.7.0 dùng MCP server 5.0.0 với bốn thao tác tách biệt: create, wait, inspect và advance-and-wait. Việc tách artifact persistence khỏi waiter ownership cho phép chat escape và reconnect mà không thay schema-v4, webview, provider, Artifact Store, renderer hoặc workspace registry.
+Phiên bản 0.8.0 dùng MCP server 5.1.0, bổ sung hỗ trợ explicit chat update qua `inspect_artifact_review` với `intent: "explicit-chat-update"` để cập nhật và advance một round trống trực tiếp từ chat mà không cần tạo comment hoặc bấm nút Review. Việc tách artifact persistence khỏi waiter ownership cho phép chat escape và reconnect mà không thay schema-v4, webview, provider, Artifact Store, renderer hoặc workspace registry.
 
 Round token vẫn là capability in-memory, single-use và hết hạn sau một giờ, nhưng được bind vào toàn bộ trạng thái đã inspect: artifact, session, round, artifact hash, comments hash và submission presence/hash. Token chỉ bị consume sau commit thành công. Schema-v3 tiếp tục chỉ đọc.

@@ -87,6 +87,8 @@ The extension publishes focused-window and active-file signals with each registr
 
 You may also save comments without pressing **Review** and tell Codex “read the review” or “hãy xem review”. Codex inspects the exact artifact attached to the conversation, answers questions in chat, applies requested changes when needed, and opens the next round. It never guesses the newest artifact in a workspace.
 
+When the current round has no saved comments or submission, you may request a concrete artifact edit directly in chat, such as “add a rollout phase to this artifact”. Codex inspects the exact artifact with the explicit chat-update intent, replaces the Markdown, opens the next round, and waits again without requiring a dummy comment or an empty Review submission. A request to reconnect or keep waiting does not use this intent: it reattaches to the same round without changing Markdown or advancing the lifecycle.
+
 ## Behavior and security
 
 - New artifacts use schema version 4 and an MCP-generated `reviewSessionId`; no chat thread ID or creation hook is needed.
@@ -95,6 +97,7 @@ You may also save comments without pressing **Review** and tell Codex “read th
 - The lifecycle API consists of `create_artifact`, `wait_for_artifact_review`, `inspect_artifact_review`, and `advance_and_wait_for_artifact`.
 - Comments and submissions bind the artifact ID, review session, round, and content hashes.
 - Round tokens are in-memory, one-time, exact-state-bound, and expire after one hour. A validated inspection can issue a fresh token after an MCP restart.
+- A chat-update token is issued only for an explicitly requested edit on an empty round. It requires replacement Markdown with a different SHA and cannot consume saved comments or a submitted decision.
 - Each artifact permits one live waiter. Cancellation and takeover release only that waiter; they do not modify persistent lifecycle files.
 - Round updates are transactional and roll back if a commit fails, including the narrow Windows editor-lock fallback.
 - Markdown uses CommonMark/GFM. Raw HTML, artifact scripts, remote images, and unsafe external protocols are disabled.
@@ -105,7 +108,8 @@ You may also save comments without pressing **Review** and tell Codex “read th
 - Schema v4 is the only writable artifact lifecycle. Existing schema-v4 artifacts do not need migration.
 - Schema-v3 artifacts remain readable in Artifact Review but are read-only. Create a new schema-v4 artifact to continue reviewing their content.
 - Older `.codex-artifacts/plans/` data is left untouched for manual archival or removal; the installer does not delete user artifact data.
-- Version 0.7.0 replaces the former two-tool MCP API with the four lifecycle tools listed above. After upgrading, run **Codex Artifacts: Install Global Codex Integration** again, restart Codex, and begin a new chat.
+- Version 0.8.0 adds explicit chat updates on empty rounds without changing artifact schema v4. After upgrading, run **Codex Artifacts: Install Global Codex Integration** again, restart Codex, and begin a new chat so the updated MCP tool schema and skill are loaded.
+- Version 0.7.0 replaced the former two-tool MCP API with the four lifecycle tools listed above.
 
 ## Troubleshooting
 

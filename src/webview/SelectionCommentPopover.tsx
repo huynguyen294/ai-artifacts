@@ -31,6 +31,15 @@ type Props = {
   onSubmit: () => void;
 };
 
+export function shouldSubmitCommentOnKeyDown(input: {
+  key: string;
+  shiftKey: boolean;
+  isComposing: boolean;
+  body: string;
+}): boolean {
+  return input.key === "Enter" && !input.shiftKey && !input.isComposing && Boolean(input.body.trim());
+}
+
 export function SelectionCommentPopover({ draft, body, onBodyChange, onCancel, onSubmit }: Props): ReactNode {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const { refs, floatingStyles, context } = useFloating({
@@ -58,6 +67,20 @@ export function SelectionCommentPopover({ draft, body, onBodyChange, onCancel, o
   const role = useRole(context, { role: "dialog" });
   const { getFloatingProps } = useInteractions([dismiss, role]);
 
+  const handleKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>): void => {
+    if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
+      event.preventDefault();
+      if (shouldSubmitCommentOnKeyDown({
+        key: event.key,
+        shiftKey: event.shiftKey,
+        isComposing: event.nativeEvent.isComposing,
+        body,
+      })) {
+        onSubmit();
+      }
+    }
+  };
+
   return (
     <FloatingPortal>
       <FloatingFocusManager context={context} modal={false} initialFocus={textareaRef} returnFocus={false}>
@@ -73,8 +96,10 @@ export function SelectionCommentPopover({ draft, body, onBodyChange, onCancel, o
             ref={textareaRef}
             value={body}
             onChange={(event) => onBodyChange(event.target.value)}
+            onKeyDown={handleKeyDown}
             placeholder="What should change?"
             rows={4}
+            wrap="soft"
           />
           <div className="editor-actions">
             <button className="ghost" onClick={onCancel}>Cancel</button>

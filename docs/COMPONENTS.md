@@ -80,6 +80,7 @@ The governing lifetime relationship is `artifact lifetime > waiter lifetime > ch
 - Interpret the returned decision.
 - Apply one feedback policy to submitted `revise` and chat-inspected comments: answer questions visibly, update Markdown only for requested changes, and advance unchanged Markdown for question-only rounds.
 - For chat escape, inspect the exact interrupted handle with takeover before applying that shared policy.
+- For an explicit chat update on an empty round, inspect the exact handle with `intent: "explicit-chat-update"`, replace the Markdown, and advance without requiring a UI comment or Review submission.
 - Reattach the same round when inspection has no feedback; ask for a path instead of guessing when the exact handle is ambiguous.
 - For `approve` on `plan` or `implementation-plan`, obey the MCP `execute-approved-plan` directive and execute the complete approved plan immediately; for other kinds, continue only with the action implied by the original request.
 - For `save`, ask for a destination and copy the Markdown without performing the proposed work.
@@ -448,6 +449,15 @@ This layer is the protocol source of truth. A contract change must be propagated
 5. The skill calls `advance_and_wait_for_artifact`; omitting Markdown preserves its bytes/SHA for a question-only round.
 6. The MCP advances, resets handled comments/submission, and waits on the new round. If the new wait is cancelled, the committed round remains valid but detached.
 7. If inspection finds no feedback, the skill reattaches `wait_for_artifact_review` to the same round instead of advancing.
+
+### Explicit chat update flow
+
+1. The user explicitly requests a concrete edit to an exact artifact in chat while its current round has no saved comments or submission.
+2. The skill calls `inspect_artifact_review` with the exact handle, `takeover: true`, the current `expectedReviewRound`, and `intent: "explicit-chat-update"`.
+3. The MCP validates the expected round before detaching a waiter, revalidates after takeover, confirms the round is still empty, and returns a state-bound `chat-update` token.
+4. The skill supplies complete replacement Markdown to `advance_and_wait_for_artifact`.
+5. The MCP rejects missing or unchanged Markdown, otherwise commits the next round transactionally and attaches a new waiter.
+6. A pure reconnect never uses this intent and remains on the same round.
 
 ### Reconnect rules
 

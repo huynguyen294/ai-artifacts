@@ -16,6 +16,66 @@ Mỗi mục mới nên nêu ngày thay đổi, loại thay đổi, nội dung đ
 
 ---
 
+## 2026-09-06 — Lifecycle and MCP API — Explicit chat update on empty review rounds
+
+### Nội dung thay đổi
+
+- Mở rộng MCP tool `inspect_artifact_review` với tham số `intent: "explicit-chat-update"` và `expectedReviewRound`.
+- Bổ sung `source: "chat-update"` cho `RoundGrant`. Cấp token `chat-update` khi người dùng yêu cầu sửa artifact từ chat trên round trống (chưa có comment hay submission lưu trên đĩa).
+- MCP từ chối intent chat-update khi đã có saved feedback/submission; validate round trước takeover và revalidate sau takeover để request stale không làm mất waiter hợp lệ.
+- Trong `advance_and_wait_for_artifact`, bắt buộc token `chat-update` phải truyền `markdown` mới và SHA phải khác SHA của tài liệu hiện tại, ngăn chặn advance rỗng.
+- Giữ nguyên hành vi fail-closed: gọi `inspect_artifact_review` thông thường trên round trống vẫn không cấp token, đảm bảo thao tác reconnect thuần túy chỉ gắn lại waiter vào cùng round mà không làm đổi dữ liệu hay tăng round.
+- Cập nhật skill `create-review-artifact` và contract phân định rõ 3 luồng: Pure reconnect, Saved comment inspection, và Explicit chat update.
+- Nâng extension lên `0.8.0` và MCP server lên `5.1.0`. Cập nhật `docs/ARCHITECTURE.md` và `docs/PHILOSOPHY.md`.
+- Đồng bộ `package-lock.json`, `README.md`, `docs/COMPONENTS.md` và regression tests cho empty-round eligibility, stale-round waiter safety, token state binding cùng Enter/Shift+Enter/IME.
+- Xác thực cuối bằng typecheck, 67/67 tests trên 12 test files và full production build.
+
+### Lý do
+
+- Khắc phục tình trạng bế tắc khi người dùng yêu cầu sửa artifact trực tiếp qua chat (không tạo comment trên UI): inspection trước đây không cấp token cho round trống, khiến agent không thể advance; đồng thời agent cũng không thể yêu cầu người dùng bấm Review vì UI và backend đều disable nút Review khi comment count = 0.
+
+### Thành phần và tài liệu bị ảnh hưởng
+
+- `src/integration/artifact-review-mcp-v4.ts`
+- `package.json`
+- `package-lock.json`
+- `skills/create-review-artifact/SKILL.md`
+- `skills/create-review-artifact/references/artifact-contract.md`
+- `test/review-wait-mcp.test.ts`
+- `test/skill-contract.test.ts`
+- `test/selection-comment-popover.test.ts`
+- `README.md`
+- `docs/COMPONENTS.md`
+- `docs/ARCHITECTURE.md`
+- `docs/PHILOSOPHY.md`
+- `CHANGE_LOGS.md`
+- `docs/CHANGE_LOGS.md`
+
+---
+
+## 2026-09-06 — Webview UX — Enter to submit comment & Text auto-wrap
+
+### Nội dung thay đổi
+
+- Cập nhật textarea trong `SelectionCommentPopover` hỗ trợ nhấn phím `Enter` để gửi comment nhanh khi đã có nội dung (`body.trim()`).
+- Hỗ trợ `Shift + Enter` để xuống dòng trong textarea bình thường.
+- Bổ sung kiểm tra `!event.nativeEvent.isComposing` để tránh kích hoạt submit ngoài ý muốn khi gõ tiếng Việt bằng bộ gõ IME (Telex/VNI).
+- Thêm thuộc tính `wrap="soft"` cho `<textarea>`.
+- Cập nhật CSS trong `styles.css` (`overflow-wrap: anywhere; word-break: break-word; white-space: pre-wrap;`) cho `.comment-popover textarea`, `.comment-detail-popover p` và `.comment-body` trong sidebar drawer để text tự động ngắt dòng xuống hàng khi vượt quá chiều rộng, tránh tràn layout kể cả với liên kết URL hoặc chuỗi ký tự dài.
+
+### Lý do
+
+- Tối ưu trải nghiệm tương tác khi review: cho phép gửi nhanh comment bằng bàn phím (Enter) thay vì phải dùng chuột bấm nút "Comment".
+- Ngăn ngừa lỗi hiển thị tràn chiều rộng (horizontal overflow) khi người dùng nhập hoặc xem lại comment có chứa URL hoặc từ dài liên tục.
+
+### Thành phần và tài liệu bị ảnh hưởng
+
+- `src/webview/SelectionCommentPopover.tsx`
+- `src/webview/styles.css`
+- Webview bundle (`dist/webview/review.js`, `dist/webview/review.css`)
+
+---
+
 ## 2026-08-31 — Documentation and distribution — README onboarding
 
 ### Nội dung thay đổi

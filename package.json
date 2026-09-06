@@ -3,7 +3,7 @@
   "displayName": "Codex Artifacts",
   "publisher": "agent-plus-local",
   "description": "Review Codex Markdown artifacts and send annotated feedback to the originating Codex conversation.",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "private": true,
   "type": "module",
   "license": "MIT",

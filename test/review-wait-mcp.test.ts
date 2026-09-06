@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { access, mkdtemp, mkdir, readFile, readdir, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
+import { access, copyFile, mkdtemp, mkdir, readFile, readdir, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { createInterface } from "node:readline";
@@ -26,7 +26,16 @@ function sha256(value: string): string {
 async function atomicWrite(filePath: string, value: string): Promise<void> {
   const temporaryPath = `${filePath}.test-${randomUUID()}`;
   await writeFile(temporaryPath, value, "utf8");
-  await rename(temporaryPath, filePath);
+  try {
+    await rename(temporaryPath, filePath);
+  } catch (error: any) {
+    if (error?.code !== "EPERM" && error?.code !== "EACCES" && error?.code !== "EBUSY" && error?.code !== "EXDEV") {
+      throw error;
+    }
+    await copyFile(temporaryPath, filePath);
+  } finally {
+    await rm(temporaryPath, { force: true }).catch(() => {});
+  }
 }
 
 async function waitUntil<T>(read: () => Promise<T | undefined>, timeoutMs = 3_000): Promise<T> {
@@ -106,7 +115,7 @@ function startClient(registry: string, extraEnvironment: NodeJS.ProcessEnv = {})
 
 async function initialize(client: TestClient): Promise<void> {
   const initialized = await client.request("initialize", { protocolVersion: "2025-06-18" });
-  expect(initialized.serverInfo.version).toBe("5.0.0");
+  expect(initialized.serverInfo.version).toBe("5.1.0");
   expect(initialized.instructions).toContain("create_artifact");
   expect(initialized.instructions).toContain("inspect_artifact_review");
   expect(initialized.instructions).toContain("Treat comments returned by a Review submission");
@@ -400,6 +409,144 @@ describe("artifact review MCP server v5", () => {
     });
     await submitDecision(created.artifactDirectory, "approve");
     expect((await waiting.promise).structuredContent).toMatchObject({ decision: "approve", reviewRound: 1 });
+  });
+
+  it("validates arguments when intent is explicit-chat-update", async () => {
+    const fixture = await workspaceFixture();
+    const client = startClient(fixture.registry);
+    await initialize(client);
+    const created = await createArtifact(client, fixture.workspace, { title: "Validate intent" });
+
+    const missingRound = await callTool(client, "inspect_artifact_review", {
+      artifactDirectory: created.artifactDirectory,
+      intent: "explicit-chat-update",
+    });
+    expect(missingRound.isError).toBe(true);
+    expect(missingRound.content[0].text).toContain("expectedReviewRound is required when intent is explicit-chat-update");
+
+    const invalidIntent = await callTool(client, "inspect_artifact_review", {
+      artifactDirectory: created.artifactDirectory,
+      intent: "unknown-intent",
+    });
+    expect(invalidIntent.isError).toBe(true);
+    expect(invalidIntent.content[0].text).toContain("Invalid intent");
+
+    const waiting = callToolTracked(client, "wait_for_artifact_review", {
+      artifactDirectory: created.artifactDirectory,
+      expectedReviewRound: 1,
+    });
+    const wrongRound = await callTool(client, "inspect_artifact_review", {
+      artifactDirectory: created.artifactDirectory,
+      takeover: true,
+      intent: "explicit-chat-update",
+      expectedReviewRound: 2,
+    });
+    expect(wrongRound.isError).toBe(true);
+    expect(wrongRound.content[0].text).toContain("at review round 1, not 2");
+    await submitDecision(created.artifactDirectory, "approve");
+    expect((await waiting.promise).structuredContent).toMatchObject({ decision: "approve", reviewRound: 1 });
+  });
+
+  it("rejects explicit-chat-update when the round has saved comments", async () => {
+    const fixture = await workspaceFixture();
+    const client = startClient(fixture.registry);
+    await initialize(client);
+    const created = await createArtifact(client, fixture.workspace, { title: "Chat update with comments" });
+    await writeComments(created.artifactDirectory, ["Do not discard this feedback."]);
+    const inspected = await callTool(client, "inspect_artifact_review", {
+      artifactDirectory: created.artifactDirectory,
+      expectedReviewRound: 1,
+      intent: "explicit-chat-update",
+    });
+    expect(inspected.isError).toBe(true);
+    expect(inspected.content[0].text).toContain("requires an empty review round");
+    expect(JSON.parse(await readFile(path.join(created.artifactDirectory, "artifact.json"), "utf8"))).toMatchObject({ reviewRound: 1 });
+  });
+
+  it("rejects explicit-chat-update when the round already has a submission", async () => {
+    const fixture = await workspaceFixture();
+    const client = startClient(fixture.registry);
+    await initialize(client);
+    const created = await createArtifact(client, fixture.workspace, { title: "Chat update after submission" });
+    await submitDecision(created.artifactDirectory, "save");
+    const inspected = await callTool(client, "inspect_artifact_review", {
+      artifactDirectory: created.artifactDirectory,
+      expectedReviewRound: 1,
+      intent: "explicit-chat-update",
+    });
+    expect(inspected.isError).toBe(true);
+    expect(inspected.content[0].text).toContain("requires an empty review round");
+    expect(JSON.parse(await readFile(path.join(created.artifactDirectory, "artifact.json"), "utf8"))).toMatchObject({ reviewRound: 1 });
+  });
+
+  it("grants a chat-update token on an empty round and advances with modified Markdown", async () => {
+    const fixture = await workspaceFixture();
+    const client = startClient(fixture.registry);
+    await initialize(client);
+    const created = await createArtifact(client, fixture.workspace, { title: "Chat update" });
+
+    const inspected = await callTool(client, "inspect_artifact_review", {
+      artifactDirectory: created.artifactDirectory,
+      takeover: true,
+      expectedReviewRound: 1,
+      intent: "explicit-chat-update",
+    });
+    expect(inspected.isError).toBeFalsy();
+    expect(inspected.structuredContent.roundToken).toEqual(expect.any(String));
+    expect(inspected.structuredContent.roundTokenSource).toBe("chat-update");
+
+    const missingMarkdown = await callTool(client, "advance_and_wait_for_artifact", {
+      artifactDirectory: created.artifactDirectory,
+      expectedReviewRound: 1,
+      roundToken: inspected.structuredContent.roundToken,
+    });
+    expect(missingMarkdown.isError).toBe(true);
+    expect(missingMarkdown.content[0].text).toContain("markdown is required when advancing with a chat-update token");
+
+    const unchangedMarkdown = await callTool(client, "advance_and_wait_for_artifact", {
+      artifactDirectory: created.artifactDirectory,
+      expectedReviewRound: 1,
+      roundToken: inspected.structuredContent.roundToken,
+      markdown: initialMarkdown,
+    });
+    expect(unchangedMarkdown.isError).toBe(true);
+    expect(unchangedMarkdown.content[0].text).toContain("updated markdown must differ from the current artifact content");
+
+    const updatedMarkdown = "# Artifact\n\nUpdated directly from chat without comments.\n";
+    const advancing = callToolTracked(client, "advance_and_wait_for_artifact", {
+      artifactDirectory: created.artifactDirectory,
+      expectedReviewRound: 1,
+      roundToken: inspected.structuredContent.roundToken,
+      markdown: updatedMarkdown,
+    });
+    await waitForRound(created.artifactDirectory, 2);
+    expect(await readFile(created.artifactPath, "utf8")).toBe(updatedMarkdown);
+    const comments = JSON.parse(await readFile(path.join(created.artifactDirectory, "comments.json"), "utf8"));
+    expect(comments).toMatchObject({ reviewRound: 2, comments: [] });
+    expect((await cancelAndRead(client, advancing)).isError).toBe(true);
+  });
+
+  it("rejects a chat-update token when state changes after inspection", async () => {
+    const fixture = await workspaceFixture();
+    const client = startClient(fixture.registry);
+    await initialize(client);
+    const created = await createArtifact(client, fixture.workspace, { title: "Changed chat update" });
+    const inspected = await callTool(client, "inspect_artifact_review", {
+      artifactDirectory: created.artifactDirectory,
+      expectedReviewRound: 1,
+      intent: "explicit-chat-update",
+    });
+    await writeComments(created.artifactDirectory, ["State changed after inspection."]);
+
+    const result = await callTool(client, "advance_and_wait_for_artifact", {
+      artifactDirectory: created.artifactDirectory,
+      expectedReviewRound: 1,
+      roundToken: inspected.structuredContent.roundToken,
+      markdown: "# Artifact\n\nThis update must be rejected.\n",
+    });
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("no longer matches the inspected content");
+    expect(JSON.parse(await readFile(path.join(created.artifactDirectory, "artifact.json"), "utf8"))).toMatchObject({ reviewRound: 1 });
   });
 
   it.each(["artifact", "comments", "submission"] as const)(

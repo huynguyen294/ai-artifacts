@@ -8,7 +8,7 @@
 
 For an `approve` result whose artifact kind is `plan` or `implementation-plan`, the result includes `nextAction.type: "execute-approved-plan"` and an explicit instruction to execute the approved plan immediately in the same turn. Treat this as execution authorization, not an acknowledgement request.
 
-`inspect_artifact_review` accepts the exact `artifactDirectory` and optional `takeover`. It immediately returns the validated manifest, Markdown, comments, optional submission, round, and hashes. It returns a `roundToken` when saved comments or a submission make the round consumable; a chat-inspection token does not require a Review submission.
+`inspect_artifact_review` accepts the exact `artifactDirectory`, optional `expectedReviewRound`, optional `takeover`, and optional `intent`. It immediately returns the validated manifest, Markdown, comments, optional submission, round, and hashes. It returns a `roundToken` when saved comments or a submission make the round consumable, or when `intent` is `"explicit-chat-update"` on an empty round; a chat-inspection token does not require a Review submission.
 
 `advance_and_wait_for_artifact` accepts the exact `artifactDirectory`, `expectedReviewRound`, and `roundToken`, plus optional complete replacement `markdown`. It transactionally advances the same artifact and waits for the next round. Omitting Markdown preserves the exact `artifact.md` bytes and SHA while still resetting handled comments and removing the old submission.
 
@@ -40,7 +40,7 @@ For wait, inspection, advance, and reconnect, use only the exact `artifactDirect
 
 ## Round tokens
 
-A token is in-memory, single-use, expires after one hour, and is bound to the exact artifact, session, round, artifact hash, comments hash, and submission presence/hash. Any intervening change rejects it. A submitted-review token additionally requires `revise`. A chat-inspection token may consume saved comments without `review-submission.json`. Tokens are consumed only after a successful round commit. After MCP restart, a validated inspection can issue a fresh token.
+A token is in-memory, single-use, expires after one hour, and is bound to the exact artifact, session, round, artifact hash, comments hash, and submission presence/hash. Any intervening change rejects it. A submitted-review token additionally requires `revise`. A chat-inspection token may consume saved comments without `review-submission.json`. A chat-update token requires non-empty replacement Markdown with a different SHA from the current artifact. Tokens are consumed only after a successful round commit. After MCP restart, a validated inspection can issue a fresh token.
 
 ## Decisions and chat feedback
 
@@ -49,7 +49,7 @@ A token is in-memory, single-use, expires after one hour, and is bound to the ex
 - Change-only: advance with complete replacement Markdown.
 - Mixed: answer visibly in chat, then advance with complete replacement Markdown.
 - Needs clarification: ask in chat and leave the round unconsumed.
-- No saved feedback: reattach a waiter to the same round without advancing.
+- No saved feedback: reattach a waiter to the same round without advancing, unless the user explicitly requested artifact changes in chat (in which case inspect with `intent: "explicit-chat-update"` to advance).
 - Do not create or update `## Review responses`; conversational answers belong in chat. Remove a previously generated response section when producing a replacement document that contains one.
 - Proceed (`approve`): for `plan` and `implementation-plan`, execute the complete approved plan immediately in the same turn according to `nextAction`; do not stop at acknowledgement, summarize future work, or request another confirmation. For other artifact kinds, perform only the follow-up already implied by the request. Do not auto-advance.
 - Just save (`save`): save as requested and do not auto-advance.

@@ -49,17 +49,26 @@ Apply this policy to all saved comments, whether they arrive from a Review (`rev
 3. Send every required chat answer before starting `advance_and_wait_for_artifact`, because that tool waits for the next round.
 4. Do not create or update a `## Review responses` section. Keep conversational answers in chat. If a replacement Markdown update touches an artifact containing a section previously generated for review answers, remove that generated section.
 
-## Chat escape and reconnect
+## Chat escape, reconnect, and chat updates
 
-When the user interrupts a live waiter with “hãy xem review”, “đọc comment”, or an equivalent request:
+1. **Pure reconnect:** When the user only asks to reconnect, resume waiting, or continue without requesting edits (e.g. “kết nối lại”, “chờ tiếp”):
+   - Call `wait_for_artifact_review` for the exact `artifactDirectory` and current `expectedReviewRound`.
+   - Do not inspect with intent, do not modify Markdown, and do not advance the round.
 
-1. Use the exact `artifactDirectory` returned by `create_artifact` or passed to the waiter that was just cancelled in the same conversation. Never search for the latest artifact and never infer the handle from cwd.
-2. If no unique exact handle remains in context, ask the user for the artifact path.
-3. Call `inspect_artifact_review` with `takeover: true`. Takeover cancels and drains the old waiter; it does not end the artifact or its round.
-4. If inspection has neither saved comments nor a submission, tell the user that no feedback is saved and call `wait_for_artifact_review` for the same round. Do not advance.
-5. Process all saved comments with **Unified feedback handling**. The only chat-escape-specific step is obtaining the feedback/token through inspection and takeover rather than through a Review submission.
+2. **Chat escape for saved review comments:** When the user interrupts a live waiter with “hãy xem review”, “đọc comment”, or an equivalent request:
+   - Use the exact `artifactDirectory` returned by `create_artifact` or passed to the waiter that was just cancelled in the same conversation. Never search for the latest artifact and never infer the handle from cwd.
+   - If no unique exact handle remains in context, ask the user for the artifact path.
+   - Call `inspect_artifact_review` with `takeover: true`. Takeover cancels and drains the old waiter; it does not end the artifact or its round.
+   - If inspection has neither saved comments nor a submission, tell the user that no feedback is saved and call `wait_for_artifact_review` for the same round. Do not advance.
+   - If saved comments exist, process them with **Unified feedback handling**.
 
-To reconnect a round already ended by Proceed or Just save, explicitly inspect the exact artifact, use its fresh token to advance without Markdown, and wait for the new round. Reconnection must not repeat the previously approved or saved action.
+3. **Explicit chat update on an empty round:** When the user explicitly requests changes in chat without saving comments on the UI (e.g. “thêm phase X vào artifact”, “sửa mục Y trong tài liệu này”):
+   - Call `inspect_artifact_review` with `takeover: true`, `expectedReviewRound: currentRound`, and `intent: "explicit-chat-update"`.
+   - This grants a one-time round token with source `chat-update`.
+   - Answer any chat questions, produce the complete replacement Markdown containing the requested changes (its SHA must differ from the current document), and call `advance_and_wait_for_artifact` with `roundToken` and `markdown`.
+   - Never instruct the user to click Review or create dummy comments when they gave explicit instructions in chat.
+
+4. **Reconnect after Proceed or Just save:** To reconnect a round already ended by Proceed or Just save, explicitly inspect the exact artifact, use its fresh token to advance without Markdown, and wait for the new round. Reconnection must not repeat the previously approved or saved action.
 
 ## Lifecycle rules
 

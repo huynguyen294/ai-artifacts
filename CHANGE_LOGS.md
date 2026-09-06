@@ -6,6 +6,29 @@ Lịch sử phát hành được chuẩn hóa và bắt đầu ghi nhận lại 
 
 ---
 
+## [0.8.0] - 2026-09-06
+
+### Explicit chat update trên round trống
+
+- Mở rộng MCP tool `inspect_artifact_review` với tham số `intent: "explicit-chat-update"` và `expectedReviewRound`.
+- Cấp round token loại `chat-update` khi người dùng yêu cầu sửa artifact trực tiếp qua chat mà round hiện tại không có comment hay submission, khắc phục tình trạng bế tắc không advance được round.
+- Từ chối `explicit-chat-update` nếu round đã có comment hoặc submission, tránh xóa feedback chưa xử lý hoặc làm sai lifecycle sau Proceed/Just save.
+- Validate `expectedReviewRound` trước takeover và revalidate sau takeover, nên request stale không thể hủy waiter hợp lệ trước khi bị từ chối.
+- Bắt buộc token `chat-update` khi gọi `advance_and_wait_for_artifact` phải truyền `markdown` mới và SHA phải khác SHA của tài liệu hiện tại, ngăn chặn advance rỗng.
+- Giữ nguyên cơ chế fail-closed: gọi `inspect_artifact_review` thông thường trên round trống vẫn không cấp token, đảm bảo thao tác reconnect thuần túy chỉ gắn lại waiter vào cùng round mà không làm đổi dữ liệu hay tăng round.
+- Cập nhật skill `create-review-artifact` và contract phân định rõ 3 luồng: Pure reconnect, Saved comment inspection, và Explicit chat update. Agent không còn hướng dẫn sai người dùng bấm nút Review khi round trống.
+- Nâng extension lên `0.8.0` và MCP server lên `5.1.0`.
+- Đồng bộ `package-lock.json`, README, component documentation và regression coverage cho lifecycle/keyboard behavior.
+- Xác thực cuối: typecheck pass, 67/67 tests pass trên 12 test files và full production build pass.
+
+### Webview UX
+
+- Hỗ trợ nhấn phím **Enter** trong popup review (`SelectionCommentPopover`) để gửi comment nhanh (`Shift + Enter` để xuống dòng).
+- Bổ sung kiểm tra IME composition (`!event.nativeEvent.isComposing`) để không bị submit nhầm khi gõ tiếng Việt có dấu.
+- Tự động ngắt dòng và xuống hàng (`overflow-wrap: anywhere; word-break: break-word;`) cho textarea nhập comment và text xem lại comment trong drawer/detail popover khi vượt quá chiều rộng.
+
+---
+
 ## [0.7.0] - 2026-08-31
 
 ### Breaking MCP API

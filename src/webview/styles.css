@@ -163,9 +163,21 @@ button:disabled { cursor: default; opacity: .5; }
   box-shadow: 0 2px 8px color-mix(in srgb, var(--vscode-widget-shadow, #000) 14%, transparent);
 }
 .comment-popover blockquote { margin: 0 0 10px; color: var(--vscode-descriptionForeground); font-size: 12px; font-style: italic; }
-.comment-popover textarea { width: 100%; resize: vertical; padding: 9px; color: var(--vscode-input-foreground); background: var(--vscode-input-background); border: 1px solid var(--vscode-input-border, var(--vscode-panel-border)); border-radius: 5px; outline: none; }
+.comment-popover textarea {
+  width: 100%;
+  resize: vertical;
+  padding: 9px;
+  color: var(--vscode-input-foreground);
+  background: var(--vscode-input-background);
+  border: 1px solid var(--vscode-input-border, var(--vscode-panel-border));
+  border-radius: 5px;
+  outline: none;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  white-space: pre-wrap;
+}
 .comment-popover textarea:focus { border-color: var(--vscode-focusBorder); }
-.comment-detail-popover p { margin: 0; white-space: pre-wrap; }
+.comment-detail-popover p { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; }
 .danger-text, .text-button { padding: 4px 6px; border: 0; color: var(--vscode-descriptionForeground); background: transparent; }
 .danger-text:hover { color: var(--vscode-errorForeground); }
 .text-button:hover { color: var(--vscode-foreground); }
@@ -191,7 +203,7 @@ button:disabled { cursor: default; opacity: .5; }
 .comment-jump { display: block; width: 100%; padding: 12px 38px 12px 12px; border: 0; color: inherit; background: transparent; text-align: left; }
 .comment-jump:hover { background: var(--vscode-list-hoverBackground); }
 .comment-jump blockquote { margin: 9px 0; color: var(--vscode-descriptionForeground); font-size: 12px; font-style: italic; }
-.comment-body { display: block; white-space: pre-wrap; font-size: 13px; }
+.comment-body { display: block; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; font-size: 13px; }
 .comments-drawer .delete-comment-button { position: absolute; top: 8px; right: 8px; }
 
 .code-block-shell, .mermaid-block-shell { margin: 18px 0; overflow: hidden; border: 1px solid var(--vscode-panel-border); border-radius: 9px; background: var(--vscode-textCodeBlock-background); }

@@ -64,8 +64,12 @@ describe("create-review-artifact skill contract", () => {
     expect(skill).toContain("without `markdown`");
     expect(skill).toContain("before starting `advance_and_wait_for_artifact`");
     expect(skill).toContain("must not repeat the previously approved or saved action");
+    expect(skill).toContain('intent: "explicit-chat-update"');
+    expect(skill).toContain("Never instruct the user to click Review or create dummy comments");
     expect(contract).toContain("artifact lifetime > waiter lifetime > chat-turn lifetime");
     expect(contract).toContain("Proceed and Just save end only the submitted round");
+    expect(contract).toContain('`intent` is `"explicit-chat-update"`');
+    expect(contract).toContain("A chat-update token requires non-empty replacement Markdown");
   });
 
   it("treats Proceed on every plan kind as immediate execution authorization", async () => {
