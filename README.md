@@ -27,7 +27,7 @@ To build the VSIX yourself, follow [Development](#development) below.
 
 ### 2. Install the Codex integration
 
-Run **Codex Artifacts: Install Global Codex Integration** from the Command Palette. By default, it installs:
+Open the Command Palette (`Ctrl+Shift+P` on Windows/Linux or `Cmd+Shift+P` on macOS) and run **Codex Artifacts: Install Global Codex Integration**. By default, it installs:
 
 ```text
 ~/.agents/skills/create-review-artifact/
@@ -39,11 +39,13 @@ The skill always uses `~/.agents/skills/create-review-artifact/`. If `CODEX_HOME
 
 The installer preserves unrelated MCP configuration, skills, hooks, and project files. During an upgrade, it removes only legacy integration assets recognized as managed by Codex Artifacts.
 
-After an installation or upgrade:
-
-1. Restart the Codex extension.
-2. Start a new chat so it can load the installed MCP tools and skill.
-3. Run **Codex Artifacts: Verify Codex Integration** from the Command Palette.
+> [!IMPORTANT]
+> **After an installation or upgrade:**
+>
+> 1. Reload the window (run **Developer: Reload Window** from the Command Palette).
+> 2. Restart the Codex extension.
+> 3. Start a new chat so it can load the installed MCP tools and skill.
+> 4. Run **Codex Artifacts: Verify Codex Integration** from the Command Palette.
 
 ### 3. Create an artifact
 
