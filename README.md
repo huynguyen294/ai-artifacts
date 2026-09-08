@@ -72,9 +72,9 @@ By default, the extension opens a new `artifact.md` in **Artifact Review** after
 
 #### Workspace resolution
 
-Codex must establish exactly one owning workspace from an explicit user path, an IDE-provided active file, an explicitly named workspace folder, or verified single-folder context. Cwd, `environment_context`, workspace ordering, project contents, and name similarity are hints only. Files such as `package.json` may verify a root already identified by user or IDE evidence; they cannot select one.
+Artifact creation has exactly two workspace-evidence flows. Workspace resolution happens before Codex reads target-workspace instructions, documentation, source, or drafts artifact content. If the user tags, links, mentions, or attaches a concrete file, Codex uses that path to identify its containing workspace. Otherwise Codex calls `resolve_artifact_workspace` immediately with the user's exact repository/workspace words, without scanning folders or rewriting the query. This resolver is the only MCP tool allowed before Codex reads the artifact contract. Codex selects one candidate automatically when it is uniquely high-confidence and asks the user only when the candidates remain ambiguous. After a candidate is chosen, Codex reads the contract, then inspects that workspace and composes the artifact.
 
-The extension publishes focused-window and active-file signals with each registry heartbeat. The MCP validates typed `workspaceEvidence` against the focused window and rejects ambiguous, unregistered, stale, nested, escaped, or unsafe linked workspace requests before creating files.
+The resolver normalizes common separators, so `agent plus`, `agent-plus`, and `agent_plus` match the same folder name. When a query has no match, it returns every fresh workspace in the focused registry scope with `matchMode: "all-available"`; it returns `not-found` only when that fresh scope is empty. Resolver tokens are short-lived, single-use, and bound to the candidate and registry context. `create_artifact` still revalidates the chosen root or tagged-file containment before writing. Cwd, `environment_context`, untagged active files, workspace ordering, project contents, and filesystem search results are never creation evidence.
 
 ### 4. Review the artifact
 
@@ -96,9 +96,12 @@ When the current round has no saved comments or submission, you may request a co
 - New artifacts use schema version 4 and an MCP-generated `reviewSessionId`; no chat thread ID or creation hook is needed.
 - Artifact data outlives the transient MCP waiter and individual chat turns. Cancellation, takeover, or an MCP restart detaches process state without deleting the artifact.
 - The MCP server and extension own lifecycle files. The skill never creates, repairs, or bypasses them directly.
-- The lifecycle API consists of `create_artifact`, `wait_for_artifact_review`, `inspect_artifact_review`, and `advance_and_wait_for_artifact`.
+- The MCP API consists of `resolve_artifact_workspace` plus the four lifecycle tools: `create_artifact`, `wait_for_artifact_review`, `inspect_artifact_review`, and `advance_and_wait_for_artifact`.
+- The official skill always creates `kind: "implementation-plan"`; the required field remains in the protocol for compatibility.
+- In chats with multiple artifacts, Codex retains a request/workspace-to-handle mapping and asks when a handle or intent is ambiguous; it never chooses by recency or takes over speculatively.
 - Comments and submissions bind the artifact ID, review session, round, and content hashes.
 - Round tokens are in-memory, one-time, exact-state-bound, and expire after one hour. A validated inspection can issue a fresh token after an MCP restart.
+- Lifecycle failures include machine-readable recovery metadata so Codex can keep the same handle, inspect uncertain state, and avoid replaying a committed update.
 - A chat-update token is issued only for an explicitly requested edit on an empty round. It requires replacement Markdown with a different SHA and cannot consume saved comments or a submitted decision.
 - Each artifact permits one live waiter. Cancellation and takeover release only that waiter; they do not modify persistent lifecycle files.
 - Round updates are transactional and roll back if a commit fails, including the narrow Windows editor-lock fallback.
@@ -110,7 +113,8 @@ When the current round has no saved comments or submission, you may request a co
 - Schema v4 is the only writable artifact lifecycle. Existing schema-v4 artifacts do not need migration.
 - Schema-v3 artifacts remain readable in Artifact Review but are read-only. Create a new schema-v4 artifact to continue reviewing their content.
 - Older `.codex-artifacts/plans/` data is left untouched for manual archival or removal; the installer does not delete user artifact data.
-- Version 0.8.0 adds explicit chat updates on empty rounds without changing artifact schema v4. After upgrading, run **Codex Artifacts: Install Global Codex Integration** again, restart Codex, and begin a new chat so the updated MCP tool schema and skill are loaded.
+- Version 0.9.0 adds workspace candidate resolution, the two-evidence creation contract, default `implementation-plan` creation, multi-handle/intent safety rules, and structured lifecycle recovery. Artifact schema remains v4. After upgrading, run **Codex Artifacts: Install Global Codex Integration** again, restart Codex, and begin a new chat so the updated five-tool MCP schema and skill are loaded.
+- Version 0.8.0 added explicit chat updates on empty rounds without changing artifact schema v4.
 - Version 0.7.0 replaced the former two-tool MCP API with the four lifecycle tools listed above.
 
 ## Troubleshooting
@@ -123,9 +127,9 @@ Run **Codex Artifacts: Install Global Codex Integration**, restart the Codex ext
 
 Open or add the exact target folder in the VS Code window running Codex Artifacts, wait briefly for the registry heartbeat, and retry. Do not substitute the first workspace folder or create the artifact directly.
 
-### `AMBIGUOUS_WORKSPACE` or `WORKSPACE_EVIDENCE_MISMATCH`
+### Workspace selection expired or evidence does not match
 
-Name the target workspace folder or path explicitly, or focus a concrete file inside it and retry. Project markers and search results do not count as workspace-selection evidence.
+If no file was tagged, resolve again and choose a current name/path candidate, asking the user only if the result is ambiguous. If a file was tagged, verify that it still exists inside the intended registered workspace. Project markers, untagged active files, and filesystem search results do not count as creation evidence.
 
 ### A round token expired or the MCP restarted
 

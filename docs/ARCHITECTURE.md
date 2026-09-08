@@ -2,7 +2,7 @@
 
 ```text
 Codex skill
-   | create / wait / inspect / advance-and-wait
+   | resolve (when no tagged file) / create / wait / inspect / advance-and-wait
    v
 Codex Artifacts MCP -- validates workspace registry and coordinates review rounds
    |
@@ -18,8 +18,8 @@ React webview -- renders Markdown, anchors comments, and submits a decision
 
 ## Ownership boundaries
 
-- The skill chooses when an artifact is appropriate, resolves workspace evidence, retains the exact artifact handle, writes complete Markdown, answers review questions in chat, and reacts to decisions.
-- The MCP server exclusively creates schema-v4 artifacts and advances their review rounds. It generates IDs and review sessions, validates paths, owns transient waiter registration, issues one-time round tokens, and commits round transitions transactionally.
+- The skill chooses when an artifact is appropriate, routes one of the two workspace-evidence flows, retains an exact request/workspace-to-handle mapping, writes complete Markdown, answers review questions in chat, and reacts to decisions.
+- The MCP server resolves current workspace candidates, exclusively creates schema-v4 artifacts, and advances their review rounds. It generates IDs and review sessions, validates paths and selection grants, owns transient waiter registration, issues one-time round tokens, and commits round transitions transactionally.
 - The extension host publishes fresh canonical workspace roots plus focused-window/active-file context, performs trusted local file access, validates bindings, and writes user comments/submissions.
 - The webview renders sanitized CommonMark/GFM and sends typed messages to the extension host. It has no direct filesystem or process access.
 - `src/shared` is the single contract boundary used by the MCP, extension host, and webview.
@@ -36,16 +36,17 @@ Cancellation and takeover close watchers/timers and release waiter ownership onl
 
 ## Lifecycle tools
 
-1. `create_artifact` validates typed workspace evidence, creates review round 1, and immediately returns the exact handle.
-2. `wait_for_artifact_review` attaches the single waiter for an expected round or immediately returns an existing submission.
-3. `inspect_artifact_review` reads the current manifest, Markdown, comments, optional submission, and hashes. With `takeover: true`, it first aborts and drains the prior waiter. It can grant a token from saved comments even before submission, or a chat-update token on an empty round when `intent: "explicit-chat-update"` is supplied.
-4. `advance_and_wait_for_artifact` consumes an exact-state round token, optionally replaces Markdown, advances the round, resets comments/submission, and attaches a waiter for the new round. Omitting Markdown preserves its exact bytes and SHA.
+1. `resolve_artifact_workspace` runs before any target-workspace action for creation without a tagged file and is the only MCP tool allowed before the agent reads the artifact contract. It normalizes common separators and searches the fresh focused registry by the user's exact keyword/path. A match returns matching candidates; no match returns every workspace in the same scope with `matchMode: "all-available"`; an empty fresh scope returns `not-found`. Every returned candidate has an opaque selection token. The resolver never selects or creates anything; the skill chooses a uniquely high-confidence candidate or asks the user when ambiguity remains. Once one workspace is chosen, the agent reads the contract before inspecting that workspace or calling any lifecycle tool.
+2. `create_artifact` validates either tagged-file evidence or a `resolved-workspace` grant, creates review round 1, and immediately returns the exact handle. The official skill always sends `kind: "implementation-plan"`.
+3. `wait_for_artifact_review` attaches the single waiter for an expected round or immediately returns an existing submission.
+4. `inspect_artifact_review` reads the current manifest, Markdown, comments, optional submission, and hashes. With `takeover: true`, it first aborts and drains the prior waiter. It can grant a token from saved comments even before submission, or a chat-update token on an empty round when `intent: "explicit-chat-update"` is supplied.
+5. `advance_and_wait_for_artifact` consumes an exact-state round token, optionally replaces Markdown, advances the round, resets comments/submission, and attaches a waiter for the new round. Omitting Markdown preserves its exact bytes and SHA.
 
 The default flow is create -> wait -> submitted decision. Review (`revise`) grants a round token and uses the same feedback policy as chat inspection: answer questions visibly in chat, replace Markdown only for requested changes, then advance and wait. Question-only Review preserves the current Markdown bytes/SHA. Proceed (`approve`) and Just save (`save`) end only the current round and do not automatically advance. For `plan` and `implementation-plan`, the Proceed result additionally carries `nextAction.type: "execute-approved-plan"`; this is runtime authorization to execute all approved in-scope actions immediately in the same turn.
 
 The chat-escape flow differs only in transport: it cancels the live waiter and inspects the exact retained handle instead of receiving a Review submission. Classification, chat answers, optional Markdown replacement, clarification, advancement, and waiting behavior are shared with Review. If no feedback exists, the skill reattaches to the same round unless the user explicitly requested edits in chat (via `intent: "explicit-chat-update"`). Reconnecting an already approved or saved artifact is explicit and must not repeat the prior command.
 
-Only one waiter may own an artifact. Round tokens are in-memory, single-use, expire after one hour, and bind the artifact, session, round, artifact hash, comments hash, and submission presence/hash. Tokens have sources `submitted-review`, `chat-inspection`, or `chat-update` (which requires replacement Markdown with a different SHA). A token is consumed only after a successful transaction commit.
+Only one waiter may own an artifact. Round tokens are in-memory, single-use, expire after one hour, and bind the artifact, session, round, artifact hash, comments hash, and submission presence/hash. Tokens have sources `submitted-review`, `chat-inspection`, or `chat-update` (which requires replacement Markdown with a different SHA). A token is consumed only after a successful transaction commit. Lifecycle errors retain readable text and add typed recovery metadata (`code`, retryability, next-tool hint, token reuse, same-handle requirement, and optional current round), preventing blind replay when commit state is uncertain.
 
 ## Persistent protocol
 
@@ -62,7 +63,7 @@ Advancing always increments the round and resets handled comments. A question-on
 
 Each running extension window writes an atomic snapshot under `~/.codex/codex-artifacts/workspaces/` (or `CODEX_HOME`) and refreshes it every 15 seconds. Schema-v2 snapshots expire after 45 seconds and contain canonical workspace folders, focus state, and the active file/root when available.
 
-Creation requires typed evidence: `single-workspace`, `active-file`, `explicit-user-path`, or `explicit-user-folder`. The MCP scopes candidates to the focused window and fails before filesystem mutation when ownership is ambiguous. Later lifecycle calls use only the exact artifact handle; they never infer “latest artifact” from cwd or a workspace scan.
+Creation accepts exactly two typed evidence variants. `tagged-file` proves ownership through an existing user-tagged file contained by the registered root. Without a tagged file, `resolve_artifact_workspace` runs before project-file reads or artifact drafting. It matches separator-normalized user words against the fresh focused registry, falling back to all workspaces in that scope when nothing matches. `resolved-workspace` proves the chosen candidate came from that resolver call through a ten-minute, context-bound, single-use token. The skill may choose a uniquely strongest candidate from the returned name, path, and match classification; it asks the user only when no unique high-confidence choice exists. Only then may the skill read the chosen workspace. Later lifecycle calls use only the exact artifact handle; they never call the resolver or infer “latest artifact” from cwd or a workspace scan.
 
 ## Filesystem safety
 
@@ -74,4 +75,4 @@ Creation requires typed evidence: `single-workspace`, `active-file`, `explicit-u
 
 ## Compatibility
 
-Extension version 0.8.0 ships MCP server 5.1.0, adding explicit-chat-update intent support to `inspect_artifact_review` so that empty review rounds can be updated and advanced directly from chat without dummy comments. Artifact schema remains v4, so existing schema-v4 artifacts need no migration and can reconnect through inspection. Schema-v3 hook-owned artifacts remain read-only.
+Extension version 0.9.0 ships MCP server 6.0.0. It adds the workspace resolver and two-evidence create contract, makes `implementation-plan` the official skill default, formalizes multi-handle/ambiguous-intent routing, and returns structured lifecycle recovery metadata. Artifact schema remains v4, so existing schema-v4 artifacts need no migration and can reconnect through inspection. Schema-v3 hook-owned artifacts remain read-only.

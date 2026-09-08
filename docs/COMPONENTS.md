@@ -74,14 +74,17 @@ The governing lifetime relationship is `artifact lifetime > waiter lifetime > ch
 **Responsibilities**
 
 - Decide whether an explicit user request should create/update an artifact, inspect saved feedback, or reconnect an exact artifact.
-- Resolve one unambiguous owning workspace from permitted user or IDE evidence.
+- Resolve the workspace before reading project files or drafting artifact content, through either a user-tagged file or a resolver candidate chosen by the skill or user.
 - Produce one complete Markdown document.
-- Call `create_artifact`, retain its exact handle, then call `wait_for_artifact_review` for the default flow.
+- When no file was tagged, call `resolve_artifact_workspace` before reading the contract or taking any project action; do not scan folders first. Choose a uniquely high-confidence candidate from the returned names, paths, and match classifications, and require user selection only when the result remains ambiguous. After choosing, read the contract before inspecting the workspace or calling any lifecycle tool.
+- Call `create_artifact` with `kind: "implementation-plan"`, retain an exact request/workspace-to-handle mapping, then call `wait_for_artifact_review` for the default flow.
 - Interpret the returned decision.
 - Apply one feedback policy to submitted `revise` and chat-inspected comments: answer questions visibly, update Markdown only for requested changes, and advance unchanged Markdown for question-only rounds.
 - For chat escape, inspect the exact interrupted handle with takeover before applying that shared policy.
 - For an explicit chat update on an empty round, inspect the exact handle with `intent: "explicit-chat-update"`, replace the Markdown, and advance without requiring a UI comment or Review submission.
 - Reattach the same round when inspection has no feedback; ask for a path instead of guessing when the exact handle is ambiguous.
+- Use the intent decision table before reconnect/inspection/chat update and never takeover when the intent or exact handle is ambiguous.
+- Follow structured lifecycle recovery metadata, keep the same handle, and never replay an update whose commit state is uncertain.
 - For `approve` on `plan` or `implementation-plan`, obey the MCP `execute-approved-plan` directive and execute the complete approved plan immediately; for other kinds, continue only with the action implied by the original request.
 - For `save`, ask for a destination and copy the Markdown without performing the proposed work.
 
@@ -103,12 +106,14 @@ The skill must never create or edit `artifact.json`, `comments.json`, or `review
 
 **Responsibilities**
 
-- Expose the four lifecycle tools:
+- Expose one workspace resolver plus four lifecycle tools:
+  - `resolve_artifact_workspace`
   - `create_artifact`
   - `wait_for_artifact_review`
   - `inspect_artifact_review`
   - `advance_and_wait_for_artifact`
 - Validate tool arguments, artifact kind, title, Markdown size, workspace root, and typed workspace evidence.
+- Match fresh focused workspace candidates and issue short-lived, context-bound, single-use resolver grants.
 - Generate the artifact ID and `reviewSessionId`.
 - Create a schema-v4 artifact at review round 1.
 - Return the persistent artifact handle before attaching any waiter.
@@ -122,6 +127,7 @@ The skill must never create or edit `artifact.json`, `comments.json`, or `review
 - Transactionally preserve or replace Markdown, increment `reviewRound`, reset comments, remove the previous submission, and wait for the next decision.
 - Consume the token only after a successful commit; leave a newly committed round detached if its waiter is cancelled.
 - Roll back a failed round transition.
+- Return additive machine-readable recovery metadata for token, round, state, waiter, transaction, and workspace failures while preserving readable error text.
 
 **Owns and may write**
 
@@ -165,13 +171,15 @@ The MCP-side resolver:
 - Reads only fresh, schema-valid snapshots.
 - Canonicalizes the requested workspace and rejects stale or unregistered roots.
 - Scopes creation evidence to the focused VS Code window when available.
-- Validates `single-workspace`, `active-file`, `explicit-user-path`, or `explicit-user-folder` evidence.
-- Fails closed when ownership is ambiguous.
+- Normalizes common name separators and resolves exact-path, exact-name, and similar-name candidates from the fresh focused registry; the skill chooses a uniquely high-confidence result or asks the user when ambiguous.
+- When no query match exists, returns every workspace in that same scope as `available`; returns `not-found` only when the fresh scope is empty.
+- Validates either `tagged-file` containment or an MCP-owned `resolved-workspace` grant.
+- Fails closed when evidence, selection context, registration, or containment is stale or invalid.
 
 **Does not own**
 
 - Artifact content or review state.
-- Artifact selection based on cwd, folder order, package markers, or name similarity.
+- Artifact selection based on cwd, folder order, package markers, untagged active files, or recency.
 - Persistent workspace configuration.
 
 The registry proves that a workspace is currently available and that the supplied evidence selects it; it does not decide when an artifact should be created.
@@ -431,14 +439,15 @@ This layer is the protocol source of truth. A contract change must be propagated
 
 ### Default submission flow
 
-1. The skill calls `create_artifact` with complete Markdown and typed workspace evidence, then retains the returned `artifactDirectory` and round.
-2. The MCP validates the workspace, creates the three initial schema-v4 files, and returns immediately.
-3. The skill calls `wait_for_artifact_review` with the exact handle. The MCP reserves waiter ownership.
-4. The extension opens the custom editor; provider, store, webview, and Markdown pipeline render and persist review comments as before.
-5. The user submits Review (`revise`), Proceed (`approve`), or Just save (`save`); the store creates `review-submission.json` exactly once.
-6. The waiting MCP validates and returns the submission. Submitted Review includes a round token.
-7. For Review, the skill classifies feedback exactly as it does for chat escape: answer questions visibly, supply replacement Markdown only when changes are requested, then call `advance_and_wait_for_artifact`. Question-only Review omits Markdown.
-8. Proceed and Just save end the current round without automatically advancing. For either plan kind, Proceed also returns `execute-approved-plan`, so the skill executes the approved code/file/workspace/command actions immediately in the same turn. The artifact remains persistent and reconnectable.
+1. With a tagged file, the skill derives its containing workspace. Without one, it calls `resolve_artifact_workspace` before reading project content. It shows matching candidates or the `all-available` fallback and waits for the user's selection.
+2. Only after selection, the skill reads required instructions and relevant source in that workspace, then calls `create_artifact` with complete Markdown, `kind: "implementation-plan"`, and one of the two evidence variants. It retains the returned `artifactDirectory` and round in its exact-handle mapping.
+3. The MCP revalidates the workspace/evidence, creates the three initial schema-v4 files, and returns immediately.
+4. The skill calls `wait_for_artifact_review` with the exact handle. The MCP reserves waiter ownership.
+5. The extension opens the custom editor; provider, store, webview, and Markdown pipeline render and persist review comments as before.
+6. The user submits Review (`revise`), Proceed (`approve`), or Just save (`save`); the store creates `review-submission.json` exactly once.
+7. The waiting MCP validates and returns the submission. Submitted Review includes a round token.
+8. For Review, the skill classifies feedback exactly as it does for chat escape: answer questions visibly, supply replacement Markdown only when changes are requested, then call `advance_and_wait_for_artifact`. Question-only Review omits Markdown.
+9. Proceed and Just save end the current round without automatically advancing. Proceed returns `execute-approved-plan`, so the skill executes the approved code/file/workspace/command actions immediately in the same turn. The artifact remains persistent and reconnectable.
 
 ### Chat escape flow
 

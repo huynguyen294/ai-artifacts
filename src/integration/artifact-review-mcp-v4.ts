@@ -26,18 +26,21 @@ import {
 } from "../shared/artifact-files";
 import {
   resolveRegisteredWorkspaceRoot,
+  resolveWorkspaceCandidates,
   resolveWorkspaceRootForArtifactCreation,
   workspaceEvidenceSchema,
   type WorkspaceEvidence,
 } from "../shared/workspace-registry";
 
 const SERVER_NAME = "codex-artifacts";
-const SERVER_VERSION = "5.1.0";
+const SERVER_VERSION = "6.0.0";
+const RESOLVE_WORKSPACE_TOOL_NAME = "resolve_artifact_workspace";
 const CREATE_TOOL_NAME = "create_artifact";
 const WAIT_TOOL_NAME = "wait_for_artifact_review";
 const INSPECT_TOOL_NAME = "inspect_artifact_review";
 const ADVANCE_AND_WAIT_TOOL_NAME = "advance_and_wait_for_artifact";
 const ROUND_TOKEN_TTL_MS = 60 * 60 * 1000;
+const WORKSPACE_SELECTION_TTL_MS = 10 * 60 * 1000;
 const MAX_MARKDOWN_BYTES = 2 * 1024 * 1024;
 
 type JsonObject = Record<string, any>;
@@ -95,6 +98,65 @@ type ActiveArtifactWaiter = {
   controller: AbortController;
   settled: Promise<void>;
 };
+
+type WorkspaceSelectionGrant = {
+  query: string;
+  candidateId: string;
+  workspaceRoot: string;
+  contextKey: string;
+  expiresAt: number;
+};
+
+type ArtifactRecoveryCode =
+  | "ROUND_TOKEN_INVALID_OR_EXPIRED"
+  | "ROUND_TOKEN_IN_USE"
+  | "ROUND_TOKEN_ALREADY_CONSUMED"
+  | "ROUND_MISMATCH"
+  | "ROUND_STATE_CHANGED"
+  | "ARTIFACT_ALREADY_WAITING"
+  | "ADVANCE_CANCELLED_BEFORE_COMMIT"
+  | "ADVANCE_COMMITTED"
+  | "ADVANCE_ROLLED_BACK"
+  | "WORKSPACE_NOT_REGISTERED";
+
+type ArtifactRecoveryMetadata = {
+  code: ArtifactRecoveryCode;
+  retryable: boolean;
+  expectedNextTool?: typeof INSPECT_TOOL_NAME | typeof WAIT_TOOL_NAME | typeof ADVANCE_AND_WAIT_TOOL_NAME;
+  reuseRoundToken: boolean;
+  useSameArtifactHandle: true;
+  currentReviewRound?: number;
+};
+
+class ArtifactRecoveryError extends Error {
+  readonly recovery: ArtifactRecoveryMetadata;
+
+  constructor(message: string, recovery: Omit<ArtifactRecoveryMetadata, "useSameArtifactHandle">) {
+    super(message);
+    this.name = "ArtifactRecoveryError";
+    this.recovery = { ...recovery, useSameArtifactHandle: true };
+  }
+}
+
+function recoveryError(
+  code: ArtifactRecoveryCode,
+  message: string,
+  options: Omit<ArtifactRecoveryMetadata, "code" | "useSameArtifactHandle">,
+): ArtifactRecoveryError {
+  return new ArtifactRecoveryError(`${code}: ${message}`, { code, ...options });
+}
+
+function asLifecycleRecoveryError(error: unknown): unknown {
+  if (error instanceof ArtifactRecoveryError) return error;
+  const message = error instanceof Error ? error.message : String(error);
+  if (message.startsWith("WORKSPACE_NOT_REGISTERED:")) {
+    return recoveryError("WORKSPACE_NOT_REGISTERED", message.slice("WORKSPACE_NOT_REGISTERED:".length).trim(), {
+      retryable: true,
+      reuseRoundToken: false,
+    });
+  }
+  return error;
+}
 
 function errorCode(error: unknown): string | undefined {
   return error instanceof Error && "code" in error && typeof error.code === "string"
@@ -180,13 +242,15 @@ function generatedArtifactId(title: string): string {
   return `${artifactSlug(title)}-${date}-${randomUUID().slice(0, 8)}`;
 }
 
-function parseCreateArguments(args: JsonObject | undefined): {
+type CreateArtifactInput = {
   workspaceRoot: string;
   workspaceEvidence: WorkspaceEvidence;
   title: string;
   kind: string;
   markdown: string;
-} {
+};
+
+function parseCreateArguments(args: JsonObject | undefined): CreateArtifactInput {
   const workspaceRoot = args?.workspaceRoot;
   const workspaceEvidence = workspaceEvidenceSchema.safeParse(args?.workspaceEvidence);
   const title = args?.title;
@@ -197,7 +261,7 @@ function parseCreateArguments(args: JsonObject | undefined): {
   }
   if (!workspaceEvidence.success) {
     throw new Error(
-      "WORKSPACE_EVIDENCE_REQUIRED: declare single-workspace, active-file, explicit-user-path, or explicit-user-folder evidence. Project markers and inferred folder names are not evidence.",
+      "WORKSPACE_EVIDENCE_REQUIRED: declare tagged-file or resolved-workspace evidence. Cwd, active files, project markers, inferred folder names, and workspace order are not evidence.",
     );
   }
   if (typeof title !== "string" || !title.trim() || title.trim().length > 200) {
@@ -215,12 +279,64 @@ function parseCreateArguments(args: JsonObject | undefined): {
   return { workspaceRoot, workspaceEvidence: workspaceEvidence.data, title: title.trim(), kind, markdown };
 }
 
-async function createArtifact(args: JsonObject | undefined): Promise<ArtifactContext> {
-  const input = parseCreateArguments(args);
-  const workspaceRoot = await resolveWorkspaceRootForArtifactCreation(
-    input.workspaceRoot,
-    input.workspaceEvidence,
-  );
+const workspaceSelectionGrants = new Map<string, WorkspaceSelectionGrant>();
+const claimedWorkspaceSelectionTokens = new Set<string>();
+
+function pruneWorkspaceSelectionGrants(): void {
+  const now = Date.now();
+  for (const [token, grant] of workspaceSelectionGrants) {
+    if (grant.expiresAt <= now) workspaceSelectionGrants.delete(token);
+  }
+}
+
+function workspaceCandidateId(workspaceRoot: string): string {
+  return sha256(samePathKey(workspaceRoot)).slice(0, 16);
+}
+
+async function resolveCreateWorkspaceRoot(input: CreateArtifactInput): Promise<{
+  workspaceRoot: string;
+  selectionToken?: string;
+}> {
+  const evidence = input.workspaceEvidence;
+  if (evidence.kind === "tagged-file") {
+    return {
+      workspaceRoot: await resolveWorkspaceRootForArtifactCreation(input.workspaceRoot, evidence),
+    };
+  }
+
+  pruneWorkspaceSelectionGrants();
+  if (claimedWorkspaceSelectionTokens.has(evidence.selectionToken)) {
+    throw new Error("WORKSPACE_SELECTION_IN_USE: the selected workspace token is already being used.");
+  }
+  const grant = workspaceSelectionGrants.get(evidence.selectionToken);
+  if (!grant) {
+    throw new Error("WORKSPACE_SELECTION_EXPIRED: resolve the workspace again and choose a current candidate, asking the user only if the result is ambiguous.");
+  }
+  if (samePathKey(grant.workspaceRoot) !== samePathKey(input.workspaceRoot)) {
+    throw new Error("WORKSPACE_EVIDENCE_MISMATCH: the selection token does not belong to workspaceRoot.");
+  }
+  const current = await resolveWorkspaceCandidates(grant.query);
+  const candidateStillValid = current.candidates.some((candidate) => (
+    workspaceCandidateId(candidate.path) === grant.candidateId
+    && samePathKey(candidate.path) === samePathKey(grant.workspaceRoot)
+  ));
+  if (current.contextKey !== grant.contextKey || !candidateStillValid) {
+    workspaceSelectionGrants.delete(evidence.selectionToken);
+    throw new Error("WORKSPACE_SELECTION_EXPIRED: the workspace registry changed; resolve and select the workspace again.");
+  }
+  claimedWorkspaceSelectionTokens.add(evidence.selectionToken);
+  try {
+    return {
+      workspaceRoot: await resolveWorkspaceRootForArtifactCreation(input.workspaceRoot, evidence),
+      selectionToken: evidence.selectionToken,
+    };
+  } catch (error) {
+    claimedWorkspaceSelectionTokens.delete(evidence.selectionToken);
+    throw error;
+  }
+}
+
+async function persistArtifact(input: CreateArtifactInput, workspaceRoot: string): Promise<ArtifactContext> {
   const collectionRoot = await safeArtifactCollectionRoot(workspaceRoot);
   const createdAt = new Date().toISOString();
   const reviewSessionId = randomUUID();
@@ -278,6 +394,18 @@ async function createArtifact(args: JsonObject | undefined): Promise<ArtifactCon
     }
   }
   throw new Error("ARTIFACT_CREATE_CONFLICT: could not allocate a unique artifact ID.");
+}
+
+async function createArtifact(args: JsonObject | undefined): Promise<ArtifactContext> {
+  const input = parseCreateArguments(args);
+  const { workspaceRoot, selectionToken } = await resolveCreateWorkspaceRoot(input);
+  try {
+    const context = await persistArtifact(input, workspaceRoot);
+    if (selectionToken) workspaceSelectionGrants.delete(selectionToken);
+    return context;
+  } finally {
+    if (selectionToken) claimedWorkspaceSelectionTokens.delete(selectionToken);
+  }
 }
 
 async function loadArtifactContext(rawDirectory: unknown): Promise<ArtifactContext> {
@@ -429,7 +557,13 @@ function reserveArtifactWaiter(
   controller: AbortController,
 ): ActiveArtifactWaiter {
   const key = samePathKey(artifactDirectory);
-  if (activeArtifactWaiters.has(key)) throw new Error("ARTIFACT_ALREADY_WAITING: another live tool call owns this artifact.");
+  if (activeArtifactWaiters.has(key)) {
+    throw recoveryError("ARTIFACT_ALREADY_WAITING", "another live tool call owns this artifact; choose reconnect or intentional takeover from the user's intent.", {
+      retryable: true,
+      reuseRoundToken: false,
+      currentReviewRound: reviewRound,
+    });
+  }
   let resolveSettled = (): void => {};
   const settled = new Promise<void>((resolve) => { resolveSettled = resolve; });
   const waiter: ActiveArtifactWaiter = {
@@ -648,10 +782,12 @@ async function commitReviewRound(
 const pending = new Map<string, AbortController>();
 const roundGrants = new Map<string, RoundGrant>();
 const claimedRoundTokens = new Set<string>();
+const consumedRoundTokens = new Map<string, number>();
 
 function pruneRoundGrants(): void {
   const now = Date.now();
   for (const [token, grant] of roundGrants) if (grant.expiresAt <= now) roundGrants.delete(token);
+  for (const [token, expiresAt] of consumedRoundTokens) if (expiresAt <= now) consumedRoundTokens.delete(token);
 }
 
 function grantSubmittedRound(context: ArtifactContext, result: ReviewWaitResult): ReviewWaitResult & { roundToken?: string; roundTokenSource?: "submitted-review" } {
@@ -716,6 +852,24 @@ function grantInspectedRound(
   return { roundToken, roundTokenSource: "chat-inspection" };
 }
 
+async function roundStateMatchesGrant(grant: RoundGrant): Promise<boolean> {
+  try {
+    const context = await loadArtifactContext(grant.artifactDirectory);
+    if (
+      context.artifactId !== grant.artifactId
+      || context.reviewSessionId !== grant.reviewSessionId
+      || context.reviewRound !== grant.reviewRound
+    ) return false;
+    const inspection = await readArtifactInspection(context);
+    return inspection.artifactSha256 === grant.artifactSha256
+      && inspection.commentsSha256 === grant.commentsSha256
+      && (inspection.submission !== undefined) === grant.submissionExpected
+      && inspection.submissionSha256 === grant.submissionSha256;
+  } catch {
+    return false;
+  }
+}
+
 function write(message: JsonObject): void {
   process.stdout.write(`${JSON.stringify(message)}\n`);
 }
@@ -737,8 +891,17 @@ function toolResult(value: unknown): JsonObject {
 }
 
 function toolError(error: unknown): JsonObject {
+  const message = error instanceof Error ? error.message : String(error);
+  if (error instanceof ArtifactRecoveryError) {
+    const structuredContent = { message, ...error.recovery };
+    return {
+      content: [{ type: "text", text: message }],
+      structuredContent,
+      isError: true,
+    };
+  }
   return {
-    content: [{ type: "text", text: error instanceof Error ? error.message : String(error) }],
+    content: [{ type: "text", text: message }],
     isError: true,
   };
 }
@@ -762,6 +925,57 @@ function parseExpectedReviewRound(args: JsonObject | undefined): number {
     throw new Error("expectedReviewRound must be a positive integer.");
   }
   return expectedReviewRound;
+}
+
+function roundMismatchError(currentReviewRound: number, expectedReviewRound: number): ArtifactRecoveryError {
+  return recoveryError("ROUND_MISMATCH", `the artifact is at review round ${currentReviewRound}, not ${expectedReviewRound}.`, {
+    retryable: true,
+    expectedNextTool: INSPECT_TOOL_NAME,
+    reuseRoundToken: false,
+    currentReviewRound,
+  });
+}
+
+async function handleResolveWorkspaceTool(id: unknown, args: JsonObject | undefined): Promise<void> {
+  try {
+    const query = args?.query;
+    if (typeof query !== "string") {
+      throw new Error("WORKSPACE_QUERY_INVALID: query must be a string containing the user's exact workspace keyword.");
+    }
+    pruneWorkspaceSelectionGrants();
+    const resolution = await resolveWorkspaceCandidates(query);
+    if (resolution.candidates.length === 0) {
+      respond(id, toolResult({ status: "not-found", matchMode: "none", candidates: [] }));
+      return;
+    }
+    const candidates = resolution.candidates.map((candidate) => {
+      const candidateId = workspaceCandidateId(candidate.path);
+      const selectionToken = randomUUID();
+      const expiresAt = Date.now() + WORKSPACE_SELECTION_TTL_MS;
+      workspaceSelectionGrants.set(selectionToken, {
+        query: resolution.query,
+        candidateId,
+        workspaceRoot: candidate.path,
+        contextKey: resolution.contextKey,
+        expiresAt,
+      });
+      return {
+        candidateId,
+        name: candidate.name,
+        path: candidate.path,
+        match: candidate.match,
+        selectionToken,
+        expiresAt: new Date(expiresAt).toISOString(),
+      };
+    });
+    respond(id, toolResult({
+      status: "selection-required",
+      matchMode: resolution.matchMode,
+      candidates,
+    }));
+  } catch (error) {
+    respond(id, toolError(error));
+  }
 }
 
 async function handleCreateTool(id: unknown, args: JsonObject | undefined): Promise<void> {
@@ -793,7 +1007,7 @@ async function handleWaitTool(id: unknown, args: JsonObject | undefined): Promis
     );
     const context = await loadArtifactContext(artifactDirectory);
     if (context.reviewRound !== expectedReviewRound) {
-      throw new Error(`The artifact is at review round ${context.reviewRound}, not ${expectedReviewRound}.`);
+      throw roundMismatchError(context.reviewRound, expectedReviewRound);
     }
     const result = await waitForSubmission(
       context,
@@ -805,7 +1019,7 @@ async function handleWaitTool(id: unknown, args: JsonObject | undefined): Promis
     reservedWaiter = undefined;
     respond(id, toolResult(grantSubmittedRound(context, result)));
   } catch (error) {
-    respond(id, toolError(error));
+    respond(id, toolError(asLifecycleRecoveryError(error)));
   } finally {
     if (reservedWaiter && artifactDirectory) releaseArtifactWaiter(artifactDirectory, reservedWaiter);
     pending.delete(requestKey(id));
@@ -831,7 +1045,7 @@ async function handleInspectTool(id: unknown, args: JsonObject | undefined): Pro
 
     let context = await loadArtifactContext(artifactDirectory);
     if (expectedReviewRound !== undefined && context.reviewRound !== expectedReviewRound) {
-      throw new Error(`The artifact is at review round ${context.reviewRound}, not ${expectedReviewRound}.`);
+      throw roundMismatchError(context.reviewRound, expectedReviewRound);
     }
     if (intent === "explicit-chat-update" && args?.takeover === true) {
       const preTakeoverInspection = await readArtifactInspection(context);
@@ -843,7 +1057,7 @@ async function handleInspectTool(id: unknown, args: JsonObject | undefined): Pro
       await detachActiveArtifactWaiter(artifactDirectory);
       context = await loadArtifactContext(artifactDirectory);
       if (expectedReviewRound !== undefined && context.reviewRound !== expectedReviewRound) {
-        throw new Error(`The artifact is at review round ${context.reviewRound}, not ${expectedReviewRound}.`);
+        throw roundMismatchError(context.reviewRound, expectedReviewRound);
       }
     }
     const inspection = await readArtifactInspection(context);
@@ -860,7 +1074,7 @@ async function handleInspectTool(id: unknown, args: JsonObject | undefined): Pro
       ...(roundTokenSource ? { roundTokenSource } : {}),
     }));
   } catch (error) {
-    respond(id, toolError(error));
+    respond(id, toolError(asLifecycleRecoveryError(error)));
   }
 }
 
@@ -868,6 +1082,7 @@ async function handleAdvanceAndWaitTool(id: unknown, args: JsonObject | undefine
   const controller = new AbortController();
   pending.set(requestKey(id), controller);
   let claimedToken: string | undefined;
+  let committedReviewRound: number | undefined;
   try {
     pruneRoundGrants();
     const expectedReviewRound = parseExpectedReviewRound(args);
@@ -877,9 +1092,27 @@ async function handleAdvanceAndWaitTool(id: unknown, args: JsonObject | undefine
     if (markdown !== undefined && (typeof markdown !== "string" || !markdown.trim())) {
       throw new Error("markdown must be non-empty when supplied.");
     }
-    if (claimedRoundTokens.has(roundToken)) throw new Error("The artifact round token is already in use.");
+    if (claimedRoundTokens.has(roundToken)) {
+      throw recoveryError("ROUND_TOKEN_IN_USE", "the artifact round token is already being used by another request; wait for that request instead of retrying concurrently.", {
+        retryable: true,
+        reuseRoundToken: false,
+      });
+    }
+    if (consumedRoundTokens.has(roundToken)) {
+      throw recoveryError("ROUND_TOKEN_ALREADY_CONSUMED", "the artifact round token was already consumed; inspect the same artifact before taking another action.", {
+        retryable: true,
+        expectedNextTool: INSPECT_TOOL_NAME,
+        reuseRoundToken: false,
+      });
+    }
     const grant = roundGrants.get(roundToken);
-    if (!grant) throw new Error("The artifact round token is invalid or expired.");
+    if (!grant) {
+      throw recoveryError("ROUND_TOKEN_INVALID_OR_EXPIRED", "the artifact round token is invalid, expired, or was lost after MCP restart; inspect the same artifact for current state.", {
+        retryable: true,
+        expectedNextTool: INSPECT_TOOL_NAME,
+        reuseRoundToken: false,
+      });
+    }
     claimedRoundTokens.add(roundToken);
     claimedToken = roundToken;
 
@@ -891,7 +1124,13 @@ async function handleAdvanceAndWaitTool(id: unknown, args: JsonObject | undefine
       || context.reviewRound !== grant.reviewRound
       || context.reviewRound !== expectedReviewRound
     ) {
-      throw new Error("The artifact round token does not match the current review round.");
+      roundGrants.delete(roundToken);
+      throw recoveryError("ROUND_MISMATCH", "the artifact round token does not match the current artifact, session, or review round.", {
+        retryable: true,
+        expectedNextTool: INSPECT_TOOL_NAME,
+        reuseRoundToken: false,
+        currentReviewRound: context.reviewRound,
+      });
     }
     const inspection = await readArtifactInspection(context);
     if (
@@ -900,7 +1139,13 @@ async function handleAdvanceAndWaitTool(id: unknown, args: JsonObject | undefine
       || (inspection.submission !== undefined) !== grant.submissionExpected
       || inspection.submissionSha256 !== grant.submissionSha256
     ) {
-      throw new Error("The artifact round token no longer matches the inspected content.");
+      roundGrants.delete(roundToken);
+      throw recoveryError("ROUND_STATE_CHANGED", "the artifact round token no longer matches the inspected content (Markdown, comments, or submission).", {
+        retryable: true,
+        expectedNextTool: INSPECT_TOOL_NAME,
+        reuseRoundToken: false,
+        currentReviewRound: context.reviewRound,
+      });
     }
     if (grant.source === "chat-update") {
       if (markdown === undefined) {
@@ -914,22 +1159,63 @@ async function handleAdvanceAndWaitTool(id: unknown, args: JsonObject | undefine
       throw new Error("The current artifact round was not submitted for Review.");
     }
     if (activeArtifactWaiters.has(samePathKey(context.artifactDirectory))) {
-      throw new Error("ARTIFACT_ALREADY_WAITING: detach the live waiter before advancing this artifact.");
+      roundGrants.delete(roundToken);
+      throw recoveryError("ARTIFACT_ALREADY_WAITING", "detach the live waiter only when the user's intent requires inspection or a direct chat update.", {
+        retryable: true,
+        reuseRoundToken: false,
+        currentReviewRound: context.reviewRound,
+      });
     }
     if (controller.signal.aborted) {
-      throw Object.assign(new Error("Artifact review advance was cancelled before commit."), { name: "AbortError" });
+      throw recoveryError("ADVANCE_CANCELLED_BEFORE_COMMIT", "artifact review advance was cancelled before commit; the current token remains valid.", {
+        retryable: true,
+        expectedNextTool: ADVANCE_AND_WAIT_TOOL_NAME,
+        reuseRoundToken: true,
+        currentReviewRound: context.reviewRound,
+      });
     }
 
-    await commitReviewRound(context, markdown ?? inspection.markdown);
+    let committed: Awaited<ReturnType<typeof commitReviewRound>>;
+    try {
+      committed = await commitReviewRound(context, markdown ?? inspection.markdown);
+    } catch (commitError) {
+      if (await roundStateMatchesGrant(grant)) {
+        const detail = commitError instanceof Error ? commitError.message : String(commitError);
+        throw recoveryError("ADVANCE_ROLLED_BACK", `the round commit failed and the original state was restored: ${detail}`, {
+          retryable: true,
+          expectedNextTool: ADVANCE_AND_WAIT_TOOL_NAME,
+          reuseRoundToken: true,
+          currentReviewRound: context.reviewRound,
+        });
+      }
+      roundGrants.delete(roundToken);
+      throw recoveryError("ROUND_STATE_CHANGED", "the round commit failed and current state could not be confirmed; inspect the same artifact before retrying.", {
+        retryable: true,
+        expectedNextTool: INSPECT_TOOL_NAME,
+        reuseRoundToken: false,
+      });
+    }
     roundGrants.delete(roundToken);
+    consumedRoundTokens.set(roundToken, Date.now() + ROUND_TOKEN_TTL_MS);
     claimedRoundTokens.delete(roundToken);
     claimedToken = undefined;
+    committedReviewRound = committed.manifest.reviewRound;
 
     const updatedContext = await loadArtifactContext(context.artifactDirectory);
     const result = await waitForSubmission(updatedContext, requestKey(id), controller);
     respond(id, toolResult(grantSubmittedRound(updatedContext, result)));
   } catch (error) {
-    respond(id, toolError(error));
+    if (committedReviewRound !== undefined) {
+      const detail = error instanceof Error ? error.message : String(error);
+      respond(id, toolError(recoveryError("ADVANCE_COMMITTED", `review round ${committedReviewRound} committed, but the follow-up wait did not complete: ${detail}`, {
+        retryable: true,
+        expectedNextTool: WAIT_TOOL_NAME,
+        reuseRoundToken: false,
+        currentReviewRound: committedReviewRound,
+      })));
+    } else {
+      respond(id, toolError(asLifecycleRecoveryError(error)));
+    }
   } finally {
     if (claimedToken) claimedRoundTokens.delete(claimedToken);
     pending.delete(requestKey(id));
@@ -944,7 +1230,7 @@ async function handleRequest(message: JsonObject): Promise<void> {
       protocolVersion,
       capabilities: { tools: { listChanged: false } },
       serverInfo: { name: SERVER_NAME, version: SERVER_VERSION },
-      instructions: "Create reviewable Markdown with create_artifact after supplying typed workspace evidence, retain its exact artifactDirectory handle, then call wait_for_artifact_review. A cancelled waiter never ends or deletes the artifact. Treat comments returned by a Review submission and comments read through inspect_artifact_review with the same policy: answer questions visibly in chat before calling advance_and_wait_for_artifact, update Markdown only for requested changes, and omit markdown for question-only feedback. Do not add Review responses to the artifact. For chat escape, inspect the exact handle with takeover=true. If inspection has no comments or submission, reattach with wait_for_artifact_review without advancing. When updating an artifact directly from chat on an empty round, inspect with takeover=true, expectedReviewRound, and intent=explicit-chat-update, then advance with replacement markdown. When Proceed returns approve for kind plan or implementation-plan, obey nextAction and execute the complete approved plan immediately in the same turn; do not stop at acknowledgement or ask for another confirmation. Proceed ends only the review round, not the authorized execution. Just save ends the round without execution. Reconnect later by explicitly inspecting, advancing without markdown, and waiting again; reconnect must not repeat an already executed action. Never select the latest artifact from a workspace or infer an artifact handle from cwd.",
+    instructions: "Resolve the workspace before reading project files or drafting new artifact content. With no user-tagged file, call resolve_artifact_workspace immediately using the user's exact workspace keyword; do not scan folders to normalize it first. The resolver normalizes common separators and, when the query has no match, returns every fresh workspace in the focused registry scope with matchMode=all-available. Select a uniquely high-confidence candidate from the returned names and paths; ask the user only when the result remains ambiguous. Create reviewable Markdown with create_artifact using only tagged-file evidence or a resolved-workspace selection token. The official skill always sends kind=implementation-plan. Retain the exact artifactDirectory handle, then call wait_for_artifact_review. Do not resolve the workspace again after creation. A cancelled waiter never ends or deletes the artifact. Treat comments returned by a Review submission and comments read through inspect_artifact_review with the same policy: answer questions visibly in chat before calling advance_and_wait_for_artifact, update Markdown only for requested changes, and omit markdown for question-only feedback. Do not add Review responses to the artifact. Pure reconnect uses wait on the exact handle and same round. For chat escape, inspect the exact handle with takeover=true. If intent or handle is ambiguous, ask the user before calling a lifecycle tool and never takeover speculatively. If inspection has no comments or submission, reattach with wait_for_artifact_review without advancing. When updating an artifact directly from chat on an empty round, inspect with takeover=true, expectedReviewRound, and intent=explicit-chat-update, then advance with replacement markdown. Follow structured recovery metadata on lifecycle errors, keep the same exact handle, and never replay when commit state is uncertain. When Proceed returns approve for kind plan or implementation-plan, obey nextAction and execute the complete approved plan immediately in the same turn; do not stop at acknowledgement or ask for another confirmation. Proceed ends only the review round, not the authorized execution. Just save ends the round without execution. Reconnect later by explicitly inspecting, advancing without markdown, and waiting again; reconnect must not repeat an already executed action. Never select the latest artifact from a workspace or infer an artifact handle from cwd.",
     });
     return;
   }
@@ -955,6 +1241,20 @@ async function handleRequest(message: JsonObject): Promise<void> {
   if (method === "tools/list") {
     respond(id, { tools: [
       {
+        name: RESOLVE_WORKSPACE_TOOL_NAME,
+        title: "Resolve artifact workspace",
+        description: "Read the fresh focused VS Code workspace registry and return name/path candidates for the user's exact workspace keyword. Common separators such as spaces, hyphens, underscores, dots, and slashes are normalized. If nothing matches, every fresh workspace in that focused scope is returned with matchMode=all-available. This tool never mutates lifecycle files. The caller may choose one uniquely high-confidence candidate and should ask the user only when the result is ambiguous.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            query: { type: "string", minLength: 2, maxLength: 500, description: "Exact workspace keyword or path from the user's message." },
+          },
+          required: ["query"],
+          additionalProperties: false,
+        },
+        annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+      },
+      {
         name: CREATE_TOOL_NAME,
         title: "Create artifact",
         description: "Create a secure schema-v4 Markdown artifact inside a currently registered VS Code workspace folder and return its exact persistent handle without waiting.",
@@ -963,19 +1263,13 @@ async function handleRequest(message: JsonObject): Promise<void> {
           properties: {
             workspaceRoot: { type: "string", description: "Absolute path of a workspace folder currently open in VS Code." },
             workspaceEvidence: {
-              description: "Why this exact workspace belongs to the request. Project files, package.json, cwd, and folder order are not evidence.",
+              description: "Creation evidence for this exact workspace. Only a user-tagged file or a candidate chosen from the current resolver result is accepted.",
               oneOf: [
                 {
                   type: "object",
-                  properties: { kind: { const: "single-workspace" } },
-                  required: ["kind"],
-                  additionalProperties: false,
-                },
-                {
-                  type: "object",
                   properties: {
-                    kind: { const: "active-file" },
-                    filePath: { type: "string", description: "Concrete active file path supplied by IDE context." },
+                    kind: { const: "tagged-file" },
+                    filePath: { type: "string", description: "Absolute path of a file explicitly tagged by the user." },
                   },
                   required: ["kind", "filePath"],
                   additionalProperties: false,
@@ -983,20 +1277,10 @@ async function handleRequest(message: JsonObject): Promise<void> {
                 {
                   type: "object",
                   properties: {
-                    kind: { const: "explicit-user-path" },
-                    path: { type: "string", description: "Existing absolute path explicitly supplied by the user." },
-                    userText: { type: "string", minLength: 1, maxLength: 500, description: "Exact relevant text from the user's message." },
+                    kind: { const: "resolved-workspace" },
+                    selectionToken: { type: "string", format: "uuid", description: "Opaque token for the candidate chosen from resolve_artifact_workspace." },
                   },
-                  required: ["kind", "path", "userText"],
-                  additionalProperties: false,
-                },
-                {
-                  type: "object",
-                  properties: {
-                    kind: { const: "explicit-user-folder" },
-                    userText: { type: "string", minLength: 1, maxLength: 500, description: "Exact user text naming one registered workspace folder." },
-                  },
-                  required: ["kind", "userText"],
+                  required: ["kind", "selectionToken"],
                   additionalProperties: false,
                 },
               ],
@@ -1068,6 +1352,10 @@ async function handleRequest(message: JsonObject): Promise<void> {
     return;
   }
   if (method === "tools/call") {
+    if (params?.name === RESOLVE_WORKSPACE_TOOL_NAME) {
+      await handleResolveWorkspaceTool(id, params?.arguments);
+      return;
+    }
     if (params?.name === CREATE_TOOL_NAME) {
       await handleCreateTool(id, params?.arguments);
       return;

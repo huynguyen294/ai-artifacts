@@ -6,6 +6,33 @@ Lịch sử phát hành được chuẩn hóa và bắt đầu ghi nhận lại 
 
 ---
 
+## [0.9.0] - 2026-09-08
+
+### Workspace resolution và create contract
+
+- Thêm tool read-only `resolve_artifact_workspace`, tìm exact-path, exact-name hoặc similar-name trong fresh focused registry và trả name/path candidate kèm selection token; MCP không tự chọn workspace, còn skill tự chọn candidate duy nhất có độ tin cậy cao hoặc hỏi người dùng khi mơ hồ.
+- Chuẩn hóa separator khi tìm kiếm nên `agent plus`, `agent-plus` và `agent_plus` cùng khớp. Nếu query không có match, resolver trả toàn bộ workspace fresh trong focused scope với `matchMode: "all-available"`; `not-found` chỉ còn nghĩa là scope fresh đang rỗng.
+- Thu gọn create evidence còn đúng hai loại: `tagged-file` và `resolved-workspace`. Resolver token chứng minh candidate thuộc fresh focused scope; candidate có thể do skill tự chọn khi duy nhất và đủ tin cậy, hoặc do người dùng chọn khi mơ hồ.
+- Selection token hết hạn sau 10 phút, chỉ được consume sau create thành công, bind vào candidate và registry context; create vẫn revalidate registration, focused scope, root canonical và tagged-file containment trước mutation.
+- Official skill luôn gửi `kind: "implementation-plan"`; artifact schema vẫn là v4 và MCP vẫn giữ field `kind` bắt buộc để tương thích protocol.
+
+### Skill orchestration và reconnect safety
+
+- Bổ sung resolver vào tool-availability contract; chỉ kiểm tra availability một lần khi bắt đầu lifecycle trong chat, trừ khi tool unavailable, MCP restart hoặc sang chat mới.
+- Đưa workspace resolution lên trước mọi project action: khi không có tagged file, `resolve_artifact_workspace` là MCP tool duy nhất được gọi trước khi đọc contract; skill chưa được scan folder, đọc project instructions/docs/source hoặc soạn artifact trước khi chọn được workspace đủ tin cậy.
+- Sau khi chọn được workspace, skill đọc `artifact-contract.md` trước khi inspect workspace hoặc gọi bất kỳ lifecycle tool nào còn lại.
+- Quy định mapping request/workspace → exact artifact handle/round cho chat có nhiều artifact; không chọn theo recency và không gọi resolver sau create.
+- Thêm decision table phân biệt pure reconnect, inspect saved feedback và explicit chat update. Nếu intent hoặc handle chưa rõ, skill phải hỏi trước và không takeover suy đoán.
+- Giữ nguyên Case F/H: pure reconnect vẫn wait exact handle/same round; Proceed vẫn thực thi `execute-approved-plan` trong cùng turn. Không thêm structured Markdown edits hoặc state-generation protocol.
+
+### Structured lifecycle recovery
+
+- Lifecycle errors giữ human-readable text và bổ sung `code`, `retryable`, `expectedNextTool`, `reuseRoundToken`, `useSameArtifactHandle` cùng optional `currentReviewRound`.
+- Phân biệt token invalid/expired, in-use, consumed, round mismatch, state changed, active waiter, confirmed rollback, cancellation/commit và workspace unavailable.
+- Token chỉ được reuse khi MCP xác nhận chưa commit và `reuseRoundToken: true`; mọi state không chắc chắn đều inspect lại cùng exact handle, không replay Markdown hoặc action cũ.
+- Nâng extension lên `0.9.0`, MCP server lên `6.0.0`, đồng bộ installer approvals, skill, contract, docs và regression tests. Sau upgrade cần cài lại global integration, restart Codex và bắt đầu chat mới.
+- Xác thực cuối: typecheck pass, 72/72 tests pass trên 12 test files và full production build pass.
+
 ## [0.8.0] - 2026-09-06
 
 ### Explicit chat update trên round trống
@@ -175,12 +202,14 @@ Lịch sử phát hành được chuẩn hóa và bắt đầu ghi nhận lại 
 ## [0.3.0] - 2026-08-28
 
 ### Breaking changes
+
 - Chuyển toàn bộ artifact protocol sang `schemaVersion: 2`; artifact phiên bản 1 không còn được hỗ trợ hoặc tự động migrate.
 - Tách `location.workspaceRoot` khỏi `origin.codexCwd`, cho phép Codex tạo và review artifact trong bất kỳ root phù hợp của multi-root workspace.
 - Chuẩn hóa việc tạo `artifact.json` và `plan.md` bằng một lần `apply_patch`; Hook xác minh exact path từ patch thay vì scan theo Codex `cwd`.
 - Hook chỉ xử lý `apply_patch`; MCP và replacement lifecycle xác minh artifact luôn thuộc workspace root đã khai báo.
 
 ### Build & integration
+
 - Skill yêu cầu Codex chọn target root theo context và hỏi người dùng khi mơ hồ.
 - Cài đặt, verify và legacy cleanup xử lý toàn bộ workspace roots đang mở thay vì root đầu tiên.
 
@@ -189,16 +218,19 @@ Lịch sử phát hành được chuẩn hóa và bắt đầu ghi nhận lại 
 ## [0.2.7] - 2026-08-28
 
 ### 🐛 Sửa lỗi
+
 - Bỏ thông báo `Plan saved` ngay sau khi chọn **Just save**, vì ở thời điểm đó Codex chưa nhận vị trí đích và chưa tạo bản sao kế hoạch.
 - Siết validation của MCP khi nhận submission: đọc lại và kiểm tra `schemaVersion`, `artifactId`, plan hash, cấu trúc comments và từng comment hiện tại trước khi trả quyết định về Codex.
 - Sửa màu icon copy Markdown: dấu tích sau khi copy dùng màu thành công; màu lỗi đỏ chỉ còn áp dụng cho nút xóa comment.
 
 ### 📚 Contract & tài liệu
+
 - Đồng bộ đầy đủ ba quyết định `revise`, `approve`, `save` trong MCP metadata, skill contract, README và tài liệu kiến trúc.
 - Cập nhật hướng dẫn cho các nút **Review**, **Proceed** và **Just save** theo đúng hành vi runtime.
 - Ghi nhận việc ngăn submit khi comment draft chưa được lưu vào `TODO.md`; hành vi này chưa được thay đổi trong phiên bản này.
 
 ### ✅ Kiểm thử
+
 - Bổ sung regression test cho trường hợp `comments.json` bị thay đổi sai schema trong khi MCP đang chờ, kể cả khi submission chứa hash khớp với nội dung sai đó.
 
 ---
@@ -206,13 +238,14 @@ Lịch sử phát hành được chuẩn hóa và bắt đầu ghi nhận lại 
 ## [0.2.6] - 2026-08-28
 
 ### 🚀 Tính năng & Giao diện mới (Topbar UI)
-- **Nút "Proceed"** *(Primary màu xanh, ngoài cùng bên phải)*:
+
+- **Nút "Proceed"** _(Primary màu xanh, ngoài cùng bên phải)_:
   - Cho phép người dùng duyệt và yêu cầu Codex tiến hành thực thi kế hoạch ngay lập tức.
   - Luôn được kích hoạt (enabled) cả khi có hoặc không có comment. Nếu có để lại comment, Codex sẽ đọc và kết hợp áp dụng ngay trong quá trình code.
-- **Nút "Review"** *(Thay thế cho label "Request revision")*:
+- **Nút "Review"** _(Thay thế cho label "Request revision")_:
   - Kích hoạt khi có ít nhất 1 comment trên tài liệu.
   - Gửi toàn bộ danh sách góp ý về cho Codex để viết lại bản kế hoạch mới.
-- **Nút "Just save"** *(Style Ghost đồng bộ)*:
+- **Nút "Just save"** _(Style Ghost đồng bộ)_:
   - Cho phép lưu lại kế hoạch mà không tiến hành code.
   - Gửi quyết định `decision: "save"` để Codex hỏi vị trí lưu file trong workspace và dừng lại.
 - **Nút Icon Copy Markdown**:
@@ -220,6 +253,7 @@ Lịch sử phát hành được chuẩn hóa và bắt đầu ghi nhận lại 
   - Hiển thị hiệu ứng tích xanh ✓ trong 2 giây khi copy thành công.
 
 ### 🐛 Sửa lỗi & Nâng cấp hệ thống (Core & MCP)
+
 - **Sửa lỗi xác thực Hash trong MCP Server (`review-wait-mcp.mjs`)**:
   - Khắc phục lỗi `"The plan or comments changed after review submission"` khi người dùng thêm comment trong quá trình mở review.
   - Cập nhật hàm `readValidatedSubmission` để đọc và tính toán mã băm SHA256 trực tiếp từ file `comments.json` và `plan.md` trên đĩa tại thời điểm submit.

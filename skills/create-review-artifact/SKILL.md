@@ -5,36 +5,32 @@ description: Create, update, inspect, or reconnect an explicitly requested revie
 
 # Create Review Artifact
 
-Coordinate one reviewable Markdown artifact for one user request. Read [references/artifact-contract.md](references/artifact-contract.md) before calling the MCP tools.
+Coordinate one reviewable Markdown artifact for one explicit user request.
 
-## Trigger policy
+## Resolve the workspace first
 
-- Trigger only when the user explicitly asks to create or update an artifact, inspect its saved review comments, or reconnect its review lifecycle.
+1. Require the current tool catalog to expose `resolve_artifact_workspace`, `create_artifact`, `wait_for_artifact_review`, `inspect_artifact_review`, and `advance_and_wait_for_artifact`. Do not probe MCP resources or run filesystem commands to check availability. If a tool is unavailable, ask the user to run **Codex Artifacts: Install Global Codex Integration**, restart Codex, and start a new chat. Check only once per chat lifecycle unless a tool becomes unavailable, the MCP restarts, or a new chat begins.
+2. Before reading target-workspace instructions, documentation, source, or drafting artifact content, resolve exactly one workspace through one of these flows:
+   - **Tagged file:** use the concrete path explicitly tagged, linked, mentioned, or attached by the user. Resolve its one containing workspace and retain `{ kind: "tagged-file", filePath }`. If tagged files span roots or ownership is ambiguous, ask the user.
+   - **No tagged file:** call `resolve_artifact_workspace({ query })` immediately, using the user's exact repository/workspace words. This resolver is the only MCP tool that may run before reading the contract. Do not scan folders or rewrite the query first.
+     - For `status: "selection-required"`, compare every returned candidate's name, path, and `match` against the user's exact workspace words. Select a candidate without asking when exactly one is clearly the strongest match. Prefer `exact-path` over `exact-name`, `exact-name` over `similar-name`, and any matched candidate over `available`.
+     - `matchMode: "matched"` means the resolver found one or more string matches. Use the ranking above and ask the user only when the strongest result is tied or otherwise ambiguous.
+     - `matchMode: "all-available"` means the query did not match, so the candidates are every fresh workspace in the focused registry scope. Select one only when its name or path is a uniquely high-confidence semantic match to the user's words; otherwise show the candidates and ask the user.
+     - `status: "not-found"` with `matchMode: "none"` means no fresh workspace is available; ask the user to open the workspace or tag one of its files.
+     - After either a confident agent choice or an explicit user choice, call create with the exact candidate path and `{ kind: "resolved-workspace", selectionToken }`. If the selection expires or registry context changes, resolve and choose again, asking the user only if it is ambiguous.
+   - Cwd, `environment_context`, untagged active files, workspace order, project markers, inferred folder names, and search results are never creation evidence.
+3. Once exactly one workspace is chosen, read [references/artifact-contract.md](references/artifact-contract.md) before inspecting that workspace or calling `create_artifact`, `wait_for_artifact_review`, `inspect_artifact_review`, or `advance_and_wait_for_artifact`. Then read the chosen workspace's required instruction files and the minimum relevant documentation/source needed to produce the requested artifact. Do not inspect other roots.
 
-## Artifact kind
+## Create and review
 
-- For a plan artifact, use `kind: "implementation-plan"` when it directly guides code, file, workspace, or command changes; use `kind: "plan"` for other executable plans.
-- For any other artifact, choose a short lowercase slug for `kind`.
-
-## Create and default review flow
-
-1. Require the `codex_artifacts` MCP server to expose `create_artifact`, `wait_for_artifact_review`, `inspect_artifact_review`, and `advance_and_wait_for_artifact`. If unavailable, ask the user to run **Codex Artifacts: Install Global Codex Integration**, restart Codex, and start a new chat.
-2. Pass the workspace evidence gate before any artifact filesystem operation. Resolve candidates in this order and stop at the first verified, unambiguous root:
-   1. A path, file link, `@mention`, or attachment explicitly supplied in the user's messages.
-   2. An active/open file supplied by IDE context with a concrete path.
-   3. A repository or folder explicitly named in the conversation, after resolving it and inspecting at least one relevant project marker, document, or source path.
-   4. If none of the above yields exactly one verified root, ask the user which workspace owns the artifact.
-   - Treat Codex/session cwd, `environment_context`, workspace-folder order, the first visible repository, and the first search result as orientation hints only. Never describe any of them as the active or selected workspace.
-   - Require an existing absolute directory and evidence that the requested work belongs there. A matching directory name alone is insufficient.
-   - Do not inspect unrelated roots, create files, or call artifact tools until the root is verified and unambiguous.
-3. Map the verified source to `workspaceEvidence`: `explicit-user-path` with the existing absolute path and exact user text; `active-file` with the concrete IDE path; `explicit-user-folder` with exact user text naming one folder; or `single-workspace` only when available workspace context proves exactly one registered folder. Never invent or paraphrase user evidence.
-4. Write one complete Markdown document. Call `create_artifact` with the verified absolute `workspaceRoot`, `workspaceEvidence`, `title`, `kind`, and `markdown`. If it returns `AMBIGUOUS_WORKSPACE` or `WORKSPACE_EVIDENCE_MISMATCH`, ask the user; do not retry another inferred root. Do not create or edit lifecycle files with filesystem tools.
-5. Retain the exact returned `artifactDirectory` and `reviewRound`, then call `wait_for_artifact_review`. This preserves the familiar behavior in which the artifact opens and the current Codex turn waits for Review, Proceed, or Just save.
-6. Handle a submitted decision:
+1. Write one complete Markdown document. Call `create_artifact` with the verified absolute `workspaceRoot`, one evidence object, title, `kind: "implementation-plan"`, and `markdown`. Keep `kind` only for protocol compatibility; do not classify the document. Do not create or edit lifecycle files with filesystem tools.
+2. Retain the exact returned `artifactDirectory`, `workspaceRoot`, and `reviewRound`. When multiple artifacts exist in one chat, maintain a request/workspace-to-handle-and-round mapping. If a handle is ambiguous, ask the user and never select by recency.
+3. Call `wait_for_artifact_review` immediately on that exact handle and round. After creation, never call `resolve_artifact_workspace` again for this artifact; later tools use the retained handle while the MCP verifies its manifest workspace internally.
+4. Handle a submitted decision:
    - `revise`: process every returned comment with **Unified feedback handling** below, using the returned round token. Treat Review-button feedback exactly like chat-inspected feedback.
-   - `approve`: read any remaining comments before acting. For `kind: "plan"` or `kind: "implementation-plan"`, obey `nextAction.type: "execute-approved-plan"`: execute the complete approved plan immediately in the current turn, including all in-scope code, file, workspace, and command actions. Do not stop after acknowledging approval, do not merely summarize what would be done, and do not ask for another implementation confirmation. Pause only for a genuine blocker or authority outside the approved scope. Do not create a new review round or wait again. For non-plan artifact kinds, continue only with the action implied by the original request.
+   - `approve`: read any remaining comments, then obey `nextAction.type: "execute-approved-plan"`: execute the complete approved plan immediately in the current turn, including all in-scope code, file, workspace, and command actions. Do not stop after acknowledging approval, merely summarize future work, or ask for another implementation confirmation. Pause only for a genuine blocker or authority outside the approved scope. Do not create a new review round or wait again.
    - `save`: ask for a destination in the workspace, copy the current Markdown there, and finish. Do not create a new round or wait again.
-7. Repeat decision handling after every advanced round. Keep the same artifact directory for the entire request.
+5. Repeat decision handling after every advanced round. Keep the same artifact directory for the entire request.
 
 ## Unified feedback handling
 
@@ -51,24 +47,34 @@ Apply this policy to all saved comments, whether they arrive from a Review (`rev
 
 ## Chat escape, reconnect, and chat updates
 
-1. **Pure reconnect:** When the user only asks to reconnect, resume waiting, or continue without requesting edits (e.g. “kết nối lại”, “chờ tiếp”):
-   - Call `wait_for_artifact_review` for the exact `artifactDirectory` and current `expectedReviewRound`.
-   - Do not inspect with intent, do not modify Markdown, and do not advance the round.
+Before calling a lifecycle tool, require both a uniquely matching exact handle and a clear intent. If a request such as “look at the artifact” does not distinguish reconnecting, reading saved feedback, or editing directly, ask the user. Never takeover speculatively.
 
-2. **Chat escape for saved review comments:** When the user interrupts a live waiter with “hãy xem review”, “đọc comment”, or an equivalent request:
-   - Use the exact `artifactDirectory` returned by `create_artifact` or passed to the waiter that was just cancelled in the same conversation. Never search for the latest artifact and never infer the handle from cwd.
-   - If no unique exact handle remains in context, ask the user for the artifact path.
-   - Call `inspect_artifact_review` with `takeover: true`. Takeover cancels and drains the old waiter; it does not end the artifact or its round.
-   - If inspection has neither saved comments nor a submission, tell the user that no feedback is saved and call `wait_for_artifact_review` for the same round. Do not advance.
-   - If saved comments exist, process them with **Unified feedback handling**.
+| Intent | Required flow |
+|---|---|
+| Pure reconnect, resume waiting, or continue without edits | Call `wait_for_artifact_review` with the exact handle and current round. Do not inspect, modify Markdown, or advance. |
+| Read saved review comments or submission | Call `inspect_artifact_review` with the exact handle and `takeover: true`. |
+| Explicitly update an empty round from chat | Call inspect with the exact handle, `takeover: true`, `expectedReviewRound`, and `intent: "explicit-chat-update"`. |
 
-3. **Explicit chat update on an empty round:** When the user explicitly requests changes in chat without saving comments on the UI (e.g. “thêm phase X vào artifact”, “sửa mục Y trong tài liệu này”):
-   - Call `inspect_artifact_review` with `takeover: true`, `expectedReviewRound: currentRound`, and `intent: "explicit-chat-update"`.
-   - This grants a one-time round token with source `chat-update`.
-   - Answer any chat questions, produce the complete replacement Markdown containing the requested changes (its SHA must differ from the current document), and call `advance_and_wait_for_artifact` with `roundToken` and `markdown`.
-   - Never instruct the user to click Review or create dummy comments when they gave explicit instructions in chat.
+- Takeover cancels and drains the old waiter; it does not end the artifact, advance the round, or edit lifecycle files.
+- If inspection has neither saved comments nor a submission, tell the user no feedback is saved and call `wait_for_artifact_review` for the same round. Do not advance.
+- If feedback exists, process it with **Unified feedback handling**.
+- A chat-update token requires complete replacement Markdown with a different SHA. Never ask the user to create dummy comments or click Review after an explicit chat update request.
+- To reconnect after Proceed or Just save, inspect the exact artifact, advance without Markdown, and wait. Never repeat the previously approved or saved action.
 
-4. **Reconnect after Proceed or Just save:** To reconnect a round already ended by Proceed or Just save, explicitly inspect the exact artifact, use its fresh token to advance without Markdown, and wait for the new round. Reconnection must not repeat the previously approved or saved action.
+## Structured recovery
+
+Follow machine-readable recovery metadata returned by lifecycle errors. Keep the same exact artifact handle and never call `resolve_artifact_workspace` during recovery.
+
+| Error code | Required recovery |
+|---|---|
+| `ROUND_TOKEN_INVALID_OR_EXPIRED`, `ROUND_TOKEN_ALREADY_CONSUMED`, `ROUND_MISMATCH`, `ROUND_STATE_CHANGED` | Inspect the same exact handle for current state and a fresh token. Do not replay old Markdown or actions. |
+| `ROUND_TOKEN_IN_USE` | Do not issue another advance. Wait for the in-flight request, then inspect only if its result is unclear. |
+| `ARTIFACT_ALREADY_WAITING` | Use the intent table: reconnect by waiting, or inspect with takeover only for saved feedback/direct update. |
+| `ADVANCE_CANCELLED_BEFORE_COMMIT`, `ADVANCE_ROLLED_BACK` with `reuseRoundToken: true` | Retry the same advance only when the server explicitly confirms the token remains valid. |
+| `ADVANCE_COMMITTED` | Do not replay. Continue with the reported round using the hinted wait flow. |
+| `WORKSPACE_NOT_REGISTERED` | Ask the user to reopen or restore the artifact's workspace; do not resolve another workspace. |
+
+For any error that does not prove both “not committed” and `reuseRoundToken: true`, inspect the exact handle before retrying.
 
 ## Lifecycle rules
 
@@ -76,7 +82,7 @@ Apply this policy to all saved comments, whether they arrive from a Review (`rev
 - Cancellation, chat-turn completion, or MCP restart detaches a waiter but never deletes or finishes an artifact.
 - One independent user request owns one artifact directory and artifact ID. Only one live waiter may own it at a time.
 - Advancing replaces the same `artifact.md` only when Markdown is supplied, increments the round, resets handled comments, and removes the old submission. It does not create revision history.
-- Round tokens are exact-state, one-time capabilities. After MCP restart, inspect the artifact again to obtain a fresh token.
+- Round tokens are exact-state, one-time capabilities. After MCP restart, inspect the exact artifact again to obtain a fresh token.
 - Only the MCP server creates artifacts, advances rounds, resets comments, consumes tokens, and writes lifecycle metadata.
 - Never edit `artifact.json`, `comments.json`, or `review-submission.json` directly.
 - Write a coherent artifact, not a patch, changelog, task tracker, or progress report.

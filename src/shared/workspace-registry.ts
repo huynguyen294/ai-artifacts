@@ -30,23 +30,34 @@ export const workspaceRegistrySnapshotSchema = z.object({
 export type WorkspaceRegistrySnapshot = z.infer<typeof workspaceRegistrySnapshotSchema>;
 
 export const workspaceEvidenceSchema = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("single-workspace") }).strict(),
   z.object({
-    kind: z.literal("active-file"),
+    kind: z.literal("tagged-file"),
     filePath: z.string().min(1),
   }).strict(),
   z.object({
-    kind: z.literal("explicit-user-path"),
-    path: z.string().min(1),
-    userText: z.string().min(1).max(500),
-  }).strict(),
-  z.object({
-    kind: z.literal("explicit-user-folder"),
-    userText: z.string().min(1).max(500),
+    kind: z.literal("resolved-workspace"),
+    selectionToken: z.string().uuid(),
   }).strict(),
 ]);
 
 export type WorkspaceEvidence = z.infer<typeof workspaceEvidenceSchema>;
+
+export type WorkspaceCandidateMatch = "exact-path" | "exact-name" | "similar-name" | "available";
+
+export type WorkspaceCandidateMatchMode = "matched" | "all-available" | "none";
+
+export type WorkspaceCandidate = {
+  name: string;
+  path: string;
+  match: WorkspaceCandidateMatch;
+};
+
+export type WorkspaceCandidateResolution = {
+  query: string;
+  contextKey: string;
+  matchMode: WorkspaceCandidateMatchMode;
+  candidates: WorkspaceCandidate[];
+};
 
 export function codexArtifactsDataDirectory(): string {
   const codexDirectory = process.env.CODEX_HOME?.trim()
@@ -177,9 +188,77 @@ function isPathInside(parent: string, candidate: string): boolean {
   return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
 }
 
-function textMentionsFolder(userText: string, folderPath: string): boolean {
-  const name = path.basename(folderPath).trim().toLocaleLowerCase();
-  return Boolean(name) && userText.toLocaleLowerCase().includes(name);
+function searchPathText(value: string): string {
+  return value.trim().replaceAll("\\", "/").toLocaleLowerCase();
+}
+
+function searchTerms(value: string): string {
+  return value
+    .normalize("NFKC")
+    .toLocaleLowerCase()
+    .replace(/[\s._/\\-]+/g, " ")
+    .trim();
+}
+
+function workspaceContextKey(folders: readonly { realPath: string }[]): string {
+  return JSON.stringify(folders
+    .map((folder) => searchPathText(folder.realPath))
+    .sort((left, right) => left.localeCompare(right)));
+}
+
+export async function resolveWorkspaceCandidates(
+  rawQuery: string,
+  directory = workspaceRegistryDirectory(),
+  now = Date.now(),
+): Promise<WorkspaceCandidateResolution> {
+  const query = rawQuery.trim();
+  if (query.length < 2 || query.length > 500) {
+    throw new Error("WORKSPACE_QUERY_INVALID: query must contain 2 to 500 characters.");
+  }
+  const snapshots = await readFreshWorkspaceSnapshots(directory, now);
+  const focusedSnapshots = snapshots.filter((snapshot) => snapshot.focused);
+  const relevantSnapshots = focusedSnapshots.length > 0 ? focusedSnapshots : snapshots;
+  const folders = uniqueRegisteredFolders(relevantSnapshots);
+  const normalizedQuery = searchTerms(query);
+  const absoluteQuery = path.isAbsolute(query);
+  const rank: Record<WorkspaceCandidateMatch, number> = {
+    "exact-path": 0,
+    "exact-name": 1,
+    "similar-name": 2,
+    available: 3,
+  };
+  const matchedCandidates = folders.flatMap((folder): WorkspaceCandidate[] => {
+    const name = path.basename(folder.path) || path.basename(folder.realPath);
+    const normalizedName = searchTerms(name);
+    const normalizedPath = searchTerms(folder.realPath);
+    let match: Exclude<WorkspaceCandidateMatch, "available"> | undefined;
+    if (absoluteQuery && (
+      sameFilesystemPath(folder.path, query)
+      || sameFilesystemPath(folder.realPath, query)
+    )) match = "exact-path";
+    else if (normalizedName === normalizedQuery) match = "exact-name";
+    else if (normalizedName.includes(normalizedQuery) || normalizedPath.includes(normalizedQuery)) {
+      match = "similar-name";
+    }
+    return match ? [{ name, path: folder.realPath, match }] : [];
+  }).sort((left, right) => (
+    rank[left.match] - rank[right.match]
+    || left.name.localeCompare(right.name)
+    || left.path.localeCompare(right.path)
+  )).slice(0, 10);
+  const candidates = matchedCandidates.length > 0
+    ? matchedCandidates
+    : folders.map((folder): WorkspaceCandidate => ({
+      name: path.basename(folder.path) || path.basename(folder.realPath),
+      path: folder.realPath,
+      match: "available",
+    })).sort((left, right) => left.name.localeCompare(right.name) || left.path.localeCompare(right.path));
+  return {
+    query,
+    contextKey: workspaceContextKey(folders),
+    matchMode: matchedCandidates.length > 0 ? "matched" : folders.length > 0 ? "all-available" : "none",
+    candidates,
+  };
 }
 
 export async function resolveWorkspaceRootForArtifactCreation(
@@ -199,57 +278,25 @@ export async function resolveWorkspaceRootForArtifactCreation(
     );
   }
 
-  if (evidence.kind === "single-workspace") {
-    if (folders.length !== 1) {
-      throw new Error(
-        `AMBIGUOUS_WORKSPACE: ${folders.length} workspace folders are currently registered. Ask the user which workspace owns the artifact.`,
-      );
-    }
-    return registeredRoot;
-  }
-
-  if (evidence.kind === "active-file") {
-    const match = relevantSnapshots.some((snapshot) => (
-      snapshot.focused
-      && snapshot.activeFile !== null
-      && sameFilesystemPath(snapshot.activeFile.path, evidence.filePath)
-      && sameFilesystemPath(snapshot.activeFile.workspaceRoot, registeredRoot)
-    ));
-    if (!match) {
-      throw new Error(
-        "WORKSPACE_EVIDENCE_MISMATCH: the supplied file is not the active file of the requested workspace in a focused VS Code window.",
-      );
-    }
-    return registeredRoot;
-  }
-
-  if (evidence.kind === "explicit-user-path") {
-    if (!path.isAbsolute(evidence.path)) {
-      throw new Error("WORKSPACE_EVIDENCE_MISMATCH: an explicit user path must be absolute.");
+  if (evidence.kind === "tagged-file") {
+    if (!path.isAbsolute(evidence.filePath)) {
+      throw new Error("WORKSPACE_EVIDENCE_MISMATCH: a tagged file path must be absolute.");
     }
     let evidenceRealPath: string;
     try {
-      evidenceRealPath = await fs.realpath(path.resolve(evidence.path));
+      const stat = await fs.stat(path.resolve(evidence.filePath));
+      if (!stat.isFile()) throw new Error("not a file");
+      evidenceRealPath = await fs.realpath(path.resolve(evidence.filePath));
     } catch {
-      throw new Error("WORKSPACE_EVIDENCE_MISMATCH: the explicit user path does not exist.");
+      throw new Error("WORKSPACE_EVIDENCE_MISMATCH: the tagged file does not exist or is not a file.");
     }
     if (!isPathInside(registeredRoot, evidenceRealPath)) {
-      throw new Error("WORKSPACE_EVIDENCE_MISMATCH: the explicit user path does not belong to the requested workspace.");
-    }
-    const evidenceName = path.basename(evidence.path).trim().toLocaleLowerCase();
-    if (!evidenceName || !evidence.userText.toLocaleLowerCase().includes(evidenceName)) {
-      throw new Error(
-        "WORKSPACE_EVIDENCE_MISMATCH: the quoted user message does not mention the supplied path.",
-      );
+      throw new Error("WORKSPACE_EVIDENCE_MISMATCH: the tagged file does not belong to the requested workspace.");
     }
     return registeredRoot;
   }
 
-  const mentioned = folders.filter((folder) => textMentionsFolder(evidence.userText, folder.path));
-  if (mentioned.length !== 1 || !sameFilesystemPath(mentioned[0]!.realPath, registeredRoot)) {
-    throw new Error(
-      "WORKSPACE_EVIDENCE_MISMATCH: the quoted user message does not identify exactly one registered workspace folder.",
-    );
-  }
+  // The MCP owns selection-token validation. This shared boundary still
+  // revalidates that the selected root belongs to the current registry scope.
   return registeredRoot;
 }

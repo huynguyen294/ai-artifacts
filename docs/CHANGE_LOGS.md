@@ -16,6 +16,44 @@ Mỗi mục mới nên nêu ngày thay đổi, loại thay đổi, nội dung đ
 
 ---
 
+## 2026-09-08 — MCP API and skill orchestration — Workspace resolver and structured recovery
+
+### Nội dung thay đổi
+
+- Thêm `resolve_artifact_workspace`; resolver đọc fresh focused registry và trả name/path candidate với selection token. Skill tự chọn candidate duy nhất có độ tin cậy cao và chỉ hỏi người dùng khi mơ hồ.
+- Resolver chuẩn hóa separator trong query/tên workspace; khi không có match, trả toàn bộ fresh focused scope với `matchMode: "all-available"`, còn `not-found` chỉ biểu thị scope rỗng.
+- Create evidence chỉ còn `tagged-file` và `resolved-workspace`; bỏ `single-workspace`, `active-file`, `explicit-user-path` và `explicit-user-folder` khỏi writable create contract.
+- Official skill luôn gửi `kind: "implementation-plan"`, chỉ kiểm tra năm tool một lần mỗi chat lifecycle và quản lý exact handle/round theo request/workspace khi có nhiều artifact.
+- `resolve_artifact_workspace` là MCP tool duy nhất được gọi trước khi đọc `artifact-contract.md`; sau khi chọn được workspace, skill đọc contract trước mọi project research, artifact drafting hoặc lifecycle tool còn lại.
+- Thêm intent decision table với rule fail-safe: chưa rõ reconnect, inspect hay chat update thì hỏi; không takeover suy đoán.
+- Thêm structured recovery metadata cho lifecycle error và rule same-handle/no-blind-replay. Chỉ confirmed pre-commit cancellation hoặc rollback mới cho phép reuse token.
+- Giữ schema v4, full replacement Markdown, pure reconnect và Proceed behavior hiện tại; không thay Artifact Store, provider, webview hoặc renderer.
+- Nâng extension lên `0.9.0`, MCP server lên `6.0.0`; cập nhật README, architecture, components, philosophy, skill contract, installer approvals và tests.
+- Xác thực bằng typecheck, 72/72 tests trên 12 test files và full production build.
+
+### Lý do
+
+- Giảm suy luận workspace ở phía AI còn hai flow rõ ràng, đồng thời vẫn giữ xác minh nhanh/fail-closed trong MCP.
+- Ngăn chọn nhầm workspace/artifact trong multi-root hoặc multi-handle chat và giúp agent phục hồi theo machine-readable state thay vì parse câu lỗi hoặc replay mù.
+
+### Thành phần và tài liệu bị ảnh hưởng
+
+- `src/shared/workspace-registry.ts`
+- `src/integration/artifact-review-mcp-v4.ts`
+- `src/extension/mcp-config.ts`
+- `skills/create-review-artifact/`
+- `test/workspace-registry.test.ts`
+- `test/review-wait-mcp.test.ts`
+- `test/skill-contract.test.ts`
+- `test/mcp-config.test.ts`
+- `README.md`
+- `docs/ARCHITECTURE.md`
+- `docs/COMPONENTS.md`
+- `docs/PHILOSOPHY.md`
+- `CHANGE_LOGS.md`
+
+---
+
 ## 2026-09-06 — Lifecycle and MCP API — Explicit chat update on empty review rounds
 
 ### Nội dung thay đổi

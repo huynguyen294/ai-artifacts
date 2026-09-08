@@ -9,9 +9,8 @@ import { afterEach, describe, expect, it } from "vitest";
 const temporaryDirectories: string[] = [];
 const processes: ChildProcessWithoutNullStreams[] = [];
 const initialMarkdown = "# Artifact\n\nBuild the MCP review bridge.\n";
-const singleWorkspaceEvidence = { kind: "single-workspace" } as const;
 
-type TrackedRequest = { id: number; promise: Promise<any> };
+type TrackedRequest = { id: number; promise: Promise<any>; sent: Promise<void> };
 type TestClient = {
   request: (method: string, params?: Record<string, unknown>) => Promise<any>;
   requestTracked: (method: string, params?: Record<string, unknown>) => TrackedRequest;
@@ -49,7 +48,7 @@ async function waitUntil<T>(read: () => Promise<T | undefined>, timeoutMs = 3_00
 }
 
 async function workspaceFixture(options: { stale?: boolean } = {}): Promise<{ workspace: string; registry: string }> {
-  const root = await mkdtemp(path.join(tmpdir(), "codex-artifacts-mcp-v5-"));
+  const root = await mkdtemp(path.join(tmpdir(), "codex-artifacts-mcp-v6-"));
   temporaryDirectories.push(root);
   const workspace = path.join(root, "workspace");
   const registry = path.join(root, "registry");
@@ -93,11 +92,13 @@ function startClient(registry: string, extraEnvironment: NodeJS.ProcessEnv = {})
   });
   const requestTracked = (method: string, params: Record<string, unknown> = {}): TrackedRequest => {
     const id = nextId++;
+    let markSent = (): void => {};
+    const sent = new Promise<void>((resolve) => { markSent = resolve; });
     const promise = new Promise((resolve, reject) => {
       pending.set(id, { resolve, reject });
-      processHandle.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id, method, params })}\n`);
+      processHandle.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id, method, params })}\n`, markSent);
     });
-    return { id, promise };
+    return { id, promise, sent };
   };
   return {
     request(method, params = {}) {
@@ -115,12 +116,15 @@ function startClient(registry: string, extraEnvironment: NodeJS.ProcessEnv = {})
 
 async function initialize(client: TestClient): Promise<void> {
   const initialized = await client.request("initialize", { protocolVersion: "2025-06-18" });
-  expect(initialized.serverInfo.version).toBe("5.1.0");
+  expect(initialized.serverInfo.version).toBe("6.0.0");
+  expect(initialized.instructions).toContain("resolve_artifact_workspace");
   expect(initialized.instructions).toContain("create_artifact");
   expect(initialized.instructions).toContain("inspect_artifact_review");
   expect(initialized.instructions).toContain("Treat comments returned by a Review submission");
   expect(initialized.instructions).toContain("Do not add Review responses to the artifact");
   expect(initialized.instructions).toContain("execute the complete approved plan immediately");
+  expect(initialized.instructions).toContain("Select a uniquely high-confidence candidate");
+  expect(initialized.instructions).toContain("ask the user only when the result remains ambiguous");
   expect(initialized.instructions).toContain("Never select the latest artifact");
   client.notify("notifications/initialized");
 }
@@ -133,6 +137,16 @@ function callToolTracked(client: TestClient, name: string, args: Record<string, 
   return client.requestTracked("tools/call", { name, arguments: args });
 }
 
+async function taggedEvidence(workspace: string): Promise<{ kind: "tagged-file"; filePath: string }> {
+  const filePath = path.join(workspace, "AGENTS.md");
+  try {
+    await access(filePath);
+  } catch {
+    await writeFile(filePath, "# Workspace\n", "utf8");
+  }
+  return { kind: "tagged-file", filePath };
+}
+
 async function createArtifact(
   client: TestClient,
   workspace: string,
@@ -140,7 +154,7 @@ async function createArtifact(
 ): Promise<Record<string, any>> {
   const result = await callTool(client, "create_artifact", {
     workspaceRoot: workspace,
-    workspaceEvidence: options.workspaceEvidence ?? singleWorkspaceEvidence,
+    workspaceEvidence: options.workspaceEvidence ?? await taggedEvidence(workspace),
     title: options.title ?? "MCP bridge",
     kind: options.kind ?? "implementation-plan",
     markdown: options.markdown ?? initialMarkdown,
@@ -230,18 +244,22 @@ afterEach(async () => {
   await Promise.all(temporaryDirectories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })));
 });
 
-describe("artifact review MCP server v5", () => {
-  it("lists only the four lifecycle tools and creates a detached schema-v4 artifact immediately", async () => {
+describe("artifact review MCP server v6", () => {
+  it("lists the resolver plus four lifecycle tools and creates a detached schema-v4 artifact immediately", async () => {
     const fixture = await workspaceFixture();
     const client = startClient(fixture.registry);
     await initialize(client);
     const tools = await client.request("tools/list");
     expect(tools.tools.map((tool: any) => tool.name)).toEqual([
+      "resolve_artifact_workspace",
       "create_artifact",
       "wait_for_artifact_review",
       "inspect_artifact_review",
       "advance_and_wait_for_artifact",
     ]);
+    const createTool = tools.tools.find((tool: any) => tool.name === "create_artifact");
+    expect(JSON.stringify(createTool.inputSchema)).toContain("resolved-workspace");
+    expect(JSON.stringify(createTool.inputSchema)).not.toContain("user-selected-workspace");
 
     const created = await createArtifact(client, fixture.workspace);
     expect(created).toMatchObject({ reviewRound: 1, kind: "implementation-plan", workspaceRoot: fixture.workspace });
@@ -263,6 +281,7 @@ describe("artifact review MCP server v5", () => {
       artifactDirectory: created.artifactDirectory,
       expectedReviewRound: 1,
     });
+    await waiting.sent;
     await submitDecision(created.artifactDirectory, "revise");
     const reviewed = await waiting.promise;
     expect(reviewed.structuredContent).toMatchObject({ decision: "revise", reviewRound: 1 });
@@ -275,6 +294,7 @@ describe("artifact review MCP server v5", () => {
       roundToken: reviewed.structuredContent.roundToken,
       markdown: replacement,
     });
+    await advancing.sent;
     const round2 = await waitForRound(created.artifactDirectory, 2);
     expect(round2.reviewSessionId).toBe(created.reviewSessionId);
     expect(await readFile(created.artifactPath, "utf8")).toBe(replacement);
@@ -297,6 +317,12 @@ describe("artifact review MCP server v5", () => {
       roundToken: reviewed.structuredContent.roundToken,
     });
     expect(replay.isError).toBe(true);
+    expect(replay.structuredContent).toMatchObject({
+      code: "ROUND_TOKEN_ALREADY_CONSUMED",
+      expectedNextTool: "inspect_artifact_review",
+      reuseRoundToken: false,
+      useSameArtifactHandle: true,
+    });
   });
 
   it.each(["plan", "implementation-plan"])(
@@ -313,6 +339,7 @@ describe("artifact review MCP server v5", () => {
         artifactDirectory: created.artifactDirectory,
         expectedReviewRound: 1,
       });
+      await waiting.sent;
       await submitDecision(created.artifactDirectory, "approve");
       const approved = await waiting.promise;
       expect(approved.structuredContent).toMatchObject({
@@ -335,6 +362,7 @@ describe("artifact review MCP server v5", () => {
       artifactDirectory: created.artifactDirectory,
       expectedReviewRound: 1,
     });
+    await firstWait.sent;
     const cancelled = await cancelAndRead(client, firstWait);
     expect(cancelled.isError).toBe(true);
     expect(cancelled.content[0].text).toContain("cancelled");
@@ -344,6 +372,7 @@ describe("artifact review MCP server v5", () => {
       artifactDirectory: created.artifactDirectory,
       expectedReviewRound: 1,
     });
+    await secondWait.sent;
     await submitDecision(created.artifactDirectory, "save");
     expect((await secondWait.promise).structuredContent).toMatchObject({ decision: "save", reviewRound: 1 });
 
@@ -360,6 +389,7 @@ describe("artifact review MCP server v5", () => {
       expectedReviewRound: 1,
       roundToken: reconnectInspection.structuredContent.roundToken,
     });
+    await reconnecting.sent;
     await waitForRound(created.artifactDirectory, 2);
     expect(await readFile(created.artifactPath, "utf8")).toBe(initialMarkdown);
     expect((await cancelAndRead(client, reconnecting)).isError).toBe(true);
@@ -374,6 +404,7 @@ describe("artifact review MCP server v5", () => {
       artifactDirectory: created.artifactDirectory,
       expectedReviewRound: 1,
     });
+    await oldWait.sent;
     await writeComments(created.artifactDirectory, ["How does reconnect work?"]);
     const inspected = await callTool(client, "inspect_artifact_review", {
       artifactDirectory: created.artifactDirectory,
@@ -389,6 +420,7 @@ describe("artifact review MCP server v5", () => {
       expectedReviewRound: 1,
       roundToken: inspected.structuredContent.roundToken,
     });
+    await advancing.sent;
     await waitForRound(created.artifactDirectory, 2);
     expect(await readFile(created.artifactPath, "utf8")).toBe(initialMarkdown);
     const comments = JSON.parse(await readFile(path.join(created.artifactDirectory, "comments.json"), "utf8"));
@@ -407,8 +439,46 @@ describe("artifact review MCP server v5", () => {
       artifactDirectory: created.artifactDirectory,
       expectedReviewRound: 1,
     });
+    await waiting.sent;
     await submitDecision(created.artifactDirectory, "approve");
     expect((await waiting.promise).structuredContent).toMatchObject({ decision: "approve", reviewRound: 1 });
+  });
+
+  it("returns structured recovery instead of advancing while the artifact already has a waiter", async () => {
+    const fixture = await workspaceFixture();
+    const client = startClient(fixture.registry);
+    await initialize(client);
+    const created = await createArtifact(client, fixture.workspace, { title: "Active waiter recovery" });
+    await writeComments(created.artifactDirectory, ["Keep this round waiting."]);
+    const inspected = await callTool(client, "inspect_artifact_review", { artifactDirectory: created.artifactDirectory });
+    const waiting = callToolTracked(client, "wait_for_artifact_review", {
+      artifactDirectory: created.artifactDirectory,
+      expectedReviewRound: 1,
+    });
+    await waiting.sent;
+
+    const duplicateWait = await callTool(client, "wait_for_artifact_review", {
+      artifactDirectory: created.artifactDirectory,
+      expectedReviewRound: 1,
+    });
+    expect(duplicateWait.structuredContent).toMatchObject({
+      code: "ARTIFACT_ALREADY_WAITING",
+      reuseRoundToken: false,
+      currentReviewRound: 1,
+    });
+    const blockedAdvance = await callTool(client, "advance_and_wait_for_artifact", {
+      artifactDirectory: created.artifactDirectory,
+      expectedReviewRound: 1,
+      roundToken: inspected.structuredContent.roundToken,
+    });
+    expect(blockedAdvance.structuredContent).toMatchObject({
+      code: "ARTIFACT_ALREADY_WAITING",
+      reuseRoundToken: false,
+      currentReviewRound: 1,
+    });
+
+    await submitDecision(created.artifactDirectory, "approve", ["Keep this round waiting."]);
+    expect((await waiting.promise).structuredContent.decision).toBe("approve");
   });
 
   it("validates arguments when intent is explicit-chat-update", async () => {
@@ -435,6 +505,7 @@ describe("artifact review MCP server v5", () => {
       artifactDirectory: created.artifactDirectory,
       expectedReviewRound: 1,
     });
+    await waiting.sent;
     const wrongRound = await callTool(client, "inspect_artifact_review", {
       artifactDirectory: created.artifactDirectory,
       takeover: true,
@@ -443,6 +514,12 @@ describe("artifact review MCP server v5", () => {
     });
     expect(wrongRound.isError).toBe(true);
     expect(wrongRound.content[0].text).toContain("at review round 1, not 2");
+    expect(wrongRound.structuredContent).toMatchObject({
+      code: "ROUND_MISMATCH",
+      expectedNextTool: "inspect_artifact_review",
+      reuseRoundToken: false,
+      currentReviewRound: 1,
+    });
     await submitDecision(created.artifactDirectory, "approve");
     expect((await waiting.promise).structuredContent).toMatchObject({ decision: "approve", reviewRound: 1 });
   });
@@ -519,11 +596,20 @@ describe("artifact review MCP server v5", () => {
       roundToken: inspected.structuredContent.roundToken,
       markdown: updatedMarkdown,
     });
+    await advancing.sent;
     await waitForRound(created.artifactDirectory, 2);
     expect(await readFile(created.artifactPath, "utf8")).toBe(updatedMarkdown);
     const comments = JSON.parse(await readFile(path.join(created.artifactDirectory, "comments.json"), "utf8"));
     expect(comments).toMatchObject({ reviewRound: 2, comments: [] });
-    expect((await cancelAndRead(client, advancing)).isError).toBe(true);
+    expect(await cancelAndRead(client, advancing)).toMatchObject({
+      isError: true,
+      structuredContent: {
+        code: "ADVANCE_COMMITTED",
+        expectedNextTool: "wait_for_artifact_review",
+        reuseRoundToken: false,
+        currentReviewRound: 2,
+      },
+    });
   });
 
   it("rejects a chat-update token when state changes after inspection", async () => {
@@ -546,6 +632,12 @@ describe("artifact review MCP server v5", () => {
     });
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain("no longer matches the inspected content");
+    expect(result.structuredContent).toMatchObject({
+      code: "ROUND_STATE_CHANGED",
+      expectedNextTool: "inspect_artifact_review",
+      reuseRoundToken: false,
+      currentReviewRound: 1,
+    });
     expect(JSON.parse(await readFile(path.join(created.artifactDirectory, "artifact.json"), "utf8"))).toMatchObject({ reviewRound: 1 });
   });
 
@@ -582,6 +674,11 @@ describe("artifact review MCP server v5", () => {
       });
       expect(result.isError).toBe(true);
       expect(result.content[0].text).toContain("no longer matches the inspected content");
+      expect(result.structuredContent).toMatchObject({
+        code: "ROUND_STATE_CHANGED",
+        expectedNextTool: "inspect_artifact_review",
+        reuseRoundToken: false,
+      });
       expect(JSON.parse(await readFile(path.join(created.artifactDirectory, "artifact.json"), "utf8"))).toMatchObject({ reviewRound: 1 });
     },
   );
@@ -597,6 +694,16 @@ describe("artifact review MCP server v5", () => {
 
     const secondClient = startClient(fixture.registry);
     await initialize(secondClient);
+    const staleToken = await callTool(secondClient, "advance_and_wait_for_artifact", {
+      artifactDirectory: created.artifactDirectory,
+      expectedReviewRound: 1,
+      roundToken: firstInspection.structuredContent.roundToken,
+    });
+    expect(staleToken.structuredContent).toMatchObject({
+      code: "ROUND_TOKEN_INVALID_OR_EXPIRED",
+      expectedNextTool: "inspect_artifact_review",
+      reuseRoundToken: false,
+    });
     const secondInspection = await callTool(secondClient, "inspect_artifact_review", { artifactDirectory: created.artifactDirectory });
     expect(secondInspection.structuredContent.roundToken).toEqual(expect.any(String));
     expect(secondInspection.structuredContent.roundToken).not.toBe(firstInspection.structuredContent.roundToken);
@@ -605,6 +712,7 @@ describe("artifact review MCP server v5", () => {
       expectedReviewRound: 1,
       roundToken: secondInspection.structuredContent.roundToken,
     });
+    await advancing.sent;
     await waitForRound(created.artifactDirectory, 2);
     expect((await cancelAndRead(secondClient, advancing)).isError).toBe(true);
   });
@@ -624,11 +732,13 @@ describe("artifact review MCP server v5", () => {
     };
     const first = callToolTracked(client, "advance_and_wait_for_artifact", args);
     const second = callToolTracked(client, "advance_and_wait_for_artifact", args);
+    await Promise.all([first.sent, second.sent]);
     await waitForRound(created.artifactDirectory, 2);
     await submitDecision(created.artifactDirectory, "approve");
     const results = await Promise.all([first.promise, second.promise]);
     expect(results.filter((result) => result.isError)).toHaveLength(1);
     expect(results.filter((result) => result.structuredContent?.decision === "approve")).toHaveLength(1);
+    expect(results.find((result) => result.isError)?.structuredContent.code).toMatch(/ROUND_TOKEN_(IN_USE|ALREADY_CONSUMED)/);
   });
 
   it("retains the round and token when a transaction rolls back", async () => {
@@ -649,10 +759,17 @@ describe("artifact review MCP server v5", () => {
     };
     const failed = await callTool(client, "advance_and_wait_for_artifact", args);
     expect(failed.isError).toBe(true);
+    expect(failed.structuredContent).toMatchObject({
+      code: "ADVANCE_ROLLED_BACK",
+      expectedNextTool: "advance_and_wait_for_artifact",
+      reuseRoundToken: true,
+      currentReviewRound: 1,
+    });
     expect(await readFile(created.artifactPath, "utf8")).toBe(initialMarkdown);
     expect(JSON.parse(await readFile(path.join(created.artifactDirectory, "artifact.json"), "utf8"))).toMatchObject({ reviewRound: 1 });
     const retried = await callTool(client, "advance_and_wait_for_artifact", args);
     expect(retried.content[0].text).toContain("Injected artifact update failure");
+    expect(retried.structuredContent).toMatchObject({ code: "ADVANCE_ROLLED_BACK", reuseRoundToken: true });
   });
 
   it("advances through the Windows-lock copy fallback without replacing the artifact directory", async () => {
@@ -671,6 +788,7 @@ describe("artifact review MCP server v5", () => {
       roundToken: inspected.structuredContent.roundToken,
       markdown: "# Updated under lock\n",
     });
+    await advancing.sent;
     await waitForRound(created.artifactDirectory, 2);
     await submitDecision(created.artifactDirectory, "save");
     expect((await advancing.promise).structuredContent.decision).toBe("save");
@@ -684,7 +802,7 @@ describe("artifact review MCP server v5", () => {
     const noEvidence = await callTool(client, "create_artifact", {
       workspaceRoot: fixture.workspace,
       title: "No evidence",
-      kind: "plan",
+      kind: "implementation-plan",
       markdown: "# No evidence\n",
     });
     expect(noEvidence.content[0].text).toContain("WORKSPACE_EVIDENCE_REQUIRED");
@@ -693,17 +811,19 @@ describe("artifact review MCP server v5", () => {
     const stale = await workspaceFixture({ stale: true });
     const staleClient = startClient(stale.registry);
     await initialize(staleClient);
+    const unresolved = await callTool(staleClient, "resolve_artifact_workspace", { query: "workspace" });
+    expect(unresolved.structuredContent).toEqual({ status: "not-found", matchMode: "none", candidates: [] });
     const staleResult = await callTool(staleClient, "create_artifact", {
       workspaceRoot: stale.workspace,
-      workspaceEvidence: singleWorkspaceEvidence,
+      workspaceEvidence: await taggedEvidence(stale.workspace),
       title: "Stale",
-      kind: "plan",
+      kind: "implementation-plan",
       markdown: "# Stale\n",
     });
     expect(staleResult.content[0].text).toContain("WORKSPACE_NOT_REGISTERED");
   });
 
-  it("rejects inferred multi-root ownership but accepts exact user folder evidence", async () => {
+  it("resolves workspace candidates and consumes the chosen token once", async () => {
     const fixture = await workspaceFixture();
     const secondWorkspace = path.join(path.dirname(fixture.workspace), "script-runner");
     await mkdir(secondWorkspace);
@@ -714,20 +834,110 @@ describe("artifact review MCP server v5", () => {
     const client = startClient(fixture.registry);
     await initialize(client);
 
-    const ambiguous = await callTool(client, "create_artifact", {
-      workspaceRoot: secondWorkspace,
-      workspaceEvidence: singleWorkspaceEvidence,
-      title: "Inferred",
-      kind: "plan",
-      markdown: "# Must ask\n",
+    const resolved = await callTool(client, "resolve_artifact_workspace", { query: "script runner" });
+    expect(resolved.structuredContent).toMatchObject({
+      status: "selection-required",
+      matchMode: "matched",
+      candidates: [{
+        name: "script-runner",
+        path: await realpath(secondWorkspace),
+        match: "exact-name",
+        selectionToken: expect.any(String),
+      }],
     });
-    expect(ambiguous.content[0].text).toContain("AMBIGUOUS_WORKSPACE");
+    const selected = resolved.structuredContent.candidates[0];
 
-    const created = await createArtifact(client, secondWorkspace, {
-      title: "Explicit folder",
-      workspaceEvidence: { kind: "explicit-user-folder", userText: "Hãy tạo artifact trong script-runner" },
+    const created = await createArtifact(client, selected.path, {
+      title: "Selected workspace",
+      workspaceEvidence: {
+        kind: "resolved-workspace",
+        selectionToken: selected.selectionToken,
+      },
     });
-    expect(created.workspaceRoot).toBe(secondWorkspace);
+    expect(created.workspaceRoot).toBe(await realpath(secondWorkspace));
+
+    const replay = await callTool(client, "create_artifact", {
+      workspaceRoot: selected.path,
+      workspaceEvidence: {
+        kind: "resolved-workspace",
+        selectionToken: selected.selectionToken,
+      },
+      title: "Replay",
+      kind: "implementation-plan",
+      markdown: "# Replay\n",
+    });
+    expect(replay.isError).toBe(true);
+    expect(replay.content[0].text).toContain("WORKSPACE_SELECTION_EXPIRED");
+
+    const legacyEvidence = await callTool(client, "create_artifact", {
+      workspaceRoot: fixture.workspace,
+      workspaceEvidence: { kind: "explicit-user-folder", userText: "workspace" },
+      title: "Legacy evidence",
+      kind: "implementation-plan",
+      markdown: "# Legacy\n",
+    });
+    expect(legacyEvidence.isError).toBe(true);
+    expect(legacyEvidence.content[0].text).toContain("tagged-file or resolved-workspace");
+  });
+
+  it("returns every fresh focused workspace with selection tokens when the query has no match", async () => {
+    const fixture = await workspaceFixture();
+    const secondWorkspace = path.join(path.dirname(fixture.workspace), "script-runner");
+    await mkdir(secondWorkspace);
+    const snapshotPath = path.join(fixture.registry, (await readdir(fixture.registry))[0]!);
+    const snapshot = JSON.parse(await readFile(snapshotPath, "utf8"));
+    snapshot.folders.push({ path: secondWorkspace, realPath: await realpath(secondWorkspace) });
+    await atomicWrite(snapshotPath, `${JSON.stringify(snapshot, null, 2)}\n`);
+    const client = startClient(fixture.registry);
+    await initialize(client);
+
+    const fallback = await callTool(client, "resolve_artifact_workspace", { query: "unknown repository" });
+    expect(fallback.structuredContent).toMatchObject({
+      status: "selection-required",
+      matchMode: "all-available",
+      candidates: [
+        { name: "script-runner", path: await realpath(secondWorkspace), match: "available", selectionToken: expect.any(String) },
+        { name: "workspace", path: await realpath(fixture.workspace), match: "available", selectionToken: expect.any(String) },
+      ],
+    });
+    const selected = fallback.structuredContent.candidates.find((candidate: any) => candidate.name === "workspace");
+    const created = await createArtifact(client, selected.path, {
+      title: "Fallback selected workspace",
+      workspaceEvidence: {
+        kind: "resolved-workspace",
+        selectionToken: selected.selectionToken,
+      },
+    });
+    expect(created.workspaceRoot).toBe(await realpath(fixture.workspace));
+  });
+
+  it("invalidates a workspace selection when the current registry scope changes", async () => {
+    const fixture = await workspaceFixture();
+    const client = startClient(fixture.registry);
+    await initialize(client);
+    const resolved = await callTool(client, "resolve_artifact_workspace", { query: "workspace" });
+    const selected = resolved.structuredContent.candidates[0];
+
+    const addedWorkspace = path.join(path.dirname(fixture.workspace), "added-workspace");
+    await mkdir(addedWorkspace);
+    const snapshotPath = path.join(fixture.registry, (await readdir(fixture.registry))[0]!);
+    const snapshot = JSON.parse(await readFile(snapshotPath, "utf8"));
+    snapshot.folders.push({ path: addedWorkspace, realPath: await realpath(addedWorkspace) });
+    await atomicWrite(snapshotPath, `${JSON.stringify(snapshot, null, 2)}\n`);
+
+    const staleSelection = await callTool(client, "create_artifact", {
+      workspaceRoot: selected.path,
+      workspaceEvidence: {
+        kind: "resolved-workspace",
+        selectionToken: selected.selectionToken,
+      },
+      title: "Stale selection",
+      kind: "implementation-plan",
+      markdown: "# Stale selection\n",
+    });
+    expect(staleSelection.isError).toBe(true);
+    expect(staleSelection.content[0].text).toContain("WORKSPACE_SELECTION_EXPIRED");
+    await expect(access(path.join(fixture.workspace, ".codex-artifacts"))).rejects.toThrow();
   });
 
   it("rejects oversized Markdown and rolls back partial creation", async () => {
@@ -736,9 +946,9 @@ describe("artifact review MCP server v5", () => {
     await initialize(client);
     const oversized = await callTool(client, "create_artifact", {
       workspaceRoot: fixture.workspace,
-      workspaceEvidence: singleWorkspaceEvidence,
+      workspaceEvidence: await taggedEvidence(fixture.workspace),
       title: "Oversized",
-      kind: "plan",
+      kind: "implementation-plan",
       markdown: "x".repeat(2 * 1024 * 1024 + 1),
     });
     expect(oversized.content[0].text).toContain("exceeds");
@@ -750,9 +960,9 @@ describe("artifact review MCP server v5", () => {
     await initialize(failingClient);
     const partial = await callTool(failingClient, "create_artifact", {
       workspaceRoot: fixture.workspace,
-      workspaceEvidence: singleWorkspaceEvidence,
+      workspaceEvidence: await taggedEvidence(fixture.workspace),
       title: "Partial",
-      kind: "plan",
+      kind: "implementation-plan",
       markdown: "# Partial\n",
     });
     expect(partial.isError).toBe(true);
@@ -768,9 +978,9 @@ describe("artifact review MCP server v5", () => {
     await initialize(client);
     const result = await callTool(client, "create_artifact", {
       workspaceRoot: fixture.workspace,
-      workspaceEvidence: singleWorkspaceEvidence,
+      workspaceEvidence: await taggedEvidence(fixture.workspace),
       title: "Unsafe",
-      kind: "plan",
+      kind: "implementation-plan",
       markdown: "# Unsafe\n",
     });
     expect(result.content[0].text).toContain("UNSAFE_ARTIFACT_PATH");

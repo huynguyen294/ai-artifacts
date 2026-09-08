@@ -12,7 +12,6 @@ describe("create-review-artifact skill contract", () => {
     ]);
 
     expect(skill).toContain("Create, update, inspect, or reconnect an explicitly requested reviewable Markdown artifact");
-    expect(skill).toContain("inspect its saved review comments, or reconnect its review lifecycle");
     expect(skill).not.toContain("asks for content to be presented as a review artifact");
     expect(skill).not.toContain("explicitly invokes this skill");
     expect(skill).not.toContain("Use automatically for substantive implementation plans");
@@ -20,18 +19,32 @@ describe("create-review-artifact skill contract", () => {
     expect(metadata).toContain("Create and reconnect review artifacts");
   });
 
-  it("uses the ordered workspace evidence gate before artifact operations", async () => {
-    const skill = await readFile(path.join(skillDirectory, "SKILL.md"), "utf8");
-    expect(skill).toContain("Pass the workspace evidence gate before any artifact filesystem operation");
-    expect(skill).toContain("A path, file link, `@mention`, or attachment explicitly supplied");
-    expect(skill).toContain("An active/open file supplied by IDE context with a concrete path");
-    expect(skill).toContain("A repository or folder explicitly named in the conversation");
-    expect(skill).toContain("ask the user which workspace owns the artifact");
-    expect(skill).toContain("workspace-folder order");
-    expect(skill).toContain("Do not inspect unrelated roots");
-    expect(skill).not.toContain("package.json");
-    expect(skill).toContain("`workspaceEvidence`");
-    expect(skill).toContain("do not retry another inferred root");
+  it("resolves workspace before project research and selects a unique high-confidence candidate", async () => {
+    const [skill, contract] = await Promise.all([
+      readFile(path.join(skillDirectory, "SKILL.md"), "utf8"),
+      readFile(path.join(skillDirectory, "references", "artifact-contract.md"), "utf8"),
+    ]);
+    expect(skill).toContain("## Resolve the workspace first");
+    expect(skill).toContain("Before reading target-workspace instructions, documentation, source, or drafting artifact content");
+    expect(skill).toContain("This resolver is the only MCP tool that may run before reading the contract");
+    expect(skill).toContain("Do not scan folders or rewrite the query first");
+    expect(skill).toContain('`{ kind: "tagged-file", filePath }`');
+    expect(skill).toContain("`resolve_artifact_workspace({ query })`");
+    expect(skill).toContain('`{ kind: "resolved-workspace", selectionToken }`');
+    expect(skill).toContain('`matchMode: "matched"`');
+    expect(skill).toContain("Select a candidate without asking when exactly one is clearly the strongest match");
+    expect(skill).toContain('`matchMode: "all-available"`');
+    expect(skill).toContain("ask the user only when the strongest result is tied or otherwise ambiguous");
+    expect(skill).toContain("uniquely high-confidence semantic match");
+    expect(skill).toContain("Once exactly one workspace is chosen, read [references/artifact-contract.md](references/artifact-contract.md)");
+    expect(skill).toContain("before inspecting that workspace or calling `create_artifact`");
+    expect(contract).toContain("may call `resolve_artifact_workspace` before loading this reference");
+    expect(skill).not.toContain("Read [references/artifact-contract.md](references/artifact-contract.md) before calling the MCP tools");
+    expect(skill).not.toContain("Do not read [references/artifact-contract.md](references/artifact-contract.md) during an ordinary create flow");
+    expect(skill).toContain("Do not probe MCP resources or run filesystem commands to check availability");
+    expect(contract).toContain("Resolver tokens are in-memory, one-time on successful creation");
+    expect(contract).toContain("expire after ten minutes");
+    expect(contract).toContain('`agent plus`, `agent-plus`, and `agent_plus` match');
   });
 
   it("uses one chat-visible feedback policy for Review and chat inspection", async () => {
@@ -54,33 +67,60 @@ describe("create-review-artifact skill contract", () => {
       readFile(path.join(skillDirectory, "references", "artifact-contract.md"), "utf8"),
     ]);
     for (const tool of [
+      "`resolve_artifact_workspace`",
       "`create_artifact`",
       "`wait_for_artifact_review`",
       "`inspect_artifact_review`",
       "`advance_and_wait_for_artifact`",
     ]) expect(skill).toContain(tool);
-    expect(skill).toContain("Never search for the latest artifact");
+    expect(contract).toContain("Never select “the latest artifact”");
+    expect(skill).toContain("maintain a request/workspace-to-handle-and-round mapping");
     expect(skill).toContain("answer every question directly in user-visible chat");
     expect(skill).toContain("without `markdown`");
     expect(skill).toContain("before starting `advance_and_wait_for_artifact`");
-    expect(skill).toContain("must not repeat the previously approved or saved action");
+    expect(skill).toContain("Never repeat the previously approved or saved action");
     expect(skill).toContain('intent: "explicit-chat-update"');
-    expect(skill).toContain("Never instruct the user to click Review or create dummy comments");
+    expect(skill).toContain("Never ask the user to create dummy comments or click Review");
     expect(contract).toContain("artifact lifetime > waiter lifetime > chat-turn lifetime");
     expect(contract).toContain("Proceed and Just save end only the submitted round");
     expect(contract).toContain('`intent` is `"explicit-chat-update"`');
     expect(contract).toContain("A chat-update token requires non-empty replacement Markdown");
+    expect(skill).toContain("Check only once per chat lifecycle");
+    expect(skill).toContain("If a request such as “look at the artifact” does not distinguish");
+    expect(skill).toContain("Never takeover speculatively");
   });
 
-  it("treats Proceed on every plan kind as immediate execution authorization", async () => {
+  it("always creates implementation plans and treats Proceed as immediate execution authorization", async () => {
     const [skill, contract] = await Promise.all([
       readFile(path.join(skillDirectory, "SKILL.md"), "utf8"),
       readFile(path.join(skillDirectory, "references", "artifact-contract.md"), "utf8"),
     ]);
-    expect(skill).toContain('For `kind: "plan"` or `kind: "implementation-plan"`');
+    expect(skill).toContain('`kind: "implementation-plan"`');
     expect(skill).toContain('`nextAction.type: "execute-approved-plan"`');
     expect(skill).toContain("execute the complete approved plan immediately in the current turn");
-    expect(skill).toContain("do not ask for another implementation confirmation");
+    expect(skill).toContain("ask for another implementation confirmation");
     expect(contract).toContain("Treat this as execution authorization, not an acknowledgement request");
+  });
+
+  it("defines machine-readable same-handle recovery without blind replay", async () => {
+    const [skill, contract] = await Promise.all([
+      readFile(path.join(skillDirectory, "SKILL.md"), "utf8"),
+      readFile(path.join(skillDirectory, "references", "artifact-contract.md"), "utf8"),
+    ]);
+    for (const code of [
+      "ROUND_TOKEN_INVALID_OR_EXPIRED",
+      "ROUND_TOKEN_IN_USE",
+      "ROUND_TOKEN_ALREADY_CONSUMED",
+      "ROUND_MISMATCH",
+      "ROUND_STATE_CHANGED",
+      "ARTIFACT_ALREADY_WAITING",
+      "ADVANCE_ROLLED_BACK",
+      "ADVANCE_COMMITTED",
+      "WORKSPACE_NOT_REGISTERED",
+    ]) expect(skill).toContain(code);
+    expect(skill).toContain("never call `resolve_artifact_workspace` during recovery");
+    expect(skill).toContain("inspect the exact handle before retrying");
+    expect(contract).toContain("useSameArtifactHandle: true");
+    expect(contract).toContain("If commit state is uncertain, inspect the same exact handle before retrying");
   });
 });

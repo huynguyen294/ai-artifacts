@@ -57,8 +57,12 @@ Codex Artifacts là lớp review cho Markdown do AI tạo ra. Nó giúp người
 
 Skill chỉ kích hoạt khi người dùng yêu cầu rõ ràng việc tạo/cập nhật artifact, đọc feedback đã lưu, hoặc reconnect lifecycle đã biết. Loại tài liệu tự nó không phải điều kiện auto-trigger.
 
-## Trạng thái triển khai 0.8.0
+## Trạng thái triển khai 0.9.0
 
-Phiên bản 0.8.0 dùng MCP server 5.1.0, bổ sung hỗ trợ explicit chat update qua `inspect_artifact_review` với `intent: "explicit-chat-update"` để cập nhật và advance một round trống trực tiếp từ chat mà không cần tạo comment hoặc bấm nút Review. Việc tách artifact persistence khỏi waiter ownership cho phép chat escape và reconnect mà không thay schema-v4, webview, provider, Artifact Store, renderer hoặc workspace registry.
+Phiên bản 0.9.0 dùng MCP server 6.0.0 và giữ schema v4. Trước create chỉ còn hai nguồn bằng chứng: file do người dùng tag, hoặc candidate có token từ `resolve_artifact_workspace`. Workspace phải được resolve trước khi skill đọc project hoặc soạn artifact. Resolver chuẩn hóa separator trong tên; nếu query không khớp, nó trả toàn bộ workspace fresh trong focused scope và chỉ trả `not-found` khi scope đó rỗng. Skill tự chọn khi có đúng một candidate có độ tin cậy cao dựa trên name/path/match và chỉ hỏi người dùng khi kết quả còn mơ hồ. MCP vẫn xác minh token, registry, root và containment trước mutation.
+
+Skill luôn tạo `kind: "implementation-plan"`, kiểm tra bộ năm tool một lần khi bắt đầu lifecycle trong chat, và giữ mapping request/workspace → exact handle/round nếu có nhiều artifact. Sau create, resolver không còn tham gia. Reconnect, đọc feedback và explicit chat update đi qua decision table; intent hoặc handle chưa rõ thì hỏi, không takeover suy đoán.
+
+Lifecycle errors có structured recovery metadata để agent giữ cùng exact handle, chọn đúng bước inspect/wait/advance và không replay mù khi chưa chắc transaction đã commit. Việc tối ưu payload sửa Markdown và state-generation protocol không thuộc phiên bản này; Case F/H giữ nguyên hành vi, còn Artifact Store, provider, webview và renderer không thay đổi.
 
 Round token vẫn là capability in-memory, single-use và hết hạn sau một giờ, nhưng được bind vào toàn bộ trạng thái đã inspect: artifact, session, round, artifact hash, comments hash và submission presence/hash. Token chỉ bị consume sau commit thành công. Schema-v3 tiếp tục chỉ đọc.
