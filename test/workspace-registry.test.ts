@@ -76,7 +76,7 @@ describe("workspace registry", () => {
     await expect(resolveRegisteredWorkspaceRoot(workspace, fixture.registry)).rejects.toThrow("WORKSPACE_NOT_REGISTERED");
   });
 
-  it("merges fresh workspace folders published by multiple VS Code windows", async () => {
+  it("keeps exact registration lookup across windows but rejects an ambiguous resolver scope", async () => {
     const fixture = await rootFixture();
     const workspaces = [path.join(fixture.root, "workspace-a"), path.join(fixture.root, "workspace-b")];
     await Promise.all(workspaces.map((workspace) => mkdir(workspace)));
@@ -85,6 +85,7 @@ describe("workspace registry", () => {
     expect(await readFreshWorkspaceSnapshots(fixture.registry)).toHaveLength(2);
     await expect(resolveRegisteredWorkspaceRoot(workspaces[0]!, fixture.registry)).resolves.toBe(await realpath(workspaces[0]!));
     await expect(resolveRegisteredWorkspaceRoot(workspaces[1]!, fixture.registry)).resolves.toBe(await realpath(workspaces[1]!));
+    await expect(resolveWorkspaceCandidates("workspace", fixture.registry)).rejects.toThrow("WORKSPACE_CONTEXT_AMBIGUOUS");
   });
 
   it("scopes resolver candidates and creation evidence to the focused VS Code window", async () => {
@@ -106,11 +107,11 @@ describe("workspace registry", () => {
     }]);
     expect(focused.matchMode).toBe("matched");
     const fallback = await resolveWorkspaceCandidates("other-window-root", fixture.registry);
-    expect(fallback.matchMode).toBe("all-available");
+    expect(fallback.matchMode).toBe("matched");
     expect(fallback.candidates).toEqual([{
       name: "focused-root",
       path: await realpath(focusedRoot),
-      match: "available",
+      match: "single-folder",
     }]);
     await expect(resolveWorkspaceRootForArtifactCreation(
       focusedRoot,
@@ -122,6 +123,35 @@ describe("workspace registry", () => {
       { kind: "tagged-file", filePath: otherFile },
       fixture.registry,
     )).rejects.toThrow("focused VS Code window");
+  });
+
+  it("returns the only folder in a workspace scope as matched even when the query differs", async () => {
+    const fixture = await rootFixture();
+    const workspace = path.join(fixture.root, "agent-plus");
+    await mkdir(workspace);
+    await publish(fixture.registry, [workspace]);
+
+    const resolution = await resolveWorkspaceCandidates("unrelated user wording", fixture.registry);
+    expect(resolution.matchMode).toBe("matched");
+    expect(resolution.candidates).toEqual([{
+      name: "agent-plus",
+      path: await realpath(workspace),
+      match: "single-folder",
+    }]);
+  });
+
+  it("accepts duplicate snapshots only when they describe the same workspace scope", async () => {
+    const fixture = await rootFixture();
+    const workspace = path.join(fixture.root, "agent-plus");
+    await mkdir(workspace);
+    await publish(fixture.registry, [workspace]);
+    await publish(fixture.registry, [workspace]);
+
+    const resolution = await resolveWorkspaceCandidates("unknown name", fixture.registry);
+    expect(resolution).toMatchObject({
+      matchMode: "matched",
+      candidates: [{ name: "agent-plus", match: "single-folder" }],
+    });
   });
 
   it("orders exact path and exact name before similar matches", async () => {

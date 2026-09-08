@@ -74,9 +74,9 @@ The governing lifetime relationship is `artifact lifetime > waiter lifetime > ch
 **Responsibilities**
 
 - Decide whether an explicit user request should create/update an artifact, inspect saved feedback, or reconnect an exact artifact.
-- Resolve the workspace before reading project files or drafting artifact content, through either a user-tagged file or a resolver candidate chosen by the skill or user.
+- Resolve the target workspace folder before reading project files or drafting artifact content, through either a user-tagged file or a resolver candidate chosen by the skill or user.
 - Produce one complete Markdown document.
-- When no file was tagged, call `resolve_artifact_workspace` before reading the contract or taking any project action; do not scan folders first. Choose a uniquely high-confidence candidate from the returned names, paths, and match classifications, and require user selection only when the result remains ambiguous. After choosing, read the contract before inspecting the workspace or calling any lifecycle tool.
+- When no file was tagged, call `resolve_artifact_workspace` before reading the contract or taking any project action; do not scan folders first. Immediately select a sole `single-folder` candidate supplied by MCP. Otherwise choose a uniquely high-confidence candidate from the returned names, paths, and match classifications, and require user selection only when the result remains ambiguous. After choosing, read the contract before inspecting the folder or calling any lifecycle tool.
 - Call `create_artifact` with `kind: "implementation-plan"`, retain an exact request/workspace-to-handle mapping, then call `wait_for_artifact_review` for the default flow.
 - Interpret the returned decision.
 - Apply one feedback policy to submitted `revise` and chat-inspected comments: answer questions visibly, update Markdown only for requested changes, and advance unchanged Markdown for question-only rounds.
@@ -113,7 +113,7 @@ The skill must never create or edit `artifact.json`, `comments.json`, or `review
   - `inspect_artifact_review`
   - `advance_and_wait_for_artifact`
 - Validate tool arguments, artifact kind, title, Markdown size, workspace root, and typed workspace evidence.
-- Match fresh focused workspace candidates and issue short-lived, context-bound, single-use resolver grants.
+- Scope resolution to one unique VS Code workspace context, match its fresh folder candidates, and issue short-lived, context-bound, single-use resolver grants.
 - Generate the artifact ID and `reviewSessionId`.
 - Create a schema-v4 artifact at review round 1.
 - Return the persistent artifact handle before attaching any waiter.
@@ -170,9 +170,9 @@ The MCP-side resolver:
 
 - Reads only fresh, schema-valid snapshots.
 - Canonicalizes the requested workspace and rejects stale or unregistered roots.
-- Scopes creation evidence to the focused VS Code window when available.
-- Normalizes common name separators and resolves exact-path, exact-name, and similar-name candidates from the fresh focused registry; the skill chooses a uniquely high-confidence result or asks the user when ambiguous.
-- When no query match exists, returns every workspace in that same scope as `available`; returns `not-found` only when the fresh scope is empty.
+- Scopes resolver candidates to one unique VS Code workspace context and never combines distinct windows.
+- Normalizes common name separators and resolves exact-path, exact-name, and similar-name folder candidates; a sole folder is returned as `single-folder` and selected without agent inference.
+- In a multi-root workspace, returns every folder in the same scope as `available` when no query match exists; returns `not-found` only when the fresh scope is empty and `WORKSPACE_CONTEXT_AMBIGUOUS` when no unique window context can be identified.
 - Validates either `tagged-file` containment or an MCP-owned `resolved-workspace` grant.
 - Fails closed when evidence, selection context, registration, or containment is stale or invalid.
 
@@ -439,7 +439,7 @@ This layer is the protocol source of truth. A contract change must be propagated
 
 ### Default submission flow
 
-1. With a tagged file, the skill derives its containing workspace. Without one, it calls `resolve_artifact_workspace` before reading project content. It shows matching candidates or the `all-available` fallback and waits for the user's selection.
+1. With a tagged file, the skill derives its containing workspace folder. Without one, it calls `resolve_artifact_workspace` before reading project content. A one-folder workspace returns `matched`/`single-folder` and is selected immediately. A multi-root workspace returns query matches or the `all-available` fallback; the skill asks only when the folder choice remains ambiguous. Resolver scope ambiguity across VS Code windows requires the user to focus the intended window and retry.
 2. Only after selection, the skill reads required instructions and relevant source in that workspace, then calls `create_artifact` with complete Markdown, `kind: "implementation-plan"`, and one of the two evidence variants. It retains the returned `artifactDirectory` and round in its exact-handle mapping.
 3. The MCP revalidates the workspace/evidence, creates the three initial schema-v4 files, and returns immediately.
 4. The skill calls `wait_for_artifact_review` with the exact handle. The MCP reserves waiter ownership.

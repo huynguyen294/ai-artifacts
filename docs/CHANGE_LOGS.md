@@ -21,7 +21,9 @@ Mỗi mục mới nên nêu ngày thay đổi, loại thay đổi, nội dung đ
 ### Nội dung thay đổi
 
 - Thêm `resolve_artifact_workspace`; resolver đọc fresh focused registry và trả name/path candidate với selection token. Skill tự chọn candidate duy nhất có độ tin cậy cao và chỉ hỏi người dùng khi mơ hồ.
-- Resolver chuẩn hóa separator trong query/tên workspace; khi không có match, trả toàn bộ fresh focused scope với `matchMode: "all-available"`, còn `not-found` chỉ biểu thị scope rỗng.
+- Resolver chuẩn hóa separator trong query/tên workspace; trong multi-root workspace, khi không có match, trả toàn bộ folder của cùng focused context với `matchMode: "all-available"`, còn `not-found` chỉ biểu thị scope rỗng.
+- Resolver trả một workspace folder duy nhất là `matched`/`single-folder` dù query không khớp, nên agent không phải tự suy ra cardinality từ context ngoài MCP.
+- Resolver chỉ đọc một VS Code workspace context duy nhất: không gộp folder từ nhiều window khi focus mơ hồ, trả `WORKSPACE_CONTEXT_AMBIGUOUS` để người dùng focus đúng window, nhưng vẫn hợp nhất heartbeat trùng nhau của cùng context.
 - Create evidence chỉ còn `tagged-file` và `resolved-workspace`; bỏ `single-workspace`, `active-file`, `explicit-user-path` và `explicit-user-folder` khỏi writable create contract.
 - Official skill luôn gửi `kind: "implementation-plan"`, chỉ kiểm tra năm tool một lần mỗi chat lifecycle và quản lý exact handle/round theo request/workspace khi có nhiều artifact.
 - `resolve_artifact_workspace` là MCP tool duy nhất được gọi trước khi đọc `artifact-contract.md`; sau khi chọn được workspace, skill đọc contract trước mọi project research, artifact drafting hoặc lifecycle tool còn lại.
@@ -29,7 +31,7 @@ Mỗi mục mới nên nêu ngày thay đổi, loại thay đổi, nội dung đ
 - Thêm structured recovery metadata cho lifecycle error và rule same-handle/no-blind-replay. Chỉ confirmed pre-commit cancellation hoặc rollback mới cho phép reuse token.
 - Giữ schema v4, full replacement Markdown, pure reconnect và Proceed behavior hiện tại; không thay Artifact Store, provider, webview hoặc renderer.
 - Nâng extension lên `0.9.0`, MCP server lên `6.0.0`; cập nhật README, architecture, components, philosophy, skill contract, installer approvals và tests.
-- Xác thực bằng typecheck, 72/72 tests trên 12 test files và full production build.
+- Xác thực bằng typecheck, 76/76 tests trên 12 test files và full production build.
 
 ### Lý do
 

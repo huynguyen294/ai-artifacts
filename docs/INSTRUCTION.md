@@ -36,7 +36,7 @@ If product intent, documentation, tests, and implementation disagree, call out t
 - Round tokens are in-memory, one-time, exact-state-bound, and expiring. Cancellation or restart preserves artifact state; recover only by inspecting an exact retained artifact handle.
 - Artifact lifetime exceeds waiter lifetime, which exceeds chat-turn lifetime. Cancellation and takeover must not mutate lifecycle files.
 - Schema v4 is the only writable lifecycle. Schema-v3 artifacts remain readable but read-only; older plan/replacement formats are not live-migrated.
-- Workspace ownership requires a user-tagged file or an MCP-issued resolver token for a candidate chosen from the user's workspace words. Cwd, `environment_context`, workspace order, project markers, and filesystem search results cannot establish ownership by themselves.
+- Workspace-folder ownership requires a user-tagged file or an MCP-issued resolver token for a candidate chosen from the user's workspace words. The resolver must scope candidates to one unique VS Code workspace context and never merge folders from different windows. Cwd, `environment_context`, workspace order, project markers, and filesystem search results cannot establish ownership by themselves.
 - Fail before filesystem mutation when workspace ownership is missing, ambiguous, stale, unregistered, or unsafe.
 - Preserve unrelated user skills, hooks, MCP configuration, and project files during install, upgrade, cleanup, or migration.
 
@@ -75,4 +75,4 @@ On shells where `npm` is directly executable, the equivalent `npm run ...` comma
 
 For lifecycle changes, cover at least create, wait, takeover inspection, Review, question-only and Markdown advancement, Proceed, Just save, reconnect, token state binding/replay, cancellation, concurrency, rollback, and legacy read-only behavior as applicable.
 
-For workspace changes, cover focused-window scoping, tagged-file evidence, separator-normalized exact/similar matches, unique high-confidence agent choice, ambiguous user selection, all-available fallback, empty-scope not-found, stale/replayed resolver tokens, registry changes, exact-root matching, containment, and linked-path rejection as applicable.
+For workspace changes, cover focused-window scoping, single-folder matching, cross-window ambiguity, duplicate snapshots of one context, tagged-file evidence, separator-normalized exact/similar matches, unique high-confidence agent choice, ambiguous user selection, multi-root all-available fallback, empty-scope not-found, stale/replayed resolver tokens, registry changes, exact-root matching, containment, and linked-path rejection as applicable.

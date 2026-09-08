@@ -2,8 +2,8 @@
 
 ## Trạng thái
 
-- **Deferred:** lưu để triển khai sau.
-- Tài liệu này ghi lại vấn đề naming và phạm vi kiến trúc cần sửa; chưa phải source of truth cho runtime hiện tại.
+- **Deferred một phần:** migration naming/public protocol vẫn để triển khai sau; strict single-workspace resolver scope đã được triển khai trong 0.9.0.
+- Tài liệu này ghi lại vấn đề naming và phạm vi kiến trúc còn cần sửa; source of truth cho runtime hiện tại vẫn là code và tài liệu chính thức.
 - Không thay đổi code, protocol, schema hoặc tài liệu chính thức chỉ dựa trên note này.
 
 ## Kết luận đã thống nhất
@@ -60,20 +60,21 @@ Artifact hiện được lưu và bind vào một folder được chọn trong w
 
 Manifest và MCP hiện dùng `location.workspaceRoot`/`workspaceRoot`. Giá trị này là root của folder được đăng ký và là parent của `.codex-artifacts`, không phải định danh của toàn bộ VS Code workspace.
 
-### Cross-window fallback cần xem lại
+### Cross-window fallback đã xử lý
 
-Resolver hiện dùng:
+Resolver trước đây dùng:
 
 ```ts
 const relevantSnapshots = focusedSnapshots.length > 0 ? focusedSnapshots : snapshots;
 ```
 
-Khi có focused snapshot, candidate được giới hạn trong focused workspace/window. Nhưng khi không có snapshot nào focused, code gộp folder từ tất cả snapshot còn fresh. Trường hợp này có thể lấy candidate từ nhiều VS Code workspace/window khác nhau.
+Khi có focused snapshot, candidate được giới hạn trong focused workspace/window. Nhưng khi không có snapshot nào focused, code từng gộp folder từ tất cả snapshot còn fresh và có thể lấy candidate từ nhiều VS Code workspace/window khác nhau.
 
-Nếu product invariant là **một workspace có nhiều folder**, fallback trên không chỉ là naming sai mà còn là hành vi lệch scope. Khi triển khai cần quyết định một trong hai hướng:
+Runtime 0.9.0 đã chốt hướng fail-closed:
 
-1. **Khuyến nghị:** nếu không xác định được đúng một workspace/window scope thì trả trạng thái ambiguous/not-focused và yêu cầu người dùng focus hoặc chọn workspace context; không gộp folder từ nhiều window.
-2. Cho phép cross-window discovery nhưng phải gọi đúng là multi-workspace registry và thêm bước chọn workspace trước khi chọn folder. Hướng này phức tạp hơn và không phù hợp với product intent đã thống nhất.
+- Resolver chọn đúng một focused workspace context; khi không có focus, nó chỉ tiếp tục nếu mọi fresh snapshot mô tả cùng một context.
+- Nhiều context khác nhau trả `WORKSPACE_CONTEXT_AMBIGUOUS` và yêu cầu người dùng focus đúng VS Code window; không gộp folder cross-window.
+- Nếu context được chọn chỉ có một folder, MCP trả `matched`/`single-folder` dù query không khớp. Việc này do MCP xác định, không giao cho AI suy luận.
 
 ## Repository nằm trong workspace folder
 
@@ -105,7 +106,7 @@ thì resolver hiện chỉ biết `workspace folder`, không biết `repo-a` và
 - `WorkspaceCandidateResolution` → `WorkspaceFolderCandidateResolution`.
 - Các hàm `resolveWorkspace*` nên nói rõ chúng resolve registered workspace folder.
 - Tách rõ snapshot/window identity khỏi danh sách folder.
-- Bỏ hoặc thay cross-window fallback khi không có focused snapshot.
+- Giữ invariant strict single-workspace scope đã triển khai; chỉ đổi naming/type khi thực hiện migration.
 
 ### 3. Extension host
 
@@ -136,7 +137,7 @@ thì resolver hiện chỉ biết `workspace folder`, không biết `repo-a` và
 ## Migration strategy đề xuất
 
 1. Chốt vocabulary và target ownership: artifact thuộc workspace folder hay repository root.
-2. Chốt strict single-workspace behavior khi không có focused snapshot.
+2. Giữ strict single-workspace behavior hiện tại khi đổi naming/type.
 3. Đổi internal type/function names trước, giữ adapter cho public protocol nếu cần.
 4. Nếu đổi tool/evidence/schema field, phát hành protocol version mới và hỗ trợ lỗi migration rõ ràng.
 5. Đồng bộ skill, MCP metadata, installer approvals, docs và tests trong cùng một thay đổi.
@@ -146,7 +147,7 @@ thì resolver hiện chỉ biết `workspace folder`, không biết `repo-a` và
 
 1. Public tool nên đổi thành `resolve_artifact_workspace_folder` hay dùng tên ngắn hơn `resolve_artifact_target_folder`?
 2. Có đổi public field `workspaceRoot` sang `workspaceFolderRoot` hay chỉ đổi internal naming và giữ field cũ để tương thích?
-3. Khi không có focused snapshot, resolver sẽ trả lỗi/ambiguous hay cho phép người dùng chọn workspace window trước?
+3. Có cần bổ sung tool chọn workspace window trong tương lai hay giữ hành vi hiện tại là yêu cầu focus window?
 4. Artifact chỉ thuộc top-level workspace folder hay cần hỗ trợ repository/project nằm sâu bên trong folder?
 5. Đây sẽ là breaking protocol version mới hay migration tương thích theo giai đoạn?
 
@@ -155,5 +156,5 @@ thì resolver hiện chỉ biết `workspace folder`, không biết `repo-a` và
 - Dùng product phrase **“one VS Code workspace with multiple workspace folders”** hoặc **“multi-root workspace support”**.
 - Xem workspace folder là target ownership hiện tại; nested repository là feature riêng.
 - Đổi internal naming sang `workspaceFolder*`.
-- Không gộp các window khi không xác định được focused workspace; fail closed và yêu cầu người dùng focus/chọn context.
+- Giữ hành vi hiện tại: không gộp các window khi không xác định được một workspace context; fail closed và yêu cầu người dùng focus đúng window.
 - Giữ compatibility alias cho public MCP/tool fields nếu chi phí breaking migration cao; nếu project vẫn đang ở giai đoạn chưa release contract mới thì đổi dứt điểm trước release.

@@ -32,12 +32,16 @@ describe("create-review-artifact skill contract", () => {
     expect(skill).toContain("`resolve_artifact_workspace({ query })`");
     expect(skill).toContain('`{ kind: "resolved-workspace", selectionToken }`');
     expect(skill).toContain('`matchMode: "matched"`');
+    expect(skill).toContain('`match: "single-folder"`');
+    expect(skill).toContain("this classification is supplied by MCP, not inferred by the agent");
     expect(skill).toContain("Select a candidate without asking when exactly one is clearly the strongest match");
     expect(skill).toContain('`matchMode: "all-available"`');
     expect(skill).toContain("ask the user only when the strongest result is tied or otherwise ambiguous");
     expect(skill).toContain("uniquely high-confidence semantic match");
-    expect(skill).toContain("Once exactly one workspace is chosen, read [references/artifact-contract.md](references/artifact-contract.md)");
-    expect(skill).toContain("before inspecting that workspace or calling `create_artifact`");
+    expect(skill).toContain("`WORKSPACE_CONTEXT_AMBIGUOUS`");
+    expect(skill).toContain("Do not combine or inspect folders from different windows");
+    expect(skill).toContain("Once exactly one target workspace folder is chosen, read [references/artifact-contract.md](references/artifact-contract.md)");
+    expect(skill).toContain("before inspecting that folder or calling `create_artifact`");
     expect(contract).toContain("may call `resolve_artifact_workspace` before loading this reference");
     expect(skill).not.toContain("Read [references/artifact-contract.md](references/artifact-contract.md) before calling the MCP tools");
     expect(skill).not.toContain("Do not read [references/artifact-contract.md](references/artifact-contract.md) during an ordinary create flow");
@@ -45,6 +49,8 @@ describe("create-review-artifact skill contract", () => {
     expect(contract).toContain("Resolver tokens are in-memory, one-time on successful creation");
     expect(contract).toContain("expire after ten minutes");
     expect(contract).toContain('`agent plus`, `agent-plus`, and `agent_plus` match');
+    expect(contract).toContain('`match: "single-folder"`');
+    expect(contract).toContain("It never combines folders from different VS Code windows");
   });
 
   it("uses one chat-visible feedback policy for Review and chat inspection", async () => {

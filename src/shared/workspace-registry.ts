@@ -42,7 +42,7 @@ export const workspaceEvidenceSchema = z.discriminatedUnion("kind", [
 
 export type WorkspaceEvidence = z.infer<typeof workspaceEvidenceSchema>;
 
-export type WorkspaceCandidateMatch = "exact-path" | "exact-name" | "similar-name" | "available";
+export type WorkspaceCandidateMatch = "exact-path" | "exact-name" | "similar-name" | "single-folder" | "available";
 
 export type WorkspaceCandidateMatchMode = "matched" | "all-available" | "none";
 
@@ -183,6 +183,35 @@ function uniqueRegisteredFolders(snapshots: readonly WorkspaceRegistrySnapshot[]
   return [...unique.values()];
 }
 
+function workspaceSnapshotScopeKey(snapshot: WorkspaceRegistrySnapshot): string {
+  return JSON.stringify({
+    workspaceFile: snapshot.workspaceFile ? searchPathText(snapshot.workspaceFile) : null,
+    folders: snapshot.folders
+      .map((folder) => searchPathText(folder.realPath))
+      .sort((left, right) => left.localeCompare(right)),
+  });
+}
+
+function selectSingleWorkspaceScope(
+  snapshots: readonly WorkspaceRegistrySnapshot[],
+): WorkspaceRegistrySnapshot[] {
+  const focusedSnapshots = snapshots.filter((snapshot) => snapshot.focused);
+  const candidates = focusedSnapshots.length > 0 ? focusedSnapshots : snapshots;
+  const scopes = new Map<string, WorkspaceRegistrySnapshot[]>();
+  for (const snapshot of candidates) {
+    const key = workspaceSnapshotScopeKey(snapshot);
+    const scope = scopes.get(key);
+    if (scope) scope.push(snapshot);
+    else scopes.set(key, [snapshot]);
+  }
+  if (scopes.size > 1) {
+    throw new Error(
+      "WORKSPACE_CONTEXT_AMBIGUOUS: the registry does not identify one unique VS Code workspace context; focus the intended VS Code window and retry.",
+    );
+  }
+  return scopes.values().next().value ?? [];
+}
+
 function isPathInside(parent: string, candidate: string): boolean {
   const relative = path.relative(parent, candidate);
   return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
@@ -200,10 +229,19 @@ function searchTerms(value: string): string {
     .trim();
 }
 
-function workspaceContextKey(folders: readonly { realPath: string }[]): string {
-  return JSON.stringify(folders
-    .map((folder) => searchPathText(folder.realPath))
-    .sort((left, right) => left.localeCompare(right)));
+function workspaceContextKey(
+  snapshots: readonly WorkspaceRegistrySnapshot[],
+  folders: readonly { realPath: string }[],
+): string {
+  const snapshot = snapshots[0];
+  return snapshot
+    ? workspaceSnapshotScopeKey(snapshot)
+    : JSON.stringify({
+      workspaceFile: null,
+      folders: folders
+        .map((folder) => searchPathText(folder.realPath))
+        .sort((left, right) => left.localeCompare(right)),
+    });
 }
 
 export async function resolveWorkspaceCandidates(
@@ -216,8 +254,7 @@ export async function resolveWorkspaceCandidates(
     throw new Error("WORKSPACE_QUERY_INVALID: query must contain 2 to 500 characters.");
   }
   const snapshots = await readFreshWorkspaceSnapshots(directory, now);
-  const focusedSnapshots = snapshots.filter((snapshot) => snapshot.focused);
-  const relevantSnapshots = focusedSnapshots.length > 0 ? focusedSnapshots : snapshots;
+  const relevantSnapshots = selectSingleWorkspaceScope(snapshots);
   const folders = uniqueRegisteredFolders(relevantSnapshots);
   const normalizedQuery = searchTerms(query);
   const absoluteQuery = path.isAbsolute(query);
@@ -225,7 +262,8 @@ export async function resolveWorkspaceCandidates(
     "exact-path": 0,
     "exact-name": 1,
     "similar-name": 2,
-    available: 3,
+    "single-folder": 3,
+    available: 4,
   };
   const matchedCandidates = folders.flatMap((folder): WorkspaceCandidate[] => {
     const name = path.basename(folder.path) || path.basename(folder.realPath);
@@ -246,17 +284,28 @@ export async function resolveWorkspaceCandidates(
     || left.name.localeCompare(right.name)
     || left.path.localeCompare(right.path)
   )).slice(0, 10);
+  const singleFolderCandidate = matchedCandidates.length === 0 && folders.length === 1
+    ? [{
+      name: path.basename(folders[0]!.path) || path.basename(folders[0]!.realPath),
+      path: folders[0]!.realPath,
+      match: "single-folder" as const,
+    }]
+    : [];
   const candidates = matchedCandidates.length > 0
     ? matchedCandidates
-    : folders.map((folder): WorkspaceCandidate => ({
+    : singleFolderCandidate.length > 0
+      ? singleFolderCandidate
+      : folders.map((folder): WorkspaceCandidate => ({
       name: path.basename(folder.path) || path.basename(folder.realPath),
       path: folder.realPath,
       match: "available",
     })).sort((left, right) => left.name.localeCompare(right.name) || left.path.localeCompare(right.path));
   return {
     query,
-    contextKey: workspaceContextKey(folders),
-    matchMode: matchedCandidates.length > 0 ? "matched" : folders.length > 0 ? "all-available" : "none",
+    contextKey: workspaceContextKey(relevantSnapshots, folders),
+    matchMode: matchedCandidates.length > 0 || singleFolderCandidate.length > 0
+      ? "matched"
+      : folders.length > 0 ? "all-available" : "none",
     candidates,
   };
 }
@@ -270,7 +319,9 @@ export async function resolveWorkspaceRootForArtifactCreation(
   const registeredRoot = await resolveRegisteredWorkspaceRoot(requestedRoot, directory, now);
   const snapshots = await readFreshWorkspaceSnapshots(directory, now);
   const focusedSnapshots = snapshots.filter((snapshot) => snapshot.focused);
-  const relevantSnapshots = focusedSnapshots.length > 0 ? focusedSnapshots : snapshots;
+  const relevantSnapshots = evidence.kind === "resolved-workspace"
+    ? selectSingleWorkspaceScope(snapshots)
+    : focusedSnapshots.length > 0 ? focusedSnapshots : snapshots;
   const folders = uniqueRegisteredFolders(relevantSnapshots);
   if (!folders.some((folder) => sameFilesystemPath(folder.realPath, registeredRoot))) {
     throw new Error(

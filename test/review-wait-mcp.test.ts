@@ -125,6 +125,8 @@ async function initialize(client: TestClient): Promise<void> {
   expect(initialized.instructions).toContain("execute the complete approved plan immediately");
   expect(initialized.instructions).toContain("Select a uniquely high-confidence candidate");
   expect(initialized.instructions).toContain("ask the user only when the result remains ambiguous");
+  expect(initialized.instructions).toContain("match=single-folder");
+  expect(initialized.instructions).toContain("WORKSPACE_CONTEXT_AMBIGUOUS");
   expect(initialized.instructions).toContain("Never select the latest artifact");
   client.notify("notifications/initialized");
 }
@@ -909,6 +911,64 @@ describe("artifact review MCP server v6", () => {
       },
     });
     expect(created.workspaceRoot).toBe(await realpath(fixture.workspace));
+  });
+
+  it("returns the only folder as a matched resolver candidate without relying on the query", async () => {
+    const fixture = await workspaceFixture();
+    const client = startClient(fixture.registry);
+    await initialize(client);
+
+    const resolved = await callTool(client, "resolve_artifact_workspace", { query: "different project name" });
+    expect(resolved.structuredContent).toMatchObject({
+      status: "selection-required",
+      matchMode: "matched",
+      candidates: [{
+        name: "workspace",
+        path: await realpath(fixture.workspace),
+        match: "single-folder",
+        selectionToken: expect.any(String),
+      }],
+    });
+    const selected = resolved.structuredContent.candidates[0];
+    const created = await createArtifact(client, selected.path, {
+      title: "Single folder selection",
+      workspaceEvidence: {
+        kind: "resolved-workspace",
+        selectionToken: selected.selectionToken,
+      },
+    });
+    expect(created.workspaceRoot).toBe(await realpath(fixture.workspace));
+  });
+
+  it("rejects resolver fallback across multiple unfocused VS Code workspace contexts", async () => {
+    const fixture = await workspaceFixture();
+    const firstSnapshotPath = path.join(fixture.registry, (await readdir(fixture.registry))[0]!);
+    const firstSnapshot = JSON.parse(await readFile(firstSnapshotPath, "utf8"));
+    firstSnapshot.focused = false;
+    await atomicWrite(firstSnapshotPath, `${JSON.stringify(firstSnapshot, null, 2)}\n`);
+
+    const secondWorkspace = path.join(path.dirname(fixture.workspace), "other-window");
+    await mkdir(secondWorkspace);
+    const now = Date.now();
+    const secondInstanceId = randomUUID();
+    await writeFile(path.join(fixture.registry, `${secondInstanceId}.json`), `${JSON.stringify({
+      schemaVersion: 2,
+      instanceId: secondInstanceId,
+      processId: process.pid,
+      workspaceFile: null,
+      focused: false,
+      folders: [{ path: secondWorkspace, realPath: await realpath(secondWorkspace) }],
+      activeFile: null,
+      updatedAt: new Date(now).toISOString(),
+      expiresAt: new Date(now + 60_000).toISOString(),
+    }, null, 2)}\n`, "utf8");
+    const client = startClient(fixture.registry);
+    await initialize(client);
+
+    const result = await callTool(client, "resolve_artifact_workspace", { query: "workspace" });
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("WORKSPACE_CONTEXT_AMBIGUOUS");
+    expect(result.content[0].text).toContain("focus the intended VS Code window");
   });
 
   it("invalidates a workspace selection when the current registry scope changes", async () => {

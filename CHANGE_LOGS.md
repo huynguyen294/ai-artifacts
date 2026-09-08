@@ -11,7 +11,9 @@ Lịch sử phát hành được chuẩn hóa và bắt đầu ghi nhận lại 
 ### Workspace resolution và create contract
 
 - Thêm tool read-only `resolve_artifact_workspace`, tìm exact-path, exact-name hoặc similar-name trong fresh focused registry và trả name/path candidate kèm selection token; MCP không tự chọn workspace, còn skill tự chọn candidate duy nhất có độ tin cậy cao hoặc hỏi người dùng khi mơ hồ.
-- Chuẩn hóa separator khi tìm kiếm nên `agent plus`, `agent-plus` và `agent_plus` cùng khớp. Nếu query không có match, resolver trả toàn bộ workspace fresh trong focused scope với `matchMode: "all-available"`; `not-found` chỉ còn nghĩa là scope fresh đang rỗng.
+- Chuẩn hóa separator khi tìm kiếm nên `agent plus`, `agent-plus` và `agent_plus` cùng khớp. Trong multi-root workspace, nếu query không có match, resolver trả toàn bộ folder fresh của cùng context với `matchMode: "all-available"`; `not-found` chỉ còn nghĩa là scope fresh đang rỗng.
+- Nếu VS Code workspace context chỉ có một folder, resolver trả ngay `matchMode: "matched"` với `match: "single-folder"` dù query không khớp, để skill chọn mà không cần tự suy luận số folder.
+- Resolver không còn fallback bằng cách gộp folder từ nhiều VS Code window. Nếu registry có nhiều context khác nhau mà không xác định được một focused context duy nhất, MCP fail với `WORKSPACE_CONTEXT_AMBIGUOUS`; các snapshot trùng nhau của cùng một context vẫn được xem là một scope.
 - Thu gọn create evidence còn đúng hai loại: `tagged-file` và `resolved-workspace`. Resolver token chứng minh candidate thuộc fresh focused scope; candidate có thể do skill tự chọn khi duy nhất và đủ tin cậy, hoặc do người dùng chọn khi mơ hồ.
 - Selection token hết hạn sau 10 phút, chỉ được consume sau create thành công, bind vào candidate và registry context; create vẫn revalidate registration, focused scope, root canonical và tagged-file containment trước mutation.
 - Official skill luôn gửi `kind: "implementation-plan"`; artifact schema vẫn là v4 và MCP vẫn giữ field `kind` bắt buộc để tương thích protocol.
@@ -31,7 +33,7 @@ Lịch sử phát hành được chuẩn hóa và bắt đầu ghi nhận lại 
 - Phân biệt token invalid/expired, in-use, consumed, round mismatch, state changed, active waiter, confirmed rollback, cancellation/commit và workspace unavailable.
 - Token chỉ được reuse khi MCP xác nhận chưa commit và `reuseRoundToken: true`; mọi state không chắc chắn đều inspect lại cùng exact handle, không replay Markdown hoặc action cũ.
 - Nâng extension lên `0.9.0`, MCP server lên `6.0.0`, đồng bộ installer approvals, skill, contract, docs và regression tests. Sau upgrade cần cài lại global integration, restart Codex và bắt đầu chat mới.
-- Xác thực cuối: typecheck pass, 72/72 tests pass trên 12 test files và full production build pass.
+- Xác thực cuối: typecheck pass, 76/76 tests pass trên 12 test files và full production build pass.
 
 ## [0.8.0] - 2026-09-06
 
