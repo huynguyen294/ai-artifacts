@@ -23,7 +23,7 @@ function getTargetVersion() {
   }
 }
 
-function getPreviousReleaseTag() {
+function getPreviousReleaseTag(targetVersion) {
   // Allow manual override via env (useful for testing or workflow_dispatch inputs)
   if (process.env.PREVIOUS_RELEASE_TAG) {
     const override = process.env.PREVIOUS_RELEASE_TAG.trim();
@@ -31,38 +31,47 @@ function getPreviousReleaseTag() {
     return override;
   }
 
-  // 1. Try GitHub CLI (fetches the latest release published on GitHub)
+  const cleanTarget = (targetVersion || '').replace(/^v/, '');
+
+  // 1. Try GitHub CLI (fetches releases and finds the latest release prior to current target version)
   try {
-    const ghOutput = execSync('gh release list --exclude-drafts --limit 1 --json tagName -q ".[0].tagName"', {
+    const ghJson = execSync('gh release list --exclude-drafts --limit 30 --json tagName', {
       encoding: 'utf8',
       stdio: ['pipe', 'pipe', 'ignore'],
     }).trim();
-    if (ghOutput && ghOutput !== 'null') {
-      console.log(`[extract-changelog] Found previous GitHub release: ${ghOutput}`);
-      return ghOutput;
+    if (ghJson) {
+      const releases = JSON.parse(ghJson);
+      if (Array.isArray(releases)) {
+        const prev = releases.find((r) => (r.tagName || '').replace(/^v/, '') !== cleanTarget);
+        if (prev?.tagName) {
+          console.log(`[extract-changelog] Found previous GitHub release: ${prev.tagName}`);
+          return prev.tagName;
+        }
+      }
     }
   } catch {
     // Ignore gh command failures (e.g. offline, unauthenticated, or no releases yet)
   }
 
-  // 2. Try git tags (from git history)
-  const currentTag = process.env.GITHUB_REF_NAME || '';
-  if (currentTag) {
-    try {
-      const gitOutput = execSync(`git describe --tags --abbrev=0 "${currentTag}^"`, {
-        encoding: 'utf8',
-        stdio: ['pipe', 'pipe', 'ignore'],
-      }).trim();
-      if (gitOutput && gitOutput !== 'null') {
-        console.log(`[extract-changelog] Found previous git tag: ${gitOutput}`);
-        return gitOutput;
+  // 2. Try git tags (from git history, ignoring current target version)
+  try {
+    const tagList = execSync('git tag --sort=-creatordate', {
+      encoding: 'utf8',
+      stdio: ['pipe', 'pipe', 'ignore'],
+    }).trim();
+    if (tagList) {
+      const tags = tagList.split(/\r?\n/).map((t) => t.trim()).filter(Boolean);
+      const prev = tags.find((t) => t.replace(/^v/, '') !== cleanTarget);
+      if (prev) {
+        console.log(`[extract-changelog] Found previous git tag: ${prev}`);
+        return prev;
       }
-    } catch {
-      // Ignore git describe failures (e.g. no prior tags)
     }
+  } catch {
+    // Ignore git tag failures
   }
 
-  console.log('[extract-changelog] No previous release or tag found. Initial release: extracting all versions up to target version.');
+  console.log(`[extract-changelog] No previous release or tag found (prior to ${targetVersion}). Initial release: extracting all versions up to target version.`);
   return null;
 }
 
@@ -111,40 +120,23 @@ function extractChangelog() {
     return;
   }
 
-  const previousTag = getPreviousReleaseTag();
+  const previousTag = getPreviousReleaseTag(version);
   let endIndex = -1;
 
   if (previousTag) {
     const previousVersion = previousTag.replace(/^v/, '');
-    if (previousVersion !== version) {
-      const prevHeaderIndex = findHeaderIndex(content, previousVersion, startIndex + 1);
-      if (prevHeaderIndex !== -1) {
-        // Cut before the previous header, or before any preceding "---" divider
-        const beforePrev = content.slice(startIndex, prevHeaderIndex);
-        const lastDivider = beforePrev.lastIndexOf('\n---');
-        if (lastDivider !== -1 && lastDivider > 0) {
-          endIndex = startIndex + lastDivider;
-        } else {
-          endIndex = prevHeaderIndex;
-        }
+    const prevHeaderIndex = findHeaderIndex(content, previousVersion, startIndex + 1);
+    if (prevHeaderIndex !== -1) {
+      // Cut before the previous header, or before any preceding "---" divider
+      const beforePrev = content.slice(startIndex, prevHeaderIndex);
+      const lastDivider = beforePrev.lastIndexOf('\n---');
+      if (lastDivider !== -1 && lastDivider > 0) {
+        endIndex = startIndex + lastDivider;
+      } else {
+        endIndex = prevHeaderIndex;
       }
     } else {
-      // Re-run scenario: previousVersion === version
-      // Cut before the next version header
-      const afterStart = content.slice(startIndex + 1);
-      const nextHeaderMatch = afterStart.search(/\n##\s+\[/);
-      if (nextHeaderMatch !== -1) {
-        const nextHeaderIndex = startIndex + 1 + nextHeaderMatch;
-        const beforeNext = content.slice(startIndex, nextHeaderIndex);
-        const lastDivider = beforeNext.lastIndexOf('\n---');
-        if (lastDivider !== -1 && lastDivider > 0) {
-          endIndex = startIndex + lastDivider;
-        } else {
-          endIndex = nextHeaderIndex;
-        }
-      } else {
-        endIndex = content.length;
-      }
+      endIndex = content.length;
     }
   } else {
     // Initial release scenario: no previous release/tag exists yet on GitHub
