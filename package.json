@@ -87,7 +87,7 @@
     "build:enhancements": "esbuild src/webview/enhancements/shiki-entry.ts --bundle --minify --platform=browser --format=iife --outfile=dist/webview/shiki.js && esbuild src/webview/enhancements/mermaid-entry.ts --bundle --minify --platform=browser --format=iife --outfile=dist/webview/mermaid.js",
     "build:integration": "esbuild src/integration/artifact-review-mcp-v4.ts --bundle --minify --platform=node --format=esm --outfile=dist/integration/codex-artifacts-review-mcp.mjs",
     "check": "tsc --noEmit",
-    "test": "npm run build:integration && vitest run --configLoader native",
+    "test": "npm run build:integration && vitest run",
     "clean:releases": "node -e \"const fs = require('fs'); fs.rmSync('releases', { recursive: true, force: true }); fs.mkdirSync('releases', { recursive: true });\"",
     "package": "npm run build && npm run clean:releases && vsce package --allow-missing-repository --out releases/",
     "pack": "npm run package",
