@@ -3,6 +3,10 @@ const path = require('path');
 const { execSync } = require('child_process');
 
 function getTargetVersion() {
+  const inputTag = (process.env.INPUT_TAG || process.env.TARGET_TAG || '').trim();
+  if (inputTag) {
+    return inputTag.replace(/^v/, '');
+  }
   const refName = (process.env.GITHUB_REF_NAME || '').trim();
   if (refName.startsWith('v')) {
     return refName.slice(1);
@@ -79,6 +83,17 @@ function extractChangelog() {
   const version = getTargetVersion();
   const changelogPath = path.resolve(__dirname, '../CHANGE_LOGS.md');
   const outputPath = path.resolve(__dirname, '../RELEASE_NOTES.md');
+
+  // Export RELEASE_TAG to GITHUB_ENV so subsequent workflow steps can use it
+  if (process.env.GITHUB_ENV && version) {
+    const targetTag = version.startsWith('v') ? version : `v${version}`;
+    try {
+      fs.appendFileSync(process.env.GITHUB_ENV, `RELEASE_TAG=${targetTag}\n`, 'utf8');
+      console.log(`[extract-changelog] Exported RELEASE_TAG=${targetTag} to GITHUB_ENV`);
+    } catch (envErr) {
+      console.warn('[extract-changelog] Failed to export RELEASE_TAG to GITHUB_ENV:', envErr);
+    }
+  }
 
   if (!fs.existsSync(changelogPath)) {
     console.warn(`[extract-changelog] File not found: ${changelogPath}`);

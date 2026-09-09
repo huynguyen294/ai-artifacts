@@ -5,6 +5,12 @@ on:
     tags:
       - 'v*'
   workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release Tag (e.g. v0.9.1). Leave empty to use package.json version.'
+        required: false
+        default: ''
+        type: string
 
 permissions:
   contents: write
@@ -39,11 +45,13 @@ jobs:
       - name: Extract Release Notes from CHANGE_LOGS.md
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          INPUT_TAG: ${{ github.event.inputs.tag }}
         run: node scripts/extract-changelog.cjs
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ github.event.inputs.tag || env.RELEASE_TAG }}
           files: releases/*.vsix
           body_path: RELEASE_NOTES.md
           draft: false
