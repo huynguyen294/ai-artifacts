@@ -192,10 +192,10 @@ The registry proves that a workspace is currently available and that the supplie
 - Schemas: [`src/shared/contracts.ts`](../src/shared/contracts.ts)
 - Binding validation: [`src/shared/artifact-validation.ts`](../src/shared/artifact-validation.ts)
 
-Each artifact uses this directory:
+Each artifact uses this directory (with legacy `<workspace>/.codex-artifacts/artifacts/<artifactId>/` fully supported):
 
 ```text
-<workspace>/.codex-artifacts/artifacts/<artifactId>/
+<workspace>/.ai-artifacts/artifacts/<artifactId>/
 ├── artifact.json
 ├── artifact.md
 ├── comments.json

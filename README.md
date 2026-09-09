@@ -29,11 +29,11 @@ AI Artifacts connects to your favorite AI coding agents using the Model Context 
 ### 1. Install the extension
 
 - **From Marketplace / Open VSX:** Search for `AI Artifacts` in the Extensions view (`Ctrl+Shift+X` / `Cmd+Shift+X`) and click **Install**.
-- **From VSIX release:** Download the latest [AI Artifacts VSIX](releases/ai-artifacts-0.9.1.vsix) and run:
+- **From VSIX release:** Download the latest [AI Artifacts VSIX](releases/ai-artifacts-0.9.2.vsix) and run:
   ```powershell
-  code --install-extension releases/ai-artifacts-0.9.1.vsix
+  code --install-extension releases/ai-artifacts-0.9.2.vsix
   # Or in Cursor:
-  cursor --install-extension releases/ai-artifacts-0.9.1.vsix
+  cursor --install-extension releases/ai-artifacts-0.9.2.vsix
   ```
 
 To build the VSIX yourself from source, follow [Development](#development) below.
@@ -83,7 +83,7 @@ Asking for a plan or Markdown document without explicitly requesting an artifact
 The AI agent calls the MCP `create_artifact` tool, which generates an isolated review bundle in your workspace:
 
 ```text
-.codex-artifacts/artifacts/<server-generated-id>/
+.ai-artifacts/artifacts/<server-generated-id>/
   artifact.json
   artifact.md
   comments.json
@@ -115,13 +115,14 @@ When the current round has no saved comments or submission, you may request a co
 - **Transactional Updates:** Multi-round revisions are transactional; failed commits automatically roll back, including the Windows editor-lock fallback.
 - **Local & Private:** Everything runs locally on your machine via stdio MCP. No code, markdown, or telemetry is sent to any external server.
 - **Content Sanitization:** Rendered with CommonMark/GFM with syntax highlighting (Shiki) and diagram rendering (Mermaid). Unsafe raw HTML, scripts, and remote protocols are disabled.
-- **State Storage:** `.codex-artifacts/` contains operational review state and normally should not be committed to Git.
+- **State Storage:** `.ai-artifacts/` contains operational review state and normally should not be committed to Git. Legacy `.codex-artifacts/` remains fully readable and supported.
 
 ## Compatibility and upgrades
 
 - Schema v4 is the only writable artifact lifecycle. Existing schema-v4 artifacts do not need migration.
 - Schema-v3 artifacts remain readable in Artifact Review but are read-only. Create a new schema-v4 artifact to continue reviewing their content.
-- Older `.codex-artifacts/plans/` data is left untouched for manual archival or removal; the installer does not delete user artifact data.
+- Older `.codex-artifacts/` data is left untouched for backwards compatibility; the installer and extension do not delete user artifact data.
+- Version 0.9.2 standardizes artifact storage under `.ai-artifacts/` while maintaining 100% backwards compatibility for legacy `.codex-artifacts/`.
 - Version 0.9.0 adds workspace candidate resolution, the two-evidence creation contract, default `implementation-plan` creation, multi-handle/intent safety rules, and structured lifecycle recovery.
 
 ## Troubleshooting
@@ -161,7 +162,7 @@ Press `F5` to launch an Extension Development Host. Package and install locally:
 
 ```powershell
 npm run package
-code --install-extension releases/ai-artifacts-0.9.1.vsix
+code --install-extension releases/ai-artifacts-0.9.2.vsix
 ```
 
 ## Documentation

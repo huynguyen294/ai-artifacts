@@ -3,6 +3,7 @@
 .agents/**
 .codex/**
 .codex-artifacts/**
+.ai-artifacts/**
 .github/**
 .vscode/**
 src/**

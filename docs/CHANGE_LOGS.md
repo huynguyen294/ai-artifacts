@@ -14,6 +14,40 @@ Minor typos, formatting fixes, or cosmetic wording adjustments that do not chang
 
 Each entry includes the date, category, summary of changes, rationale, and affected components or files.
 
+## 2026-09-09 — Standardized .ai-artifacts Storage with 100% Backwards Compatibility
+
+### Changes
+
+- Migrated default artifact storage directory from `.codex-artifacts/` to `.ai-artifacts/` across shared constants (`src/shared/artifact-files.ts`), MCP server creation runtime (`src/integration/artifact-review-mcp-v4.ts`), and skill reference contracts (`skills/create-review-artifact/references/artifact-contract.md`).
+- Implemented non-breaking dual-directory validation in `src/shared/artifact-validation.ts` (`assertArtifactDirectory`), accepting both `.ai-artifacts` (primary) and `.codex-artifacts` (legacy).
+- Extended VS Code Custom Editor declaration in `package.json` with multi-pattern selectors for both `.ai-artifacts` and `.codex-artifacts`.
+- Updated filesystem watcher in `src/extension/extension.ts` to listen for new comments across both directories (`**/{.ai-artifacts,.codex-artifacts}/artifacts/**/comments.json`).
+- Updated file staging prefix in `src/integration/stamp-origin.ts` to `.ai-artifacts-...tmp`.
+- Bumped extension version to `0.9.2`.
+
+### Rationale
+
+- Completes the re-branding from Codex-specific tooling to platform-agnostic AI Artifacts without stranding existing user artifacts or causing file lock issues on Windows.
+
+### Affected components and files
+
+- `package.json`
+- `.gitignore`
+- `.vscodeignore`
+- `src/shared/artifact-files.ts`
+- `src/shared/artifact-validation.ts`
+- `src/integration/artifact-review-mcp-v4.ts`
+- `src/integration/stamp-origin.ts`
+- `src/extension/extension.ts`
+- `skills/create-review-artifact/references/artifact-contract.md`
+- `test/artifact-store.test.ts`
+- `test/review-wait-mcp.test.ts`
+- `README.md`
+- `CHANGE_LOGS.md`
+- `docs/ARCHITECTURE.md`
+- `docs/COMPONENTS.md`
+- `plans/migrate-to-ai-artifacts.md`
+
 ---
 
 ## 2026-09-09 — Multi-Client MCP Architecture and Dedicated Installers

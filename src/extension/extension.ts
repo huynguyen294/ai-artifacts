@@ -17,7 +17,7 @@ export function activate(context: vscode.ExtensionContext): void {
   const workspaceRegistryPublisher = new WorkspaceRegistryPublisher();
 
   const artifactReadyWatcher = vscode.workspace.createFileSystemWatcher(
-    "**/.codex-artifacts/artifacts/**/comments.json",
+    "**/{.ai-artifacts,.codex-artifacts}/artifacts/**/comments.json",
     false,
     true,
     true,

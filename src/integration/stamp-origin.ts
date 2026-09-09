@@ -42,7 +42,7 @@ function sha256(value: string): string {
 }
 
 async function atomicJson(filePath: string, value: unknown): Promise<void> {
-  const temporary = `${filePath}.codex-artifacts-${process.pid}-${Date.now()}.tmp`;
+  const temporary = `${filePath}.ai-artifacts-${process.pid}-${Date.now()}.tmp`;
   await fs.writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`, "utf8");
   try {
     for (let attempt = 0; attempt < 3; attempt++) {

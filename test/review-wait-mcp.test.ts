@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { createInterface } from "node:readline";
 import { afterEach, describe, expect, it } from "vitest";
+import { ARTIFACTS_DIRECTORY } from "../src/shared/artifact-files";
 
 const temporaryDirectories: string[] = [];
 const processes: ChildProcessWithoutNullStreams[] = [];
@@ -794,7 +795,7 @@ describe("artifact review MCP server v6", () => {
     await waitForRound(created.artifactDirectory, 2);
     await submitDecision(created.artifactDirectory, "save");
     expect((await advancing.promise).structuredContent.decision).toBe("save");
-    expect(await readdir(path.join(fixture.workspace, ".codex-artifacts", "artifacts"))).toHaveLength(1);
+    expect(await readdir(path.join(fixture.workspace, ARTIFACTS_DIRECTORY, "artifacts"))).toHaveLength(1);
   });
 
   it("requires typed workspace evidence and rejects missing or stale registrations", async () => {
@@ -808,7 +809,7 @@ describe("artifact review MCP server v6", () => {
       markdown: "# No evidence\n",
     });
     expect(noEvidence.content[0].text).toContain("WORKSPACE_EVIDENCE_REQUIRED");
-    await expect(access(path.join(fixture.workspace, ".codex-artifacts"))).rejects.toThrow();
+    await expect(access(path.join(fixture.workspace, ARTIFACTS_DIRECTORY))).rejects.toThrow();
 
     const stale = await workspaceFixture({ stale: true });
     const staleClient = startClient(stale.registry);
@@ -997,7 +998,7 @@ describe("artifact review MCP server v6", () => {
     });
     expect(staleSelection.isError).toBe(true);
     expect(staleSelection.content[0].text).toContain("WORKSPACE_SELECTION_EXPIRED");
-    await expect(access(path.join(fixture.workspace, ".codex-artifacts"))).rejects.toThrow();
+    await expect(access(path.join(fixture.workspace, ARTIFACTS_DIRECTORY))).rejects.toThrow();
   });
 
   it("rejects oversized Markdown and rolls back partial creation", async () => {
@@ -1026,14 +1027,14 @@ describe("artifact review MCP server v6", () => {
       markdown: "# Partial\n",
     });
     expect(partial.isError).toBe(true);
-    expect(await readdir(path.join(fixture.workspace, ".codex-artifacts", "artifacts"))).toEqual([]);
+    expect(await readdir(path.join(fixture.workspace, ARTIFACTS_DIRECTORY, "artifacts"))).toEqual([]);
   });
 
   it("rejects a linked artifact storage path without modifying its target", async () => {
     const fixture = await workspaceFixture();
     const outside = path.join(path.dirname(fixture.workspace), "outside");
     await mkdir(outside);
-    await symlink(outside, path.join(fixture.workspace, ".codex-artifacts"), process.platform === "win32" ? "junction" : "dir");
+    await symlink(outside, path.join(fixture.workspace, ARTIFACTS_DIRECTORY), process.platform === "win32" ? "junction" : "dir");
     const client = startClient(fixture.registry);
     await initialize(client);
     const result = await callTool(client, "create_artifact", {
@@ -1045,5 +1046,59 @@ describe("artifact review MCP server v6", () => {
     });
     expect(result.content[0].text).toContain("UNSAFE_ARTIFACT_PATH");
     expect(await readdir(outside)).toEqual([]);
+  });
+
+  it("inspects and advances an existing legacy artifact under .codex-artifacts", async () => {
+    const fixture = await workspaceFixture();
+    const artifactId = "legacy-artifact-001";
+    const artifactDirectory = path.join(fixture.workspace, ".codex-artifacts", "artifacts", artifactId);
+    await mkdir(artifactDirectory, { recursive: true });
+    await writeFile(path.join(artifactDirectory, "artifact.md"), initialMarkdown, "utf8");
+    const timestamp = new Date().toISOString();
+    await writeFile(path.join(artifactDirectory, "artifact.json"), JSON.stringify({
+      schemaVersion: 4,
+      kind: "implementation-plan",
+      artifactId,
+      title: "Legacy Artifact",
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      reviewRound: 1,
+      location: { workspaceRoot: fixture.workspace },
+      reviewSessionId: "33333333-3333-4333-8333-333333333333",
+    }), "utf8");
+    await writeFile(path.join(artifactDirectory, "comments.json"), JSON.stringify({
+      schemaVersion: 4,
+      artifactId,
+      reviewRound: 1,
+      artifactSha256: sha256(initialMarkdown),
+      comments: [],
+    }), "utf8");
+
+    const client = startClient(fixture.registry);
+    await initialize(client);
+
+    const inspected = await callTool(client, "inspect_artifact_review", {
+      artifactDirectory,
+      expectedReviewRound: 1,
+      takeover: true,
+      intent: "explicit-chat-update",
+    });
+    expect(inspected.structuredContent.roundToken).toBeTruthy();
+
+    const advancing = client.requestTracked("tools/call", {
+      name: "advance_and_wait_for_artifact",
+      arguments: {
+        artifactDirectory,
+        expectedReviewRound: 1,
+        roundToken: inspected.structuredContent.roundToken,
+        markdown: "# Updated Legacy Markdown\n",
+      },
+    });
+    await advancing.sent;
+    await waitForRound(artifactDirectory, 2);
+    await submitDecision(artifactDirectory, "approve");
+    const advanced = await advancing.promise;
+    expect(advanced.structuredContent.decision).toBe("approve");
+    expect(await readFile(path.join(artifactDirectory, "artifact.md"), "utf8")).toBe("# Updated Legacy Markdown\n");
   });
 });

@@ -6,6 +6,27 @@ Release history has been standardized and tracked starting from version **0.2.6*
 
 ---
 
+## [0.9.2] - 2026-09-09
+
+### Standardized .ai-artifacts Storage with 100% Backwards Compatibility
+
+- **Default Storage Migration**:
+  - Migrated primary artifact storage directory from `.codex-artifacts/` to `.ai-artifacts/` across the core system.
+  - New artifacts created via the MCP server `create_artifact` tool are stored in `.ai-artifacts/artifacts/<id>/`.
+  - Zero data mutation: existing artifacts in `.codex-artifacts/` are left untouched without disruptive filesystem scanning or file moves.
+- **Dual-Directory Validation (`assertArtifactDirectory`)**:
+  - Updated core validation in `src/shared/artifact-validation.ts` to accept both primary `.ai-artifacts` and legacy `.codex-artifacts` directories.
+  - Exported `ARTIFACTS_DIRECTORIES` containing both paths to unify validation across the extension and MCP server.
+- **VS Code Extension Host & Custom Editor Integration**:
+  - Updated `customEditors` contribution in `package.json` with multi-pattern selectors matching both `**/.ai-artifacts/artifacts/**/artifact.md` and `**/.codex-artifacts/artifacts/**/artifact.md`.
+  - Updated `artifactReadyWatcher` in `src/extension/extension.ts` to watch comments across both directories via `**/{.ai-artifacts,.codex-artifacts}/artifacts/**/comments.json`.
+- **MCP Server & Skill Contract**:
+  - Updated temporary file naming in `stamp-origin.ts` to `.ai-artifacts-...tmp`.
+  - Updated artifact lifecycle contract in `skills/create-review-artifact/references/artifact-contract.md` to reference `.ai-artifacts`.
+  - Added comprehensive unit and integration tests verifying dual-directory validation, artifact storage, and legacy `.codex-artifacts` inspection/advancement (90 tests passing).
+
+---
+
 ## [0.9.1] - 2026-09-09
 
 ### Product Branding and Release Automation

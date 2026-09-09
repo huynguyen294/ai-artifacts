@@ -10,7 +10,7 @@ import {
   type AnyReviewSubmission,
 } from "./contracts";
 import {
-  ARTIFACTS_DIRECTORY,
+  ARTIFACTS_DIRECTORIES,
   ARTIFACT_COLLECTION_DIRECTORY,
   ARTIFACT_MANIFEST_FILE,
   ARTIFACT_MARKDOWN_FILE,
@@ -47,13 +47,15 @@ export function assertArtifactDirectory(
   if (!path.isAbsolute(workspaceRoot)) {
     throw new Error("The artifact workspace root must be an absolute path.");
   }
-  const expectedDirectory = path.join(
-    path.resolve(workspaceRoot),
-    ARTIFACTS_DIRECTORY,
-    ARTIFACT_COLLECTION_DIRECTORY,
-    artifact.artifactId,
+  const expectedDirectories = ARTIFACTS_DIRECTORIES.map((directory) =>
+    path.join(
+      path.resolve(workspaceRoot),
+      directory,
+      ARTIFACT_COLLECTION_DIRECTORY,
+      artifact.artifactId,
+    ),
   );
-  if (!sameFilesystemPath(artifactDirectory, expectedDirectory)) {
+  if (!expectedDirectories.some((expected) => sameFilesystemPath(artifactDirectory, expected))) {
     throw new Error("The artifact directory does not match its declared workspace root and id.");
   }
   return path.resolve(workspaceRoot);

@@ -1,4 +1,6 @@
-export const ARTIFACTS_DIRECTORY = ".codex-artifacts";
+export const ARTIFACTS_DIRECTORY = ".ai-artifacts";
+export const LEGACY_ARTIFACTS_DIRECTORY = ".codex-artifacts";
+export const ARTIFACTS_DIRECTORIES = [ARTIFACTS_DIRECTORY, LEGACY_ARTIFACTS_DIRECTORY] as const;
 export const ARTIFACT_COLLECTION_DIRECTORY = "artifacts";
 export const ARTIFACT_MANIFEST_FILE = "artifact.json";
 export const ARTIFACT_MARKDOWN_FILE = "artifact.md";

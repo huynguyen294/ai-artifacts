@@ -34,7 +34,7 @@ The artifact is persistent workspace data. A waiter is an in-memory connection f
 ## Directory
 
 ```text
-.codex-artifacts/artifacts/<server-generated-id>/
+.ai-artifacts/artifacts/<server-generated-id>/
   artifact.json
   artifact.md
   comments.json
