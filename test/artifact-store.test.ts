@@ -145,6 +145,7 @@ describe("ArtifactStore", () => {
   });
 
   it("validates artifact directories in both .ai-artifacts and .codex-artifacts", () => {
+    const workspaceRoot = path.resolve(tmpdir(), "project");
     const mockManifest: AnyArtifactManifest = {
       schemaVersion: 4,
       kind: "implementation-plan",
@@ -153,7 +154,7 @@ describe("ArtifactStore", () => {
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       reviewRound: 1,
-      location: { workspaceRoot: "D:/workspace/project" },
+      location: { workspaceRoot },
       reviewSessionId: "11111111-1111-4111-8111-111111111111",
     };
 
@@ -161,7 +162,7 @@ describe("ArtifactStore", () => {
     expect(() =>
       assertArtifactDirectory(
         mockManifest,
-        path.resolve("D:/workspace/project/.ai-artifacts/artifacts/test-artifact-001"),
+        path.join(workspaceRoot, ".ai-artifacts", "artifacts", "test-artifact-001"),
       ),
     ).not.toThrow();
 
@@ -169,7 +170,7 @@ describe("ArtifactStore", () => {
     expect(() =>
       assertArtifactDirectory(
         mockManifest,
-        path.resolve("D:/workspace/project/.codex-artifacts/artifacts/test-artifact-001"),
+        path.join(workspaceRoot, ".codex-artifacts", "artifacts", "test-artifact-001"),
       ),
     ).not.toThrow();
 
@@ -177,7 +178,7 @@ describe("ArtifactStore", () => {
     expect(() =>
       assertArtifactDirectory(
         mockManifest,
-        path.resolve("D:/workspace/project/.other-artifacts/artifacts/test-artifact-001"),
+        path.join(workspaceRoot, ".other-artifacts", "artifacts", "test-artifact-001"),
       ),
     ).toThrow("The artifact directory does not match its declared workspace root and id.");
   });

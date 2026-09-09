@@ -19,6 +19,10 @@ export async function readJsonConfig(filePath: string): Promise<Record<string, a
 }
 
 export function normalizePathForComparison(targetPath: string): string {
+  const unified = targetPath.replaceAll("\\", "/");
+  if (/^[a-zA-Z]:\//.test(unified)) {
+    return path.posix.normalize(unified).toLowerCase();
+  }
   const resolved = path.resolve(targetPath).replaceAll("\\", "/");
   return process.platform === "win32" ? resolved.toLowerCase() : resolved;
 }
