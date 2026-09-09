@@ -40,34 +40,36 @@ To build the VSIX yourself from source, follow [Development](#development) below
 
 ### 2. Install the AI / MCP integration
 
-Open the Command Palette (`Ctrl+Shift+P` on Windows/Linux or `Cmd+Shift+P` on macOS) and run:
-**AI Artifacts: Install Global AI Integration**.
+Open the Command Palette (`Ctrl+Shift+P` on Windows/Linux or `Cmd+Shift+P` on macOS) and choose your preferred setup command:
 
-The installer deploys a centralized MCP runtime and automatically detects installed AI environments on your machine to register the review server:
+- **`AI Artifacts: Install All Detected Integrations`**: Deploys the centralized MCP runtime to `~/.vscode/ai-artifacts/` and automatically configures all detected AI environments on your machine.
+- Or choose the dedicated installer for your specific AI client:
+  - **`AI Artifacts: Install Integration for GitHub Copilot`**: Automatically configures VS Code User global configuration (`Code/User/mcp.json`) for GitHub Copilot.
+  - **`AI Artifacts: Install Integration for Cursor`**: Automatically configures `~/.cursor/mcp.json`.
+  - **`AI Artifacts: Install Integration for Codex`**: Automatically configures `~/.codex/config.toml`.
+  - **`AI Artifacts: Install Integration for Claude`**: Automatically configures `~/.claude.json`.
+  - **`AI Artifacts: Install Integration for Windsurf`**: Automatically configures `~/.codeium/windsurf/mcp_config.json`.
+- Or run **`AI Artifacts: Copy MCP Configuration JSON`** to copy the ready-to-use JSON configuration snippet directly to your clipboard to paste into any MCP-compatible editor.
 
 ```text
-# Centralized runtime & skill assets
+# Centralized runtime & skill assets:
+~/.vscode/ai-artifacts/ai-artifacts-review-mcp.mjs      # Centralized MCP runtime server
+~/.vscode/ai-artifacts/workspaces/                      # Live workspace heartbeat registry
 ~/.agents/skills/create-review-artifact/                 # Shared agent skill & instructions
-~/.agents/mcp/codex-artifacts-review-mcp.mjs           # Centralized MCP runtime server
-
-# Automatically detected & configured environments:
-~/.cursor/mcp.json                                      # Cursor Agent
-~/.codex/config.toml                                    # Codex
-~/.codeium/windsurf/mcp_config.json                     # Windsurf Cascade
-Claude / custom MCP config files                        # Claude & other MCP clients
 ```
 
-The installer scans for existing environment directories, automatically configures active clients without creating clutter in unused paths, and preserves all unrelated MCP configurations, skills, and project files.
+The installer preserves all unrelated MCP configurations, custom skills, and workspace files.
 
-> [!IMPORTANT]
-> **After installing or upgrading:**
->
-> 1. Reload the window (**Developer: Reload Window** from the Command Palette).
-> 2. Restart your AI chat extension or agent (Cursor, Codex, Windsurf, Claude).
-> 3. Start a fresh chat conversation to load the newly registered MCP tools and skill.
-> 4. Verify status by running **AI Artifacts: Verify Global AI Integration**.
+### 3. Reload and verify the integration
 
-### 3. Ask your AI to create a review artifact
+After installing or upgrading:
+
+1. Reload the window (**Developer: Reload Window** from the Command Palette).
+2. Restart your AI chat extension or agent (Cursor, Codex, Windsurf, Claude, Copilot).
+3. Start a fresh chat conversation to load the newly registered MCP tools and skill.
+4. Verify readiness by running **AI Artifacts: Verify All Integrations** from the Command Palette.
+
+### 4. Ask your AI to create a review artifact
 
 In your AI chat (Codex, Cursor, etc.), request a review artifact for your task:
 
@@ -90,7 +92,7 @@ The AI agent calls the MCP `create_artifact` tool, which generates an isolated r
 
 By default, the custom **Artifact Review** editor opens automatically as soon as the artifact is created. This behavior is controlled by the `agentPlus.autoOpenArtifactReview` setting (defaults to `true`).
 
-### 4. Review, annotate, and drive execution
+### 5. Review, annotate, and drive execution
 
 1. **Highlight text:** Select any paragraph, heading, list item, quote, code block, or table cell.
 2. **Add inline comments:** Type your feedback in the floating comment popover and click **Save**.
@@ -142,7 +144,7 @@ The existing content remains intact. Ask the AI agent to inspect the exact artif
 
 ### A configuration conflict is reported
 
-Remove or rename the unmanaged `[mcp_servers.codex_artifacts]` entry in your configuration file, then run the installer again.
+Remove or rename the unmanaged `[mcp_servers.ai_artifacts]` entry in your configuration file, then run the installer again.
 
 ## Development
 

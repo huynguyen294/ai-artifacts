@@ -16,6 +16,40 @@ Each entry includes the date, category, summary of changes, rationale, and affec
 
 ---
 
+## 2026-09-09 — Multi-Client MCP Architecture and Dedicated Installers
+
+### Changes
+
+- Relocated centralized MCP runtime storage to `~/.vscode/ai-artifacts/ai-artifacts-review-mcp.mjs` and moved live workspace heartbeat registry snapshots to `~/.vscode/ai-artifacts/workspaces/`.
+- Built modular MCP client drivers under `src/extension/mcp-clients/` supporting:
+  - **GitHub Copilot (VS Code)**: User global configuration in `Code/User/mcp.json` with the official `"servers"` key and `"type": "stdio"`, resolving cross-platform (Windows `%APPDATA%\Code\User`, macOS, Linux) and preserving existing custom server definitions.
+  - **Cursor**: `~/.cursor/mcp.json`.
+  - **Codex**: `~/.codex/config.toml` unified with `[mcp_servers.ai_artifacts]` and `# >>> AI Artifacts review MCP >>>` markers, including automatic backwards-compatible migration of legacy `[mcp_servers.codex_artifacts]` blocks and encapsulated legacy hook cleanup.
+  - **Claude Code**: `~/.claude.json`.
+  - **Windsurf**: `~/.codeium/windsurf/mcp_config.json`.
+- Standardized MCP server naming: unified to `ai_artifacts` across all client drivers and configurations.
+- Stdio transport conformity: enforced `"type": "stdio"` when upserting to VS Code native `"servers"` container in `Code/User/mcp.json`.
+- Provided dedicated installer commands in the VS Code Command Palette for each environment plus `AI Artifacts: Install All Detected Integrations` and `AI Artifacts: Copy MCP Configuration JSON`.
+- Refined extension icon at `media/icon.png` with smooth transparent corners for light and dark themes.
+- Preserved repository-level `.codex-artifacts` directory naming and schema v4 contracts.
+
+### Rationale
+
+- Eliminates coupling to the `.codex` folder for developers working in Cursor, Claude, or Copilot.
+- Enables single-click, non-destructive configuration across diverse AI coding environments while preserving existing custom configurations.
+
+### Affected components
+
+- Shared Registry: `src/shared/workspace-registry.ts`
+- MCP Drivers: `src/extension/mcp-clients/`
+- Integration Service: `src/extension/workspace-integration-v4.ts`
+- Extension Entrypoint: `src/extension/extension.ts`
+- Manifest: `package.json`
+- Tests: `test/mcp-client-drivers.test.ts`
+- Documentation: `README.md`, `CHANGE_LOGS.md`, `docs/CHANGE_LOGS.md`, `docs/ARCHITECTURE.md`, `docs/COMPONENTS.md`, `docs/INSTRUCTION.md`
+
+---
+
 ## 2026-09-09 — Product branding and release automation — AI Artifacts and CI/CD workflow
 
 ### Changes

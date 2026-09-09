@@ -55,7 +55,8 @@ If product intent, documentation, tests, and implementation disagree, call out t
 - `src/integration/artifact-review-mcp-v4.ts`: MCP tools, artifact creation, waiter ownership/takeover, round grants, inspection, and transactional round commits.
 - `src/extension/artifact-store.ts`: trusted artifact loading, comment writes, and submission writes.
 - `src/extension/workspace-registry-publisher.ts`: live VS Code workspace heartbeat.
-- `src/extension/workspace-integration-v4.ts`: global integration installation and legacy cleanup.
+- `src/extension/workspace-integration-v4.ts`: centralized MCP installation, base runtime provisioning, and legacy cleanup.
+- `src/extension/mcp-clients/`: dedicated configuration drivers for Codex, Cursor, Claude Code, Windsurf, and GitHub Copilot (VS Code).
 - `src/webview/`: review UI and typed messages to the extension host; no direct filesystem or process access.
 - `src/shared/`: shared schemas, file contracts, validation, and workspace registry rules.
 - `skills/create-review-artifact/`: Codex trigger and lifecycle orchestration contract.

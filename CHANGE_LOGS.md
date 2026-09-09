@@ -11,7 +11,7 @@ Release history has been standardized and tracked starting from version **0.2.6*
 ### Product Branding and Release Automation
 
 - Rebranded the product to **AI Artifacts - Interactive Planning & Review** (`ai-artifacts`), positioned as an interactive review layer for AI coding agents (Codex, Cursor, Windsurf, Claude, etc.).
-- Added official extension brand icon at `media/icon.png` (256x256 px).
+- Added official extension brand icon at `media/icon.png` (256x256 px) with clean anti-aliased transparency for light and dark themes.
 - Updated `package.json` metadata:
   - Set publisher to `huynguyen294`.
   - Added categories `AI` and `Programming Languages`.
@@ -23,10 +23,33 @@ Release history has been standardized and tracked starting from version **0.2.6*
   - Relocated historical builds to `old-releases/` and configured ignore rules in `.gitignore` and `.vscodeignore`.
 - Configured automated CI/CD releases via GitHub Actions (`.github/workflows/release.yml`):
   - Triggered automatically on `v*` tag pushes.
-  - Runs typechecks (`npm run check`) and all 76 unit/integration tests (`npm test`).
+  - Runs typechecks (`npm run check`) and all 86 unit/integration tests (`npm test`).
   - Builds and publishes a GitHub Release with the production VSIX asset attached.
 - Security and VSIX optimization: added `.env*` and `old-releases/**` to `.vscodeignore` to prevent leaking environment files or bundling legacy builds.
 - Comprehensive `README.md` upgrade: added an agent compatibility matrix and detailed end-to-end getting-started walkthrough.
+
+### Multi-Client MCP Architecture and Installation
+
+- Standardized centralized MCP runtime storage at `~/.vscode/ai-artifacts/ai-artifacts-review-mcp.mjs` and moved live workspace heartbeat snapshots to `~/.vscode/ai-artifacts/workspaces/`.
+- Introduced modular MCP client drivers under `src/extension/mcp-clients/`:
+  - **GitHub Copilot (VS Code)**: Automated configuration in VS Code User configuration (`Code/User/mcp.json` under the official `"servers"` key) across Windows (`%APPDATA%\Code\User\mcp.json`), macOS (`~/Library/Application Support/Code/User/mcp.json`), and Linux (`~/.config/Code/User/mcp.json`), preserving custom servers and settings.
+  - **Cursor**: Automated non-destructive configuration in `~/.cursor/mcp.json`.
+  - **Codex**: Automated TOML block management in `~/.codex/config.toml` using unified server name `[mcp_servers.ai_artifacts]` and `# >>> AI Artifacts review MCP >>>` markers, with automatic backwards-compatible migration of legacy `[mcp_servers.codex_artifacts]` blocks and encapsulated legacy hook cleanup.
+  - **Claude Code**: Automated configuration in `~/.claude.json`.
+  - **Windsurf**: Automated configuration in `~/.codeium/windsurf/mcp_config.json`.
+- Unified MCP server naming: standardized server name to `ai_artifacts` across all client platforms (Codex, Cursor, Claude Code, Windsurf, GitHub Copilot).
+- Stdio transport conformity for VS Code: ensured `CopilotClientDriver` and `upsertJsonMcpServer` automatically inject `"type": "stdio"` when targeting VS Code's `"servers"` container in `Code/User/mcp.json`.
+- Implemented dedicated installation commands in the Command Palette:
+  - `AI Artifacts: Install All Detected Integrations`: Deploys base server and configures all detected environments including VS Code / Copilot User configuration.
+  - `AI Artifacts: Install Integration for GitHub Copilot`: Automatically configures VS Code User configuration (`Code/User/mcp.json`) and provisions base runtime and agent skills.
+  - `AI Artifacts: Install Integration for Codex`
+  - `AI Artifacts: Install Integration for Cursor`
+  - `AI Artifacts: Install Integration for Claude`
+  - `AI Artifacts: Install Integration for Windsurf`
+  - `AI Artifacts: Copy MCP Configuration JSON`: Copies ready-to-use JSON config snippet directly to clipboard.
+  - `AI Artifacts: Verify All Integrations`: Verifies and reports detailed readiness for base assets and each client.
+- Implemented robust non-destructive JSON & text helper with atomic file writing (`.tmp` staging with retry and copy fallback) and cross-platform path normalization (`normalizePathForComparison`).
+- Preserved repository artifact isolation: repository-level `.codex-artifacts` directory naming and schema v4 contracts remain 100% unchanged.
 
 ---
 

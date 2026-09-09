@@ -38,7 +38,13 @@
     "onStartupFinished",
     "onCustomEditor:agentPlus.artifactReview",
     "onCommand:agentPlus.openArtifactReview",
-    "onCommand:agentPlus.installWorkspaceIntegration",
+    "onCommand:agentPlus.installAllIntegrations",
+    "onCommand:agentPlus.installCopilotIntegration",
+    "onCommand:agentPlus.installCodexIntegration",
+    "onCommand:agentPlus.installCursorIntegration",
+    "onCommand:agentPlus.installClaudeIntegration",
+    "onCommand:agentPlus.installWindsurfIntegration",
+    "onCommand:agentPlus.copyMcpConfig",
     "onCommand:agentPlus.verifyGlobalIntegration"
   ],
   "main": "./dist/extension.cjs",
@@ -49,12 +55,36 @@
         "title": "AI Artifacts: Open Artifact Review"
       },
       {
-        "command": "agentPlus.installWorkspaceIntegration",
-        "title": "AI Artifacts: Install Global Codex Integration"
+        "command": "agentPlus.installAllIntegrations",
+        "title": "AI Artifacts: Install All Detected Integrations"
+      },
+      {
+        "command": "agentPlus.installCopilotIntegration",
+        "title": "AI Artifacts: Install Integration for GitHub Copilot"
+      },
+      {
+        "command": "agentPlus.installCodexIntegration",
+        "title": "AI Artifacts: Install Integration for Codex"
+      },
+      {
+        "command": "agentPlus.installCursorIntegration",
+        "title": "AI Artifacts: Install Integration for Cursor"
+      },
+      {
+        "command": "agentPlus.installClaudeIntegration",
+        "title": "AI Artifacts: Install Integration for Claude"
+      },
+      {
+        "command": "agentPlus.installWindsurfIntegration",
+        "title": "AI Artifacts: Install Integration for Windsurf"
+      },
+      {
+        "command": "agentPlus.copyMcpConfig",
+        "title": "AI Artifacts: Copy MCP Configuration JSON"
       },
       {
         "command": "agentPlus.verifyGlobalIntegration",
-        "title": "AI Artifacts: Verify Codex Integration"
+        "title": "AI Artifacts: Verify All Integrations"
       }
     ],
     "customEditors": [

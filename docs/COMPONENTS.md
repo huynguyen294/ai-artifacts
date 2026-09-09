@@ -414,17 +414,19 @@ This layer is the protocol source of truth. A contract change must be propagated
 **Source**
 
 - Installer: [`src/extension/workspace-integration-v4.ts`](../src/extension/workspace-integration-v4.ts)
+- Client drivers: [`src/extension/mcp-clients/`](../src/extension/mcp-clients/)
 - MCP configuration: [`src/extension/mcp-config.ts`](../src/extension/mcp-config.ts)
 - Status classification: [`src/extension/global-integration-status.ts`](../src/extension/global-integration-status.ts)
 - Legacy-hook cleanup: [`src/extension/hook-config.ts`](../src/extension/hook-config.ts)
 
 **Responsibilities**
 
-- Copy the built MCP script into the Codex data directory.
-- Copy the bundled skill into the global agent-skills directory.
-- Add or update only the extension-managed `codex_artifacts` block in `config.toml`.
-- Verify whether installed assets and configuration match the extension version.
-- Report ready, missing, outdated, restart-required, or configuration-conflict states.
+- Deploy the centralized MCP server runtime into `~/.vscode/ai-artifacts/`.
+- Deploy the bundled skill into the global agent-skills directory (`~/.agents/skills/create-review-artifact/`).
+- Provide dedicated, non-destructive configuration drivers for Codex (`config.toml`), Cursor (`mcp.json`), Claude Code (`.claude.json`), Windsurf (`mcp_config.json`), and GitHub Copilot (`Code/User/mcp.json`).
+- Expose dedicated setup commands plus `AI Artifacts: Install All Detected Integrations` and `AI Artifacts: Copy MCP Configuration JSON`.
+- Verify whether installed assets and client configurations match the extension requirements.
+- Report ready, missing, outdated, or configuration-conflict states across environments.
 - Remove only recognized legacy Codex Artifacts hooks, scripts, and skill directories.
 - Preserve unrelated user configuration.
 

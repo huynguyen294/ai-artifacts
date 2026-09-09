@@ -59,16 +59,17 @@ export type WorkspaceCandidateResolution = {
   candidates: WorkspaceCandidate[];
 };
 
+export function aiArtifactsDataDirectory(): string {
+  return path.join(os.homedir(), ".vscode", "ai-artifacts");
+}
+
 export function codexArtifactsDataDirectory(): string {
-  const codexDirectory = process.env.CODEX_HOME?.trim()
-    ? path.resolve(process.env.CODEX_HOME)
-    : path.join(os.homedir(), ".codex");
-  return path.join(codexDirectory, "codex-artifacts");
+  return aiArtifactsDataDirectory();
 }
 
 export function workspaceRegistryDirectory(): string {
   const override = process.env.CODEX_ARTIFACTS_REGISTRY_DIRECTORY?.trim();
-  return override ? path.resolve(override) : path.join(codexArtifactsDataDirectory(), "workspaces");
+  return override ? path.resolve(override) : path.join(aiArtifactsDataDirectory(), "workspaces");
 }
 
 export function createWorkspaceInstanceId(): string {
