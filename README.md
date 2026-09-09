@@ -69,7 +69,19 @@ After installing or upgrading:
 3. Start a fresh chat conversation to load the newly registered MCP tools and skill.
 4. Verify readiness by running **AI Artifacts: Verify All Integrations** from the Command Palette.
 
-### 4. Ask your AI to create a review artifact
+### 4. Uninstalling and cleanup
+
+AI Artifacts provides two comprehensive ways to remove MCP configurations and runtime assets:
+
+- **Automatic Cleanup upon Extension Uninstall:** When you uninstall the AI Artifacts extension from VS Code or Cursor (`Extensions -> Uninstall`), an automated lifecycle hook (`vscode:uninstall`) runs a standalone script that automatically removes the `ai_artifacts` MCP configuration from all detected AI clients and completely deletes base runtime assets (`~/.vscode/ai-artifacts/` and `~/.agents/skills/create-review-artifact/`).
+- **Manual Cleanup via Command Palette:** If you want to disconnect MCP integrations while keeping the VS Code extension active, open the Command Palette (`Ctrl+Shift+P` / `Cmd+Shift+P`):
+  - **`AI Artifacts: Uninstall All Detected Integrations`**: Removes MCP configs from all detected editors and clears base runtime assets.
+  - Or choose a specific client: **`AI Artifacts: Uninstall Integration for GitHub Copilot`**, **`... for Cursor`**, **`... for Codex`**, **`... for Claude`**, or **`... for Windsurf`**.
+
+> [!IMPORTANT]
+> **Zero Project Data Loss:** Neither uninstall method will ever touch or delete your project repositories' `.ai-artifacts/` or `.codex-artifacts/` review history and documents.
+
+### 5. Ask your AI to create a review artifact
 
 In your AI chat (Codex, Cursor, etc.), request a review artifact for your task:
 
@@ -92,7 +104,7 @@ The AI agent calls the MCP `create_artifact` tool, which generates an isolated r
 
 By default, the custom **Artifact Review** editor opens automatically as soon as the artifact is created. This behavior is controlled by the `agentPlus.autoOpenArtifactReview` setting (defaults to `true`).
 
-### 5. Review, annotate, and drive execution
+### 6. Review, annotate, and drive execution
 
 1. **Highlight text:** Select any paragraph, heading, list item, quote, code block, or table cell.
 2. **Add inline comments:** Type your feedback in the floating comment popover and click **Save**.

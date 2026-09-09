@@ -101,3 +101,32 @@ export async function hasJsonMcpServer(
   }
 }
 
+export async function removeJsonMcpServer(
+  filePath: string,
+  serverName: string,
+): Promise<boolean> {
+  try {
+    const config = await readJsonConfig(filePath);
+    let removed = false;
+    if (config.mcpServers && typeof config.mcpServers === "object" && !Array.isArray(config.mcpServers)) {
+      if (serverName in config.mcpServers) {
+        delete config.mcpServers[serverName];
+        removed = true;
+      }
+    }
+    if (config.servers && typeof config.servers === "object" && !Array.isArray(config.servers)) {
+      if (serverName in config.servers) {
+        delete config.servers[serverName];
+        removed = true;
+      }
+    }
+    if (removed) {
+      await writeJsonConfig(filePath, config);
+    }
+    return removed;
+  } catch (error: any) {
+    if (error?.code === "ENOENT") return false;
+    throw error;
+  }
+}
+

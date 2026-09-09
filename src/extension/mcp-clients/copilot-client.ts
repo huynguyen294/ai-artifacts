@@ -3,7 +3,11 @@ import os from "node:os";
 import path from "node:path";
 import type { IntegrationCheck } from "../global-integration-status";
 import type { McpClientDriver } from "./index";
-import { hasJsonMcpServer, upsertJsonMcpServer } from "./json-mcp-helper";
+import {
+  hasJsonMcpServer,
+  removeJsonMcpServer,
+  upsertJsonMcpServer,
+} from "./json-mcp-helper";
 
 export function getVsCodeUserDirectory(): string {
   if (process.platform === "win32") {
@@ -42,5 +46,9 @@ export class CopilotClientDriver implements McpClientDriver {
 
   async install(mcpScriptPath: string): Promise<void> {
     await upsertJsonMcpServer(this.configPath, "ai_artifacts", mcpScriptPath, "servers");
+  }
+
+  async uninstall(): Promise<boolean> {
+    return removeJsonMcpServer(this.configPath, "ai_artifacts");
   }
 }

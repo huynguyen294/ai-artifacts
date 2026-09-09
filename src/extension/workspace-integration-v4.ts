@@ -17,6 +17,9 @@ import {
   type McpClientDriver,
 } from "./mcp-clients/index";
 import { upsertJsonMcpServer } from "./mcp-clients/json-mcp-helper";
+import { cleanupBaseMcpServer } from "./mcp-clients/base-cleanup";
+
+export { cleanupBaseMcpServer } from "./mcp-clients/base-cleanup";
 
 export type BaseIntegrationPaths = {
   targetDirectory: string;
@@ -190,6 +193,60 @@ export async function installWindsurfIntegration(
   const { paths } = await setupBaseMcpServer(context);
   const windsurfDriver = new WindsurfClientDriver();
   await windsurfDriver.install(paths.targetMcpScript);
+}
+
+// 7. Uninstall all detected integrations
+export async function uninstallAllDetectedIntegrations(
+  context?: vscode.ExtensionContext,
+  options?: { cleanupBase?: boolean },
+): Promise<{ uninstalledClients: string[] }> {
+  const copilotConfigPath = getCopilotConfigPath(context);
+  const drivers = getAllClientDrivers(copilotConfigPath);
+  const uninstalledClients: string[] = [];
+
+  for (const driver of drivers) {
+    if (driver.isDetected()) {
+      const changed = await driver.uninstall();
+      if (changed) {
+        uninstalledClients.push(driver.name);
+      }
+    }
+  }
+
+  if (options?.cleanupBase !== false) {
+    await cleanupBaseMcpServer();
+  }
+
+  return { uninstalledClients };
+}
+
+// 8. Individual uninstall functions
+export async function uninstallCopilotIntegration(
+  context?: vscode.ExtensionContext,
+): Promise<boolean> {
+  const copilotConfigPath = getCopilotConfigPath(context);
+  const driver = new CopilotClientDriver(copilotConfigPath);
+  return driver.uninstall();
+}
+
+export async function uninstallCodexIntegration(): Promise<boolean> {
+  const driver = new CodexClientDriver();
+  return driver.uninstall();
+}
+
+export async function uninstallCursorIntegration(): Promise<boolean> {
+  const driver = new CursorClientDriver();
+  return driver.uninstall();
+}
+
+export async function uninstallClaudeIntegration(): Promise<boolean> {
+  const driver = new ClaudeClientDriver();
+  return driver.uninstall();
+}
+
+export async function uninstallWindsurfIntegration(): Promise<boolean> {
+  const driver = new WindsurfClientDriver();
+  return driver.uninstall();
 }
 
 export type ClientVerificationReport = {

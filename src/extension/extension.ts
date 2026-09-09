@@ -9,6 +9,12 @@ import {
   installCopilotIntegration,
   installCursorIntegration,
   installWindsurfIntegration,
+  uninstallAllDetectedIntegrations,
+  uninstallClaudeIntegration,
+  uninstallCodexIntegration,
+  uninstallCopilotIntegration,
+  uninstallCursorIntegration,
+  uninstallWindsurfIntegration,
 } from "./workspace-integration-v4";
 import { WorkspaceRegistryPublisher } from "./workspace-registry-publisher";
 
@@ -154,6 +160,100 @@ export function activate(context: vscode.ExtensionContext): void {
         void vscode.window.showInformationMessage(
           `AI Artifacts Base (.vscode): ${baseStatus}. Clients: [${clientSummaries.join("; ")}]`,
         );
+      } catch (error) {
+        void vscode.window.showErrorMessage(error instanceof Error ? error.message : String(error));
+      }
+    }),
+
+    // 9. Uninstall all detected integrations
+    vscode.commands.registerCommand("agentPlus.uninstallAllIntegrations", async () => {
+      try {
+        const result = await uninstallAllDetectedIntegrations(context);
+        const count = result.uninstalledClients.length;
+        const msg = count > 0
+          ? `AI Artifacts: Uninstalled integrations from ${result.uninstalledClients.join(", ")} and cleaned up base assets.`
+          : "AI Artifacts: Cleaned up base assets. No configured client integrations found.";
+        void vscode.window.showInformationMessage(msg);
+      } catch (error) {
+        void vscode.window.showErrorMessage(error instanceof Error ? error.message : String(error));
+      }
+    }),
+
+    // 10. Uninstall Copilot
+    vscode.commands.registerCommand("agentPlus.uninstallCopilotIntegration", async () => {
+      try {
+        const removed = await uninstallCopilotIntegration(context);
+        if (removed) {
+          void vscode.window.showInformationMessage(
+            "AI Artifacts MCP uninstalled for GitHub Copilot. Please restart VS Code or reload window to apply changes.",
+          );
+        } else {
+          void vscode.window.showInformationMessage("AI Artifacts MCP was not found in GitHub Copilot configuration.");
+        }
+      } catch (error) {
+        void vscode.window.showErrorMessage(error instanceof Error ? error.message : String(error));
+      }
+    }),
+
+    // 11. Uninstall Codex
+    vscode.commands.registerCommand("agentPlus.uninstallCodexIntegration", async () => {
+      try {
+        const removed = await uninstallCodexIntegration();
+        if (removed) {
+          void vscode.window.showInformationMessage(
+            "AI Artifacts MCP uninstalled for Codex (~/.codex/config.toml). Please restart Codex to apply changes.",
+          );
+        } else {
+          void vscode.window.showInformationMessage("AI Artifacts MCP was not found in Codex configuration.");
+        }
+      } catch (error) {
+        void vscode.window.showErrorMessage(error instanceof Error ? error.message : String(error));
+      }
+    }),
+
+    // 12. Uninstall Cursor
+    vscode.commands.registerCommand("agentPlus.uninstallCursorIntegration", async () => {
+      try {
+        const removed = await uninstallCursorIntegration();
+        if (removed) {
+          void vscode.window.showInformationMessage(
+            "AI Artifacts MCP uninstalled for Cursor (~/.cursor/mcp.json). Please restart Cursor to apply changes.",
+          );
+        } else {
+          void vscode.window.showInformationMessage("AI Artifacts MCP was not found in Cursor configuration.");
+        }
+      } catch (error) {
+        void vscode.window.showErrorMessage(error instanceof Error ? error.message : String(error));
+      }
+    }),
+
+    // 13. Uninstall Claude
+    vscode.commands.registerCommand("agentPlus.uninstallClaudeIntegration", async () => {
+      try {
+        const removed = await uninstallClaudeIntegration();
+        if (removed) {
+          void vscode.window.showInformationMessage(
+            "AI Artifacts MCP uninstalled for Claude (~/.claude.json). Please restart Claude to apply changes.",
+          );
+        } else {
+          void vscode.window.showInformationMessage("AI Artifacts MCP was not found in Claude configuration.");
+        }
+      } catch (error) {
+        void vscode.window.showErrorMessage(error instanceof Error ? error.message : String(error));
+      }
+    }),
+
+    // 14. Uninstall Windsurf
+    vscode.commands.registerCommand("agentPlus.uninstallWindsurfIntegration", async () => {
+      try {
+        const removed = await uninstallWindsurfIntegration();
+        if (removed) {
+          void vscode.window.showInformationMessage(
+            "AI Artifacts MCP uninstalled for Windsurf (~/.codeium/windsurf/mcp_config.json). Please restart Windsurf to apply changes.",
+          );
+        } else {
+          void vscode.window.showInformationMessage("AI Artifacts MCP was not found in Windsurf configuration.");
+        }
       } catch (error) {
         void vscode.window.showErrorMessage(error instanceof Error ? error.message : String(error));
       }

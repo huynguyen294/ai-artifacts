@@ -12,6 +12,7 @@ export interface McpClientDriver {
   isDetected(): boolean;
   check(mcpScriptPath: string): Promise<IntegrationCheck>;
   install(mcpScriptPath: string): Promise<void>;
+  uninstall(): Promise<boolean>;
 }
 
 export { CodexClientDriver } from "./codex-client";

@@ -6,6 +6,7 @@ import type { IntegrationCheck } from "../global-integration-status";
 import type { McpClientDriver } from "./index";
 import {
   hasManagedCodexArtifactsMcp,
+  removeCodexArtifactsMcp,
   upsertCodexArtifactsMcp,
 } from "../mcp-config";
 import { writeTextFileAtomic } from "./json-mcp-helper";
@@ -73,7 +74,25 @@ export class CodexClientDriver implements McpClientDriver {
     await this.cleanupLegacyHooks();
   }
 
-  private async cleanupLegacyHooks(): Promise<void> {
+  async uninstall(): Promise<boolean> {
+    let changed = false;
+    try {
+      const content = await fs.readFile(this.configPath, "utf8");
+      const updated = removeCodexArtifactsMcp(content);
+      if (updated !== content) {
+        await writeTextFileAtomic(this.configPath, updated);
+        changed = true;
+      }
+    } catch (error: any) {
+      if (error?.code !== "ENOENT") throw error;
+    }
+
+    const hooksCleaned = await this.cleanupLegacyHooks();
+    return changed || hooksCleaned;
+  }
+
+  private async cleanupLegacyHooks(): Promise<boolean> {
+    let changed = false;
     const codexHome = getCodexHome();
     const hooksPath = path.join(codexHome, "hooks.json");
     try {
@@ -83,11 +102,20 @@ export class CodexClientDriver implements McpClientDriver {
         const migration = removeCodexArtifactsHooks(hooks);
         if (migration.changed) {
           await writeTextFileAtomic(hooksPath, `${JSON.stringify(migration.config, null, 2)}\n`);
+          changed = true;
         }
       }
     } catch {}
 
     const legacyHookScript = path.join(codexHome, "codex-artifacts", CODEX_ARTIFACTS_HOOK_MARKER);
-    await fs.rm(legacyHookScript, { force: true }).catch(() => {});
+    try {
+      const stat = await fs.stat(legacyHookScript).catch(() => null);
+      if (stat) {
+        await fs.rm(legacyHookScript, { force: true }).catch(() => {});
+        changed = true;
+      }
+    } catch {}
+
+    return changed;
   }
 }

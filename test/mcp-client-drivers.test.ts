@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   hasJsonMcpServer,
   readJsonConfig,
+  removeJsonMcpServer,
   upsertJsonMcpServer,
   writeJsonConfig,
 } from "../src/extension/mcp-clients/json-mcp-helper";
@@ -13,6 +14,8 @@ import { ClaudeClientDriver } from "../src/extension/mcp-clients/claude-client";
 import { WindsurfClientDriver } from "../src/extension/mcp-clients/windsurf-client";
 import { CodexClientDriver } from "../src/extension/mcp-clients/codex-client";
 import { CopilotClientDriver } from "../src/extension/mcp-clients/copilot-client";
+import { cleanupBaseMcpServer } from "../src/extension/mcp-clients/base-cleanup";
+import { runUninstall } from "../src/extension/uninstall-entry";
 
 describe("JSON MCP Helper", () => {
   let tempDir: string;
@@ -88,6 +91,28 @@ describe("JSON MCP Helper", () => {
 
     expect(await hasJsonMcpServer(targetFile, "ai_artifacts", mixedQueryPath)).toBe(true);
     expect(await hasJsonMcpServer(targetFile, "ai_artifacts", storedPath)).toBe(true);
+  });
+
+  it("removes server key and leaves remaining keys intact", async () => {
+    const targetFile = path.join(tempDir, "mcp.json");
+    await writeJsonConfig(targetFile, {
+      other: 123,
+      mcpServers: {
+        ai_artifacts: { command: "node", args: ["test.js"] },
+        keep_me: { command: "node", args: ["keep.js"] },
+      },
+    });
+
+    const removed = await removeJsonMcpServer(targetFile, "ai_artifacts");
+    expect(removed).toBe(true);
+
+    const updated = await readJsonConfig(targetFile);
+    expect(updated.other).toBe(123);
+    expect(updated.mcpServers.ai_artifacts).toBeUndefined();
+    expect(updated.mcpServers.keep_me).toBeDefined();
+
+    const removedAgain = await removeJsonMcpServer(targetFile, "ai_artifacts");
+    expect(removedAgain).toBe(false);
   });
 });
 
@@ -240,4 +265,209 @@ describe("Client Drivers", () => {
     });
     expect(content.inputs).toEqual([]);
   });
+
+  it("Cursor driver uninstalls ai_artifacts cleanly", async () => {
+    const cursorDriver = new CursorClientDriver();
+    const customConfig = path.join(tempHome, ".cursor", "mcp.json");
+    Object.defineProperty(cursorDriver, "configPath", { value: customConfig });
+
+    const scriptPath = "C:/test/ai-artifacts-review-mcp.mjs";
+    await cursorDriver.install(scriptPath);
+    expect((await cursorDriver.check(scriptPath)).status).toBe("ready");
+
+    const uninstalled = await cursorDriver.uninstall();
+    expect(uninstalled).toBe(true);
+    expect((await cursorDriver.check(scriptPath)).status).toBe("missing");
+
+    const json = JSON.parse(await fs.readFile(customConfig, "utf8"));
+    expect(json.mcpServers.ai_artifacts).toBeUndefined();
+  });
+
+  it("Claude driver uninstalls ai_artifacts while preserving root keys", async () => {
+    const claudeDriver = new ClaudeClientDriver();
+    const customConfig = path.join(tempHome, ".claude.json");
+    await fs.writeFile(customConfig, JSON.stringify({ opusProMigrationComplete: true }), "utf8");
+    Object.defineProperty(claudeDriver, "configPath", { value: customConfig });
+
+    const scriptPath = "/path/to/server.mjs";
+    await claudeDriver.install(scriptPath);
+    expect((await claudeDriver.check(scriptPath)).status).toBe("ready");
+
+    const uninstalled = await claudeDriver.uninstall();
+    expect(uninstalled).toBe(true);
+    expect((await claudeDriver.check(scriptPath)).status).toBe("missing");
+
+    const json = JSON.parse(await fs.readFile(customConfig, "utf8"));
+    expect(json.opusProMigrationComplete).toBe(true);
+    expect(json.mcpServers.ai_artifacts).toBeUndefined();
+  });
+
+  it("Windsurf driver uninstalls ai_artifacts cleanly", async () => {
+    const windsurfDriver = new WindsurfClientDriver();
+    const customConfig = path.join(tempHome, ".codeium", "windsurf", "mcp_config.json");
+    Object.defineProperty(windsurfDriver, "configPath", { value: customConfig });
+
+    const scriptPath = "D:/path/to/server.mjs";
+    await windsurfDriver.install(scriptPath);
+    expect((await windsurfDriver.check(scriptPath)).status).toBe("ready");
+
+    const uninstalled = await windsurfDriver.uninstall();
+    expect(uninstalled).toBe(true);
+    expect((await windsurfDriver.check(scriptPath)).status).toBe("missing");
+  });
+
+  it("Codex driver uninstalls ai_artifacts cleanly from config.toml", async () => {
+    const originalCodexHome = process.env.CODEX_HOME;
+    process.env.CODEX_HOME = tempHome;
+    try {
+      const codexDriver = new CodexClientDriver();
+      const scriptPath = "C:/test/ai-artifacts-review-mcp.mjs";
+      await codexDriver.install(scriptPath);
+      expect((await codexDriver.check(scriptPath)).status).toBe("ready");
+
+      const uninstalled = await codexDriver.uninstall();
+      expect(uninstalled).toBe(true);
+      expect((await codexDriver.check(scriptPath)).status).toBe("missing");
+
+      const content = await fs.readFile(codexDriver.configPath, "utf8");
+      expect(content).not.toContain("[mcp_servers.ai_artifacts]");
+      expect(content).not.toContain("AI Artifacts review MCP");
+
+      const uninstalledAgain = await codexDriver.uninstall();
+      expect(uninstalledAgain).toBe(false);
+    } finally {
+      if (originalCodexHome === undefined) {
+        delete process.env.CODEX_HOME;
+      } else {
+        process.env.CODEX_HOME = originalCodexHome;
+      }
+    }
+  });
+
+  it("Codex driver cleans legacy hooks even when config.toml has no ai_artifacts block", async () => {
+    const originalCodexHome = process.env.CODEX_HOME;
+    process.env.CODEX_HOME = tempHome;
+    try {
+      const codexDriver = new CodexClientDriver();
+      const hooksPath = path.join(tempHome, "hooks.json");
+      const sampleHooks = {
+        description: "Custom hooks",
+        hooks: {
+          PostToolUse: [
+            {
+              matcher: "apply_patch",
+              hooks: [
+                {
+                  type: "command",
+                  command: "node ~/.codex/codex-artifacts/codex-artifacts-stamp-origin.mjs",
+                },
+              ],
+            },
+          ],
+        },
+      };
+      await fs.writeFile(hooksPath, JSON.stringify(sampleHooks, null, 2), "utf8");
+
+      const uninstalled = await codexDriver.uninstall();
+      expect(uninstalled).toBe(true);
+
+      const updatedHooks = JSON.parse(await fs.readFile(hooksPath, "utf8"));
+      expect(updatedHooks.hooks.PostToolUse).toEqual([]);
+
+      const uninstalledAgain = await codexDriver.uninstall();
+      expect(uninstalledAgain).toBe(false);
+    } finally {
+      if (originalCodexHome === undefined) {
+        delete process.env.CODEX_HOME;
+      } else {
+        process.env.CODEX_HOME = originalCodexHome;
+      }
+    }
+  });
+
+  it("Copilot driver uninstalls ai_artifacts while preserving other servers", async () => {
+    const customConfig = path.join(tempHome, "Code", "User", "mcp.json");
+    const existing = {
+      servers: {
+        "dhis2-docs": {
+          type: "http",
+          url: "https://dhis2docs.mcp.kapa.ai",
+        },
+      },
+    };
+    await writeJsonConfig(customConfig, existing);
+
+    const copilotDriver = new CopilotClientDriver(customConfig);
+    const scriptPath = "C:/path/to/server.mjs";
+    await copilotDriver.install(scriptPath);
+    expect((await copilotDriver.check(scriptPath)).status).toBe("ready");
+
+    const uninstalled = await copilotDriver.uninstall();
+    expect(uninstalled).toBe(true);
+    expect((await copilotDriver.check(scriptPath)).status).toBe("missing");
+
+    const content = JSON.parse(await fs.readFile(customConfig, "utf8"));
+    expect(content.servers["dhis2-docs"]).toBeDefined();
+    expect(content.servers.ai_artifacts).toBeUndefined();
+  });
 });
+
+describe("Uninstall & Base Assets Cleanup", () => {
+  let tempHome: string;
+
+  beforeEach(async () => {
+    tempHome = path.join(os.tmpdir(), `ai-artifacts-cleanup-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    await fs.mkdir(tempHome, { recursive: true });
+  });
+
+  afterEach(async () => {
+    await fs.rm(tempHome, { recursive: true, force: true }).catch(() => {});
+  });
+
+  it("cleanupBaseMcpServer removes deployed base directories and skills cleanly", async () => {
+    const baseDir = path.join(tempHome, ".vscode", "ai-artifacts");
+    const skillDir = path.join(tempHome, ".agents", "skills", "create-review-artifact");
+    const legacySkillDir = path.join(tempHome, ".agents", "skills", "create-plan-artifact");
+
+    await fs.mkdir(baseDir, { recursive: true });
+    await fs.writeFile(path.join(baseDir, "ai-artifacts-review-mcp.mjs"), "// server", "utf8");
+    await fs.mkdir(skillDir, { recursive: true });
+    await fs.writeFile(path.join(skillDir, "SKILL.md"), "# Skill", "utf8");
+    await fs.mkdir(legacySkillDir, { recursive: true });
+    await fs.writeFile(path.join(legacySkillDir, "SKILL.md"), "# Legacy", "utf8");
+
+    await cleanupBaseMcpServer({ userHome: tempHome });
+
+    expect(await fs.stat(baseDir).catch(() => null)).toBeNull();
+    expect(await fs.stat(skillDir).catch(() => null)).toBeNull();
+    expect(await fs.stat(legacySkillDir).catch(() => null)).toBeNull();
+  });
+
+  it("cleanupBaseMcpServer does not throw when folders do not exist", async () => {
+    await expect(cleanupBaseMcpServer({ userHome: tempHome })).resolves.not.toThrow();
+  });
+
+  it("runUninstall executes cleanups and returns uninstalled clients", async () => {
+    const originalCodexHome = process.env.CODEX_HOME;
+    process.env.CODEX_HOME = tempHome;
+    try {
+      const codexDriver = new CodexClientDriver();
+      await codexDriver.install("C:/test/server.mjs");
+
+      const baseDir = path.join(tempHome, ".vscode", "ai-artifacts");
+      await fs.mkdir(baseDir, { recursive: true });
+
+      const result = await runUninstall({ userHome: tempHome });
+      expect(result.uninstalledClients).toContain("Codex");
+      expect(await fs.stat(baseDir).catch(() => null)).toBeNull();
+    } finally {
+      if (originalCodexHome === undefined) {
+        delete process.env.CODEX_HOME;
+      } else {
+        process.env.CODEX_HOME = originalCodexHome;
+      }
+    }
+  });
+});
+
+

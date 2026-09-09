@@ -25,6 +25,25 @@ Release history has been standardized and tracked starting from version **0.2.6*
   - Updated artifact lifecycle contract in `skills/create-review-artifact/references/artifact-contract.md` to reference `.ai-artifacts`.
   - Added comprehensive unit and integration tests verifying dual-directory validation, artifact storage, and legacy `.codex-artifacts` inspection/advancement (90 tests passing).
 
+### MCP Client Uninstallation Engine (Dual Hook & Command Support)
+
+- **Dual-Mechanism Uninstallation**:
+  - **Extension Lifecycle Hook (`vscode:uninstall`)**: Standalone, pure Node.js uninstallation script (`dist/uninstall.cjs`) that runs automatically when the extension is uninstalled via VS Code or Cursor. It safely strips all `ai_artifacts` server configurations across all detected AI environments and purges base runtime assets (`~/.vscode/ai-artifacts/` and `~/.agents/skills/create-review-artifact/`).
+  - **Manual Command Palette Commands**: Introduced `agentPlus.uninstallAllIntegrations` to cleanly remove MCP client configurations and base assets on demand while retaining the VS Code extension for artifact review. Also added fine-grained, per-editor commands:
+    - `agentPlus.uninstallCopilotIntegration`
+    - `agentPlus.uninstallCodexIntegration`
+    - `agentPlus.uninstallCursorIntegration`
+    - `agentPlus.uninstallClaudeIntegration`
+    - `agentPlus.uninstallWindsurfIntegration`
+- **Driver Architecture (`McpClientDriver.uninstall`)**:
+  - Extended the client driver abstraction with `uninstall(): Promise<boolean>`.
+  - Implemented atomic removal helper `removeJsonMcpServer` in `src/extension/mcp-clients/json-mcp-helper.ts` for Copilot, Cursor, Claude, and Windsurf JSON configuration files.
+  - Implemented TOML managed-block removal `removeCodexArtifactsMcp` in `src/extension/mcp-config.ts` for Codex `config.toml`.
+- **Zero Project Data Loss**:
+  - Uninstallation operates strictly on external AI client configuration files and centralized user home assets (`~/.vscode/ai-artifacts/`). Workspace artifact storage (`.ai-artifacts/` and `.codex-artifacts/`) is never modified or deleted.
+- **Test Coverage**:
+  - Added full test coverage for all 5 drivers' `uninstall()` methods and `cleanupBaseMcpServer` (100/100 tests passing).
+
 ---
 
 ## [0.9.1] - 2026-09-09

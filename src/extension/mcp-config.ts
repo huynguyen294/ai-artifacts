@@ -25,6 +25,12 @@ function stripBlock(config: string, beginMarker: string, endMarker: string): str
   return `${config.slice(0, begin).trimEnd()}\n${config.slice(after).trimStart()}`.trim();
 }
 
+export function removeCodexArtifactsMcp(config: string): string {
+  const cleaned = withoutManagedBlock(config);
+  if (cleaned === config) return config;
+  return cleaned ? `${cleaned}\n` : "";
+}
+
 function withoutManagedBlock(config: string): string {
   let cleaned = stripBlock(config, CURRENT_BEGIN_MARKER, CURRENT_END_MARKER);
   cleaned = stripBlock(cleaned, LEGACY_BEGIN_MARKER, LEGACY_END_MARKER);

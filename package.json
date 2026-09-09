@@ -45,7 +45,13 @@
     "onCommand:agentPlus.installClaudeIntegration",
     "onCommand:agentPlus.installWindsurfIntegration",
     "onCommand:agentPlus.copyMcpConfig",
-    "onCommand:agentPlus.verifyGlobalIntegration"
+    "onCommand:agentPlus.verifyGlobalIntegration",
+    "onCommand:agentPlus.uninstallAllIntegrations",
+    "onCommand:agentPlus.uninstallCopilotIntegration",
+    "onCommand:agentPlus.uninstallCodexIntegration",
+    "onCommand:agentPlus.uninstallCursorIntegration",
+    "onCommand:agentPlus.uninstallClaudeIntegration",
+    "onCommand:agentPlus.uninstallWindsurfIntegration"
   ],
   "main": "./dist/extension.cjs",
   "contributes": {
@@ -85,6 +91,30 @@
       {
         "command": "agentPlus.verifyGlobalIntegration",
         "title": "AI Artifacts: Verify All Integrations"
+      },
+      {
+        "command": "agentPlus.uninstallAllIntegrations",
+        "title": "AI Artifacts: Uninstall All Detected Integrations"
+      },
+      {
+        "command": "agentPlus.uninstallCopilotIntegration",
+        "title": "AI Artifacts: Uninstall Integration for GitHub Copilot"
+      },
+      {
+        "command": "agentPlus.uninstallCodexIntegration",
+        "title": "AI Artifacts: Uninstall Integration for Codex"
+      },
+      {
+        "command": "agentPlus.uninstallCursorIntegration",
+        "title": "AI Artifacts: Uninstall Integration for Cursor"
+      },
+      {
+        "command": "agentPlus.uninstallClaudeIntegration",
+        "title": "AI Artifacts: Uninstall Integration for Claude"
+      },
+      {
+        "command": "agentPlus.uninstallWindsurfIntegration",
+        "title": "AI Artifacts: Uninstall Integration for Windsurf"
       }
     ],
     "customEditors": [
@@ -114,8 +144,10 @@
     }
   },
   "scripts": {
-    "build": "npm run build:extension && npm run build:webview && npm run build:enhancements && npm run build:integration",
+    "vscode:uninstall": "node ./dist/uninstall.cjs",
+    "build": "npm run build:extension && npm run build:uninstall && npm run build:webview && npm run build:enhancements && npm run build:integration",
     "build:extension": "esbuild src/extension/extension.ts --bundle --minify --platform=node --format=cjs --external:vscode --outfile=dist/extension.cjs",
+    "build:uninstall": "esbuild src/extension/uninstall-entry.ts --bundle --minify --platform=node --format=cjs --outfile=dist/uninstall.cjs",
     "build:webview": "vite build",
     "build:enhancements": "esbuild src/webview/enhancements/shiki-entry.ts --bundle --minify --platform=browser --format=iife --outfile=dist/webview/shiki.js && esbuild src/webview/enhancements/mermaid-entry.ts --bundle --minify --platform=browser --format=iife --outfile=dist/webview/mermaid.js",
     "build:integration": "esbuild src/integration/artifact-review-mcp-v4.ts --bundle --minify --platform=node --format=esm --outfile=dist/integration/codex-artifacts-review-mcp.mjs",

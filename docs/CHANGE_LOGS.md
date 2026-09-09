@@ -14,6 +14,43 @@ Minor typos, formatting fixes, or cosmetic wording adjustments that do not chang
 
 Each entry includes the date, category, summary of changes, rationale, and affected components or files.
 
+## 2026-09-09 — MCP Client Uninstallation Engine (Dual Hook & Command Support)
+
+### Changes
+
+- Implemented comprehensive uninstallation architecture combining automatic extension lifecycle hook (`vscode:uninstall`) and manual Command Palette commands (`agentPlus.uninstall*`).
+- Extended `McpClientDriver` interface with `uninstall(): Promise<boolean>`.
+- Implemented `removeJsonMcpServer` helper in `src/extension/mcp-clients/json-mcp-helper.ts` providing atomic deletion of `ai_artifacts` server configurations from JSON configurations (VS Code User `mcp.json`, Cursor `mcp.json`, Claude `~/.claude.json`, and Windsurf `mcp_config.json`).
+- Exported `removeCodexArtifactsMcp` in `src/extension/mcp-config.ts` to cleanly extract the managed MCP TOML block from `~/.codex/config.toml`.
+- Added `cleanupBaseMcpServer` in `src/extension/mcp-clients/base-cleanup.ts` to remove centralized MCP runtime server scripts (`~/.vscode/ai-artifacts/`) and deployed agent skills (`~/.agents/skills/create-review-artifact/`) without touching workspace project repositories.
+- Created standalone, pure Node.js entry point `src/extension/uninstall-entry.ts` compiled via esbuild into `dist/uninstall.cjs` (10KB) invoked by VS Code's `"vscode:uninstall"` hook without dependency on the `vscode` extension API.
+- Registered Command Palette commands: `agentPlus.uninstallAllIntegrations`, `agentPlus.uninstallCopilotIntegration`, `agentPlus.uninstallCodexIntegration`, `agentPlus.uninstallCursorIntegration`, `agentPlus.uninstallClaudeIntegration`, and `agentPlus.uninstallWindsurfIntegration`.
+- Added unit and integration tests verifying clean uninstallation across all 5 drivers, JSON/TOML cleanup, and base asset removal.
+
+### Rationale
+
+- Ensures complete lifecycle management so that users can seamlessly disconnect or remove AI Artifacts without manual file editing, broken JSON/TOML syntax, or orphaned background runtime files.
+- Guarantees zero project data loss by strictly segregating client configuration cleanup from workspace artifact history.
+
+### Affected components and files
+
+- `package.json`
+- `src/extension/mcp-clients/index.ts`
+- `src/extension/mcp-clients/json-mcp-helper.ts`
+- `src/extension/mcp-clients/codex-client.ts`
+- `src/extension/mcp-clients/copilot-client.ts`
+- `src/extension/mcp-clients/cursor-client.ts`
+- `src/extension/mcp-clients/claude-client.ts`
+- `src/extension/mcp-clients/windsurf-client.ts`
+- `src/extension/mcp-clients/base-cleanup.ts`
+- `src/extension/mcp-config.ts`
+- `src/extension/uninstall-entry.ts`
+- `src/extension/workspace-integration-v4.ts`
+- `src/extension/extension.ts`
+- `test/mcp-client-drivers.test.ts`
+- `README.md`
+- `CHANGE_LOGS.md`
+
 ## 2026-09-09 — Standardized .ai-artifacts Storage with 100% Backwards Compatibility
 
 ### Changes
