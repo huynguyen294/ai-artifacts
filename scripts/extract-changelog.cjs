@@ -62,7 +62,7 @@ function getPreviousReleaseTag() {
     }
   }
 
-  console.log('[extract-changelog] No previous release or tag found. Extracting target version section.');
+  console.log('[extract-changelog] No previous release or tag found. Initial release: extracting all versions up to target version.');
   return null;
 }
 
@@ -128,26 +128,28 @@ function extractChangelog() {
           endIndex = prevHeaderIndex;
         }
       }
-    }
-  }
-
-  // Fallback: If no previous tag, or previous tag was not found in changelog, or previousVersion === version:
-  // Cut before the next version header (## [...) or divider (---)
-  if (endIndex === -1) {
-    const afterStart = content.slice(startIndex + 1);
-    const nextHeaderMatch = afterStart.search(/\n##\s+\[/);
-    if (nextHeaderMatch !== -1) {
-      const nextHeaderIndex = startIndex + 1 + nextHeaderMatch;
-      const beforeNext = content.slice(startIndex, nextHeaderIndex);
-      const lastDivider = beforeNext.lastIndexOf('\n---');
-      if (lastDivider !== -1 && lastDivider > 0) {
-        endIndex = startIndex + lastDivider;
-      } else {
-        endIndex = nextHeaderIndex;
-      }
     } else {
-      endIndex = content.length;
+      // Re-run scenario: previousVersion === version
+      // Cut before the next version header
+      const afterStart = content.slice(startIndex + 1);
+      const nextHeaderMatch = afterStart.search(/\n##\s+\[/);
+      if (nextHeaderMatch !== -1) {
+        const nextHeaderIndex = startIndex + 1 + nextHeaderMatch;
+        const beforeNext = content.slice(startIndex, nextHeaderIndex);
+        const lastDivider = beforeNext.lastIndexOf('\n---');
+        if (lastDivider !== -1 && lastDivider > 0) {
+          endIndex = startIndex + lastDivider;
+        } else {
+          endIndex = nextHeaderIndex;
+        }
+      } else {
+        endIndex = content.length;
+      }
     }
+  } else {
+    // Initial release scenario: no previous release/tag exists yet on GitHub
+    // Extract all versions from target version down to the end of the changelog
+    endIndex = content.length;
   }
 
   let notes = content.slice(startIndex, endIndex).trim();
@@ -157,7 +159,7 @@ function extractChangelog() {
 
   fs.writeFileSync(outputPath, notes + '\n', 'utf8');
 
-  console.log(`[extract-changelog] Successfully extracted release notes for ${version} (since previous: ${previousTag || 'initial version'}):`);
+  console.log(`[extract-changelog] Successfully extracted release notes for ${version} (since previous: ${previousTag || 'initial release'}):`);
   console.log('--------------------------------------------------');
   console.log(notes.slice(0, 400) + (notes.length > 400 ? '\n... [truncated in log] ...' : ''));
   console.log('--------------------------------------------------');
