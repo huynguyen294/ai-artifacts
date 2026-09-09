@@ -19,3 +19,9 @@ vite.config.ts
 debug.log
 ASSESSMENT.md
 HIGHLIGHTS.md
+.env*
+old-releases/**
+scripts/**
+RELEASE_NOTES.md
+AGENTS.md
+TODO.md

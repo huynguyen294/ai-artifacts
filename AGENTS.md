@@ -1,10 +1,10 @@
 # RULES
 
-- Không được tự ý thực hiện bất kỳ thao tác code nào, phải có yêu cầu thực hiện thì mới làm
-- Khi phát hiện có thay đổi về kiến trúc, hành vi... mà cần cập nhật docs thì hãy hỏi tôi để cập nhật. Hãy lưu các thay đổi này vào CHANGE_LOGS.md ở docs.
-- trong dự án này AI sẽ tổng hợp lại theo các thành phần, và khi chat với tôi hãy nói sẽ sửa các thành phần gì trong dự án.
+- Do not perform any code changes autonomously; only perform modifications when explicitly requested by the user.
+- When detecting architectural, behavioral, or system changes that require documentation updates, ask the user before updating. Record these changes in `docs/CHANGE_LOGS.md`.
+- In this project, AI must synthesize work grouped by components, and explicitly state which components will be modified when discussing with the user.
 
 # PROJECT INSTRUCTIONS
 
-- Trước khi phân tích hoặc thực hiện yêu cầu trong dự án, hãy đọc toàn bộ [`docs/INSTRUCTION.md`](docs/INSTRUCTION.md).
-- Dùng tài liệu này để nắm product intent, kiến trúc hiện tại, các invariant, ownership map và quy trình validation.
+- Before analyzing or executing any request in this project, thoroughly read [`docs/INSTRUCTION.md`](docs/INSTRUCTION.md).
+- Use that document to understand product intent, current architecture, critical invariants, the ownership map, and validation workflows.

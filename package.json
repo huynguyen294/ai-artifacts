@@ -1,12 +1,12 @@
 {
-  "name": "codex-artifacts",
-  "displayName": "Codex Artifacts",
-  "publisher": "agent-plus-local",
-  "description": "Review Codex Markdown artifacts and send annotated feedback to the originating Codex conversation.",
-  "version": "0.9.0",
-  "private": true,
+  "name": "ai-artifacts",
+  "displayName": "AI Artifacts - Interactive Planning & Review",
+  "publisher": "huynguyen294",
+  "description": "Interactive review editor for AI-generated planning artifacts, markdown specs, and proposals. Connects via MCP to Cursor, Codex, Windsurf, Claude, and more.",
+  "version": "0.9.1",
   "type": "module",
   "license": "MIT",
+  "icon": "media/icon.png",
   "repository": {
     "type": "git",
     "url": "https://github.com/huynguyen294/vscode-codex-artifacts.git"
@@ -15,7 +15,21 @@
     "vscode": ">=1.95.0"
   },
   "categories": [
+    "AI",
+    "Programming Languages",
     "Other"
+  ],
+  "keywords": [
+    "ai",
+    "artifacts",
+    "planning",
+    "review",
+    "human-in-the-loop",
+    "mcp",
+    "markdown",
+    "cursor",
+    "codex",
+    "windsurf"
   ],
   "extensionKind": [
     "workspace"
@@ -32,15 +46,15 @@
     "commands": [
       {
         "command": "agentPlus.openArtifactReview",
-        "title": "Codex Artifacts: Open Artifact Review"
+        "title": "AI Artifacts: Open Artifact Review"
       },
       {
         "command": "agentPlus.installWorkspaceIntegration",
-        "title": "Codex Artifacts: Install Global Codex Integration"
+        "title": "AI Artifacts: Install Global Codex Integration"
       },
       {
         "command": "agentPlus.verifyGlobalIntegration",
-        "title": "Codex Artifacts: Verify Codex Integration"
+        "title": "AI Artifacts: Verify Codex Integration"
       }
     ],
     "customEditors": [
@@ -56,7 +70,7 @@
       }
     ],
     "configuration": {
-      "title": "Codex Artifacts",
+      "title": "AI Artifacts",
       "properties": {
         "agentPlus.autoOpenArtifactReview": {
           "type": "boolean",
@@ -74,8 +88,11 @@
     "build:integration": "esbuild src/integration/artifact-review-mcp-v4.ts --bundle --minify --platform=node --format=esm --outfile=dist/integration/codex-artifacts-review-mcp.mjs",
     "check": "tsc --noEmit",
     "test": "npm run build:integration && vitest run --configLoader native",
-    "package": "npm run build && vsce package --allow-missing-repository --out releases/ && vsce package --allow-missing-repository --out releases/codex-artifacts.vsix",
-    "pack": "npm run package"
+    "clean:releases": "node -e \"const fs = require('fs'); fs.rmSync('releases', { recursive: true, force: true }); fs.mkdirSync('releases', { recursive: true });\"",
+    "package": "npm run build && npm run clean:releases && vsce package --allow-missing-repository --out releases/",
+    "pack": "npm run package",
+    "publish:vscode": "vsce publish",
+    "publish:ovsx": "npx ovsx publish"
   },
   "devDependencies": {
     "@floating-ui/react": "^0.27.20",

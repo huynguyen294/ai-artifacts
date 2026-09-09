@@ -1,60 +1,86 @@
 # Change Logs
 
-Tất cả các thay đổi quan trọng của dự án **Codex Artifacts** (`agent-plus`) sẽ được ghi nhận tại tài liệu này.
+All notable changes to the **AI Artifacts** (`agent-plus`) project will be documented in this file.
 
-Lịch sử phát hành được chuẩn hóa và bắt đầu ghi nhận lại từ phiên bản **0.2.6**. Các gói build mang số phiên bản thấp hơn không được xem là một phần của changelog chính thức này.
+Release history has been standardized and tracked starting from version **0.2.6**. Package builds prior to this version are not considered part of the official changelog.
+
+---
+
+## [0.9.1] - 2026-09-09
+
+### Product Branding and Release Automation
+
+- Rebranded the product to **AI Artifacts - Interactive Planning & Review** (`ai-artifacts`), positioned as an interactive review layer for AI coding agents (Codex, Cursor, Windsurf, Claude, etc.).
+- Added official extension brand icon at `media/icon.png` (256x256 px).
+- Updated `package.json` metadata:
+  - Set publisher to `huynguyen294`.
+  - Added categories `AI` and `Programming Languages`.
+  - Configured 10 high-value SEO keywords for the VS Code Marketplace and Open VSX Registry.
+  - Removed `private: true` to unlock public distribution.
+  - Added utility scripts: `clean:releases`, `publish:vscode`, and `publish:ovsx`.
+- Improved packaging workflow:
+  - Automated cleaning of the `releases/` directory prior to each build (`clean:releases`), guaranteeing that the folder contains exclusively the single newest version VSIX (`releases/ai-artifacts-0.9.1.vsix`).
+  - Relocated historical builds to `old-releases/` and configured ignore rules in `.gitignore` and `.vscodeignore`.
+- Configured automated CI/CD releases via GitHub Actions (`.github/workflows/release.yml`):
+  - Triggered automatically on `v*` tag pushes.
+  - Runs typechecks (`npm run check`) and all 76 unit/integration tests (`npm test`).
+  - Builds and publishes a GitHub Release with the production VSIX asset attached.
+- Security and VSIX optimization: added `.env*` and `old-releases/**` to `.vscodeignore` to prevent leaking environment files or bundling legacy builds.
+- Comprehensive `README.md` upgrade: added an agent compatibility matrix and detailed end-to-end getting-started walkthrough.
 
 ---
 
 ## [0.9.0] - 2026-09-08
 
-### Workspace resolution và create contract
+### Workspace Resolution and Create Contract
 
-- Thêm tool read-only `resolve_artifact_workspace`, tìm exact-path, exact-name hoặc similar-name trong fresh focused registry và trả name/path candidate kèm selection token; MCP không tự chọn workspace, còn skill tự chọn candidate duy nhất có độ tin cậy cao hoặc hỏi người dùng khi mơ hồ.
-- Chuẩn hóa separator khi tìm kiếm nên `agent plus`, `agent-plus` và `agent_plus` cùng khớp. Trong multi-root workspace, nếu query không có match, resolver trả toàn bộ folder fresh của cùng context với `matchMode: "all-available"`; `not-found` chỉ còn nghĩa là scope fresh đang rỗng.
-- Nếu VS Code workspace context chỉ có một folder, resolver trả ngay `matchMode: "matched"` với `match: "single-folder"` dù query không khớp, để skill chọn mà không cần tự suy luận số folder.
-- Resolver không còn fallback bằng cách gộp folder từ nhiều VS Code window. Nếu registry có nhiều context khác nhau mà không xác định được một focused context duy nhất, MCP fail với `WORKSPACE_CONTEXT_AMBIGUOUS`; các snapshot trùng nhau của cùng một context vẫn được xem là một scope.
-- Thu gọn create evidence còn đúng hai loại: `tagged-file` và `resolved-workspace`. Resolver token chứng minh candidate thuộc fresh focused scope; candidate có thể do skill tự chọn khi duy nhất và đủ tin cậy, hoặc do người dùng chọn khi mơ hồ.
-- Selection token hết hạn sau 10 phút, chỉ được consume sau create thành công, bind vào candidate và registry context; create vẫn revalidate registration, focused scope, root canonical và tagged-file containment trước mutation.
-- Official skill luôn gửi `kind: "implementation-plan"`; artifact schema vẫn là v4 và MCP vẫn giữ field `kind` bắt buộc để tương thích protocol.
+- Added read-only `resolve_artifact_workspace` tool; searches exact-path, exact-name, or similar-name in the fresh focused registry and returns candidate name/paths with an opaque selection token. The skill automatically picks uniquely high-confidence candidates and prompts the user only when ambiguous.
+- Normalized separators in search queries so `agent plus`, `agent-plus`, and `agent_plus` match identically. In multi-root workspaces without a match, returns all fresh folders for the same context with `matchMode: "all-available"`; `not-found` strictly indicates an empty fresh scope.
+- If a VS Code context contains exactly one folder, the resolver immediately returns `matchMode: "matched"` with `match: "single-folder"` even if the query differs, relieving agents from inferring folder cardinality outside MCP.
+- Prevented merging folders across different VS Code windows. When multiple active contexts exist without a unique focused window, MCP fails with `WORKSPACE_CONTEXT_AMBIGUOUS`; duplicate snapshots of the same context are consolidated.
+- Reduced create evidence to two explicit types: `tagged-file` and `resolved-workspace`. The resolver token proves the candidate belongs to the fresh focused scope.
+- Selection tokens expire after 10 minutes, are consumed only upon successful creation, and bind to candidate and registry contexts; `create_artifact` revalidates registration, focused scope, canonical root, and tagged-file containment before mutation.
+- The official skill always sends `kind: "implementation-plan"`; artifact schema remains v4 and MCP retains the required `kind` field for protocol compatibility.
 
-### Skill orchestration và reconnect safety
+### Skill Orchestration and Reconnect Safety
 
-- Bổ sung resolver vào tool-availability contract; chỉ kiểm tra availability một lần khi bắt đầu lifecycle trong chat, trừ khi tool unavailable, MCP restart hoặc sang chat mới.
-- Đưa workspace resolution lên trước mọi project action: khi không có tagged file, `resolve_artifact_workspace` là MCP tool duy nhất được gọi trước khi đọc contract; skill chưa được scan folder, đọc project instructions/docs/source hoặc soạn artifact trước khi chọn được workspace đủ tin cậy.
-- Sau khi chọn được workspace, skill đọc `artifact-contract.md` trước khi inspect workspace hoặc gọi bất kỳ lifecycle tool nào còn lại.
-- Quy định mapping request/workspace → exact artifact handle/round cho chat có nhiều artifact; không chọn theo recency và không gọi resolver sau create.
-- Thêm decision table phân biệt pure reconnect, inspect saved feedback và explicit chat update. Nếu intent hoặc handle chưa rõ, skill phải hỏi trước và không takeover suy đoán.
-- Giữ nguyên Case F/H: pure reconnect vẫn wait exact handle/same round; Proceed vẫn thực thi `execute-approved-plan` trong cùng turn. Không thêm structured Markdown edits hoặc state-generation protocol.
+- Added the resolver to the tool-availability contract; verified once when starting a chat lifecycle unless tools become unavailable, MCP restarts, or a new chat begins.
+- Positioned workspace resolution prior to all project actions: when no file is tagged, `resolve_artifact_workspace` is the only MCP tool allowed before reading the contract; the skill may not scan folders, read instructions/docs/source, or draft artifacts before establishing a trusted workspace.
+- Once a workspace is selected, the skill reads `artifact-contract.md` before inspecting files or calling remaining lifecycle tools.
+- Enforced request/workspace-to-handle mappings for multi-artifact conversations; recency heuristics and post-create resolver calls are disallowed.
+- Added an intent decision table distinguishing pure reconnects, saved feedback inspections, and explicit chat updates. Unclear intents or handles require user confirmation before speculative takeover.
+- Preserved Case F/H invariants: pure reconnects reattach to the exact handle and round; Proceed executes `execute-approved-plan` immediately within the same turn.
 
-### Structured lifecycle recovery
+### Structured Lifecycle Recovery
 
-- Lifecycle errors giữ human-readable text và bổ sung `code`, `retryable`, `expectedNextTool`, `reuseRoundToken`, `useSameArtifactHandle` cùng optional `currentReviewRound`.
-- Phân biệt token invalid/expired, in-use, consumed, round mismatch, state changed, active waiter, confirmed rollback, cancellation/commit và workspace unavailable.
-- Token chỉ được reuse khi MCP xác nhận chưa commit và `reuseRoundToken: true`; mọi state không chắc chắn đều inspect lại cùng exact handle, không replay Markdown hoặc action cũ.
-- Nâng extension lên `0.9.0`, MCP server lên `6.0.0`, đồng bộ installer approvals, skill, contract, docs và regression tests. Sau upgrade cần cài lại global integration, restart Codex và bắt đầu chat mới.
-- Xác thực cuối: typecheck pass, 76/76 tests pass trên 12 test files và full production build pass.
+- Enhanced lifecycle errors with human-readable descriptions alongside structured metadata: `code`, `retryable`, `expectedNextTool`, `reuseRoundToken`, `useSameArtifactHandle`, and optional `currentReviewRound`.
+- Differentiated invalid/expired tokens, in-use tokens, consumed tokens, round mismatches, state changes, active waiters, confirmed rollbacks, cancellations, and workspace unavailability.
+- Tokens may only be reused when MCP confirms pre-commit state and `reuseRoundToken: true`; uncertain states re-inspect the exact handle without replaying previous mutations.
+- Bumped extension to `0.9.0` and MCP server to `6.0.0`; synchronized installer approvals, skills, contracts, documentation, and regression tests.
+- Final validation: typecheck pass, 76/76 tests pass across 12 test files, and full production build pass.
+
+---
 
 ## [0.8.0] - 2026-09-06
 
-### Explicit chat update trên round trống
+### Explicit Chat Updates on Empty Rounds
 
-- Mở rộng MCP tool `inspect_artifact_review` với tham số `intent: "explicit-chat-update"` và `expectedReviewRound`.
-- Cấp round token loại `chat-update` khi người dùng yêu cầu sửa artifact trực tiếp qua chat mà round hiện tại không có comment hay submission, khắc phục tình trạng bế tắc không advance được round.
-- Từ chối `explicit-chat-update` nếu round đã có comment hoặc submission, tránh xóa feedback chưa xử lý hoặc làm sai lifecycle sau Proceed/Just save.
-- Validate `expectedReviewRound` trước takeover và revalidate sau takeover, nên request stale không thể hủy waiter hợp lệ trước khi bị từ chối.
-- Bắt buộc token `chat-update` khi gọi `advance_and_wait_for_artifact` phải truyền `markdown` mới và SHA phải khác SHA của tài liệu hiện tại, ngăn chặn advance rỗng.
-- Giữ nguyên cơ chế fail-closed: gọi `inspect_artifact_review` thông thường trên round trống vẫn không cấp token, đảm bảo thao tác reconnect thuần túy chỉ gắn lại waiter vào cùng round mà không làm đổi dữ liệu hay tăng round.
-- Cập nhật skill `create-review-artifact` và contract phân định rõ 3 luồng: Pure reconnect, Saved comment inspection, và Explicit chat update. Agent không còn hướng dẫn sai người dùng bấm nút Review khi round trống.
-- Nâng extension lên `0.8.0` và MCP server lên `5.1.0`.
-- Đồng bộ `package-lock.json`, README, component documentation và regression coverage cho lifecycle/keyboard behavior.
-- Xác thực cuối: typecheck pass, 67/67 tests pass trên 12 test files và full production build pass.
+- Extended MCP tool `inspect_artifact_review` with parameters `intent: "explicit-chat-update"` and `expectedReviewRound`.
+- Granted `chat-update` round tokens when users request artifact edits directly in chat while the round has no saved comments or submissions.
+- Rejected `explicit-chat-update` if comments or submissions already exist on disk, preventing accidental feedback loss or corrupting Proceed/Just save lifecycles.
+- Validated `expectedReviewRound` before takeover and revalidated after takeover, preventing stale requests from canceling active waiters.
+- Mandated that `advance_and_wait_for_artifact` with `chat-update` tokens supply replacement `markdown` with a different SHA, preventing empty advances.
+- Preserved fail-closed mechanics: standard `inspect_artifact_review` calls on empty rounds issue no token, ensuring pure reconnects reattach to the same round without data mutations or round increments.
+- Updated `create-review-artifact` skill and contract to separate Pure reconnects, Saved comment inspection, and Explicit chat updates.
+- Bumped extension to `0.8.0` and MCP server to `5.1.0`.
+- Synchronized `package-lock.json`, README, component docs, and regression coverage for lifecycle and keyboard behavior.
+- Final validation: typecheck pass, 67/67 tests pass across 12 test files, and full production build pass.
 
 ### Webview UX
 
-- Hỗ trợ nhấn phím **Enter** trong popup review (`SelectionCommentPopover`) để gửi comment nhanh (`Shift + Enter` để xuống dòng).
-- Bổ sung kiểm tra IME composition (`!event.nativeEvent.isComposing`) để không bị submit nhầm khi gõ tiếng Việt có dấu.
-- Tự động ngắt dòng và xuống hàng (`overflow-wrap: anywhere; word-break: break-word;`) cho textarea nhập comment và text xem lại comment trong drawer/detail popover khi vượt quá chiều rộng.
+- Supported pressing **Enter** in the review popover (`SelectionCommentPopover`) to quickly submit comments (`Shift + Enter` for newlines).
+- Added IME composition checks (`!event.nativeEvent.isComposing`) to prevent accidental submissions during multilingual typing.
+- Added automatic text wrapping (`overflow-wrap: anywhere; word-break: break-word;`) across comment inputs and detail drawers.
 
 ---
 
@@ -62,207 +88,156 @@ Lịch sử phát hành được chuẩn hóa và bắt đầu ghi nhận lại 
 
 ### Breaking MCP API
 
-- Xóa hoàn toàn `create_and_wait_for_artifact` và `update_and_wait_for_artifact`; thay bằng bốn tool tách biệt: `create_artifact`, `wait_for_artifact_review`, `inspect_artifact_review` và `advance_and_wait_for_artifact`.
-- Nâng extension lên `0.7.0` và MCP server lên `5.0.0`. Sau khi nâng cấp, người dùng phải chạy lại **Codex Artifacts: Install Global Codex Integration**, restart Codex và bắt đầu chat mới.
-- Giữ nguyên artifact schema v4 nên artifact hiện có không cần migration; schema v3 tiếp tục chỉ đọc.
+- Removed `create_and_wait_for_artifact` and `update_and_wait_for_artifact`; replaced with four distinct tools: `create_artifact`, `wait_for_artifact_review`, `inspect_artifact_review`, and `advance_and_wait_for_artifact`.
+- Bumped extension to `0.7.0` and MCP server to `5.0.0`.
+- Preserved artifact schema v4; existing artifacts require no migration; schema v3 remains read-only.
 
-### Chat escape và reconnect
+### Chat Escape and Reconnect
 
-- Tách dữ liệu artifact bền vững khỏi waiter tạm thời theo nguyên tắc `artifact lifetime > waiter lifetime > chat-turn lifetime`.
-- Cho phép người dùng lưu comment rồi nhắn “hãy xem review” hoặc yêu cầu tương đương mà không cần bấm **Review**. Skill hủy waiter cũ bằng takeover, inspect đúng artifact handle, trả lời câu hỏi trong chat, áp dụng yêu cầu sửa và mở round mới.
-- Nút **Review** và chat “hãy xem review” dùng chung một feedback policy: question-only trả lời trong chat rồi advance không đổi Markdown; change-only cập nhật artifact; mixed vừa trả lời chat vừa cập nhật; feedback chưa rõ được hỏi lại trước khi consume round.
-- Không còn tạo hoặc cập nhật mục `Review responses` trong artifact; câu trả lời hội thoại luôn thuộc Codex chat.
-- Question-only feedback vẫn tăng round và reset comment đã xử lý nhưng giữ nguyên bytes và SHA của `artifact.md`.
-- **Proceed** và **Just save** chỉ kết thúc round hiện tại, không kill artifact và không tự mở round mới. Với `plan` và `implementation-plan`, Proceed trả thêm runtime directive `execute-approved-plan`, bắt buộc AI thực thi toàn bộ plan đã duyệt ngay trong cùng turn thay vì chỉ xác nhận. Artifact có thể được reconnect rõ ràng về sau mà không thực thi lại hành động cũ.
-- Bắt buộc reconnect bằng exact `artifactDirectory` còn trong conversation hoặc path do người dùng cung cấp; không chọn “artifact mới nhất” và không suy luận từ cwd.
+- Decoupled durable artifact data from ephemeral waiters following `artifact lifetime > waiter lifetime > chat-turn lifetime`.
+- Enabled chat escape: users can save comments and ask the AI to "read the review" without clicking the Review button. The AI takes over the waiter, inspects comments, answers questions in chat, updates the artifact if requested, and starts a new round.
+- Unified feedback policies between Review button submissions and in-chat review requests.
+- Stopped generating `Review responses` inside the artifact; conversational answers belong exclusively in chat.
+- Question-only feedback increments review rounds and resets processed comments while preserving the exact bytes and SHA of `artifact.md`.
+- Proceed and Just save conclude rounds without deleting artifacts. Proceed on `plan` or `implementation-plan` returns runtime directive `execute-approved-plan` authorizing immediate execution in the same turn.
+- Enforced exact `artifactDirectory` handles; prohibited latest-artifact heuristics and working directory inferences.
 
-### Waiter ownership và round token
+### Waiter Ownership and Round Tokens
 
-- Thay active-waiter `Set` bằng registry có request key, review round, `AbortController` và settled state; ownership được reserve trước I/O để loại bỏ race giữa wait và chat takeover.
-- JSON-RPC cancellation và takeover dùng chung cơ chế detach, chỉ đóng watcher/timer và giải phóng ownership, không sửa lifecycle files.
-- Tổng quát hóa update token thành round token in-memory, single-use, hết hạn sau một giờ và bind vào artifact/session/round, artifact hash, comments hash cùng submission presence/hash.
-- Inspection có thể cấp token từ comment đã lưu khi chưa có `review-submission.json`; MCP restart làm mất token/waiter nhưng inspection có thể cấp token mới từ persistent state đã validate.
-- Token chỉ bị consume sau transaction commit thành công. Cancellation sau commit để lại round mới hợp lệ ở trạng thái detached và có thể reconnect.
-
-### Skill, integration và tài liệu
-
-- Cập nhật bundled skill cho default create → wait, chat escape, mixed/question-only feedback, no-comment reattach, exact-handle resolution và reconnect sau Proceed/Just save.
-- Managed `config.toml` cấp approval cho đúng bốn tool mới.
-- Cập nhật `README.md`, `ARCHITECTURE.md`, `PHILOSOPHY.md`, `COMPONENTS.md`, project instructions và artifact contract theo lifetime/ownership mới; không thay đổi webview, provider, Artifact Store, renderer hoặc workspace registry.
-- Hoàn thiện README onboarding và phân phối VSIX: bổ sung prerequisite, đường dẫn cài đặt, phạm vi `CODEX_HOME`, auto-open setting, UI labels, Just save, schema-v3 compatibility, contributor commands và các liên kết tài liệu; bổ sung repository metadata để VSCE resolve các link tương đối, không thay đổi runtime/API/schema behavior.
+- Replaced active-waiter sets with an explicit registry tracking request keys, review rounds, `AbortController`, and settled states.
+- Unified JSON-RPC cancellation and takeover detach semantics without mutating persistent files.
+- Generalized update tokens into in-memory, single-use, 1-hour expiring round tokens bound to artifact, session, round, and document/comment hashes.
+- Allowed inspections to issue tokens from saved comments prior to `review-submission.json`.
+- Tokens are consumed strictly after successful transaction commits.
 
 ### Verification
 
-- Bổ sung regression coverage cho create detached, default Review flow, cancellation/reattach, takeover không race, inspect trước submission, question-only SHA preservation, exact-state token rejection, MCP restart, concurrent consumption, reconnect sau Just save, rollback và Windows editor-lock fallback.
-- `npm.cmd run check`, toàn bộ 57 tests và `npm.cmd run build` đều pass.
+- Added regression coverage for detached creation, default Review flows, cancellation/reattach, non-racing takeovers, inspection prior to submission, question-only SHA preservation, exact-state token rejection, MCP restarts, concurrent consumption, rollback, and Windows editor locks.
+- `npm.cmd run check`, all 57 tests, and `npm.cmd run build` passed.
+
+---
 
 ## [0.6.1] - 2026-08-29
 
-- Khôi phục workspace evidence gate chặt từ trước migration MCP; `package.json`, project contents, cwd và folder order không còn được dùng để tự chọn root.
-- Nâng workspace registry lên schema v2 với focused-window và active-file context.
-- Bắt buộc `workspaceEvidence` có kiểu; MCP fail closed trước filesystem mutation khi multi-root mơ hồ hoặc evidence không khớp.
-- `Review responses` chỉ chứa phản hồi cho comment round ngay trước đó và được thay thế ở lần Review kế tiếp, không tích lũy toàn bộ lịch sử.
-- Thêm regression tests cho multi-root ambiguity, active-file evidence, explicit user path/folder, focused-window scoping và skill contract.
+- Restored strict workspace evidence gates; disallow `package.json`, project markers, cwd, or folder order from establishing workspace roots independently.
+- Upgraded workspace registry to schema v2 with focused-window and active-file contexts.
+- Enforced typed `workspaceEvidence`; MCP fails closed before mutation on multi-root ambiguity.
+- Streamlined `Review responses` to contain only the immediate preceding round's answers.
+- Added regression tests for multi-root ambiguity, active-file evidence, explicit user paths, focused-window scoping, and skill contracts.
+
+---
 
 ## [0.6.0] - 2026-08-29
 
-### MCP-owned lifecycle
+### MCP-Owned Lifecycle
 
-- Thay creation hook và App Server trust flow bằng hai MCP tool `create_and_wait_for_artifact` và `update_and_wait_for_artifact`.
-- MCP tạo artifact ID/session, ghi schema v4, chờ quyết định và cập nhật cùng `artifact.md` trong đúng tool call gốc.
-- Dùng update token in-memory, một lần, gắn với artifact/session/round; giữ transaction rollback và Windows editor-lock fallback.
+- Replaced creation hooks and App Server trust flows with two MCP tools: `create_and_wait_for_artifact` and `update_and_wait_for_artifact`.
+- MCP server generates artifact IDs/sessions, commits schema v4, awaits decisions, and updates `artifact.md` within the originating tool call.
+- Used single-use in-memory update tokens bound to artifact/session/round with transactional rollback and Windows editor-lock fallbacks.
 
-### Workspace boundary
+### Workspace Boundary
 
-- Extension công bố registry heartbeat cho toàn bộ `workspaceFolders` thực sự đang mở; MCP chỉ chấp nhận exact canonical root còn hiệu lực.
-- Chặn workspace stale/unregistered, nested root không được đăng ký, path escape và artifact storage qua symlink/junction.
-- Skill vẫn bắt buộc xác định workspace từ bằng chứng trong yêu cầu/IDE/hội thoại và không chọn folder đầu tiên.
+- Extension host publishes registry heartbeats for currently active `workspaceFolders`; MCP requires exact valid canonical roots.
+- Blocked stale/unregistered workspaces, unnested root registrations, path escapes, and symlink/junction storage.
 
-### Migration
+### Review Semantics
 
-- Installer chỉ cài MCP + skill, không cần `/hooks` trust, đồng thời gỡ an toàn các hook/skill legacy do extension quản lý.
-- Artifact schema v3 vẫn mở được ở chế độ read-only; schema v4 là lifecycle duy nhất được phép review/update.
-- Bổ sung test end-to-end create → Review → update-and-wait → Proceed, registry TTL, token replay, rollback và legacy read-only.
+- **Proceed** on `implementation-plan` grants immediate execution authority in the same turn.
+- In-artifact Q&A answers append to `Review responses` at the document bottom for review in subsequent rounds.
 
-### Review semantics
-
-- **Proceed** trên `implementation-plan` là quyền triển khai plan đã duyệt ngay trong cùng turn, không chỉ xác nhận approve hoặc yêu cầu thêm một lần xác nhận.
-- Khi comment là câu hỏi, Codex trả lời trực tiếp trong mục `Review responses` ở cuối artifact mới để câu trả lời tồn tại và tiếp tục được review ở round kế tiếp.
+---
 
 ## [0.5.0] - 2026-08-29
 
-### Markdown viewer
+### Markdown Viewer
 
-- Thay renderer thủ công bằng `react-markdown`, `remark-gfm` và remark AST có source positions dùng chung với comment blocks.
-- Hỗ trợ nested list, task list, table, link, inline formatting, fenced code và Mermaid.
-- Dùng Shiki fine-grained bundle cho syntax highlighting; Shiki và Mermaid chỉ tải khi artifact cần đến.
-- Tự động theo theme light, dark và high contrast của VS Code.
+- Replaced custom renderer with `react-markdown`, `remark-gfm`, and unified remark AST source positions.
+- Supported nested lists, task lists, tables, links, inline formatting, code blocks, and Mermaid diagrams.
+- Used fine-grained Shiki bundles for syntax highlighting; lazy-loaded Shiki and Mermaid.
+- Automatically matched VS Code light, dark, and high-contrast themes.
 
-### Contextual review
+### Contextual Review
 
-- Hiển thị comment composer bằng Floating UI popover ngay cạnh vùng chọn.
-- Thay sidebar cố định bằng comments drawer có thể ẩn, điều hướng từ comment về đúng highlight.
-- Nút `Review (N)` hiển thị số comment và trở thành primary khi có feedback; `Proceed` luôn primary trong toàn bộ vòng review.
-- Không còn báo nhầm cross-block khi selection kết thúc tại offset đầu tiên của block kế tiếp hoặc khi click comment highlight.
-- Giảm shadow/backdrop của document, popover và drawer để giao diện phẳng, sát VS Code hơn.
-- Giảm padding hai lớp của workspace/document và compact popover/drawer để tăng diện tích đọc.
-- Chuyển `Comments (N)` khỏi lifecycle control bar xuống utility bar riêng ngay bên dưới.
-- Đổi utility action thành icon + `View comments` + count badge, kèm trạng thái drawer cho accessibility.
-- Giữ nguyên inline Markdown khi highlight comment thay vì biến cả block thành plain text.
+- Displayed comment composer using Floating UI popovers anchored to selected text.
+- Replaced static sidebar with collapsible comments drawer navigating directly to highlighted passages.
+- Styled `Review (N)` button showing comment counts; `Proceed` remains primary throughout the review.
+- Prevented false cross-block selections and compacted padding for improved reading space.
 
-### Security và verification
+### Security and Verification
 
-- Tắt raw HTML/MDX execution, chặn unsafe URL và remote image, mở external link qua VS Code host.
-- Giữ nonce-based CSP; Shiki render token bằng React, Mermaid strict SVG chạy trong data-image context.
-- Bổ sung regression tests cho legacy block IDs, GFM/source positions, action state, URL policy, raw HTML và annotation qua inline markup.
+- Disabled raw HTML/MDX execution, blocked unsafe URLs and remote images, routed external links through the VS Code host.
+- Maintained nonce-based CSP; Shiki tokens rendered via React, Mermaid strict SVG rendered inside data-image contexts.
+
+---
 
 ## [0.4.3] - 2026-08-29
 
-- Không còn xem Codex cwd, `environment_context` hoặc workspace folder đầu tiên là folder đang active/được chọn.
-- Bắt buộc có tín hiệu UI/path tường minh và kiểm chứng bằng file dự án liên quan; nếu thiếu phải hỏi người dùng trước khi tạo Artifact.
-- Chuẩn hóa thứ tự xác định workspace: path/file/attachment trong hội thoại; file có path từ IDE context; repository được nhắc đến và kiểm chứng; cuối cùng hỏi người dùng.
+- Disallowed using agent cwd, `environment_context`, or the first workspace folder as the active folder.
+- Enforced explicit UI/path signals verified against workspace contents; prompted users when missing.
+
+---
 
 ## [0.4.2] - 2026-08-29
 
-- Tự động tạo Artifact Review khi người dùng yêu cầu tạo, xem hoặc cập nhật một plan, kể cả khi không nhắc đến từ "artifact".
-- Phân biệt implementation plan (`implementation-plan`) với plan thông thường (`plan`).
+- Automatically activated Artifact Review for requests creating, viewing, or updating plans, even without the word "artifact".
+- Differentiated `implementation-plan` from standard `plan`.
+
+---
 
 ## [0.4.1] - 2026-08-29
 
-- Cho phép cập nhật `artifact.md` khi Windows chặn thao tác đổi tên do file đang được mở trong editor.
-- Bắt buộc skill xác định workspace từ bằng chứng cụ thể; không chọn theo thứ tự workspace, kết quả tìm kiếm đầu tiên hoặc chỉ dựa vào cwd.
-- Thêm regression test cho fallback cập nhật file đang mở trên Windows.
+- Added fallback for updating `artifact.md` when Windows file locks prevent renaming open files.
+- Enforced evidence-based workspace determination in skills.
+
+---
 
 ## [0.4.0] - 2026-08-28
 
-### Breaking changes
+### Breaking Changes
 
-- Chuyển sang `schemaVersion: 3` và cấu trúc `.codex-artifacts/artifacts/<id>/artifact.md`.
-- Một request giữ cùng artifact ID qua nhiều review round; Review cập nhật cùng file thay vì tạo replacement artifact.
-- Bỏ runtime `operation: replace`, `replacesArtifactId` và `.trash` cho artifact mới.
-- Đổi skill thành `create-review-artifact` và MCP tools thành `wait_for_artifact_review`/`update_artifact`.
-- Không tự migrate review schema v2 đang tồn tại.
+- Upgraded to `schemaVersion: 3` and `.codex-artifacts/artifacts/<id>/artifact.md` layout.
+- Retained identical artifact IDs across review rounds; updated files in place rather than generating replacement artifacts.
+- Removed runtime operations `replace`, `replacesArtifactId`, and `.trash` directories.
+- Renamed skill to `create-review-artifact` and MCP tools to `wait_for_artifact_review` and `update_artifact`.
 
-### Artifact lifecycle
+### Artifact Lifecycle
 
-- Thêm `reviewRound`, `updatedAt` và round-aware bindings cho comments/submission.
-- MCP cấp update token dùng một lần và commit Markdown/manifest/comments theo transaction có rollback.
-- Review reset comments/submission trên cùng artifact; Proceed và Just save kết thúc lifecycle.
+- Added `reviewRound`, `updatedAt`, and round-aware comment/submission bindings.
+- MCP server issued single-use update tokens and committed transactions with rollback support.
 
-### Extension và skill
-
-- Generic hóa Plan Review thành Artifact Review và hỗ trợ `kind` tổng quát.
-- Chặn lifecycle actions khi có comment draft chưa lưu.
-- Chỉ auto-trigger implementation plan; các artifact kind khác yêu cầu explicit user request.
-- Installer thay skill cũ ở user scope và verify bộ asset mới.
-
-### Verification
-
-- Thêm regression test nhiều review round trên cùng directory/ID và token không reuse được.
-- Cập nhật hook, store, MCP, multi-root và invalid-binding tests cho schema v3.
+---
 
 ## [0.3.0] - 2026-08-28
 
-### Breaking changes
+### Breaking Changes
 
-- Chuyển toàn bộ artifact protocol sang `schemaVersion: 2`; artifact phiên bản 1 không còn được hỗ trợ hoặc tự động migrate.
-- Tách `location.workspaceRoot` khỏi `origin.codexCwd`, cho phép Codex tạo và review artifact trong bất kỳ root phù hợp của multi-root workspace.
-- Chuẩn hóa việc tạo `artifact.json` và `plan.md` bằng một lần `apply_patch`; Hook xác minh exact path từ patch thay vì scan theo Codex `cwd`.
-- Hook chỉ xử lý `apply_patch`; MCP và replacement lifecycle xác minh artifact luôn thuộc workspace root đã khai báo.
-
-### Build & integration
-
-- Skill yêu cầu Codex chọn target root theo context và hỏi người dùng khi mơ hồ.
-- Cài đặt, verify và legacy cleanup xử lý toàn bộ workspace roots đang mở thay vì root đầu tiên.
+- Upgraded artifact protocol to `schemaVersion: 2`; deprecated version 1.
+- Separated `location.workspaceRoot` from `origin.codexCwd`, enabling multi-root workspace review.
+- Standardized `artifact.json` and `plan.md` creation using single `apply_patch` operations.
 
 ---
 
 ## [0.2.7] - 2026-08-28
 
-### 🐛 Sửa lỗi
+### Bug Fixes
 
-- Bỏ thông báo `Plan saved` ngay sau khi chọn **Just save**, vì ở thời điểm đó Codex chưa nhận vị trí đích và chưa tạo bản sao kế hoạch.
-- Siết validation của MCP khi nhận submission: đọc lại và kiểm tra `schemaVersion`, `artifactId`, plan hash, cấu trúc comments và từng comment hiện tại trước khi trả quyết định về Codex.
-- Sửa màu icon copy Markdown: dấu tích sau khi copy dùng màu thành công; màu lỗi đỏ chỉ còn áp dụng cho nút xóa comment.
-
-### 📚 Contract & tài liệu
-
-- Đồng bộ đầy đủ ba quyết định `revise`, `approve`, `save` trong MCP metadata, skill contract, README và tài liệu kiến trúc.
-- Cập nhật hướng dẫn cho các nút **Review**, **Proceed** và **Just save** theo đúng hành vi runtime.
-- Ghi nhận việc ngăn submit khi comment draft chưa được lưu vào `TODO.md`; hành vi này chưa được thay đổi trong phiên bản này.
-
-### ✅ Kiểm thử
-
-- Bổ sung regression test cho trường hợp `comments.json` bị thay đổi sai schema trong khi MCP đang chờ, kể cả khi submission chứa hash khớp với nội dung sai đó.
+- Removed premature `Plan saved` notification upon selecting **Just save**.
+- Tightened MCP submission validation: re-checked `schemaVersion`, `artifactId`, plan hashes, and comment structures before returning decisions.
+- Corrected copy icon colors: green checkmark upon success; red reserved for delete operations.
 
 ---
 
 ## [0.2.6] - 2026-08-28
 
-### 🚀 Tính năng & Giao diện mới (Topbar UI)
+### Topbar UI
 
-- **Nút "Proceed"** _(Primary màu xanh, ngoài cùng bên phải)_:
-  - Cho phép người dùng duyệt và yêu cầu Codex tiến hành thực thi kế hoạch ngay lập tức.
-  - Luôn được kích hoạt (enabled) cả khi có hoặc không có comment. Nếu có để lại comment, Codex sẽ đọc và kết hợp áp dụng ngay trong quá trình code.
-- **Nút "Review"** _(Thay thế cho label "Request revision")_:
-  - Kích hoạt khi có ít nhất 1 comment trên tài liệu.
-  - Gửi toàn bộ danh sách góp ý về cho Codex để viết lại bản kế hoạch mới.
-- **Nút "Just save"** _(Style Ghost đồng bộ)_:
-  - Cho phép lưu lại kế hoạch mà không tiến hành code.
-  - Gửi quyết định `decision: "save"` để Codex hỏi vị trí lưu file trong workspace và dừng lại.
-- **Nút Icon Copy Markdown**:
-  - Tích hợp icon clipboard trên thanh Topbar giúp sao chép nhanh toàn văn Markdown gốc vào Clipboard.
-  - Hiển thị hiệu ứng tích xanh ✓ trong 2 giây khi copy thành công.
+- **"Proceed" Button** _(Primary green, rightmost)_: Approves plans and requests immediate execution.
+- **"Review" Button** _(Replaced "Request revision")_: Enabled when comments exist; sends feedback back to AI agents.
+- **"Just save" Button** _(Ghost style)_: Saves plans to workspace without code execution.
+- **Copy Markdown Button**: Copies raw Markdown to clipboard with 2-second success confirmation.
 
-### 🐛 Sửa lỗi & Nâng cấp hệ thống (Core & MCP)
+### Core & MCP Upgrades
 
-- **Sửa lỗi xác thực Hash trong MCP Server (`review-wait-mcp.mjs`)**:
-  - Khắc phục lỗi `"The plan or comments changed after review submission"` khi người dùng thêm comment trong quá trình mở review.
-  - Cập nhật hàm `readValidatedSubmission` để đọc và tính toán mã băm SHA256 trực tiếp từ file `comments.json` và `plan.md` trên đĩa tại thời điểm submit.
-- **Mở rộng Contracts & Schema (`contracts.ts`)**:
-  - Bổ sung giá trị `"save"` vào `reviewDecisionSchema`: `z.enum(["revise", "approve", "save"])`.
-  - Bổ sung trường `markdown: string` vào `ReviewState` để webview truy cập trực tiếp nội dung Markdown raw.
-- **Nới lỏng ràng buộc Comment (`artifact-store.ts`, `review-wait-mcp.mjs`)**:
-  - Bỏ kiểm tra bắt buộc xóa hết comment khi duyệt (`approve`/Proceed) và khi chỉ lưu (`save`).
-- **Cập nhật Codex Skill (`create-plan-artifact`)**:
-  - Hướng dẫn AI xử lý chi tiết cho cả 3 kịch bản: `revise`, `approve` (Proceed), và `save`.
+- Resolved submission hash verification discrepancies in `review-wait-mcp.mjs`.
+- Expanded `contracts.ts` with `"save"` decision and `markdown: string` in `ReviewState`.
+- Relaxed comment deletion requirements when approving or saving.

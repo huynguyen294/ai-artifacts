@@ -4,5 +4,8 @@ dist/
 .vscode-test/
 coverage/
 .tmp-skill-validator/
-# releases/*.vsix
+releases/*.vsix
+/old-releases
 .codex-artifacts/
+.env
+RELEASE_NOTES.md

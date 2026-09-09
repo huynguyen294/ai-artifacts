@@ -1,44 +1,70 @@
 # Documentation change logs
 
-Tài liệu này ghi lại các thay đổi có ý nghĩa đối với cách dự án hoạt động và cách dự án được mô tả. Mục đích là giúp người duy trì và AI nhanh chóng nhận biết những quyết định nào đã làm thay đổi trạng thái hiện tại của hệ thống, đồng thời giữ code, hành vi và tài liệu nhất quán với nhau.
+This document records meaningful changes to how the project behaves and how it is documented. Its purpose is to help maintainers and AI assistants quickly track architectural and behavioral decisions that alter the system's state, keeping code, behavior, and documentation aligned.
 
-Các thay đổi cần ghi nhận gồm:
+Changes documented here include:
 
-- Hành vi của sản phẩm, extension, MCP, webview hoặc Codex skill.
-- Kiến trúc, ownership boundary, lifecycle, data flow, schema hoặc contract.
-- Product intent, philosophy, non-goal hoặc ý nghĩa của các quyết định review.
-- Quy tắc workspace, filesystem safety, compatibility hoặc migration.
-- Nội dung tài liệu và instruction làm thay đổi cách con người hoặc AI hiểu và làm việc với dự án.
+- Product, extension host, MCP server, webview, or agent skill behavior.
+- Architecture, ownership boundaries, lifecycle, data flow, schema, or contracts.
+- Product intent, philosophy, non-goals, or the semantics of review decisions.
+- Workspace rules, filesystem safety, compatibility, or migration paths.
+- Content in instructions or documentation that modifies how humans or AI understand and work on the project.
 
-Không cần ghi các chỉnh sửa chính tả, format hoặc diễn đạt nhỏ không làm thay đổi ý nghĩa. Release notes theo phiên bản vẫn được lưu trong `CHANGE_LOGS.md` ở root; file này tập trung vào thay đổi hành vi, kiến trúc và tài liệu, kể cả khi thay đổi đó chưa thuộc một bản phát hành.
+Minor typos, formatting fixes, or cosmetic wording adjustments that do not change technical semantics do not need to be recorded here. Versioned release notes are kept in `CHANGE_LOGS.md` at the repository root; this file focuses on behavior, architecture, and documentation decisions, even when not tied to an immediate release.
 
-Mỗi mục mới nên nêu ngày thay đổi, loại thay đổi, nội dung đã đổi, lý do và các file hoặc thành phần bị ảnh hưởng.
+Each entry includes the date, category, summary of changes, rationale, and affected components or files.
+
+---
+
+## 2026-09-09 — Product branding and release automation — AI Artifacts and CI/CD workflow
+
+### Changes
+
+- Rebranded product from "Codex Artifacts" to **AI Artifacts - Interactive Planning & Review** (`ai-artifacts`), expanding positioning and documentation to support the open Model Context Protocol (MCP) across multiple AI coding agents (Codex, Cursor, Windsurf, Claude, etc.).
+- Created and integrated the official extension icon at `media/icon.png` (256x256 px).
+- Unlocked public distribution in `package.json`: removed `private: true`, configured publisher `huynguyen294`, icon, categories, SEO keywords, and bumped version to `0.9.1`.
+- Refined the `package` script with `clean:releases` so `releases/` is always wiped before packaging, retaining only the single latest version VSIX (`releases/ai-artifacts-0.9.1.vsix`).
+- Added CI/CD workflow at `.github/workflows/release.yml` triggered on `v*` tag pushes to automatically run typechecks, unit tests, build, and publish a GitHub Release with the VSIX artifact attached.
+- Added `.env*` and `old-releases/**` to `.vscodeignore` and `.gitignore` to prevent environment leaks and exclude legacy builds from VSIX packaging.
+
+### Rationale
+
+- Broadens product reach to developer communities using Cursor, Windsurf, and Claude rather than remaining restricted to Codex alone.
+- Automates releases according to modern CI/CD standards and guarantees clean, deterministic VSIX bundles.
+
+### Affected components
+
+- Metadata: `package.json`
+- Assets: `media/icon.png`
+- Documentation: `README.md`, `CHANGE_LOGS.md`, `docs/CHANGE_LOGS.md`
+- Packaging & Git: `.vscodeignore`, `.gitignore`
+- CI/CD: `.github/workflows/release.yml`
 
 ---
 
 ## 2026-09-08 — MCP API and skill orchestration — Workspace resolver and structured recovery
 
-### Nội dung thay đổi
+### Changes
 
-- Thêm `resolve_artifact_workspace`; resolver đọc fresh focused registry và trả name/path candidate với selection token. Skill tự chọn candidate duy nhất có độ tin cậy cao và chỉ hỏi người dùng khi mơ hồ.
-- Resolver chuẩn hóa separator trong query/tên workspace; trong multi-root workspace, khi không có match, trả toàn bộ folder của cùng focused context với `matchMode: "all-available"`, còn `not-found` chỉ biểu thị scope rỗng.
-- Resolver trả một workspace folder duy nhất là `matched`/`single-folder` dù query không khớp, nên agent không phải tự suy ra cardinality từ context ngoài MCP.
-- Resolver chỉ đọc một VS Code workspace context duy nhất: không gộp folder từ nhiều window khi focus mơ hồ, trả `WORKSPACE_CONTEXT_AMBIGUOUS` để người dùng focus đúng window, nhưng vẫn hợp nhất heartbeat trùng nhau của cùng context.
-- Create evidence chỉ còn `tagged-file` và `resolved-workspace`; bỏ `single-workspace`, `active-file`, `explicit-user-path` và `explicit-user-folder` khỏi writable create contract.
-- Official skill luôn gửi `kind: "implementation-plan"`, chỉ kiểm tra năm tool một lần mỗi chat lifecycle và quản lý exact handle/round theo request/workspace khi có nhiều artifact.
-- `resolve_artifact_workspace` là MCP tool duy nhất được gọi trước khi đọc `artifact-contract.md`; sau khi chọn được workspace, skill đọc contract trước mọi project research, artifact drafting hoặc lifecycle tool còn lại.
-- Thêm intent decision table với rule fail-safe: chưa rõ reconnect, inspect hay chat update thì hỏi; không takeover suy đoán.
-- Thêm structured recovery metadata cho lifecycle error và rule same-handle/no-blind-replay. Chỉ confirmed pre-commit cancellation hoặc rollback mới cho phép reuse token.
-- Giữ schema v4, full replacement Markdown, pure reconnect và Proceed behavior hiện tại; không thay Artifact Store, provider, webview hoặc renderer.
-- Nâng extension lên `0.9.0`, MCP server lên `6.0.0`; cập nhật README, architecture, components, philosophy, skill contract, installer approvals và tests.
-- Xác thực bằng typecheck, 76/76 tests trên 12 test files và full production build.
+- Added read-only `resolve_artifact_workspace` tool; the resolver reads the fresh focused registry and returns name/path candidates with a selection token. The skill automatically selects a uniquely high-confidence candidate and prompts the user only when ambiguous.
+- Resolver normalizes separators in search queries and workspace names; in multi-root workspaces with no match, it returns all fresh folders for the same context with `matchMode: "all-available"`, while `not-found` strictly indicates an empty fresh scope.
+- Resolver immediately returns a single workspace folder as `matched`/`single-folder` even when the query differs, relieving the agent from inferring cardinality outside MCP.
+- Resolver reads strictly one unique VS Code workspace context: it never merges folders across windows during ambiguous focus, returning `WORKSPACE_CONTEXT_AMBIGUOUS` to request window focus, while deduplicating identical heartbeats from the same context.
+- Reduced create evidence to two types: `tagged-file` and `resolved-workspace`; removed `single-workspace`, `active-file`, `explicit-user-path`, and `explicit-user-folder` from the writable create contract.
+- Official skill always sends `kind: "implementation-plan"`, checks tool availability once per chat lifecycle, and maintains exact request/workspace-to-handle mappings across multiple artifacts.
+- `resolve_artifact_workspace` is the only MCP tool called before reading `artifact-contract.md`; after selecting a workspace, the skill reads the contract before performing workspace research, artifact drafting, or calling remaining lifecycle tools.
+- Added intent decision table with fail-safe rule: ask if intent or handle is unclear; never take over speculatively.
+- Added structured recovery metadata for lifecycle errors with a same-handle/no-blind-replay policy. Only confirmed pre-commit cancellations or rollbacks allow token reuse.
+- Retained schema v4, full replacement Markdown, pure reconnect, and Proceed behavior; no changes to Artifact Store, provider, webview, or renderer.
+- Bumped extension to `0.9.0` and MCP server to `6.0.0`; synchronized README, architecture, components, philosophy, skill contract, installer approvals, and tests.
+- Verified with typecheck, 76/76 tests across 12 test files, and full production build.
 
-### Lý do
+### Rationale
 
-- Giảm suy luận workspace ở phía AI còn hai flow rõ ràng, đồng thời vẫn giữ xác minh nhanh/fail-closed trong MCP.
-- Ngăn chọn nhầm workspace/artifact trong multi-root hoặc multi-handle chat và giúp agent phục hồi theo machine-readable state thay vì parse câu lỗi hoặc replay mù.
+- Streamlines agent workspace inference down to two clear flows while preserving fast, fail-closed MCP verification.
+- Prevents misattributing workspaces/artifacts in multi-root or multi-handle sessions and enables agents to recover from machine-readable state rather than parsing error strings or blindly replaying.
 
-### Thành phần và tài liệu bị ảnh hưởng
+### Affected components and documentation
 
 - `src/shared/workspace-registry.ts`
 - `src/integration/artifact-review-mcp-v4.ts`
@@ -58,23 +84,23 @@ Mỗi mục mới nên nêu ngày thay đổi, loại thay đổi, nội dung đ
 
 ## 2026-09-06 — Lifecycle and MCP API — Explicit chat update on empty review rounds
 
-### Nội dung thay đổi
+### Changes
 
-- Mở rộng MCP tool `inspect_artifact_review` với tham số `intent: "explicit-chat-update"` và `expectedReviewRound`.
-- Bổ sung `source: "chat-update"` cho `RoundGrant`. Cấp token `chat-update` khi người dùng yêu cầu sửa artifact từ chat trên round trống (chưa có comment hay submission lưu trên đĩa).
-- MCP từ chối intent chat-update khi đã có saved feedback/submission; validate round trước takeover và revalidate sau takeover để request stale không làm mất waiter hợp lệ.
-- Trong `advance_and_wait_for_artifact`, bắt buộc token `chat-update` phải truyền `markdown` mới và SHA phải khác SHA của tài liệu hiện tại, ngăn chặn advance rỗng.
-- Giữ nguyên hành vi fail-closed: gọi `inspect_artifact_review` thông thường trên round trống vẫn không cấp token, đảm bảo thao tác reconnect thuần túy chỉ gắn lại waiter vào cùng round mà không làm đổi dữ liệu hay tăng round.
-- Cập nhật skill `create-review-artifact` và contract phân định rõ 3 luồng: Pure reconnect, Saved comment inspection, và Explicit chat update.
-- Nâng extension lên `0.8.0` và MCP server lên `5.1.0`. Cập nhật `docs/ARCHITECTURE.md` và `docs/PHILOSOPHY.md`.
-- Đồng bộ `package-lock.json`, `README.md`, `docs/COMPONENTS.md` và regression tests cho empty-round eligibility, stale-round waiter safety, token state binding cùng Enter/Shift+Enter/IME.
-- Xác thực cuối bằng typecheck, 67/67 tests trên 12 test files và full production build.
+- Extended MCP tool `inspect_artifact_review` with parameters `intent: "explicit-chat-update"` and `expectedReviewRound`.
+- Added `source: "chat-update"` to `RoundGrant`. Grants a `chat-update` token when the user requests artifact edits directly from chat on an empty round (no comments or submissions saved on disk).
+- MCP rejects chat-update intent if saved feedback or submissions already exist; validates round before takeover and revalidates after takeover so stale requests do not terminate valid waiters.
+- In `advance_and_wait_for_artifact`, requires `chat-update` tokens to provide new `markdown` with a different SHA from the current document, preventing empty advances.
+- Maintained fail-closed behavior: standard `inspect_artifact_review` calls on an empty round do not issue a token, ensuring pure reconnects reattach to the same round without changing data or advancing rounds.
+- Updated `create-review-artifact` skill and contract to distinguish 3 flows: Pure reconnect, Saved comment inspection, and Explicit chat update.
+- Bumped extension to `0.8.0` and MCP server to `5.1.0`. Updated `docs/ARCHITECTURE.md` and `docs/PHILOSOPHY.md`.
+- Synchronized `package-lock.json`, `README.md`, `docs/COMPONENTS.md`, and regression tests for empty-round eligibility, stale-round waiter safety, token state binding, and Enter/Shift+Enter/IME support.
+- Verified with typecheck, 67/67 tests across 12 test files, and full production build.
 
-### Lý do
+### Rationale
 
-- Khắc phục tình trạng bế tắc khi người dùng yêu cầu sửa artifact trực tiếp qua chat (không tạo comment trên UI): inspection trước đây không cấp token cho round trống, khiến agent không thể advance; đồng thời agent cũng không thể yêu cầu người dùng bấm Review vì UI và backend đều disable nút Review khi comment count = 0.
+- Resolves deadlocks when users request artifact edits directly in chat without UI comments: previous inspections issued no token on empty rounds, preventing agents from advancing, while agents could not instruct users to click Review because the UI and backend disabled Review when comment count was 0.
 
-### Thành phần và tài liệu bị ảnh hưởng
+### Affected components and documentation
 
 - `src/integration/artifact-review-mcp-v4.ts`
 - `package.json`
@@ -95,20 +121,20 @@ Mỗi mục mới nên nêu ngày thay đổi, loại thay đổi, nội dung đ
 
 ## 2026-09-06 — Webview UX — Enter to submit comment & Text auto-wrap
 
-### Nội dung thay đổi
+### Changes
 
-- Cập nhật textarea trong `SelectionCommentPopover` hỗ trợ nhấn phím `Enter` để gửi comment nhanh khi đã có nội dung (`body.trim()`).
-- Hỗ trợ `Shift + Enter` để xuống dòng trong textarea bình thường.
-- Bổ sung kiểm tra `!event.nativeEvent.isComposing` để tránh kích hoạt submit ngoài ý muốn khi gõ tiếng Việt bằng bộ gõ IME (Telex/VNI).
-- Thêm thuộc tính `wrap="soft"` cho `<textarea>`.
-- Cập nhật CSS trong `styles.css` (`overflow-wrap: anywhere; word-break: break-word; white-space: pre-wrap;`) cho `.comment-popover textarea`, `.comment-detail-popover p` và `.comment-body` trong sidebar drawer để text tự động ngắt dòng xuống hàng khi vượt quá chiều rộng, tránh tràn layout kể cả với liên kết URL hoặc chuỗi ký tự dài.
+- Updated textarea in `SelectionCommentPopover` to support pressing `Enter` to quickly submit a comment when text is present (`body.trim()`).
+- Supported `Shift + Enter` to insert normal newlines inside the textarea.
+- Added `!event.nativeEvent.isComposing` check to prevent unintended submissions during IME composition (e.g., Vietnamese Telex/VNI, Japanese, Chinese).
+- Added `wrap="soft"` attribute to `<textarea>`.
+- Updated CSS in `styles.css` (`overflow-wrap: anywhere; word-break: break-word; white-space: pre-wrap;`) for `.comment-popover textarea`, `.comment-detail-popover p`, and `.comment-body` in the sidebar drawer so text wraps cleanly, preventing horizontal layout overflow even with long URLs or unbroken strings.
 
-### Lý do
+### Rationale
 
-- Tối ưu trải nghiệm tương tác khi review: cho phép gửi nhanh comment bằng bàn phím (Enter) thay vì phải dùng chuột bấm nút "Comment".
-- Ngăn ngừa lỗi hiển thị tràn chiều rộng (horizontal overflow) khi người dùng nhập hoặc xem lại comment có chứa URL hoặc từ dài liên tục.
+- Improves review UX by enabling keyboard-driven comment submissions (Enter) without requiring mouse interaction.
+- Prevents horizontal overflow rendering bugs when users enter or inspect comments with long continuous words or URLs.
 
-### Thành phần và tài liệu bị ảnh hưởng
+### Affected components and documentation
 
 - `src/webview/SelectionCommentPopover.tsx`
 - `src/webview/styles.css`
@@ -118,96 +144,96 @@ Mỗi mục mới nên nêu ngày thay đổi, loại thay đổi, nội dung đ
 
 ## 2026-08-31 — Documentation and distribution — README onboarding
 
-### Nội dung thay đổi
+### Changes
 
-- Viết lại phần mở đầu README theo hướng người dùng, không đưa thuật ngữ waiter vào mô tả sản phẩm ban đầu.
-- Bổ sung yêu cầu VS Code, Node runtime/build, đường dẫn cài VSIX và quy trình build từ source bằng `npm ci`.
-- Làm rõ skill luôn nằm trong `~/.agents/skills`, còn MCP script và `config.toml` tuân theo `CODEX_HOME`.
-- Mô tả auto-open là hành vi mặc định có setting và manual fallback; đồng bộ nhãn **View comments** cùng semantics Review, Proceed, Just save và Copy Markdown.
-- Khôi phục compatibility guidance cho schema v4, schema-v3 read-only và dữ liệu legacy không tự migrate/xóa.
-- Thêm liên kết tới Philosophy, Architecture, Components, Project Instructions, artifact contract, changelog, TODO và MIT License.
-- Tài liệu hóa stable VSIX alias và versioned package; không thay đổi runtime, MCP API hoặc artifact schema.
-- Khai báo Git repository từ origin hiện có trong package metadata để VSCE có thể resolve các link tương đối khi đóng gói README.
+- Rewrote README introduction for end-users, removing internal waiter jargon from initial descriptions.
+- Added VS Code requirements, Node runtime/build versions, VSIX installation paths, and source build workflows via `npm ci`.
+- Clarified that skills reside in `~/.agents/skills`, while MCP scripts and `config.toml` adhere to `CODEX_HOME`.
+- Documented auto-open as default behavior with configurable settings and manual fallbacks; aligned **View comments** drawer labels with Review, Proceed, Just save, and Copy Markdown semantics.
+- Restored compatibility guidance for schema v4, read-only schema v3, and preserved unmigrated legacy data.
+- Added links to Philosophy, Architecture, Components, Project Instructions, artifact contract, changelog, TODO, and MIT License.
+- Documented stable VSIX alias alongside versioned packages; no changes to runtime, MCP API, or artifact schema.
+- Added Git repository metadata in `package.json` to allow VSCE to resolve relative markdown links during packaging.
 
-### Lý do
+### Rationale
 
-README trước đó giả định file VSIX đã có, thiếu prerequisite runtime, dùng thuật ngữ nội bộ quá sớm và chưa mô tả chính xác một số hành vi cài đặt/review. Onboarding mới giúp người dùng cài từ repository hoặc build từ source mà vẫn giữ phần contract chuyên sâu ở các tài liệu chuyên biệt.
+- Previous README assumed pre-existing VSIX packages, lacked runtime prerequisites, introduced internal jargon prematurely, and omitted several installation/review details. The revised onboarding supports direct repository checkouts and builds while keeping deep contract specifications in specialized docs.
 
-### Thành phần và tài liệu bị ảnh hưởng
+### Affected components and documentation
 
-- `README.md`.
-- `package.json` repository metadata.
-- Release VSIX được tạo từ source hiện tại.
-- `CHANGE_LOGS.md` và tài liệu change log này.
+- `README.md`
+- `package.json` repository metadata
+- Release VSIX generated from current source
+- `CHANGE_LOGS.md` and this documentation change log
 
 ---
 
 ## 2026-08-31 — Proceed semantics — Runtime execution directive
 
-### Nội dung thay đổi
+### Changes
 
-- Xác định cả `plan` và `implementation-plan` là executable plan khi người dùng chọn Proceed.
-- `wait_for_artifact_review` trả `nextAction.type: "execute-approved-plan"` cùng instruction bắt buộc thực thi toàn bộ code, file, workspace và command action nằm trong phạm vi plan đã duyệt ngay trong cùng turn.
-- Skill không được dừng ở acknowledgement, mô tả công việc tương lai hoặc hỏi thêm xác nhận triển khai; chỉ được dừng khi có blocker thật hoặc cần authority ngoài phạm vi đã duyệt.
-- Mở rộng quy tắc chọn `implementation-plan` cho plan trực tiếp hướng dẫn code, file, workspace hoặc command changes; `plan` vẫn là executable plan cho các trường hợp khác.
-- Reconnect qua inspection không phát lại runtime directive, tránh coi reconnect là yêu cầu thực hiện lại hành động cũ.
+- Classified both `plan` and `implementation-plan` as executable plans upon user Proceed.
+- `wait_for_artifact_review` returns `nextAction.type: "execute-approved-plan"` with instructions mandating immediate execution of all code, file, workspace, and command actions within the approved plan scope in the same turn.
+- Skill must not pause at acknowledgements, describe future work, or prompt for additional execution confirmation; pauses are permitted only for genuine blockers or out-of-scope permissions.
+- Expanded `implementation-plan` selection rules for plans directly guiding code, file, workspace, or command changes; `plan` remains executable for other proposal types.
+- Reconnect via inspection avoids re-emitting runtime directives, preventing reconnects from re-executing previously approved actions.
 
-### Lý do
+### Rationale
 
-Tool result trước đây chỉ trả `decision: "approve"` và dựa vào model tự kết hợp `kind` với skill. Artifact hành động bị phân loại thành `plan` có thể khiến AI chỉ xác nhận Proceed mà không triển khai. Runtime directive làm quyền thực thi trở thành dữ liệu rõ ràng trong kết quả MCP thay vì chỉ là prompt convention.
+- Previous tool results returned only `decision: "approve"`, relying on model inference to combine `kind` with skill instructions. Actionable artifacts classified as `plan` could cause agents to merely acknowledge Proceed without implementing. Runtime directives make execution authority explicit data in MCP results rather than relying on prompt conventions.
 
-### Thành phần và tài liệu bị ảnh hưởng
+### Affected components and documentation
 
-- MCP result và initialization instructions.
-- Bundled skill và artifact contract.
-- README, Architecture, Philosophy, Components, project instructions và release notes 0.7.0.
-- MCP lifecycle tests và skill contract tests.
+- MCP results and initialization instructions
+- Bundled skill and artifact contract
+- README, Architecture, Philosophy, Components, project instructions, and 0.7.0 release notes
+- MCP lifecycle tests and skill contract tests
 
 ---
 
 ## 2026-08-31 — Review semantics — Unified feedback handling
 
-### Nội dung thay đổi
+### Changes
 
-- Cho Review submission (`revise`) và chat inspection dùng chung một feedback classifier và action policy.
-- Question-only luôn trả lời user-visible trong Codex chat rồi advance không truyền Markdown; change-only cập nhật complete Markdown; mixed vừa trả lời chat vừa cập nhật; needs-clarification chưa consume token.
-- Loại bỏ hành vi tạo/cập nhật `## Review responses` trong artifact. Câu trả lời hội thoại không còn được nhúng vào tài liệu review.
-- Giữ nguyên sự khác biệt transport nội bộ: Review nhận submitted-review token từ waiter, còn chat escape nhận chat-inspection token qua takeover/inspect.
+- Aligned Review submissions (`revise`) and chat inspection under a single unified feedback classifier and action policy.
+- Question-only feedback always answers questions visibly in chat, then advances without transmitting Markdown; change-only updates complete Markdown; mixed answers in chat and updates Markdown; needs-clarification defers token consumption.
+- Removed creation and updating of `## Review responses` in artifacts. Conversational answers are no longer embedded in review documents.
+- Preserved internal transport distinctions: Review receives submitted-review tokens from waiters, while chat escape receives chat-inspection tokens via takeover/inspection.
 
-### Lý do
+### Rationale
 
-Người dùng cần nút Review và câu lệnh “hãy đọc comment” có cùng kết quả quan sát được. Một policy duy nhất tránh hai luồng xử lý comment lệch nhau và giữ artifact tập trung vào nội dung tài liệu thay vì lưu transcript hội thoại.
+- Users expect the Review button and "read the review" chat commands to yield identical observable behavior. A single unified policy prevents diverging comment-handling behaviors and keeps artifacts focused on clean document content rather than conversation transcripts.
 
-### Thành phần và tài liệu bị ảnh hưởng
+### Affected components and documentation
 
-- Agent behavior: bundled skill và artifact contract.
-- MCP guidance: initialization instructions; không đổi tool API, token validation hoặc persistent schema.
-- Tài liệu: README, Architecture, Philosophy, Components, project instructions và release notes 0.7.0.
-- Regression contract: skill contract và MCP initialization tests.
+- Agent behavior: bundled skill and artifact contract
+- MCP guidance: initialization instructions; no changes to tool APIs, token validation, or persistent schema
+- Documentation: README, Architecture, Philosophy, Components, project instructions, and 0.7.0 release notes
+- Regression contract: skill contract and MCP initialization tests
 
 ---
 
-## 2026-08-31 — Lifecycle architecture và behavior — Chat escape/reconnect
+## 2026-08-31 — Lifecycle architecture and behavior — Chat escape/reconnect
 
-### Nội dung thay đổi
+### Changes
 
-- Chuẩn hóa lifetime thành `artifact lifetime > waiter lifetime > chat-turn lifetime`: artifact là persistent workspace state; waiter và round token chỉ là process state tạm thời.
-- Tách lifecycle MCP thành `create_artifact`, `wait_for_artifact_review`, `inspect_artifact_review` và `advance_and_wait_for_artifact`.
-- Thêm chat escape để AI có thể takeover waiter, đọc comment chưa submit, trả lời câu hỏi trong chat, sửa artifact khi cần và mở round mới.
-- Cho phép question-only advancement giữ nguyên Markdown/SHA; no-comment inspection reattach cùng round.
-- Xác định Proceed/Just save chỉ kết thúc round, không kết thúc artifact; reconnect là hành động explicit và không lặp lại command cũ.
-- Bắt buộc exact artifact handle, không dùng latest-artifact heuristic hoặc cwd inference.
-- Chuyển update grant thành exact-state round grant và làm waiter cancellation/takeover dùng chung detach semantics.
+- Standardized lifetime hierarchy: `artifact lifetime > waiter lifetime > chat-turn lifetime`: artifacts are persistent workspace state; waiters and round tokens are transient process state.
+- Split MCP lifecycle into `create_artifact`, `wait_for_artifact_review`, `inspect_artifact_review`, and `advance_and_wait_for_artifact`.
+- Added chat escape so AI agents can take over waiters, read unsubmitted comments, answer questions in chat, revise artifacts as needed, and start new rounds.
+- Allowed question-only advancement to preserve Markdown bytes and SHA; no-comment inspection reattaches to the same round.
+- Established that Proceed and Just save conclude rounds without deleting artifacts; reconnect is an explicit action that never repeats past commands.
+- Enforced exact artifact handles; eliminated latest-artifact heuristics and working directory inferences.
+- Converted update grants to exact-state round grants; unified waiter cancellation and takeover detach semantics.
 
-### Lý do
+### Rationale
 
-Lifecycle cũ gắn persistence của artifact quá chặt với một MCP tool call đang chờ, khiến comment trong UI chỉ có thể quay lại AI qua nút Review. Việc tách artifact khỏi waiter giữ nguyên default UX nhưng cho phép hội thoại tự nhiên, reconnect sau cancellation/restart và xử lý câu hỏi trực tiếp trong chat mà không cần thay schema hoặc UI.
+- Former lifecycles coupled artifact persistence too tightly to a single pending MCP tool call, requiring UI comments to return exclusively via the Review button. Decoupling artifacts from waiters preserves default UX while enabling natural conversation, post-cancellation reconnection, and direct in-chat Q&A without altering schemas or UI.
 
-### Thành phần và tài liệu bị ảnh hưởng
+### Affected components and documentation
 
-- MCP lifecycle: `src/integration/artifact-review-mcp-v4.ts`.
-- Managed integration: `src/extension/mcp-config.ts`, extension `0.7.0`, MCP server `5.0.0`.
-- Agent contract: `skills/create-review-artifact/SKILL.md`, `references/artifact-contract.md`, `agents/openai.yaml`.
-- Tài liệu trạng thái hiện tại: `README.md`, `docs/ARCHITECTURE.md`, `docs/PHILOSOPHY.md`, `docs/COMPONENTS.md`, `docs/INSTRUCTION.md`.
-- Regression coverage: `test/review-wait-mcp.test.ts`, `test/mcp-config.test.ts`, `test/skill-contract.test.ts`.
-- Không thay đổi artifact schema v4, webview, provider, Artifact Store, Markdown renderer hoặc workspace registry.
+- MCP lifecycle: `src/integration/artifact-review-mcp-v4.ts`
+- Managed integration: `src/extension/mcp-config.ts`, extension `0.7.0`, MCP server `5.0.0`
+- Agent contract: `skills/create-review-artifact/SKILL.md`, `references/artifact-contract.md`, `agents/openai.yaml`
+- Current state docs: `README.md`, `docs/ARCHITECTURE.md`, `docs/PHILOSOPHY.md`, `docs/COMPONENTS.md`, `docs/INSTRUCTION.md`
+- Regression coverage: `test/review-wait-mcp.test.ts`, `test/mcp-config.test.ts`, `test/skill-contract.test.ts`
+- No changes to artifact schema v4, webview, provider, Artifact Store, Markdown renderer, or workspace registry.

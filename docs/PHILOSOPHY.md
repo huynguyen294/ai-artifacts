@@ -1,68 +1,64 @@
-# Triết lý Codex Artifacts
+# Product Philosophy
 
-## Artifact là dữ liệu bền vững, waiter chỉ là kết nối
+## Artifacts are durable data; waiters are ephemeral connections
 
-Nguyên tắc vòng đời cốt lõi là:
+The core lifecycle rule is:
 
 ```text
 artifact lifetime > waiter lifetime > chat-turn lifetime
 ```
 
-Artifact đại diện cho một yêu cầu cần review và tồn tại trong workspace cho đến khi người dùng chủ động xử lý nó. Waiter chỉ là kết nối tạm thời giữa một MCP request và một review round. Chat turn còn ngắn hơn nữa.
+An artifact represents a request awaiting human review and persists within the workspace until the user explicitly acts upon it. A waiter is merely a temporary connection between an active MCP request and an artifact review round. Individual chat turns are shorter still.
 
-Vì vậy, cancellation, takeover, kết thúc chat turn hoặc MCP restart không được xóa hay kết thúc artifact. Chúng chỉ làm mất waiter hoặc token đang nằm trong memory. AI có thể inspect đúng artifact đã biết, lấy token mới từ trạng thái đã validate và reconnect về sau.
+Therefore, cancellations, takeovers, concluding a chat turn, or restarting the MCP server must never delete or terminate an artifact. They only clear in-memory waiters or active round tokens. The AI can inspect the exact known artifact handle, obtain a fresh token from validated persistent state, and reconnect later.
 
-## Hai cách đối thoại cùng một artifact
+## Two ways to interact with the same artifact
 
-Luồng mặc định vẫn giữ trải nghiệm quen thuộc:
+The default flow provides an intuitive, in-editor review experience:
 
 ```mermaid
 flowchart LR
-    A[AI tạo artifact] --> B[AI attach waiter]
-    B --> C[Người dùng review]
+    A[AI creates artifact] --> B[AI attaches waiter]
+    B --> C[User reviews]
     C --> D{Decision}
-    D -->|Review| E[AI cập nhật và mở round mới]
+    D -->|Review| E[AI updates & starts new round]
     E --> B
-    D -->|Proceed| F[Thực hiện hành động đã duyệt]
-    D -->|Just save| G[Lưu Markdown]
+    D -->|Proceed| F[Execute approved plan]
+    D -->|Just save| G[Save Markdown]
 ```
 
-Luồng chat escape cho phép người dùng lưu comment rồi nhắn “hãy xem review” mà không cần bấm Review. Waiter cũ được hủy an toàn; AI inspect đúng artifact handle, đọc comment và:
+The chat escape flow allows the user to save comments and say "read the review" without pressing the Review button. The previous waiter is safely cancelled; the AI inspects the exact artifact handle, reads the comments, and:
 
-- Trả lời câu hỏi trực tiếp trong chat.
-- Sửa artifact nếu comment yêu cầu thay đổi.
-- Vừa trả lời vừa sửa nếu feedback là hỗn hợp.
-- Hỏi lại và chưa consume round nếu feedback chưa rõ.
+- Answers questions directly in chat.
+- Revises the artifact if comments request changes.
+- Both answers and edits if feedback is mixed.
+- Clarifies in chat without consuming the round if feedback is ambiguous.
 
-Sau khi xử lý xong, AI mở round mới và tự chờ lại. Nếu chỉ có câu hỏi, round vẫn tăng nhưng bytes và SHA của `artifact.md` được giữ nguyên. Nếu không có comment hoặc submission đã lưu, AI attach lại waiter cho cùng round và không tăng round, trừ khi người dùng yêu cầu sửa trực tiếp qua chat (explicit chat update với `intent: "explicit-chat-update"`), khi đó AI cập nhật Markdown mới và mở round tiếp theo.
+After processing, the AI starts the next round and attaches a new waiter. If feedback consisted solely of questions, the round advances while preserving the exact bytes and SHA of `artifact.md`. If no comments or submissions were saved, the AI reattaches to the current round without advancing, unless the user explicitly requested an artifact edit directly in chat (`intent: "explicit-chat-update"`), in which case the AI updates the Markdown and advances to the next round.
 
-## Ý nghĩa của các quyết định
+## Meaning of review decisions
 
-1. **Review:** gửi submission `revise`. AI xử lý batch comment bằng cùng policy với chat escape: trả lời câu hỏi trực tiếp trong chat, chỉ cập nhật `artifact.md` khi có yêu cầu sửa, reset trạng thái và bắt đầu round mới. Question-only giữ nguyên Markdown/SHA. Không giữ revision history hoặc chèn câu trả lời hội thoại vào artifact.
-2. **Proceed:** kết thúc round hiện tại. Với `plan` và `implementation-plan`, đây là quyền thực thi toàn bộ plan đã duyệt ngay trong cùng turn; MCP trả runtime directive `execute-approved-plan`, và AI không được dừng ở bước xác nhận, mô tả việc sẽ làm hoặc hỏi lại quyền triển khai. Không tự mở round mới.
-3. **Just save:** kết thúc round hiện tại, lưu Markdown theo yêu cầu và không thực hiện công việc được đề xuất. Không tự mở round mới.
-4. **Copy Markdown:** chỉ sao chép nội dung, không gửi decision và không thay đổi lifecycle.
+1. **Review:** Submits a `revise` decision. The AI processes batch comments using the same policy as the chat escape flow: answers questions directly in chat, updates `artifact.md` only when edits are requested, resets state, and begins the next round. Question-only feedback preserves Markdown bytes and SHA. No revision history or conversational responses are inserted into the artifact document itself.
+2. **Proceed:** Concludes the current review round. For `plan` and `implementation-plan`, this authorizes immediate execution of the entire approved plan within the same turn; the MCP server returns an `execute-approved-plan` runtime directive, and the AI must not halt at confirmation, explain what it will do, or ask for execution authorization again. It does not automatically open another review round.
+3. **Just save:** Concludes the current round, saves the Markdown as requested, and does not execute proposed work. It does not automatically open another review round.
+4. **Copy Markdown:** Copies content locally to the clipboard without submitting a decision or mutating lifecycle state.
 
-Proceed và Just save kết thúc round, không “kill” artifact. Người dùng có thể yêu cầu reconnect rõ ràng về sau. Reconnect chỉ mở round mới; nó không được thực thi lại hành động Proceed/Just save trước đó.
+Proceed and Just save conclude the round without destroying the artifact. The user may explicitly request a reconnect later. Reconnect opens a fresh round; it does not re-execute the previous Proceed or Just save action.
 
-## Exact handle, không suy đoán artifact
+## Exact handles, no speculative artifact guessing
 
-AI phải dùng chính xác `artifactDirectory` được trả về khi tạo artifact hoặc được giữ từ waiter vừa bị ngắt trong cùng conversation. Không được chọn “artifact mới nhất”, quét workspace để đoán, hoặc suy luận từ cwd. Nếu context không còn một handle duy nhất, AI phải hỏi người dùng artifact path.
+The AI must use the exact `artifactDirectory` returned when creating the artifact or retained from an interrupted waiter in the same conversation. It must never select the "newest artifact", scan the workspace to guess, or infer an artifact from the current working directory. If the context does not contain a single unique handle, the AI must ask the user for the artifact path.
 
-Quy tắc này quan trọng hơn sự tiện lợi: kết nối nhầm artifact có thể khiến comment, nội dung và quyền thực hiện hành động bị gắn sai cuộc đối thoại.
+This safety invariant takes precedence over convenience: binding to the wrong artifact could attach comments, document content, and execution authorization to the wrong conversation.
 
-## Mục tiêu sản phẩm
+## Product intent
 
-Codex Artifacts là lớp review cho Markdown do AI tạo ra. Nó giúp người dùng đọc, comment và điều khiển vòng phản hồi mà không biến ứng dụng thành task manager hoặc một chat UI thứ hai. Câu trả lời hội thoại vẫn thuộc Codex chat; webview tập trung vào tài liệu và annotation.
+AI Artifacts provides a dedicated review layer for AI-generated Markdown. It enables users to read, annotate, and drive the feedback loop without turning the extension into a task manager or a second chat interface. Conversational interaction belongs in AI chat; the webview focuses purely on document review and annotations.
 
-Skill chỉ kích hoạt khi người dùng yêu cầu rõ ràng việc tạo/cập nhật artifact, đọc feedback đã lưu, hoặc reconnect lifecycle đã biết. Loại tài liệu tự nó không phải điều kiện auto-trigger.
+The agent skill triggers only when the user explicitly requests creating or updating an artifact, reading saved feedback, or reconnecting an existing lifecycle. The document type alone is never an auto-trigger condition.
 
-## Trạng thái triển khai 0.9.0
+## Implementation status 0.9.1
 
-Phiên bản 0.9.0 dùng MCP server 6.0.0 và giữ schema v4. Trước create chỉ còn hai nguồn bằng chứng: file do người dùng tag, hoặc candidate có token từ `resolve_artifact_workspace`. Workspace folder phải được resolve trước khi skill đọc project hoặc soạn artifact. Resolver chuẩn hóa separator trong tên và chỉ hoạt động trong một VS Code workspace context được xác định duy nhất. Nếu context chỉ có một folder, MCP trả folder đó là `matched`/`single-folder` dù query không khớp; trong multi-root workspace, query không khớp mới trả toàn bộ folder fresh của cùng context. Resolver không gộp folder từ nhiều cửa sổ; khi registry không xác định được một context duy nhất, nó fail với `WORKSPACE_CONTEXT_AMBIGUOUS` để người dùng focus đúng cửa sổ. Skill tự chọn khi có đúng một candidate có độ tin cậy cao dựa trên name/path/match và chỉ hỏi người dùng khi kết quả còn mơ hồ. MCP vẫn xác minh token, registry, root và containment trước mutation.
+Version 0.9.1 retains artifact schema v4 and MCP server 6.0.0, expanding support to multiple AI coding assistants (Codex, Cursor, Windsurf, Claude) with centralized MCP assets and automated CI/CD releases. Workspace creation requires either tagged-file evidence or a validated candidate selection token from `resolve_artifact_workspace`. Workspace folder resolution occurs before the skill inspects the repository or drafts artifact content. The resolver normalizes separators, scopes candidates to a single focused VS Code context, and rejects cross-window ambiguity with `WORKSPACE_CONTEXT_AMBIGUOUS`.
 
-Skill luôn tạo `kind: "implementation-plan"`, kiểm tra bộ năm tool một lần khi bắt đầu lifecycle trong chat, và giữ mapping request/workspace → exact handle/round nếu có nhiều artifact. Sau create, resolver không còn tham gia. Reconnect, đọc feedback và explicit chat update đi qua decision table; intent hoặc handle chưa rõ thì hỏi, không takeover suy đoán.
-
-Lifecycle errors có structured recovery metadata để agent giữ cùng exact handle, chọn đúng bước inspect/wait/advance và không replay mù khi chưa chắc transaction đã commit. Việc tối ưu payload sửa Markdown và state-generation protocol không thuộc phiên bản này; Case F/H giữ nguyên hành vi, còn Artifact Store, provider, webview và renderer không thay đổi.
-
-Round token vẫn là capability in-memory, single-use và hết hạn sau một giờ, nhưng được bind vào toàn bộ trạng thái đã inspect: artifact, session, round, artifact hash, comments hash và submission presence/hash. Token chỉ bị consume sau commit thành công. Schema-v3 tiếp tục chỉ đọc.
+The official skill creates `kind: "implementation-plan"`, verifies tool availability once per chat lifecycle, and manages exact handle-to-round mappings. Reconnect, saved comment inspection, and explicit chat updates follow an explicit decision table with fail-closed safety. Lifecycle errors supply structured recovery metadata so agents preserve handles and avoid duplicate commits. Round tokens remain in-memory, single-use, and state-bound with a 1-hour expiration. Schema v3 remains supported as read-only.

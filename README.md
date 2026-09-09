@@ -1,143 +1,148 @@
 > This project was built through vibe coding with AI.
 
-# Codex Artifacts
+# AI Artifacts - Interactive Planning & Review
 
-Codex Artifacts is a VS Code extension for reviewing Markdown created by Codex. It opens the document in a dedicated review editor, lets you attach comments to selected text, and sends your decision back to Codex so the same conversation can revise the document, proceed with approved work, or save it without execution.
+**AI Artifacts** is a VS Code extension for reviewing AI-generated Markdown artifacts, implementation plans, and architecture proposals. It provides a dedicated interactive review editor directly inside your IDE—allowing you to highlight text, attach inline feedback, and send review decisions back to your AI coding agents (such as **Codex**, **Cursor**, **Windsurf**, and other MCP-enabled assistants) through the open **Model Context Protocol (MCP)**.
+
+With AI Artifacts, you can review proposals before code is written, guide agent planning iteratively, and authorize execution with a single click.
 
 ## Requirements
 
-- VS Code 1.95.0 or newer.
-- The Codex extension for VS Code.
+- VS Code 1.95.0 or newer (or compatible editors like Cursor, Windsurf, VSCodium).
+- An AI Agent or extension supporting MCP / Skills (e.g. Codex extension, Cursor Agent, Windsurf Cascade).
 - Node.js available as `node` in `PATH`; the installed MCP integration is launched with this command.
 - When building from source: Node.js `^20.19.0 || >=22.12.0` and npm.
+
+## Compatibility & Supported Agents
+
+AI Artifacts connects to your favorite AI coding agents using the Model Context Protocol (MCP) and shared agent skills:
+
+| AI / Environment                     | Integration Type                   | Supported Features                                       |
+| :----------------------------------- | :--------------------------------- | :------------------------------------------------------- |
+| **Codex** (VS Code)                  | Native MCP (`config.toml`) + Skill | Full lifecycle, auto-open editor, Proceed execution      |
+| **Cursor**                           | MCP Server (`mcp.json`) + Skill    | Multi-round review, inline annotations, waiter reconnect |
+| **Windsurf** (Cascade)               | MCP Server (`mcp_config.json`)     | Plan review, inline feedback via MCP                     |
+| **Claude (VS Code Extension / MCP)** | MCP Server / Tool Integration      | Artifact creation, inspection, round advancement         |
 
 ## Getting started
 
 ### 1. Install the extension
 
-Download [the current Codex Artifacts VSIX](releases/codex-artifacts.vsix). In VS Code, open **Extensions**, select `...`, choose **Install from VSIX...**, and select the downloaded file.
+- **From Marketplace / Open VSX:** Search for `AI Artifacts` in the Extensions view (`Ctrl+Shift+X` / `Cmd+Shift+X`) and click **Install**.
+- **From VSIX release:** Download the latest [AI Artifacts VSIX](releases/ai-artifacts-0.9.1.vsix) and run:
+  ```powershell
+  code --install-extension releases/ai-artifacts-0.9.1.vsix
+  # Or in Cursor:
+  cursor --install-extension releases/ai-artifacts-0.9.1.vsix
+  ```
 
-From a repository checkout, you can also run:
+To build the VSIX yourself from source, follow [Development](#development) below.
 
-```powershell
-code --install-extension releases/codex-artifacts.vsix
-```
+### 2. Install the AI / MCP integration
 
-To build the VSIX yourself, follow [Development](#development) below.
+Open the Command Palette (`Ctrl+Shift+P` on Windows/Linux or `Cmd+Shift+P` on macOS) and run:
+**AI Artifacts: Install Global AI Integration**.
 
-### 2. Install the Codex integration
-
-Open the Command Palette (`Ctrl+Shift+P` on Windows/Linux or `Cmd+Shift+P` on macOS) and run **Codex Artifacts: Install Global Codex Integration**. By default, it installs:
+The installer deploys a centralized MCP runtime and automatically detects installed AI environments on your machine to register the review server:
 
 ```text
-~/.agents/skills/create-review-artifact/
-~/.codex/codex-artifacts/codex-artifacts-review-mcp.mjs
-~/.codex/config.toml
+# Centralized runtime & skill assets
+~/.agents/skills/create-review-artifact/                 # Shared agent skill & instructions
+~/.agents/mcp/codex-artifacts-review-mcp.mjs           # Centralized MCP runtime server
+
+# Automatically detected & configured environments:
+~/.cursor/mcp.json                                      # Cursor Agent
+~/.codex/config.toml                                    # Codex
+~/.codeium/windsurf/mcp_config.json                     # Windsurf Cascade
+Claude / custom MCP config files                        # Claude & other MCP clients
 ```
 
-The skill always uses `~/.agents/skills/create-review-artifact/`. If `CODEX_HOME` is set, the MCP script and `config.toml` use that directory instead of `~/.codex`; the skill location does not change.
-
-The installer preserves unrelated MCP configuration, skills, hooks, and project files. During an upgrade, it removes only legacy integration assets recognized as managed by Codex Artifacts.
+The installer scans for existing environment directories, automatically configures active clients without creating clutter in unused paths, and preserves all unrelated MCP configurations, skills, and project files.
 
 > [!IMPORTANT]
-> **After an installation or upgrade:**
+> **After installing or upgrading:**
 >
-> 1. Reload the window (run **Developer: Reload Window** from the Command Palette).
-> 2. Restart the Codex extension.
-> 3. Start a new chat so it can load the installed MCP tools and skill.
-> 4. Run **Codex Artifacts: Verify Codex Integration** from the Command Palette.
+> 1. Reload the window (**Developer: Reload Window** from the Command Palette).
+> 2. Restart your AI chat extension or agent (Cursor, Codex, Windsurf, Claude).
+> 3. Start a fresh chat conversation to load the newly registered MCP tools and skill.
+> 4. Verify status by running **AI Artifacts: Verify Global AI Integration**.
 
-### 3. Create an artifact
+### 3. Ask your AI to create a review artifact
 
-Explicitly ask Codex to create or update a review artifact:
+In your AI chat (Codex, Cursor, etc.), request a review artifact for your task:
 
 ```text
 Create a review artifact for this API design.
-Use $create-review-artifact to draft a plan for this change.
+Use $create-review-artifact to draft an implementation plan before writing code.
 ```
 
 Asking for a plan or Markdown document without explicitly requesting an artifact does not activate the review lifecycle. Explicit requests to inspect saved feedback or reconnect a known artifact can resume an existing lifecycle.
 
-The MCP server creates:
+The AI agent calls the MCP `create_artifact` tool, which generates an isolated review bundle in your workspace:
 
 ```text
 .codex-artifacts/artifacts/<server-generated-id>/
   artifact.json
   artifact.md
   comments.json
-  review-submission.json  # present after a decision is submitted
+  review-submission.json  # Present after a decision is submitted
 ```
 
-By default, the extension opens a new `artifact.md` in **Artifact Review** after its `comments.json` is created. This behavior is controlled by `agentPlus.autoOpenArtifactReview`, which defaults to `true`. If auto-open is disabled, run **Codex Artifacts: Open Artifact Review** or open `artifact.md` with the Artifact Review editor.
+By default, the custom **Artifact Review** editor opens automatically as soon as the artifact is created. This behavior is controlled by the `agentPlus.autoOpenArtifactReview` setting (defaults to `true`).
 
-#### Workspace resolution
+### 4. Review, annotate, and drive execution
 
-Artifact creation has exactly two workspace-evidence flows. Workspace-folder resolution happens before Codex reads target-workspace instructions, documentation, source, or drafts artifact content. If the user tags, links, mentions, or attaches a concrete file, Codex uses that path to identify its containing workspace folder. Otherwise Codex calls `resolve_artifact_workspace` immediately with the user's exact repository/workspace words, without scanning folders or rewriting the query. This resolver is the only MCP tool allowed before Codex reads the artifact contract. Codex selects one candidate automatically when it is uniquely high-confidence and asks the user only when the candidates remain ambiguous. After a candidate is chosen, Codex reads the contract, then inspects that folder and composes the artifact.
+1. **Highlight text:** Select any paragraph, heading, list item, quote, code block, or table cell.
+2. **Add inline comments:** Type your feedback in the floating comment popover and click **Save**.
+3. **Inspect feedback:** Open the **Comments (N)** drawer to jump between annotated passages.
+4. **Submit your decision:**
+   - **Review (Revise):** Sends your batch comments back to the AI. The agent answers questions in chat, updates the Markdown where changes were requested, and opens the next review round. Question-only feedback starts the next round without changing the Markdown bytes or SHA.
+   - **Proceed:** Approves the plan and concludes the review. For `plan` and `implementation-plan`, this authorizes the agent to execute the approved work immediately in the same turn.
+   - **Just save:** Saves the Markdown to a designated workspace path without executing code.
+   - **Copy Markdown:** Copies the raw document to the clipboard without changing lifecycle state.
 
-The resolver normalizes common separators, so `agent plus`, `agent-plus`, and `agent_plus` match the same folder name. It operates inside one uniquely identified VS Code workspace context. If that context has one folder, MCP returns it as `matchMode: "matched"` with `match: "single-folder"` even when the query differs. In a multi-root workspace, a query with no match returns every fresh folder in that same context with `matchMode: "all-available"`; it returns `not-found` only when the fresh scope is empty. The resolver never combines folders from different VS Code windows: when the registry cannot identify one unique context, it returns `WORKSPACE_CONTEXT_AMBIGUOUS` and asks the user to focus the intended window. Resolver tokens are short-lived, single-use, and bound to the candidate and registry context. `create_artifact` still revalidates the chosen root or tagged-file containment before writing. Cwd, `environment_context`, untagged active files, workspace ordering, project contents, and filesystem search results are never creation evidence.
+> [!TIP]
+> **Chat Escape Flow:** You can also save comments without clicking _Review_, then simply tell your AI in chat: _"Read the review"_ or _"Check the review comments"_. The AI will inspect the exact artifact, answer your notes, and advance the review round.
 
-### 4. Review the artifact
-
-1. Select text inside one paragraph, heading, list item, quote, code block, or table cell.
-2. Save feedback in the nearby comment popover.
-3. Use **View comments** to inspect saved comments or jump to a highlighted passage. The drawer heading shows **Comments (N)**.
-4. Choose an action:
-   - **Review** returns saved comments to Codex. Questions are answered directly in chat, and Markdown is replaced only when feedback requests a change. Question-only feedback starts the next round without changing the Markdown bytes or SHA.
-   - **Proceed** approves the artifact and ends the current review round. For `plan` and `implementation-plan`, this authorizes Codex to execute the complete approved plan immediately in the same turn. It does not automatically open another review round.
-   - **Just save** ends the current round without performing the proposed work. Codex asks for a destination in the workspace and copies the current Markdown there.
-   - **Copy Markdown** copies the content locally without sending a lifecycle decision.
-
-You may also save comments without pressing **Review** and tell Codex “read the review” or “hãy xem review”. Codex inspects the exact artifact attached to the conversation, answers questions in chat, applies requested changes when needed, and opens the next round. It never guesses the newest artifact in a workspace.
-
-When the current round has no saved comments or submission, you may request a concrete artifact edit directly in chat, such as “add a rollout phase to this artifact”. Codex inspects the exact artifact with the explicit chat-update intent, replaces the Markdown, opens the next round, and waits again without requiring a dummy comment or an empty Review submission. A request to reconnect or keep waiting does not use this intent: it reattaches to the same round without changing Markdown or advancing the lifecycle.
+When the current round has no saved comments or submission, you may request a concrete artifact edit directly in chat, such as _"add a rollout phase to this artifact"_. The AI inspects the exact artifact with the explicit chat-update intent, replaces the Markdown, opens the next round, and waits again without requiring a dummy comment or an empty Review submission.
 
 ## Behavior and security
 
-- New artifacts use schema version 4 and an MCP-generated `reviewSessionId`; no chat thread ID or creation hook is needed.
-- Artifact data outlives the transient MCP waiter and individual chat turns. Cancellation, takeover, or an MCP restart detaches process state without deleting the artifact.
-- The MCP server and extension own lifecycle files. The skill never creates, repairs, or bypasses them directly.
-- The MCP API consists of `resolve_artifact_workspace` plus the four lifecycle tools: `create_artifact`, `wait_for_artifact_review`, `inspect_artifact_review`, and `advance_and_wait_for_artifact`.
-- The official skill always creates `kind: "implementation-plan"`; the required field remains in the protocol for compatibility.
-- In chats with multiple artifacts, Codex retains a request/workspace-to-handle mapping and asks when a handle or intent is ambiguous; it never chooses by recency or takes over speculatively.
-- Comments and submissions bind the artifact ID, review session, round, and content hashes.
-- Round tokens are in-memory, one-time, exact-state-bound, and expire after one hour. A validated inspection can issue a fresh token after an MCP restart.
-- Lifecycle failures include machine-readable recovery metadata so Codex can keep the same handle, inspect uncertain state, and avoid replaying a committed update.
-- A chat-update token is issued only for an explicitly requested edit on an empty round. It requires replacement Markdown with a different SHA and cannot consume saved comments or a submitted decision.
-- Each artifact permits one live waiter. Cancellation and takeover release only that waiter; they do not modify persistent lifecycle files.
-- Round updates are transactional and roll back if a commit fails, including the narrow Windows editor-lock fallback.
-- Markdown uses CommonMark/GFM. Raw HTML, artifact scripts, remote images, and unsafe external protocols are disabled.
-- `.codex-artifacts/` is operational review state and normally should not be committed.
+- **Safe Lifecycle:** Artifact data outlives transient MCP connections. Process restarts, waiter cancellations, or new chat turns never destroy unreviewed artifacts.
+- **Fail-Closed Workspace Ownership:** The agent must prove workspace ownership via explicit tagged files or an MCP-issued resolver token before creating an artifact. Cwd or fuzzy workspace guessing is rejected.
+- **Transactional Updates:** Multi-round revisions are transactional; failed commits automatically roll back, including the Windows editor-lock fallback.
+- **Local & Private:** Everything runs locally on your machine via stdio MCP. No code, markdown, or telemetry is sent to any external server.
+- **Content Sanitization:** Rendered with CommonMark/GFM with syntax highlighting (Shiki) and diagram rendering (Mermaid). Unsafe raw HTML, scripts, and remote protocols are disabled.
+- **State Storage:** `.codex-artifacts/` contains operational review state and normally should not be committed to Git.
 
 ## Compatibility and upgrades
 
 - Schema v4 is the only writable artifact lifecycle. Existing schema-v4 artifacts do not need migration.
 - Schema-v3 artifacts remain readable in Artifact Review but are read-only. Create a new schema-v4 artifact to continue reviewing their content.
 - Older `.codex-artifacts/plans/` data is left untouched for manual archival or removal; the installer does not delete user artifact data.
-- Version 0.9.0 adds workspace candidate resolution, the two-evidence creation contract, default `implementation-plan` creation, multi-handle/intent safety rules, and structured lifecycle recovery. Artifact schema remains v4. After upgrading, run **Codex Artifacts: Install Global Codex Integration** again, restart Codex, and begin a new chat so the updated five-tool MCP schema and skill are loaded.
-- Version 0.8.0 added explicit chat updates on empty rounds without changing artifact schema v4.
-- Version 0.7.0 replaced the former two-tool MCP API with the four lifecycle tools listed above.
+- Version 0.9.0 adds workspace candidate resolution, the two-evidence creation contract, default `implementation-plan` creation, multi-handle/intent safety rules, and structured lifecycle recovery.
 
 ## Troubleshooting
 
 ### MCP tools are unavailable
 
-Run **Codex Artifacts: Install Global Codex Integration**, restart the Codex extension, and start a new chat. A chat that was already open cannot load tools installed afterward. Also verify that `node` is available in `PATH`.
+Run **Codex Artifacts: Install Global Codex Integration**, restart your AI extension/editor, and start a new chat. A chat that was already open cannot load tools installed afterward. Also verify that `node` is available in `PATH`.
 
 ### `WORKSPACE_NOT_REGISTERED`
 
-Open or add the exact target folder in the VS Code window running Codex Artifacts, wait briefly for the registry heartbeat, and retry. Do not substitute the first workspace folder or create the artifact directly.
+Open or add the exact target folder in the VS Code / Cursor window running AI Artifacts, wait briefly for the registry heartbeat, and retry. Do not substitute the first workspace folder or create the artifact directly.
 
 ### Workspace selection expired or evidence does not match
 
-If no file was tagged, resolve again and choose a current name/path candidate, asking the user only if the result is ambiguous. If a file was tagged, verify that it still exists inside the intended registered workspace. Project markers, untagged active files, and filesystem search results do not count as creation evidence.
+If no file was tagged, resolve again and choose a current name/path candidate, asking the user only if the result is ambiguous. If a file was tagged, verify that it still exists inside the intended registered workspace.
 
 ### A round token expired or the MCP restarted
 
-The existing content remains intact. Ask Codex to inspect the exact artifact path again to obtain a fresh token and reconnect. If the conversation no longer contains one unambiguous handle, provide the artifact path; Codex must not guess the newest artifact.
+The existing content remains intact. Ask the AI agent to inspect the exact artifact path again to obtain a fresh token and reconnect.
 
 ### A configuration conflict is reported
 
-Remove or rename the unmanaged `[mcp_servers.codex_artifacts]` entry in `config.toml`, then run the installer again. The extension does not overwrite MCP configuration it does not own.
+Remove or rename the unmanaged `[mcp_servers.codex_artifacts]` entry in your configuration file, then run the installer again.
 
 ## Development
 
@@ -150,14 +155,12 @@ npm test
 npm run build
 ```
 
-Press `F5` to launch an Extension Development Host. Package and install with:
+Press `F5` to launch an Extension Development Host. Package and install locally:
 
 ```powershell
 npm run package
-code --install-extension releases/codex-artifacts.vsix
+code --install-extension releases/ai-artifacts-0.9.1.vsix
 ```
-
-`npm run package` creates both `releases/codex-artifacts-<version>.vsix` and the stable `releases/codex-artifacts.vsix` alias.
 
 ## Documentation
 
