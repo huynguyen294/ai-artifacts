@@ -8,7 +8,7 @@ With AI Artifacts, you can review proposals before code is written, guide agent 
 
 ## How It Works
 
-1. **Ask your AI to create an artifact** — In your AI chat, request a review artifact (e.g., _"Create a review artifact for this API design"_). The agent generates an interactive Markdown document in your workspace.
+1. **Ask your AI to create an artifact** — In your AI chat, request a review artifact (e.g., _"Draft an example plan and produce a reviewable artifact"_). The agent generates an interactive Markdown document in your workspace.
 2. **Review & annotate inline** — The Artifact Review editor opens automatically. Highlight any text and attach inline comments with your feedback.
 3. **Submit your decision** — Click **Review** to send feedback back for revision, or **Proceed** to approve the plan and let the AI execute immediately.
 

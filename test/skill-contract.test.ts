@@ -129,4 +129,14 @@ describe("create-review-artifact skill contract", () => {
     expect(contract).toContain("useSameArtifactHandle: true");
     expect(contract).toContain("If commit state is uncertain, inspect the same exact handle before retrying");
   });
+
+  it("documents artifactUrl and artifactLink for re-opening artifacts", async () => {
+    const [skill, contract] = await Promise.all([
+      readFile(path.join(skillDirectory, "SKILL.md"), "utf8"),
+      readFile(path.join(skillDirectory, "references", "artifact-contract.md"), "utf8"),
+    ]);
+    expect(skill).toContain("artifactLink");
+    expect(contract).toContain("artifactUrl");
+    expect(contract).toContain("artifactLink");
+  });
 });

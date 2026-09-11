@@ -11,13 +11,13 @@ The skill may call `resolve_artifact_workspace` before loading this reference. R
 - `{ kind: "tagged-file", filePath }` for a concrete file explicitly tagged by the user.
 - `{ kind: "resolved-workspace", selectionToken }` for a candidate chosen from the current resolver result by the agent or user.
 
-The server revalidates current registry scope, canonical root, tagged-file containment or the resolver grant before mutation. Cwd, untagged active files, project markers, folder order, and filesystem search results are not creation evidence. The official skill always sends `kind: "implementation-plan"`; the MCP keeps `kind` required for protocol compatibility.
+The server revalidates current registry scope, canonical root, tagged-file containment or the resolver grant before mutation. Cwd, untagged active files, project markers, folder order, and filesystem search results are not creation evidence. The official skill always sends `kind: "implementation-plan"`; the MCP keeps `kind` required for protocol compatibility. Creation results include `artifactUrl` (RFC 8089 `file:///...` URI) and `artifactLink` (`[${title}](${artifactUrl})`).
 
-`wait_for_artifact_review` accepts `artifactDirectory`, `expectedReviewRound`, and optional `takeover`. It returns an existing submission immediately or owns the single transient waiter until Review, Proceed, Just save, cancellation, or takeover. A `revise` result includes a one-time `roundToken`.
+`wait_for_artifact_review` accepts `artifactDirectory`, `expectedReviewRound`, and optional `takeover`. It returns an existing submission immediately or owns the single transient waiter until Review, Proceed, Just save, cancellation, or takeover. A `revise` result includes a one-time `roundToken`, `artifactUrl`, and `artifactLink`.
 
 For an `approve` result whose artifact kind is `plan` or `implementation-plan`, the result includes `nextAction.type: "execute-approved-plan"` and an explicit instruction to execute the approved plan immediately in the same turn. Treat this as execution authorization, not an acknowledgement request.
 
-`inspect_artifact_review` accepts the exact `artifactDirectory`, optional `expectedReviewRound`, optional `takeover`, and optional `intent`. It immediately returns the validated manifest, Markdown, comments, optional submission, round, and hashes. It returns a `roundToken` when saved comments or a submission make the round consumable, or when `intent` is `"explicit-chat-update"` on an empty round.
+`inspect_artifact_review` accepts the exact `artifactDirectory`, optional `expectedReviewRound`, optional `takeover`, and optional `intent`. It immediately returns the validated manifest, Markdown, comments, optional submission, round, hashes, `artifactUrl`, and `artifactLink`. It returns a `roundToken` when saved comments or a submission make the round consumable, or when `intent` is `"explicit-chat-update"` on an empty round.
 
 `advance_and_wait_for_artifact` accepts the exact `artifactDirectory`, `expectedReviewRound`, and `roundToken`, plus optional complete replacement `markdown`. It transactionally advances the same artifact and waits for the next round. Omitting Markdown preserves the exact `artifact.md` bytes and SHA while resetting handled comments and removing the old submission.
 

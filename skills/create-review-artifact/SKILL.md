@@ -25,7 +25,7 @@ Coordinate one reviewable Markdown artifact for one explicit user request.
 ## Create and review
 
 1. Write one complete Markdown document. Call `create_artifact` with the verified absolute `workspaceRoot`, one evidence object, title, `kind: "implementation-plan"`, and `markdown`. Keep `kind` only for protocol compatibility; do not classify the document. Do not create or edit lifecycle files with filesystem tools.
-2. Retain the exact returned `artifactDirectory`, `workspaceRoot`, and `reviewRound`. When multiple artifacts exist in one chat, maintain a request/workspace-to-handle-and-round mapping. If a handle is ambiguous, ask the user and never select by recency.
+2. Retain the exact returned `artifactDirectory`, `workspaceRoot`, and `reviewRound`. When multiple artifacts exist in one chat, maintain a request/workspace-to-handle-and-round mapping. If a handle is ambiguous, ask the user and never select by recency. Include the returned `artifactLink` in the chat message so the user can easily re-open the artifact review tab if it was closed or failed to open automatically.
 3. Call `wait_for_artifact_review` immediately on that exact handle and round. After creation, never call `resolve_artifact_workspace` again for this artifact; later tools use the retained handle while the MCP verifies its manifest workspace internally.
 4. Handle a submitted decision:
    - `revise`: process every returned comment with **Unified feedback handling** below, using the returned round token. Treat Review-button feedback exactly like chat-inspected feedback.
@@ -43,7 +43,7 @@ Apply this policy to all saved comments, whether they arrive from a Review (`rev
    - Change-only: produce complete replacement Markdown, then call `advance_and_wait_for_artifact` with it.
    - Mixed: answer every question directly in user-visible chat, produce complete replacement Markdown containing the requested changes, then advance with it.
    - Needs clarification: ask the user in chat and do not consume the round token or advance until the answer is available.
-3. Send every required chat answer before starting `advance_and_wait_for_artifact`, because that tool waits for the next round.
+3. Send every required chat answer and include `artifactLink` before starting `advance_and_wait_for_artifact`, because that tool waits for the next round.
 4. Do not create or update a `## Review responses` section. Keep conversational answers in chat. If a replacement Markdown update touches an artifact containing a section previously generated for review answers, remove that generated section.
 
 ## Chat escape, reconnect, and chat updates

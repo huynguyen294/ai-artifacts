@@ -14,6 +14,31 @@ Minor typos, formatting fixes, or cosmetic wording adjustments that do not chang
 
 Each entry includes the date, category, summary of changes, rationale, and affected components or files.
 
+## 2026-09-11 — Clickable Artifact Review Link in MCP Server and Agent Chat
+
+### Changes
+
+- Implemented `toArtifactFileUrl` using Node.js built-in `pathToFileURL` (`node:url`) conforming to RFC 8089 with forward-slash normalization and explicit percent-encoding for parentheses (`%28`, `%29`).
+- Implemented `formatArtifactLink` adhering strictly to CommonMark 0.31.2: sanitizes newline characters into single spaces and backslash-escapes `\`, `[`, and `]`.
+- Enhanced `artifactHandle` (consumed by `create_artifact` and `inspect_artifact_review`) to return `artifactUrl` and preformatted markdown link `artifactLink`.
+- Enhanced `grantSubmittedRound` (consumed by `wait_for_artifact_review` and `advance_and_wait_for_artifact`) to return `artifactUrl` and `artifactLink`.
+- Updated `skills/create-review-artifact/SKILL.md` to instruct AI Agents to emit `artifactLink` into user-visible chat upon creating new artifacts and before advancing/waiting on subsequent rounds.
+- Updated `skills/create-review-artifact/references/artifact-contract.md` to document the presence of `artifactUrl` and `artifactLink` in the tool response contract.
+- Added comprehensive unit tests in `test/review-wait-mcp.test.ts` (covering spaces, `#`, `()`, and complex title formatting) and `test/skill-contract.test.ts`.
+
+### Rationale
+
+- When creating or updating an artifact across multiple rounds, if the user inadvertently closes the artifact review tab or if the extension auto-open event is missed, users previously lacked an intuitive way to restore the custom review editor without searching the filesystem or triggering a reconnect.
+- Returning an RFC 8089 `file:///...` markdown link enables users to simply click the link in the AI Agent chat window to reopen the `agentPlus.artifactReview` custom editor seamlessly, while avoiding intrusive watcher-based tab focus stealing.
+
+### Affected components and files
+
+- `src/integration/artifact-review-mcp-v4.ts`
+- `skills/create-review-artifact/SKILL.md`
+- `skills/create-review-artifact/references/artifact-contract.md`
+- `test/review-wait-mcp.test.ts`
+- `test/skill-contract.test.ts`
+
 ## 2026-09-11 — Skill Copy Command and Independent Skill Verification
 
 ### Changes

@@ -1,1 +1,3 @@
 [AGENTS.md](file;file:///d%3A/workspace/my-projects/agent-plus/AGENTS.md) hãy kiểm tra tính đúng đắng của [docs](file;file:///d%3A/workspace/my-projects/agent-plus/docs) này, có gì cần cập nhật không, trong quá trình kiểm tra thấy gì cần cập nhật chi tiết thêm không? tôi muốn đây là nguồn tài liệu dev đẻ lại sau này mọi AI đều có thể nhanh chóng thích nghi với dự án. Có lẽ cần thêm 1 file kiểu README trong docs này để nói về cấu trúc dự án và cấu trúc files và phân hóa file làm gì để AI có thế quét nhanh hơn. Tôi nghĩ đây nên là 1 folder để dễ làm map chia file để AI đọc các thứ cần thiết. Bước này chỉ tạo plan và ghi lại toàn bộ analized.
+
+> sẽ thực hiện sau khi move .ai-artifacts sang global

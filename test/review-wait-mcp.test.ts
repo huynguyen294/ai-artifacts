@@ -48,10 +48,10 @@ async function waitUntil<T>(read: () => Promise<T | undefined>, timeoutMs = 3_00
   throw new Error("Timed out waiting for MCP filesystem state.");
 }
 
-async function workspaceFixture(options: { stale?: boolean } = {}): Promise<{ workspace: string; registry: string }> {
+async function workspaceFixture(options: { stale?: boolean; folderName?: string } = {}): Promise<{ workspace: string; registry: string }> {
   const root = await mkdtemp(path.join(tmpdir(), "codex-artifacts-mcp-v6-"));
   temporaryDirectories.push(root);
-  const workspace = path.join(root, "workspace");
+  const workspace = path.join(root, options.folderName ?? "workspace");
   const registry = path.join(root, "registry");
   await Promise.all([mkdir(workspace), mkdir(registry)]);
   const now = Date.now();
@@ -267,6 +267,8 @@ describe("artifact review MCP server v6", () => {
     const created = await createArtifact(client, fixture.workspace);
     expect(created).toMatchObject({ reviewRound: 1, kind: "implementation-plan", workspaceRoot: fixture.workspace });
     expect(created.artifactSha256).toBe(sha256(initialMarkdown));
+    expect(created.artifactUrl).toMatch(/^file:\/\/\/.+\/artifact\.md$/);
+    expect(created.artifactLink).toBe(`[MCP bridge](${created.artifactUrl})`);
     expect(await readdir(created.artifactDirectory)).toEqual(expect.arrayContaining([
       "artifact.json",
       "artifact.md",
@@ -289,6 +291,8 @@ describe("artifact review MCP server v6", () => {
     const reviewed = await waiting.promise;
     expect(reviewed.structuredContent).toMatchObject({ decision: "revise", reviewRound: 1 });
     expect(reviewed.structuredContent.roundToken).toEqual(expect.any(String));
+    expect(reviewed.structuredContent.artifactUrl).toMatch(/^file:\/\/\/.+\/artifact\.md$/);
+    expect(reviewed.structuredContent.artifactLink).toBe(`[MCP bridge](${reviewed.structuredContent.artifactUrl})`);
 
     const replacement = "# Artifact\n\nBuild the bridge with recovery behavior.\n";
     const advancing = callToolTracked(client, "advance_and_wait_for_artifact", {
@@ -438,6 +442,8 @@ describe("artifact review MCP server v6", () => {
     const created = await createArtifact(client, fixture.workspace, { title: "No comments" });
     const inspected = await callTool(client, "inspect_artifact_review", { artifactDirectory: created.artifactDirectory });
     expect(inspected.structuredContent.roundToken).toBeUndefined();
+    expect(inspected.structuredContent.artifactUrl).toMatch(/^file:\/\/\/.+\/artifact\.md$/);
+    expect(inspected.structuredContent.artifactLink).toBe(`[No comments](${inspected.structuredContent.artifactUrl})`);
     const waiting = callToolTracked(client, "wait_for_artifact_review", {
       artifactDirectory: created.artifactDirectory,
       expectedReviewRound: 1,
@@ -1100,5 +1106,27 @@ describe("artifact review MCP server v6", () => {
     const advanced = await advancing.promise;
     expect(advanced.structuredContent.decision).toBe("approve");
     expect(await readFile(path.join(artifactDirectory, "artifact.md"), "utf8")).toBe("# Updated Legacy Markdown\n");
+  });
+
+  it("generates correctly formatted and URL-encoded artifactUrl and artifactLink for paths with spaces and special characters", async () => {
+    const fixture = await workspaceFixture({ folderName: "c# workspace (copy)" });
+    const client = startClient(fixture.registry);
+    await initialize(client);
+
+    const title = "[RFC] Feature \\\nPlan & Spec: (v1.0)";
+    const created = await createArtifact(client, fixture.workspace, { title });
+    expect(created.artifactUrl).toMatch(/^file:\/\/\/.+\/artifact\.md$/);
+    expect(created.artifactUrl).not.toContain("\\");
+    expect(created.artifactUrl).toContain("c%23%20workspace%20%28copy%29");
+    expect(created.artifactUrl).not.toContain("(");
+    expect(created.artifactUrl).not.toContain(")");
+    expect(created.artifactUrl).not.toContain("#");
+    expect(created.artifactLink).toBe(`[\\[RFC\\] Feature \\\\ Plan & Spec: (v1.0)](${created.artifactUrl})`);
+
+    const inspected = await callTool(client, "inspect_artifact_review", {
+      artifactDirectory: created.artifactDirectory,
+    });
+    expect(inspected.structuredContent.artifactUrl).toBe(created.artifactUrl);
+    expect(inspected.structuredContent.artifactLink).toBe(`[\\[RFC\\] Feature \\\\ Plan & Spec: (v1.0)](${created.artifactUrl})`);
   });
 });

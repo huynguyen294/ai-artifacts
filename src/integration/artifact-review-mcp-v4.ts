@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { constants, promises as fs, watch as watchFs } from "node:fs";
 import path from "node:path";
 import { createInterface } from "node:readline";
+import { pathToFileURL } from "node:url";
 import {
   assertArtifactDirectory,
   artifactPaths,
@@ -73,6 +74,8 @@ type ReviewWaitResult = {
   artifactPath: string;
   commentsPath: string;
   submissionSha256: string;
+  artifactUrl?: string;
+  artifactLink?: string;
   nextAction?: {
     type: "execute-approved-plan";
     instruction: string;
@@ -790,8 +793,27 @@ function pruneRoundGrants(): void {
   for (const [token, expiresAt] of consumedRoundTokens) if (expiresAt <= now) consumedRoundTokens.delete(token);
 }
 
-function grantSubmittedRound(context: ArtifactContext, result: ReviewWaitResult): ReviewWaitResult & { roundToken?: string; roundTokenSource?: "submitted-review" } {
-  if (result.decision !== "revise") return result;
+function toArtifactFileUrl(filePath: string): string {
+  const url = filePath.startsWith("file://") ? filePath : pathToFileURL(filePath).href;
+  return url.replaceAll("(", "%28").replaceAll(")", "%29");
+}
+
+function formatArtifactLink(title: string | undefined, artifactUrl: string): string {
+  const rawTitle = title?.trim().replace(/\r?\n/g, " ") || "Artifact Review";
+  const safeTitle = rawTitle
+    .replaceAll("\\", "\\\\")
+    .replaceAll("[", "\\[")
+    .replaceAll("]", "\\]");
+  return `[${safeTitle}](${artifactUrl})`;
+}
+
+function grantSubmittedRound(
+  context: ArtifactContext,
+  result: ReviewWaitResult,
+): ReviewWaitResult & { roundToken?: string; roundTokenSource?: "submitted-review"; artifactUrl?: string; artifactLink?: string } {
+  const artifactUrl = toArtifactFileUrl(context.artifactPath);
+  const artifactLink = formatArtifactLink(context.manifest.title, artifactUrl);
+  if (result.decision !== "revise") return { ...result, artifactUrl, artifactLink };
   pruneRoundGrants();
   const roundToken = randomUUID();
   roundGrants.set(roundToken, {
@@ -806,7 +828,7 @@ function grantSubmittedRound(context: ArtifactContext, result: ReviewWaitResult)
     submissionSha256: result.submissionSha256,
     expiresAt: Date.now() + ROUND_TOKEN_TTL_MS,
   });
-  return { ...result, roundToken, roundTokenSource: "submitted-review" };
+  return { ...result, roundToken, roundTokenSource: "submitted-review", artifactUrl, artifactLink };
 }
 
 function grantInspectedRound(
@@ -907,10 +929,14 @@ function toolError(error: unknown): JsonObject {
 }
 
 function artifactHandle(context: ArtifactContext): JsonObject {
+  const artifactUrl = toArtifactFileUrl(context.artifactPath);
+  const artifactLink = formatArtifactLink(context.manifest.title, artifactUrl);
   return {
     artifactDirectory: context.artifactDirectory,
     artifactId: context.artifactId,
     artifactPath: context.artifactPath,
+    artifactUrl,
+    artifactLink,
     reviewSessionId: context.reviewSessionId,
     reviewRound: context.reviewRound,
     artifactSha256: context.artifactSha256,

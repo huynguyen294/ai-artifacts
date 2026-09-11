@@ -25,6 +25,21 @@ Release history has been standardized and tracked starting from version **0.2.6*
 - **Automated Tests**:
   - Added unit tests in `test/workspace-integration.test.ts`, `test/mcp-config.test.ts`, and `test/mcp-client-drivers.test.ts` (108/108 tests passing).
 
+### Clickable Artifact Review Link in MCP Server & Agent Chat
+
+- **MCP Tool Response Contract Enhancement**:
+  - Implemented `toArtifactFileUrl` using Node.js built-in `pathToFileURL` (`node:url`) conforming to RFC 8089 with forward-slash normalization and explicit percent-encoding for parentheses (`%28`, `%29`).
+  - Implemented `formatArtifactLink` adhering strictly to CommonMark 0.31.2: sanitizes newline characters into single spaces and backslash-escapes `\`, `[`, and `]`.
+  - Enhanced `artifactHandle` (used by `create_artifact` and `inspect_artifact_review`) to return `artifactUrl` and preformatted Markdown link `artifactLink`.
+  - Enhanced `grantSubmittedRound` (used by `wait_for_artifact_review` and `advance_and_wait_for_artifact`) to return `artifactUrl` and `artifactLink`.
+  - Enables users to click the Markdown link directly in the AI Agent chat interface to re-open the Artifact Review editor whenever a tab is closed or focus is lost.
+- **Agent Skill & Contract Updates**:
+  - Updated `skills/create-review-artifact/SKILL.md` instructing the Agent to output `artifactLink` in user-visible chat upon artifact creation and before transitioning to the waiting state on subsequent rounds.
+  - Updated `skills/create-review-artifact/references/artifact-contract.md` documenting `artifactUrl` and `artifactLink` in the tool result contract.
+- **Automated Tests & Regression Hardening**:
+  - Added dedicated test cases in `test/review-wait-mcp.test.ts` verifying path encoding with `#`, spaces, parentheses, and complex titles with newlines, backslashes, and brackets.
+  - Added contract verification test in `test/skill-contract.test.ts` (110/110 tests passing).
+
 ---
 
 ## [0.9.2] - 2026-09-09

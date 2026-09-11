@@ -1,3 +1,5 @@
+> MOVE sang global nên đã bỏ workspace naming
+
 # Workspace naming và ownership model
 
 ## Trạng thái
@@ -25,26 +27,26 @@ Artifact hiện được lưu và bind vào một folder được chọn trong w
 
 ## Vocabulary chuẩn
 
-| Khái niệm | Ý nghĩa | Tên nên dùng |
-|---|---|---|
-| VS Code workspace | Container/session hoặc cửa sổ VS Code đang mở; có thể chứa một hoặc nhiều folder | `workspace`, `workspace context` hoặc `workspace window` |
-| Workspace folder | Một entry trong `vscode.workspace.workspaceFolders` | `workspaceFolder` |
-| Root của folder đích | Đường dẫn tuyệt đối nơi artifact thuộc về và nơi đặt `.codex-artifacts` | `workspaceFolderRoot` hoặc `targetFolderRoot` |
-| Candidate từ resolver | Một workspace folder có thể chứa artifact | `WorkspaceFolderCandidate` |
-| Nhiều folder trong một workspace | Khả năng VS Code chính thức gọi là multi-root | `multi-root workspace` hoặc “workspace có nhiều folder” |
-| Repository/project | Đơn vị source code; có thể trùng với workspace folder hoặc nằm sâu bên trong | `repositoryRoot` / `projectRoot`, không tự động đồng nhất với workspace folder |
+| Khái niệm                        | Ý nghĩa                                                                          | Tên nên dùng                                                                   |
+| -------------------------------- | -------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| VS Code workspace                | Container/session hoặc cửa sổ VS Code đang mở; có thể chứa một hoặc nhiều folder | `workspace`, `workspace context` hoặc `workspace window`                       |
+| Workspace folder                 | Một entry trong `vscode.workspace.workspaceFolders`                              | `workspaceFolder`                                                              |
+| Root của folder đích             | Đường dẫn tuyệt đối nơi artifact thuộc về và nơi đặt `.codex-artifacts`          | `workspaceFolderRoot` hoặc `targetFolderRoot`                                  |
+| Candidate từ resolver            | Một workspace folder có thể chứa artifact                                        | `WorkspaceFolderCandidate`                                                     |
+| Nhiều folder trong một workspace | Khả năng VS Code chính thức gọi là multi-root                                    | `multi-root workspace` hoặc “workspace có nhiều folder”                        |
+| Repository/project               | Đơn vị source code; có thể trùng với workspace folder hoặc nằm sâu bên trong     | `repositoryRoot` / `projectRoot`, không tự động đồng nhất với workspace folder |
 
 ## Những tên hiện tại đang gây nhầm lẫn
 
-| Tên hiện tại | Thực tế đại diện cho | Hướng đổi tên đề xuất |
-|---|---|---|
-| `resolve_artifact_workspace` | Chọn một folder trong workspace để chứa artifact | `resolve_artifact_workspace_folder` hoặc `resolve_artifact_target_folder` |
-| `WorkspaceCandidate` | Candidate của workspace folder | `WorkspaceFolderCandidate` |
-| `WorkspaceCandidateResolution` | Kết quả resolve folder | `WorkspaceFolderCandidateResolution` |
-| `workspaceRoot` | Root của folder đích | `workspaceFolderRoot` hoặc `targetFolderRoot` |
-| `resolved-workspace` | Resolver grant cho một folder | `resolved-workspace-folder` |
-| “multi-workspace” | Một workspace có nhiều folder | `multi-root workspace` |
-| “workspace registry” | Registry gồm snapshot của VS Code window/workspace và các folder của từng snapshot | Có thể giữ tên, nhưng contract phải tách rõ `workspace snapshot` và `workspace folders` |
+| Tên hiện tại                   | Thực tế đại diện cho                                                               | Hướng đổi tên đề xuất                                                                   |
+| ------------------------------ | ---------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| `resolve_artifact_workspace`   | Chọn một folder trong workspace để chứa artifact                                   | `resolve_artifact_workspace_folder` hoặc `resolve_artifact_target_folder`               |
+| `WorkspaceCandidate`           | Candidate của workspace folder                                                     | `WorkspaceFolderCandidate`                                                              |
+| `WorkspaceCandidateResolution` | Kết quả resolve folder                                                             | `WorkspaceFolderCandidateResolution`                                                    |
+| `workspaceRoot`                | Root của folder đích                                                               | `workspaceFolderRoot` hoặc `targetFolderRoot`                                           |
+| `resolved-workspace`           | Resolver grant cho một folder                                                      | `resolved-workspace-folder`                                                             |
+| “multi-workspace”              | Một workspace có nhiều folder                                                      | `multi-root workspace`                                                                  |
+| “workspace registry”           | Registry gồm snapshot của VS Code window/workspace và các folder của từng snapshot | Có thể giữ tên, nhưng contract phải tách rõ `workspace snapshot` và `workspace folders` |
 
 ## Kiến trúc hiện tại
 
