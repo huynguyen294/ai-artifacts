@@ -3,6 +3,7 @@ import { ArtifactReviewProvider } from "./artifact-review-provider";
 import {
   checkAllIntegrations,
   getMcpConfigSnippet,
+  getReviewSkillMarkdown,
   installAllDetectedIntegrations,
   installClaudeIntegration,
   installCodexIntegration,
@@ -151,21 +152,35 @@ export function activate(context: vscode.ExtensionContext): void {
       }
     }),
 
-    // 8. Verify All Integrations
-    vscode.commands.registerCommand("agentPlus.verifyGlobalIntegration", async () => {
+    // 8. Copy create-review-artifact Skill Markdown
+    vscode.commands.registerCommand("agentPlus.copyReviewSkill", async () => {
       try {
-        const report = await checkAllIntegrations(context);
-        const baseStatus = report.baseCurrent ? "Ready" : "Outdated / Missing";
-        const clientSummaries = report.clients.map((c) => `${c.name}: ${c.status}${c.isDetected ? " (detected)" : ""}`);
+        const skillMarkdown = await getReviewSkillMarkdown(context);
+        await vscode.env.clipboard.writeText(skillMarkdown);
         void vscode.window.showInformationMessage(
-          `AI Artifacts Base (.vscode): ${baseStatus}. Clients: [${clientSummaries.join("; ")}]`,
+          "AI Artifacts 'create-review-artifact' skill copied to clipboard! You can paste it into your agent's customization, rules, or system instructions.",
         );
       } catch (error) {
         void vscode.window.showErrorMessage(error instanceof Error ? error.message : String(error));
       }
     }),
 
-    // 9. Uninstall all detected integrations
+    // 9. Verify All Integrations
+    vscode.commands.registerCommand("agentPlus.verifyGlobalIntegration", async () => {
+      try {
+        const report = await checkAllIntegrations(context);
+        const skillStatus = report.skillCurrent ? "Ready" : "Outdated / Missing";
+        const baseStatus = report.baseCurrent ? "Ready" : "Outdated / Missing";
+        const clientSummaries = report.clients.map((c) => `${c.name}: ${c.status}${c.isDetected ? " (detected)" : ""}`);
+        void vscode.window.showInformationMessage(
+          `AI Artifacts Skill (.agents): ${skillStatus}. Base (.vscode): ${baseStatus}. Clients: [${clientSummaries.join("; ")}]`,
+        );
+      } catch (error) {
+        void vscode.window.showErrorMessage(error instanceof Error ? error.message : String(error));
+      }
+    }),
+
+    // 10. Uninstall all detected integrations
     vscode.commands.registerCommand("agentPlus.uninstallAllIntegrations", async () => {
       try {
         const result = await uninstallAllDetectedIntegrations(context);
@@ -179,7 +194,7 @@ export function activate(context: vscode.ExtensionContext): void {
       }
     }),
 
-    // 10. Uninstall Copilot
+    // 11. Uninstall Copilot
     vscode.commands.registerCommand("agentPlus.uninstallCopilotIntegration", async () => {
       try {
         const removed = await uninstallCopilotIntegration(context);
@@ -195,7 +210,7 @@ export function activate(context: vscode.ExtensionContext): void {
       }
     }),
 
-    // 11. Uninstall Codex
+    // 12. Uninstall Codex
     vscode.commands.registerCommand("agentPlus.uninstallCodexIntegration", async () => {
       try {
         const removed = await uninstallCodexIntegration();
@@ -211,7 +226,7 @@ export function activate(context: vscode.ExtensionContext): void {
       }
     }),
 
-    // 12. Uninstall Cursor
+    // 13. Uninstall Cursor
     vscode.commands.registerCommand("agentPlus.uninstallCursorIntegration", async () => {
       try {
         const removed = await uninstallCursorIntegration();
@@ -227,7 +242,7 @@ export function activate(context: vscode.ExtensionContext): void {
       }
     }),
 
-    // 13. Uninstall Claude
+    // 14. Uninstall Claude
     vscode.commands.registerCommand("agentPlus.uninstallClaudeIntegration", async () => {
       try {
         const removed = await uninstallClaudeIntegration();
@@ -243,7 +258,7 @@ export function activate(context: vscode.ExtensionContext): void {
       }
     }),
 
-    // 14. Uninstall Windsurf
+    // 15. Uninstall Windsurf
     vscode.commands.registerCommand("agentPlus.uninstallWindsurfIntegration", async () => {
       try {
         const removed = await uninstallWindsurfIntegration();

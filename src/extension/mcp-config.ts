@@ -1,3 +1,5 @@
+import { normalizePathForComparison } from "./mcp-clients/json-mcp-helper";
+
 export const AI_ARTIFACTS_MCP_NAME = "ai_artifacts";
 export const CODEX_ARTIFACTS_MCP_NAME = AI_ARTIFACTS_MCP_NAME;
 export const AI_ARTIFACTS_MCP_MARKER = "AI Artifacts review MCP";
@@ -14,15 +16,90 @@ function tomlString(value: string): string {
   return JSON.stringify(value);
 }
 
-function stripBlock(config: string, beginMarker: string, endMarker: string): string {
+function escapeRegExp(string: string): string {
+  return string.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function isArtifactsTableHeader(line: string): boolean {
+  const match = line.match(/^\s*\[\s*([^\]]+?)\s*\]/);
+  if (!match) return false;
+  const name = match[1]?.trim();
+  if (!name) return false;
+  return (
+    name === `mcp_servers.${AI_ARTIFACTS_MCP_NAME}` ||
+    name.startsWith(`mcp_servers.${AI_ARTIFACTS_MCP_NAME}.`) ||
+    name === "mcp_servers.codex_artifacts" ||
+    name.startsWith("mcp_servers.codex_artifacts.")
+  );
+}
+
+function isAnyTableHeader(line: string): boolean {
+  return /^\s*\[\s*[^\]]+?\s*\]/.test(line);
+}
+
+interface BlockBounds {
+  startIndex: number;
+  endIndex: number;
+}
+
+function findManagedBlockBounds(config: string, beginMarker: string, endMarker: string): BlockBounds | undefined {
   const begin = config.indexOf(beginMarker);
-  const end = config.indexOf(endMarker);
-  if (begin === -1 && end === -1) return config;
-  if (begin === -1 || end === -1 || end < begin) {
-    throw new Error("The managed AI Artifacts MCP block in config.toml is malformed.");
+  if (begin === -1) return undefined;
+
+  const remaining = config.slice(begin);
+  const lines = remaining.split(/\r?\n/);
+  let charOffset = 0;
+  let blockEndOffset = -1;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (line === undefined) continue;
+    const matchLine = remaining.slice(charOffset).match(/^.*?(?:\r?\n|$)/);
+    const lineLengthWithNewline = matchLine?.[0]?.length ?? line.length;
+
+    if (i === 0) {
+      charOffset += lineLengthWithNewline;
+      continue;
+    }
+
+    if (line.includes(endMarker)) {
+      blockEndOffset = charOffset + lineLengthWithNewline;
+      break;
+    }
+
+    if (isArtifactsTableHeader(line)) {
+      // Still inside an ai_artifacts table or sub-table
+    } else if (isAnyTableHeader(line)) {
+      // Encountered an unrelated table header (e.g. [mcp_servers.node_repl], [desktop])
+      // The managed block boundary stops right before this line.
+      blockEndOffset = charOffset;
+      break;
+    }
+
+    charOffset += lineLengthWithNewline;
   }
-  const after = end + endMarker.length;
-  return `${config.slice(0, begin).trimEnd()}\n${config.slice(after).trimStart()}`.trim();
+
+  if (blockEndOffset === -1) {
+    blockEndOffset = config.length - begin;
+  }
+
+  return {
+    startIndex: begin,
+    endIndex: begin + blockEndOffset,
+  };
+}
+
+function stripBlock(config: string, beginMarker: string, endMarker: string): string {
+  const bounds = findManagedBlockBounds(config, beginMarker, endMarker);
+  if (!bounds) return config;
+
+  let result = `${config.slice(0, bounds.startIndex).trimEnd()}\n\n${config.slice(bounds.endIndex).trimStart()}`.trim();
+
+  // Clean up any orphaned endMarker lines displaced elsewhere in the document
+  const endMarkerRegex = new RegExp(`^\\s*${escapeRegExp(endMarker)}\\s*(?:\\r?\\n|$)`, "gm");
+  result = result.replace(endMarkerRegex, "").trim();
+
+  return result;
 }
 
 export function removeCodexArtifactsMcp(config: string): string {
@@ -73,10 +150,52 @@ export function upsertCodexArtifactsMcp(config: string, serverScriptPath: string
 }
 
 export function hasManagedCodexArtifactsMcp(config: string, serverScriptPath: string): boolean {
-  const begin = config.indexOf(CURRENT_BEGIN_MARKER);
-  const end = config.indexOf(CURRENT_END_MARKER);
-  if (begin === -1 || end === -1 || end < begin) return false;
-  const block = config.slice(begin, end + CURRENT_END_MARKER.length).replaceAll("\r\n", "\n").trim();
-  const expected = upsertCodexArtifactsMcp("", serverScriptPath).replaceAll("\r\n", "\n").trim();
-  return block === expected;
+  const bounds = findManagedBlockBounds(config, CURRENT_BEGIN_MARKER, CURRENT_END_MARKER);
+  if (!bounds) return false;
+
+  const block = config.slice(bounds.startIndex, bounds.endIndex);
+
+  // 1. Must define [mcp_servers.ai_artifacts]
+  if (!/^\s*\[mcp_servers\.ai_artifacts\]\s*$/m.test(block)) {
+    return false;
+  }
+
+  // 2. command must be "node"
+  if (!/^\s*command\s*=\s*["']node["']\s*$/m.test(block)) {
+    return false;
+  }
+
+  // 3. args must match serverScriptPath (normalized comparison)
+  const argsMatch = block.match(/^\s*args\s*=\s*\[\s*(?:"([^"]+)"|'([^']+)')\s*\]/m);
+  if (!argsMatch) return false;
+  const configuredScript = argsMatch[1] ?? argsMatch[2] ?? "";
+  if (normalizePathForComparison(configuredScript) !== normalizePathForComparison(serverScriptPath)) {
+    return false;
+  }
+
+  // 4. tool timeout and default approval mode
+  if (!new RegExp(`^\\s*tool_timeout_sec\\s*=\\s*${CODEX_ARTIFACTS_MCP_TIMEOUT_SECONDS}\\s*$`, "m").test(block)) {
+    return false;
+  }
+  if (!/^\s*default_tools_approval_mode\s*=\s*["']approve["']\s*$/m.test(block)) {
+    return false;
+  }
+
+  // 5. Must configure the 5 core tools
+  const requiredTools = [
+    "resolve_artifact_workspace",
+    "create_artifact",
+    "wait_for_artifact_review",
+    "inspect_artifact_review",
+    "advance_and_wait_for_artifact",
+  ];
+
+  for (const tool of requiredTools) {
+    const toolHeader = new RegExp(`^\\s*\\[mcp_servers\\.ai_artifacts\\.tools\\.${tool}\\]\\s*$`, "m");
+    if (!toolHeader.test(block)) {
+      return false;
+    }
+  }
+
+  return true;
 }

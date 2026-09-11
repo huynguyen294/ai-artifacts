@@ -344,6 +344,57 @@ describe("Client Drivers", () => {
     }
   });
 
+  it("Codex driver correctly detects ready status even when config.toml has displaced closing marker", async () => {
+    const originalCodexHome = process.env.CODEX_HOME;
+    process.env.CODEX_HOME = tempHome;
+    try {
+      const codexDriver = new CodexClientDriver();
+      const scriptPath = "C:/Users/Admin/.vscode/ai-artifacts/ai-artifacts-review-mcp.mjs";
+      const displacedConfig = [
+        'model = "gpt-5.6-sol"',
+        "",
+        "# >>> AI Artifacts review MCP >>>",
+        "[mcp_servers.ai_artifacts]",
+        'command = "node"',
+        'args = ["C:\\\\Users\\\\Admin\\\\.vscode\\\\ai-artifacts\\\\ai-artifacts-review-mcp.mjs"]',
+        "tool_timeout_sec = 3600",
+        'default_tools_approval_mode = "approve"',
+        "",
+        "[mcp_servers.ai_artifacts.tools.resolve_artifact_workspace]",
+        'approval_mode = "approve"',
+        "",
+        "[mcp_servers.ai_artifacts.tools.create_artifact]",
+        'approval_mode = "approve"',
+        "",
+        "[mcp_servers.ai_artifacts.tools.wait_for_artifact_review]",
+        'approval_mode = "approve"',
+        "",
+        "[mcp_servers.ai_artifacts.tools.inspect_artifact_review]",
+        'approval_mode = "approve"',
+        "",
+        "[mcp_servers.ai_artifacts.tools.advance_and_wait_for_artifact]",
+        'approval_mode = "approve"',
+        "",
+        "[mcp_servers.node_repl]",
+        'command = "node_repl.exe"',
+        "",
+        '[plugins."test-plugin"]',
+        "enabled = true",
+        "# <<< AI Artifacts review MCP <<<",
+      ].join("\n");
+
+      await fs.writeFile(codexDriver.configPath, displacedConfig, "utf8");
+      const checkResult = await codexDriver.check(scriptPath);
+      expect(checkResult.status).toBe("ready");
+    } finally {
+      if (originalCodexHome === undefined) {
+        delete process.env.CODEX_HOME;
+      } else {
+        process.env.CODEX_HOME = originalCodexHome;
+      }
+    }
+  });
+
   it("Codex driver cleans legacy hooks even when config.toml has no ai_artifacts block", async () => {
     const originalCodexHome = process.env.CODEX_HOME;
     process.env.CODEX_HOME = tempHome;

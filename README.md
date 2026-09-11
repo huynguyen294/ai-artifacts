@@ -6,6 +6,12 @@
 
 With AI Artifacts, you can review proposals before code is written, guide agent planning iteratively, and authorize execution with a single click.
 
+## How It Works
+
+1. **Ask your AI to create an artifact** — In your AI chat, request a review artifact (e.g., _"Create a review artifact for this API design"_). The agent generates an interactive Markdown document in your workspace.
+2. **Review & annotate inline** — The Artifact Review editor opens automatically. Highlight any text and attach inline comments with your feedback.
+3. **Submit your decision** — Click **Review** to send feedback back for revision, or **Proceed** to approve the plan and let the AI execute immediately.
+
 ## Requirements
 
 - VS Code 1.95.0 or newer (or compatible editors like Cursor, Windsurf, VSCodium).
@@ -13,27 +19,16 @@ With AI Artifacts, you can review proposals before code is written, guide agent 
 - Node.js available as `node` in `PATH`; the installed MCP integration is launched with this command.
 - When building from source: Node.js `^20.19.0 || >=22.12.0` and npm.
 
-## Compatibility & Supported Agents
-
-AI Artifacts connects to your favorite AI coding agents using the Model Context Protocol (MCP) and shared agent skills:
-
-| AI / Environment                     | Integration Type                   | Supported Features                                       |
-| :----------------------------------- | :--------------------------------- | :------------------------------------------------------- |
-| **Codex** (VS Code)                  | Native MCP (`config.toml`) + Skill | Full lifecycle, auto-open editor, Proceed execution      |
-| **Cursor**                           | MCP Server (`mcp.json`) + Skill    | Multi-round review, inline annotations, waiter reconnect |
-| **Windsurf** (Cascade)               | MCP Server (`mcp_config.json`)     | Plan review, inline feedback via MCP                     |
-| **Claude (VS Code Extension / MCP)** | MCP Server / Tool Integration      | Artifact creation, inspection, round advancement         |
-
 ## Getting started
 
 ### 1. Install the extension
 
 - **From Marketplace / Open VSX:** Search for `AI Artifacts` in the Extensions view (`Ctrl+Shift+X` / `Cmd+Shift+X`) and click **Install**.
-- **From VSIX release:** Download the latest [AI Artifacts VSIX](releases/ai-artifacts-0.9.2.vsix) and run:
+- **From VSIX release:** Download the latest [AI Artifacts VSIX](releases/ai-artifacts-0.9.3.vsix) and run:
   ```powershell
-  code --install-extension releases/ai-artifacts-0.9.2.vsix
+  code --install-extension releases/ai-artifacts-0.9.3.vsix
   # Or in Cursor:
-  cursor --install-extension releases/ai-artifacts-0.9.2.vsix
+  cursor --install-extension releases/ai-artifacts-0.9.3.vsix
   ```
 
 To build the VSIX yourself from source, follow [Development](#development) below.
@@ -50,6 +45,7 @@ Open the Command Palette (`Ctrl+Shift+P` on Windows/Linux or `Cmd+Shift+P` on ma
   - **`AI Artifacts: Install Integration for Claude`**: Automatically configures `~/.claude.json`.
   - **`AI Artifacts: Install Integration for Windsurf`**: Automatically configures `~/.codeium/windsurf/mcp_config.json`.
 - Or run **`AI Artifacts: Copy MCP Configuration JSON`** to copy the ready-to-use JSON configuration snippet directly to your clipboard to paste into any MCP-compatible editor.
+- Or run **`AI Artifacts: Copy create-review-artifact Skill Markdown`** to copy the full agent review skill instructions directly to your clipboard to paste into custom agent prompts, system instructions, or skill files.
 
 ```text
 # Centralized runtime & skill assets:
@@ -69,7 +65,29 @@ After installing or upgrading:
 3. Start a fresh chat conversation to load the newly registered MCP tools and skill.
 4. Verify readiness by running **AI Artifacts: Verify All Integrations** from the Command Palette.
 
-### 4. Uninstalling and cleanup
+### 4. Verification & troubleshooting
+
+To ensure AI Artifacts is ready, verify the two core components (**MCP** and **Skills**):
+
+#### 1. Automated check via command
+
+Run **`AI Artifacts: Verify All Integrations`** from the Command Palette (`Ctrl+Shift+P` / `Cmd+Shift+P`):
+
+- **Skill (.agents):** Must report **Ready** (confirms `create-review-artifact` is deployed to `~/.agents/skills/`).
+- **Base (.vscode):** Must report **Ready** (confirms central MCP runtime server is deployed to `~/.vscode/ai-artifacts/`).
+- **Clients:** Shows detected configuration state for each AI editor.
+
+#### 2. Agent customization check (or manual setup)
+
+If the verify command reports `missing` (or you prefer manual setup), check directly in your Agent's **Customization / Settings** view:
+
+- **MCP Server:** Confirm `ai_artifacts` is enabled with tools like `create_artifact` and `inspect_artifact`. If missing, run **`AI Artifacts: Copy MCP Configuration JSON`** from the Command Palette and paste the snippet into your agent's MCP settings.
+- **Skills:** Confirm `create-review-artifact` is available (type `$create-review-artifact` in chat or check active skills). If missing, run **`AI Artifacts: Copy create-review-artifact Skill Markdown`** to copy the skill instructions directly to your clipboard, configure your agent to load skills from `~/.agents/skills/`, or copy `~/.agents/skills/create-review-artifact/` into your agent/workspace skills directory.
+
+> [!NOTE]
+> **Prerequisites:** Requires **Node.js** in `PATH` to run the MCP server. Always reload the window and start a fresh chat turn after changing configurations.
+
+### 5. Uninstalling and cleanup
 
 AI Artifacts provides two comprehensive ways to remove MCP configurations and runtime assets:
 
@@ -81,7 +99,18 @@ AI Artifacts provides two comprehensive ways to remove MCP configurations and ru
 > [!IMPORTANT]
 > **Zero Project Data Loss:** Neither uninstall method will ever touch or delete your project repositories' `.ai-artifacts/` or `.codex-artifacts/` review history and documents.
 
-### 5. Ask your AI to create a review artifact
+### Compatibility & Supported Agents
+
+AI Artifacts connects to your favorite AI coding agents using the Model Context Protocol (MCP) and shared agent skills:
+
+| AI / Environment                     | Integration Type                   | Supported Features                                       |
+| :----------------------------------- | :--------------------------------- | :------------------------------------------------------- |
+| **Codex** (VS Code)                  | Native MCP (`config.toml`) + Skill | Full lifecycle, auto-open editor, Proceed execution      |
+| **Cursor**                           | MCP Server (`mcp.json`) + Skill    | Multi-round review, inline annotations, waiter reconnect |
+| **Windsurf** (Cascade)               | MCP Server (`mcp_config.json`)     | Plan review, inline feedback via MCP                     |
+| **Claude (VS Code Extension / MCP)** | MCP Server / Tool Integration      | Artifact creation, inspection, round advancement         |
+
+### 6. Ask your AI to create a review artifact
 
 In your AI chat (Codex, Cursor, etc.), request a review artifact for your task:
 
@@ -104,7 +133,7 @@ The AI agent calls the MCP `create_artifact` tool, which generates an isolated r
 
 By default, the custom **Artifact Review** editor opens automatically as soon as the artifact is created. This behavior is controlled by the `agentPlus.autoOpenArtifactReview` setting (defaults to `true`).
 
-### 6. Review, annotate, and drive execution
+### 7. Review, annotate, and drive execution
 
 1. **Highlight text:** Select any paragraph, heading, list item, quote, code block, or table cell.
 2. **Add inline comments:** Type your feedback in the floating comment popover and click **Save**.
@@ -174,7 +203,7 @@ Press `F5` to launch an Extension Development Host. Package and install locally:
 
 ```powershell
 npm run package
-code --install-extension releases/ai-artifacts-0.9.2.vsix
+code --install-extension releases/ai-artifacts-0.9.3.vsix
 ```
 
 ## Documentation

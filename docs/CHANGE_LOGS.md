@@ -14,6 +14,40 @@ Minor typos, formatting fixes, or cosmetic wording adjustments that do not chang
 
 Each entry includes the date, category, summary of changes, rationale, and affected components or files.
 
+## 2026-09-11 — Skill Copy Command and Independent Skill Verification
+
+### Changes
+
+- Registered Command Palette command `agentPlus.copyReviewSkill` (`AI Artifacts: Copy create-review-artifact Skill Markdown`) to copy the bundled agent review skill directly to the clipboard.
+- Decoupled Agent Skill verification (`skillAssetsAreCurrent`) from MCP server script verification (`baseScriptIsCurrent`) in `src/extension/workspace-integration-v4.ts`.
+- Updated `checkAllIntegrations` signature and return contract to independently report `skillCurrent` alongside `baseCurrent`.
+- Updated `agentPlus.verifyGlobalIntegration` notification to prioritize Skill status first, before Base runtime and Client status.
+- Re-architected Codex TOML configuration parser in `src/extension/mcp-config.ts` using Table-Aware Section Scanning (`findManagedBlockBounds`) and semantic key validation (`hasManagedCodexArtifactsMcp`), eliminating fragile literal string comparisons and fixing false-negative `missing` reports caused by displaced comment markers.
+- Hardened `stripBlock` and `removeCodexArtifactsMcp` against configuration data loss by stopping block removal at the first unrelated table header and pruning orphaned end markers.
+- Updated `README.md` documentation covering manual skill setup and the updated verification checklist order.
+- Added unit test suites `test/workspace-integration.test.ts` and extended `test/mcp-config.test.ts` and `test/mcp-client-drivers.test.ts`.
+- Bumped extension version to `0.9.3`.
+
+### Rationale
+
+- Provides an immediate manual fallback for users whose AI environments do not automatically pick up global skills from `~/.agents/skills/`.
+- Gives users clear, distinct visibility into whether the Agent Skill is deployed and up to date, eliminating false confidence when only the MCP server script was ready.
+- Eliminates false-negative Codex detection and prevents catastrophic deletion of intervening configurations (`node_repl`, `desktop`, `plugins`) when external tools/formatters move comments.
+
+### Affected components and files
+
+- `package.json`
+- `src/extension/workspace-integration-v4.ts`
+- `src/extension/extension.ts`
+- `src/extension/mcp-config.ts`
+- `src/extension/mcp-clients/codex-client.ts`
+- `README.md`
+- `test/workspace-integration.test.ts`
+- `test/mcp-config.test.ts`
+- `test/mcp-client-drivers.test.ts`
+- `CHANGE_LOGS.md`
+- `docs/CHANGE_LOGS.md`
+
 ## 2026-09-09 — MCP Client Uninstallation Engine (Dual Hook & Command Support)
 
 ### Changes

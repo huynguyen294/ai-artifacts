@@ -22,10 +22,7 @@ export function getCodexHome(): string {
 }
 
 function configurationConflict(config: string): string | undefined {
-  const withoutManaged = config.replace(
-    /# >>> (?:Codex|AI) Artifacts review MCP >>>[\s\S]*?# <<< (?:Codex|AI) Artifacts review MCP <<</g,
-    "",
-  );
+  const withoutManaged = removeCodexArtifactsMcp(config);
   return /^\s*\[mcp_servers\.(?:ai_artifacts|codex_artifacts)\]\s*$/m.test(withoutManaged)
     ? "config.toml defines mcp_servers.ai_artifacts outside the extension-managed block."
     : undefined;

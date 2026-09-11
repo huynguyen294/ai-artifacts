@@ -3,7 +3,7 @@
   "displayName": "AI Artifacts - Interactive Planning & Review",
   "publisher": "huynguyen294",
   "description": "Interactive review editor for AI-generated planning artifacts, markdown specs, and proposals. Connects via MCP to Cursor, Codex, Windsurf, Claude, and more.",
-  "version": "0.9.2",
+  "version": "0.9.3",
   "type": "module",
   "license": "MIT",
   "icon": "media/icon.png",
@@ -45,6 +45,7 @@
     "onCommand:agentPlus.installClaudeIntegration",
     "onCommand:agentPlus.installWindsurfIntegration",
     "onCommand:agentPlus.copyMcpConfig",
+    "onCommand:agentPlus.copyReviewSkill",
     "onCommand:agentPlus.verifyGlobalIntegration",
     "onCommand:agentPlus.uninstallAllIntegrations",
     "onCommand:agentPlus.uninstallCopilotIntegration",
@@ -87,6 +88,10 @@
       {
         "command": "agentPlus.copyMcpConfig",
         "title": "AI Artifacts: Copy MCP Configuration JSON"
+      },
+      {
+        "command": "agentPlus.copyReviewSkill",
+        "title": "AI Artifacts: Copy create-review-artifact Skill Markdown"
       },
       {
         "command": "agentPlus.verifyGlobalIntegration",

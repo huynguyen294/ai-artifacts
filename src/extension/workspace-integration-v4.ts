@@ -71,22 +71,31 @@ async function sameFile(left: string, right: string): Promise<boolean> {
   }
 }
 
-export async function baseAssetsAreCurrent(paths: BaseIntegrationPaths): Promise<boolean> {
+export async function skillAssetsAreCurrent(paths: BaseIntegrationPaths): Promise<boolean> {
   const skillFiles = [
     "SKILL.md",
     path.join("references", "artifact-contract.md"),
     path.join("agents", "openai.yaml"),
   ];
-  const checks = [
-    sameFile(paths.sourceMcpScript, paths.targetMcpScript),
-    ...skillFiles.map((relativePath) =>
-      sameFile(
-        path.join(paths.sourceSkill, relativePath),
-        path.join(paths.targetSkill, relativePath),
-      ),
+  const checks = skillFiles.map((relativePath) =>
+    sameFile(
+      path.join(paths.sourceSkill, relativePath),
+      path.join(paths.targetSkill, relativePath),
     ),
-  ];
+  );
   return (await Promise.all(checks)).every(Boolean);
+}
+
+export async function baseScriptIsCurrent(paths: BaseIntegrationPaths): Promise<boolean> {
+  return sameFile(paths.sourceMcpScript, paths.targetMcpScript);
+}
+
+export async function baseAssetsAreCurrent(paths: BaseIntegrationPaths): Promise<boolean> {
+  const [skillCurrent, scriptCurrent] = await Promise.all([
+    skillAssetsAreCurrent(paths),
+    baseScriptIsCurrent(paths),
+  ]);
+  return skillCurrent && scriptCurrent;
 }
 
 export async function setupBaseMcpServer(
@@ -126,6 +135,17 @@ export function getMcpConfigSnippet(context: vscode.ExtensionContext): string {
     },
   };
   return JSON.stringify(snippet, null, 2);
+}
+
+export async function getReviewSkillMarkdown(context: vscode.ExtensionContext): Promise<string> {
+  const paths = getBaseIntegrationPaths(context);
+  const skillFile = path.join(paths.sourceSkill, "SKILL.md");
+  try {
+    return await fs.readFile(skillFile, "utf8");
+  } catch {
+    const fallback = path.join(paths.targetSkill, "SKILL.md");
+    return await fs.readFile(fallback, "utf8");
+  }
 }
 
 // 1. All detected
@@ -260,11 +280,15 @@ export type ClientVerificationReport = {
 export async function checkAllIntegrations(
   context: vscode.ExtensionContext,
 ): Promise<{
+  skillCurrent: boolean;
   baseCurrent: boolean;
   clients: ClientVerificationReport[];
 }> {
   const paths = getBaseIntegrationPaths(context);
-  const baseCurrent = await baseAssetsAreCurrent(paths);
+  const [skillCurrent, baseCurrent] = await Promise.all([
+    skillAssetsAreCurrent(paths),
+    baseScriptIsCurrent(paths),
+  ]);
   const copilotConfigPath = getCopilotConfigPath(context);
   const drivers = getAllClientDrivers(copilotConfigPath);
   const clients: ClientVerificationReport[] = [];
@@ -281,7 +305,7 @@ export async function checkAllIntegrations(
     });
   }
 
-  return { baseCurrent, clients };
+  return { skillCurrent, baseCurrent, clients };
 }
 
 // Backward compatibility methods for existing tests and callers

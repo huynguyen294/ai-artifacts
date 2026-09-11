@@ -4,6 +4,27 @@ All notable changes to the **AI Artifacts** (`agent-plus`) project will be docum
 
 Release history has been standardized and tracked starting from version **0.2.6**. Package builds prior to this version are not considered part of the official changelog.
 
+## [0.9.3] - 2026-09-11
+
+### Skill Copy Command & Independent Skill Verification
+
+- **Dedicated Copy Skill Command**:
+  - Registered Command Palette command `agentPlus.copyReviewSkill` with title `AI Artifacts: Copy create-review-artifact Skill Markdown`.
+  - Copies the full `SKILL.md` markdown content directly to the clipboard, providing an immediate manual setup method for AI Agents that do not automatically discover global skills.
+- **Independent Skill Verification**:
+  - Decoupled Agent Skill verification from base MCP server script checking in `src/extension/workspace-integration-v4.ts`.
+  - Added dedicated `skillAssetsAreCurrent` and `baseScriptIsCurrent` verifiers.
+  - `checkAllIntegrations` independently reports `skillCurrent` alongside `baseCurrent`.
+  - Updated `AI Artifacts: Verify All Integrations` notification to prioritize Skill status first: `AI Artifacts Skill (.agents): Ready. Base (.vscode): Ready. Clients: [...]`.
+- **Table-Aware Codex TOML Scanner & Data Loss Prevention**:
+  - Refactored `hasManagedCodexArtifactsMcp`, `withoutManagedBlock`, and `stripBlock` in `src/extension/mcp-config.ts` to use TOML table boundary detection and semantic validation instead of brittle marker string equality.
+  - Fixes false-negative `missing (detected)` status for Codex when external TOML formatters or Codex CLI displace the closing marker comment.
+  - Eliminates data loss risk by guaranteeing intervening TOML sections (`[mcp_servers.node_repl]`, `[desktop]`, `[plugins]`) are preserved during uninstallation or upsert operations.
+- **Documentation & Verification Workflow**:
+  - Updated `README.md` with the new command and the refined Verification & Troubleshooting checklist.
+- **Automated Tests**:
+  - Added unit tests in `test/workspace-integration.test.ts`, `test/mcp-config.test.ts`, and `test/mcp-client-drivers.test.ts` (108/108 tests passing).
+
 ---
 
 ## [0.9.2] - 2026-09-09

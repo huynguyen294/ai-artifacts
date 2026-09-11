@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   CODEX_ARTIFACTS_MCP_TIMEOUT_SECONDS,
   hasManagedCodexArtifactsMcp,
+  removeCodexArtifactsMcp,
   upsertCodexArtifactsMcp,
 } from "../src/extension/mcp-config";
 
@@ -61,5 +62,60 @@ describe("Codex Artifacts MCP config", () => {
       '[mcp_servers.codex_artifacts]\ncommand = "custom"\n',
       "/tmp/review-wait-mcp.mjs",
     )).toThrow("outside the managed");
+  });
+
+  it("handles displaced closing marker caused by TOML formatters and preserves intervening tables", () => {
+    const displacedConfig = [
+      'model = "gpt-5.6-sol"',
+      "",
+      "# >>> AI Artifacts review MCP >>>",
+      "[mcp_servers.ai_artifacts]",
+      'command = "node"',
+      'args = ["C:\\\\Users\\\\Admin\\\\.vscode\\\\ai-artifacts\\\\ai-artifacts-review-mcp.mjs"]',
+      "tool_timeout_sec = 3600",
+      'default_tools_approval_mode = "approve"',
+      "",
+      "[mcp_servers.ai_artifacts.tools.resolve_artifact_workspace]",
+      'approval_mode = "approve"',
+      "",
+      "[mcp_servers.ai_artifacts.tools.create_artifact]",
+      'approval_mode = "approve"',
+      "",
+      "[mcp_servers.ai_artifacts.tools.wait_for_artifact_review]",
+      'approval_mode = "approve"',
+      "",
+      "[mcp_servers.ai_artifacts.tools.inspect_artifact_review]",
+      'approval_mode = "approve"',
+      "",
+      "[mcp_servers.ai_artifacts.tools.advance_and_wait_for_artifact]",
+      'approval_mode = "approve"',
+      "",
+      "[mcp_servers.node_repl]",
+      'command = "node_repl.exe"',
+      "",
+      '[plugins."test-plugin@bundled"]',
+      "enabled = true",
+      "# <<< AI Artifacts review MCP <<<",
+    ].join("\n");
+
+    const scriptPath = "C:/Users/Admin/.vscode/ai-artifacts/ai-artifacts-review-mcp.mjs";
+
+    // 1. Check recognizes the config as ready despite displaced marker and slash differences
+    expect(hasManagedCodexArtifactsMcp(displacedConfig, scriptPath)).toBe(true);
+
+    // 2. Removal preserves unrelated intervening tables (node_repl, plugins) and cleans orphaned end marker
+    const cleaned = removeCodexArtifactsMcp(displacedConfig);
+    expect(cleaned).toContain('model = "gpt-5.6-sol"');
+    expect(cleaned).toContain("[mcp_servers.node_repl]");
+    expect(cleaned).toContain('[plugins."test-plugin@bundled"]');
+    expect(cleaned).not.toContain("[mcp_servers.ai_artifacts]");
+    expect(cleaned).not.toContain("AI Artifacts review MCP");
+
+    // 3. Upsert preserves unrelated tables and re-emits a clean block
+    const updated = upsertCodexArtifactsMcp(displacedConfig, "D:/new/path/ai-artifacts-review-mcp.mjs");
+    expect(updated).toContain("[mcp_servers.node_repl]");
+    expect(updated).toContain('[plugins."test-plugin@bundled"]');
+    expect(updated).toContain("[mcp_servers.ai_artifacts]");
+    expect(hasManagedCodexArtifactsMcp(updated, "D:/new/path/ai-artifacts-review-mcp.mjs")).toBe(true);
   });
 });
