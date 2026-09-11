@@ -213,7 +213,7 @@ code --install-extension releases/ai-artifacts-0.9.3.vsix
 - [Components and responsibilities](docs/COMPONENTS.md) — detailed component and ownership map.
 - [Project instructions](docs/INSTRUCTION.md) — contributor invariants, workflow, and validation requirements.
 - [Artifact contract](skills/create-review-artifact/references/artifact-contract.md) — exact skill and MCP lifecycle contract.
-- [Change logs](CHANGE_LOGS.md) — release history.
+- [Changelog](CHANGELOG.md) — release history.
 - [Documentation change logs](docs/CHANGE_LOGS.md) — meaningful documentation and architecture decisions.
 - [Known follow-up work](TODO.md) — current improvement backlog.
 - [MIT License](LICENSE) — project license.

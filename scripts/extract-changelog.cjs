@@ -90,7 +90,7 @@ function findHeaderIndex(content, version, fromIndex = 0) {
 
 function extractChangelog() {
   const version = getTargetVersion();
-  const changelogPath = path.resolve(__dirname, '../CHANGE_LOGS.md');
+  const changelogPath = path.resolve(__dirname, '../CHANGELOG.md');
   const outputPath = path.resolve(__dirname, '../RELEASE_NOTES.md');
 
   // Export RELEASE_TAG to GITHUB_ENV so subsequent workflow steps can use it
@@ -115,7 +115,7 @@ function extractChangelog() {
   // Start index at target version header
   const startIndex = findHeaderIndex(content, version);
   if (startIndex === -1) {
-    console.warn(`[extract-changelog] Could not find section for version [${version}] in CHANGE_LOGS.md`);
+    console.warn(`[extract-changelog] Could not find section for version [${version}] in CHANGELOG.md`);
     fs.writeFileSync(outputPath, `Release ${process.env.GITHUB_REF_NAME || version}\n`, 'utf8');
     return;
   }

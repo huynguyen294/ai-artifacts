@@ -10,7 +10,7 @@ Changes documented here include:
 - Workspace rules, filesystem safety, compatibility, or migration paths.
 - Content in instructions or documentation that modifies how humans or AI understand and work on the project.
 
-Minor typos, formatting fixes, or cosmetic wording adjustments that do not change technical semantics do not need to be recorded here. Versioned release notes are kept in `CHANGE_LOGS.md` at the repository root; this file focuses on behavior, architecture, and documentation decisions, even when not tied to an immediate release.
+Minor typos, formatting fixes, or cosmetic wording adjustments that do not change technical semantics do not need to be recorded here. Versioned release notes are kept in `CHANGELOG.md` at the repository root; this file focuses on behavior, architecture, and documentation decisions, even when not tied to an immediate release.
 
 Each entry includes the date, category, summary of changes, rationale, and affected components or files.
 

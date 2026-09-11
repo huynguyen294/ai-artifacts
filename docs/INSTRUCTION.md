@@ -17,7 +17,7 @@ Before changing behavior, read the smallest relevant set in this order:
 2. `docs/ARCHITECTURE.md` for current boundaries and safety invariants.
 3. `skills/create-review-artifact/SKILL.md` and its referenced contract for agent behavior.
 4. The implementation and tests for the area being changed.
-5. `CHANGE_LOGS.md` and `TODO.md` for recent migration context and known follow-up work.
+5. `CHANGELOG.md` and `TODO.md` for recent migration context and known follow-up work.
 
 `plans/`, `ASSESSMENT.md`, and `HIGHLIGHTS.md` may describe historical designs or older snapshots. Do not treat them as the current architecture without verifying them against the files above.
 

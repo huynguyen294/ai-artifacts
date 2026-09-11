@@ -1,4 +1,4 @@
-# Change Logs
+# Changelog
 
 All notable changes to the **AI Artifacts** (`agent-plus`) project will be documented in this file.
 

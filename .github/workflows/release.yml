@@ -42,7 +42,7 @@ jobs:
       - name: Build & Package VSIX
         run: npm run package
 
-      - name: Extract Release Notes from CHANGE_LOGS.md
+      - name: Extract Release Notes from CHANGELOG.md
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           INPUT_TAG: ${{ github.event.inputs.tag }}
