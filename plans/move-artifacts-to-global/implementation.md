@@ -263,6 +263,14 @@ Chuyển shared contract, MCP producer và extension store consumer sang v5 tron
 - test/mcp-config.test.ts
 - test/workspace-integration.test.ts
 
+### Quy tắc triển khai atomic
+
+- Các mục 2A–2E là internal checkpoints để giới hạn blast radius và giúp chẩn đoán lỗi; chúng không phải các phase có thể merge, release hoặc handoff độc lập.
+- Extension release target là `1.0.0`; MCP server target được khóa là `7.0.0`.
+- Có thể tạo local checkpoint trong quá trình làm, nhưng chỉ tạo commit Phase 2 hoàn chỉnh sau khi gate 2E pass.
+- Trạng thái trung gian có thể chưa typecheck hoặc chưa chạy end-to-end; không được cài vào integration thật hay chuyển sang Phase 3.
+- Nếu dừng hoặc rollback, quay lại checkpoint Phase 1 đã commit; không giữ lại một phần contract v5 trong source/runtime.
+
 ### Work package 2A — Shared contract v5-only
 
 - ARTIFACT_SCHEMA_VERSION: 4 → 5.
@@ -284,20 +292,21 @@ Expected:
 - Không thêm compatibility shim để làm im lỗi.
 - Full typecheck chỉ chạy sau khi hoàn thành 2B và 2C trong cùng atomic cutover.
 
-### Work package 2B — MCP create/load global
+### Work package 2B1 — MCP global create/load
 
 - Giữ resolver imports/constants/grants/handlers và toàn bộ selection-token behavior hiện tại.
 - `CreateArtifactInput` tiếp tục nhận `workspaceRoot`, `workspaceEvidence`, `title`, `kind` và `markdown`.
 - Resolve và validate workspace evidence trước mutation như hiện tại.
 - `safeArtifactCollectionRoot()` dùng global root thay vì đặt collection dưới workspace.
 - `persistArtifact()` vẫn nhận canonical `workspaceRoot` để ghi `location.workspaceRoot`, nhưng không dùng nó để tính storage path và không dùng `process.cwd()`.
+- Artifact directory được tạo owner-only dưới exact global collection root; collision retry và create rollback chỉ thao tác trên directory vừa cấp phát.
 - `loadArtifactContext()` dùng exact handle + global containment, rồi revalidate manifest workspace qua registry như behavior hiện tại.
 - Giữ `workspaceRoot` trong context/result.
 - `tools/list` tiếp tục có 5 tools.
-- Bump MCP server major version và chốt version đích cụ thể trước implementation.
+- Bump MCP server từ `6.0.0` lên target đã khóa `7.0.0`.
 - Creation result tiếp tục trả `artifactUrl` và `artifactLink`; `artifactLink` là regular file link, không phải deep link và không bảo đảm custom editor.
 
-#### Verification 2B
+#### Verification 2B1
 
 ```powershell
 npm.cmd run build:integration
@@ -317,6 +326,24 @@ Protocol checks:
 - Create collision retry vẫn hoạt động.
 - Failure sau manifest write rollback đúng directory.
 
+Không coi 2B1 là pass độc lập nếu lifecycle mutation ở 2B2 chưa dùng cùng global-path/permission contract.
+
+### Work package 2B2 — MCP lifecycle transaction và permissions
+
+- Áp dụng global lexical assertion và async `lstat`/`realpath` validation ngay trước mọi lifecycle read/write.
+- Validate manifest, Markdown, comments, submission, lock, staging và backup targets bằng managed-file allowlist.
+- Create, staged writes và lock files dùng POSIX mode `0600`; artifact directory dùng `0700`.
+- Backup bằng rename/copy, staged replacement, rollback và Windows editor-lock fallback không được làm rộng target permission.
+- Existing managed POSIX file có permission rộng phải được siết an toàn hoặc fail trước mutation.
+- Giữ transaction order, rollback semantics, waiter ownership và round-token state binding hiện tại.
+
+#### Verification 2B2
+
+```powershell
+npm.cmd run build:integration
+npx.cmd vitest run test/global-artifact-path.test.ts test/review-wait-mcp.test.ts
+```
+
 Lifecycle regression:
 
 - create → wait.
@@ -327,21 +354,64 @@ Lifecycle regression:
 - round token expiry/replay/concurrency/state binding.
 - transaction rollback.
 - Windows editor-lock fallback.
+- Linked lifecycle/lock/staging/backup target fail trước read/write/copy fallback.
+- Sau successful advance hoặc rollback, POSIX target files vẫn là `0600` và không còn lock/staging/backup rác.
 
-### Work package 2C — Extension store v5 consumer
+### Work package 2C1 — Extension Store load và validation
 
 - ArtifactStore.load() parse v5-only.
-- Comment/submission writes dùng global lexical + async filesystem assertion.
 - Giữ reviewRound, artifact SHA, comments SHA và reviewSessionId validation.
 - Giữ `location.workspaceRoot` trong ReviewState; nó không được dùng để suy ra artifact directory.
 - Schema v3/v4 trả unsupported error; không mở read-only.
+- Trước khi đọc manifest, Markdown, comments, submission hoặc quan sát lock, Store validate exact global artifact directory và từng managed file path.
 
-#### Verification 2C
+#### Verification 2C1
+
+```powershell
+npm.cmd run check
+npx.cmd vitest run test/artifact-store.test.ts
+npm.cmd run build:extension
+```
+
+Negative cases:
+
+- v3/v4 reject.
+- Modified artifact.md reject vì hash mismatch.
+- Wrong session/round reject.
+- Artifact path ngoài global root reject.
+- Lifecycle file hoặc lock path là symlink/junction bị reject trước read.
+
+### Work package 2C2 — Extension Store writes và permissions
+
+- Comment/submission writes dùng global lexical + async filesystem assertion trước mutation.
+- Temporary files được tạo `0600`; rename, hard-link/copy fallback và replacement không làm rộng permission.
+- Revalidate managed source/target ngay sát thao tác; target bị thay bằng link hoặc non-regular file phải fail closed.
+- Giữ create-once submission semantics, comments atomic replace retry và Windows lock/copy fallback hiện tại.
+
+#### Verification 2C2
+
+```powershell
+npm.cmd run check
+npx.cmd vitest run test/global-artifact-path.test.ts test/artifact-store.test.ts
+npm.cmd run build:extension
+```
+
+Write checks:
+
+- Comment add/remove và revise/approve/save vẫn đúng binding.
+- Symlink/junction tại comments, submission hoặc temporary target bị reject trước mutation.
+- Comment/submission writes và copy/rename replacement giữ POSIX file mode `0600`.
+- Failed write không để lại temporary file và không thay đổi lifecycle state hợp lệ trước đó.
+
+### Work package 2C3 — MCP ↔ Extension Store round-trip
+
+Chạy một contract fixture xuyên producer và consumer thay vì chỉ chứng minh từng component riêng lẻ.
+
+#### Verification 2C3
 
 ```powershell
 npm.cmd run check
 npx.cmd vitest run test/artifact-store.test.ts test/review-wait-mcp.test.ts
-npm.cmd run build:extension
 ```
 
 Cross-component test:
@@ -353,54 +423,70 @@ Cross-component test:
 5. MCP waiter nhận submission hợp lệ.
 6. Advance round và load lại bằng store.
 
-Negative cases:
+Cross-boundary negative cases:
 
-- v3/v4 reject.
-- Modified artifact.md reject vì hash mismatch.
-- Wrong session/round reject.
-- Artifact path ngoài global root reject.
 - Workspace registration stale/missing reject theo behavior hiện tại.
-- Lifecycle file symlink/junction reject trước read hoặc write.
-- Comment/submission writes và transaction replacement giữ POSIX file mode `0600`.
+- Producer và consumer dùng hai global roots khác nhau phải fail thay vì suy đoán hoặc scan.
+- Producer/consumer schema, review session, round hoặc hash lệch phải fail closed.
+- Toàn bộ fixture dùng temp home và không tạo file dưới real user home.
 
-### Work package 2D — Production skill, MCP config và installed-asset contract
+### Work package 2D1 — Production skill và artifact contract
 
 - Cập nhật production skill và artifact contract trong cùng cutover:
   - Giữ resolver/5-tool availability check và workspace-selection rules.
   - Mô tả schema v5, global artifact directory và `location.workspaceRoot` là target metadata.
   - Giữ create input với workspaceRoot/workspaceEvidence/title/kind/markdown.
   - Mô tả artifactLink là regular file link, không phải deep link/custom-editor guarantee.
+- Không thay đổi trigger boundary, exact-handle rules, feedback policy, recovery flow hoặc Proceed execution semantics.
+
+#### Verification 2D1
+
+```powershell
+npx.cmd vitest run test/skill-contract.test.ts
+```
+
+Contract checks:
+
+- Production skill và contract không còn mô tả workspace-local artifact storage hoặc schema v4.
+- Production skill vẫn yêu cầu resolver và đúng 5 tools.
+- Sau create, wait/inspect/advance chỉ dùng exact global handle; không yêu cầu resolver lần nữa và không scan “latest artifact”.
+- `artifactLink` được mô tả rõ là regular file link, không phải deep link hay custom-editor guarantee.
+
+### Work package 2D2 — MCP config, bundle và temp-installed assets
+
 - Verify Codex MCP config/allowlist tiếp tục khai báo đúng 5 tools; không thêm hoặc bỏ tool trong cutover này.
 - Build bundled MCP và dùng temp-home fixture để install source MCP/skill.
 - Verify installed bundle, installed skill và configured tool surface khớp source trước khi Phase 2 được qua gate.
 - Không sửa trực tiếp global integration thật; mọi end-to-end installation check dùng temp home/config.
 
-#### Verification 2D
+#### Verification 2D2
 
 ```powershell
-npx.cmd vitest run test/skill-contract.test.ts test/mcp-config.test.ts test/workspace-integration.test.ts
+npx.cmd vitest run test/mcp-config.test.ts test/workspace-integration.test.ts
 npm.cmd run build
 ```
 
 Contract/integration checks:
 
-- Production skill và contract không còn mô tả workspace-local artifact storage hoặc schema v4.
-- Production skill vẫn yêu cầu resolver và đúng 5 tools.
 - Temp-installed MCP bundle/skill byte-match source build/assets.
 - Config allowlist có đúng resolver, create, wait, inspect và advance-and-wait.
 - Temp-installed tool catalog tạo được artifact v5 global và Extension Store đọc/submit được cùng artifact.
 
-### Điều kiện qua gate Phase 2
+### Work package 2E — Atomic final gate
+
+2E không thêm behavior mới. Mục đích là chứng minh toàn bộ 2A–2D2 tạo thành một cutover unit nhất quán và không để trạng thái trung gian lọt sang Phase 3.
+
+#### Điều kiện qua gate Phase 2
 
 ```powershell
 npm.cmd run check
-npx.cmd vitest run test/artifact-contracts.test.ts test/artifact-store.test.ts test/review-wait-mcp.test.ts test/skill-contract.test.ts test/mcp-config.test.ts test/workspace-integration.test.ts
+npx.cmd vitest run test/artifact-contracts.test.ts test/global-artifact-path.test.ts test/artifact-store.test.ts test/review-wait-mcp.test.ts test/skill-contract.test.ts test/mcp-config.test.ts test/workspace-integration.test.ts
 npm.cmd run build:integration
 npm.cmd run build:extension
 npm.cmd run build
 ```
 
-Tất cả pass. Không được sang Phase 3 nếu shared schema, MCP, ArtifactStore, production skill/contract, config allowlist và temp-installed assets chưa hoàn thành round-trip v5/global-storage end-to-end.
+Tất cả pass. Chỉ khi đó mới tạo commit Phase 2 hoàn chỉnh. Không được merge, handoff, cài integration thật hoặc sang Phase 3 nếu shared schema, MCP, ArtifactStore, production skill/contract, config allowlist và temp-installed assets chưa hoàn thành round-trip v5/global-storage end-to-end.
 
 ### Đánh giá ổn định
 
