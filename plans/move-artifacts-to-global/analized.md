@@ -1,13 +1,13 @@
 # Breaking Change: Chuyển AI Artifact Storage sang `~/.ai-artifacts/`
 
 > **Chiến lược**: Breaking change — không migration artifacts cũ, không backward compatibility.
-> **Phạm vi**: Loại bỏ hoàn toàn Workspace Registry, workspace evidence/token, lưu trữ cục bộ workspace. Giữ nguyên MCP Client Drivers, Uninstall Engine, Webview UI, Build pipeline.
+> **Phạm vi**: Loại bỏ hoàn toàn Workspace Registry, workspace evidence/token, workspace metadata và lưu trữ cục bộ workspace. Artifact là dữ liệu global, chỉ cửa sổ VS Code đang focused được auto-open. Giữ nguyên lifecycle review, MCP Client Drivers, Uninstall Engine, Webview UI và Build pipeline.
 
 ---
 
 ## 1. Hiện trạng & Mục tiêu
 
-### As-Is (v0.9.2, schema v4)
+### As-Is (v0.9.3, schema v4)
 ```text
 <workspaceRoot>/.ai-artifacts/artifacts/<artifact-id>/
 ├── artifact.json     # manifest có location.workspaceRoot
@@ -23,7 +23,7 @@
 ### To-Be (v1.0.0, schema v5)
 ```text
 ~/.ai-artifacts/artifacts/<artifact-id>/
-├── artifact.json     # manifest không còn location, có originWorkspaceRoot tùy chọn
+├── artifact.json     # manifest thuần lifecycle, không có workspace metadata
 ├── artifact.md
 ├── comments.json
 └── review-submission.json
@@ -31,7 +31,9 @@
 - MCP Server expose **4 tools**: `create_artifact` → `wait` → `inspect` → `advance_and_wait`
 - AI gọi thẳng `create_artifact({ title, kind, markdown })` — **1 bước duy nhất**
 - Extension KHÔNG chạy WorkspaceRegistryPublisher, KHÔNG heartbeat
-- Watcher dùng `fs.watch(globalArtifactsRoot(), { recursive: true })` hoặc `vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(globalUri, glob))`
+- Watcher dùng `vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(globalArtifactsRootUri, "*/comments.json"))`
+- Chỉ VS Code window có `vscode.window.state.focused === true` được auto-open artifact mới
+- Artifact cũ schema v3/v4 bị loại bỏ hoàn toàn: không migration, không read-only viewer
 
 ---
 
@@ -82,12 +84,11 @@
 
 #### A. [`src/shared/contracts.ts`](file:///d:/workspace/my-projects/agent-plus/src/shared/contracts.ts)
 - Nâng `ARTIFACT_SCHEMA_VERSION` từ `4` → `5`
-- **Thay đổi cấu trúc manifest schema**:
+- **Thay đổi cấu trúc manifest schema** — bỏ hoàn toàn workspace metadata:
   ```diff
   - location: z.object({
   -   workspaceRoot: z.string().min(1),
   - }).strict(),
-  + originWorkspaceRoot: z.string().min(1).optional(),
   ```
 - `ReviewState.artifact` chuyển từ `AnyArtifactManifest` → `ArtifactManifest` (chỉ v5)
 - `ReviewState.comments` chuyển từ `AnyCommentsDocument` → `CommentsDocument`
@@ -148,7 +149,7 @@
 
 **`safeArtifactCollectionRoot()`** — thay từ `path.join(workspaceRoot, ".ai-artifacts", "artifacts")` sang `globalArtifactsRoot()`
 
-**`persistArtifact()`** — không nhận `workspaceRoot` parameter, tự lấy `process.cwd()` gán vào `originWorkspaceRoot`
+**`persistArtifact()`** — không nhận `workspaceRoot`, không dùng `process.cwd()` và không ghi workspace metadata. Hàm chỉ resolve global root, sinh ID/session, tạo directory, ghi lifecycle files và rollback đúng directory vừa tạo nếu có lỗi.
 
 **`createArtifact()`** — bỏ `resolveCreateWorkspaceRoot()`, gọi thẳng `persistArtifact(input)`
 
@@ -177,8 +178,9 @@
 
 #### E. [`src/extension/extension.ts`](file:///d:/workspace/my-projects/agent-plus/src/extension/extension.ts)
 - **Xóa** import và khởi tạo `WorkspaceRegistryPublisher`
-- **Thay watcher**: Từ `createFileSystemWatcher("**/{.ai-artifacts,.codex-artifacts}/artifacts/**/comments.json")` sang watcher lắng nghe `globalArtifactsRoot()`
-- **Bổ sung logic lọc multi-window**: Khi watcher bắt artifact mới, đọc `originWorkspaceRoot` từ manifest, so sánh với `vscode.workspace.workspaceFolders` → chỉ auto-open nếu khớp
+- **Thay watcher**: Từ glob trong workspace sang `RelativePattern(globalArtifactsRootUri, "*/comments.json")`
+- **Lọc multi-window bằng focus**: Chỉ xử lý create event khi `vscode.window.state.focused === true`; không đọc hoặc so sánh `workspaceFolders`
+- Validate manifest/path trước khi gọi `vscode.openWith(..., ArtifactReviewProvider.viewType)`
 
 #### F. [`src/extension/artifact-store.ts`](file:///d:/workspace/my-projects/agent-plus/src/extension/artifact-store.ts)
 - `load()`: Gọi `assertArtifactDirectory()` phiên bản mới (check global path thay vì workspace path)
@@ -188,14 +190,27 @@
 - **Bổ sung concurrency guard**: `Map<string, Promise<void>>` cho dedup mở tab
 - **Bổ sung tab deduplication**: Quét `vscode.window.tabGroups.all` trước khi `openWith`
 
-#### H. Skill Contract & Docs
+#### H. Integration & MCP Config
+- [`src/extension/workspace-integration-v4.ts`](file:///d:/workspace/my-projects/agent-plus/src/extension/workspace-integration-v4.ts): Bỏ `workspacesDirectory` và việc tạo `~/.vscode/ai-artifacts/workspaces/`; giữ logic deploy MCP bundle/skill và client install/uninstall.
+- [`src/extension/mcp-config.ts`](file:///d:/workspace/my-projects/agent-plus/src/extension/mcp-config.ts): Bỏ approval block và verification requirement cho `resolve_artifact_workspace`.
+- [`src/integration/stamp-origin.ts`](file:///d:/workspace/my-projects/agent-plus/src/integration/stamp-origin.ts): Xóa source runtime nếu không còn được build/sử dụng; vẫn giữ marker/cleanup logic cần thiết trong client driver để dọn cấu hình hook cũ an toàn.
+
+#### I. Custom-editor Deep Link
+- `artifactLink` hiện là `file://` URL nên không bảo đảm mở bằng Artifact Review.
+- Tách `artifactUrl` (file URL) khỏi `reviewUrl` (VS Code deep link).
+- Extension đăng ký URI handler, validate path nằm trong global root rồi gọi `vscode.openWith(..., ArtifactReviewProvider.viewType)`.
+- Watcher gọi `openWith` trực tiếp; `reviewUrl` hoặc lệnh **Open Artifact Review** là fallback khi auto-open event bị lỡ.
+
+#### J. Skill Contract & Docs
 - [`skills/create-review-artifact/references/artifact-contract.md`](file:///d:/workspace/my-projects/agent-plus/skills/create-review-artifact/references/artifact-contract.md): Xóa `resolve_artifact_workspace`, workspace evidence, token flow. Cập nhật `create_artifact` schema mới.
 - [`skills/create-review-artifact/SKILL.md`](file:///d:/workspace/my-projects/agent-plus/skills/create-review-artifact/SKILL.md): Đồng bộ luồng AI agent — gọi thẳng `create_artifact` không qua resolve.
 - [`docs/INSTRUCTION.md`](file:///d:/workspace/my-projects/agent-plus/docs/INSTRUCTION.md): Cập nhật critical invariants — loại bỏ workspace-folder ownership rules.
 - [`docs/ARCHITECTURE.md`](file:///d:/workspace/my-projects/agent-plus/docs/ARCHITECTURE.md): Cập nhật storage architecture.
-- [`CHANGE_LOGS.md`](file:///d:/workspace/my-projects/agent-plus/CHANGE_LOGS.md): Ghi nhận breaking change v1.0.0.
+- [`docs/PHILOSOPHY.md`](file:///d:/workspace/my-projects/agent-plus/docs/PHILOSOPHY.md), [`docs/COMPONENTS.md`](file:///d:/workspace/my-projects/agent-plus/docs/COMPONENTS.md), [`README.md`](file:///d:/workspace/my-projects/agent-plus/README.md): Đồng bộ product intent, ownership và UX auto-open.
+- [`docs/CHANGE_LOGS.md`](file:///d:/workspace/my-projects/agent-plus/docs/CHANGE_LOGS.md): Ghi nhận thay đổi behavior/architecture.
+- [`CHANGELOG.md`](file:///d:/workspace/my-projects/agent-plus/CHANGELOG.md): Ghi nhận breaking release v1.0.0.
 
-#### I. Test Suite — Viết lại trọng tâm
+#### K. Test Suite — Viết lại trọng tâm
 
 | File | Thay đổi |
 | :--- | :--- |
@@ -204,6 +219,8 @@
 | [`skill-contract.test.ts`](file:///d:/workspace/my-projects/agent-plus/test/skill-contract.test.ts) | Kiểm tra contract khớp 4 tools (không còn 5). |
 | [`workspace-registry.test.ts`](file:///d:/workspace/my-projects/agent-plus/test/workspace-registry.test.ts) | **XÓA TOÀN BỘ** |
 
+Bổ sung coverage cho canonical containment, direct-child/artifactId binding, symlink/junction rejection, focused-window guard, duplicate event/tab, deep-link validation và uninstall không xóa global artifact data. Test MCP phải dùng temp global root riêng, không ghi vào home thật.
+
 ---
 
 ### 2.3. GIỮ NGUYÊN (No Change)
@@ -211,15 +228,13 @@
 | Module | File(s) | Lý do |
 | :--- | :--- | :--- |
 | **MCP Client Drivers** | [`src/extension/mcp-clients/`](file:///d:/workspace/my-projects/agent-plus/src/extension/mcp-clients/) (5 drivers) | Install/uninstall cấu hình MCP cho các AI client — không liên quan đến storage location |
-| **Uninstall Engine** | [`src/extension/uninstall-entry.ts`](file:///d:/workspace/my-projects/agent-plus/src/extension/uninstall-entry.ts), [`src/integration/stamp-origin.ts`](file:///d:/workspace/my-projects/agent-plus/src/integration/stamp-origin.ts) | Dọn dẹp cấu hình client, không đụng artifact data |
+| **Uninstall Engine** | [`src/extension/uninstall-entry.ts`](file:///d:/workspace/my-projects/agent-plus/src/extension/uninstall-entry.ts), `src/extension/mcp-clients/base-cleanup.ts` | Dọn cấu hình/runtime assets, tuyệt đối không đụng `~/.ai-artifacts/` |
 | **Webview UI** | [`src/webview/`](file:///d:/workspace/my-projects/agent-plus/src/webview/) | React components nhận state từ extension host, không biết file path |
 | **Markdown Blocks** | [`src/shared/markdown-blocks.ts`](file:///d:/workspace/my-projects/agent-plus/src/shared/markdown-blocks.ts) | Parser Markdown thuần túy, không phụ thuộc storage |
 | **Review Wait Logic** | [`src/integration/review-wait-mcp.ts`](file:///d:/workspace/my-projects/agent-plus/src/integration/review-wait-mcp.ts) | Polling/watching submission file — chỉ cần absolute path |
-| **MCP Config** | [`src/extension/mcp-config.ts`](file:///d:/workspace/my-projects/agent-plus/src/extension/mcp-config.ts) | Tạo JSON snippet cho install |
 | **Hook Config** | [`src/extension/hook-config.ts`](file:///d:/workspace/my-projects/agent-plus/src/extension/hook-config.ts) | Codex hooks.json management |
-| **Workspace Integration** | [`src/extension/workspace-integration-v4.ts`](file:///d:/workspace/my-projects/agent-plus/src/extension/workspace-integration-v4.ts) | Provisioning base runtime + client install/uninstall |
 | **Plan Review Provider** | [`src/extension/plan-review-provider.ts`](file:///d:/workspace/my-projects/agent-plus/src/extension/plan-review-provider.ts) | Custom editor cho plan files |
-| **Test: các file không liên quan** | `mcp-client-drivers.test.ts`, `mcp-config.test.ts`, `hook-config.test.ts`, `markdown-blocks.test.ts`, `markdown-renderer.test.tsx`, `review-actions.test.ts`, `selection-comment-popover.test.ts`, `url-policy.test.ts`, `global-integration-status.test.ts` | Không phụ thuộc workspace registry hay storage path |
+| **Test: các file không liên quan** | `hook-config.test.ts`, `markdown-blocks.test.ts`, `markdown-renderer.test.tsx`, `review-actions.test.ts`, `selection-comment-popover.test.ts`, `url-policy.test.ts`, `global-integration-status.test.ts` | Không phụ thuộc workspace registry hay storage path |
 
 ---
 
@@ -229,7 +244,7 @@
 graph TD
     subgraph "AI Client & MCP Server"
         AI["AI Agent (Codex / Cursor / Claude...)"] -->|"create_artifact(title, kind, markdown)"| MCP["MCP Server v5<br/>(4 tools)"]
-        MCP -->|"Ghi file + process.cwd() → originWorkspaceRoot"| STORE["~/.ai-artifacts/artifacts/<id>/"]
+        MCP -->|"Ghi lifecycle files"| STORE["~/.ai-artifacts/artifacts/<id>/"]
     end
 
     subgraph "Global Storage"
@@ -240,12 +255,15 @@ graph TD
     end
 
     subgraph "VS Code Extension Host"
-        WATCHER["fs.watch / RelativePattern Watcher<br/>~/.ai-artifacts/artifacts/"] -->|"comments.json created"| FILTER{"originWorkspaceRoot<br/>khớp workspace<br/>cửa sổ này?"}
-        FILTER -->|Không| DROP["Bỏ qua"]
-        FILTER -->|Có| DEDUP{"Tab đã mở?"}
+        WATCHER["RelativePattern Watcher<br/>~/.ai-artifacts/artifacts/*/comments.json"] -->|"comments.json created"| FILTER{"Window đang focused?"}
+        FILTER -->|Không| DROP["Bỏ qua event"]
+        FILTER -->|Có| VALIDATE["Validate manifest + global path"]
+        VALIDATE --> DEDUP{"Tab đã mở?"}
         DEDUP -->|Đã mở| FOCUS["Focus tab"]
         DEDUP -->|Chưa| OPEN["vscode.openWith()"]
     end
+
+    LINK["reviewUrl / Open Artifact Review"] -->|"Fallback"| OPEN
 ```
 
 ---
@@ -260,26 +278,27 @@ graph TD
 
 ---
 
-## 5. Rủi ro & Điểm cần Chú Quyết Định
+## 5. Quyết định kỹ thuật & Rủi ro trọng tâm
 
 > [!IMPORTANT]
-> ### Watcher ngoài Workspace — Chọn cách tiếp cận
-> Có 2 lựa chọn kỹ thuật cho watcher:
-> 1. **Node.js native `fs.watch()`**: Ổn định, tức thì, không phụ thuộc VS Code API. Nhưng phải tự quản lý lifecycle (start/stop/error).
-> 2. **`vscode.workspace.createFileSystemWatcher(new RelativePattern(globalUri, glob))`**: Dùng API chính thống của VS Code. Nhưng cần kiểm chứng hành vi với path tuyệt đối ngoài workspace trên cả Windows/macOS/Linux.
->
-> Phiên trước đã kiểm chứng `fs.watch` hoạt động tốt trên Windows. Nếu không có ý kiến khác, mặc định dùng `fs.watch`.
+> ### Watcher ngoài Workspace — Đã chốt RelativePattern
+> Dùng `vscode.workspace.createFileSystemWatcher(new RelativePattern(globalArtifactsRootUri, "*/comments.json"))`. VS Code hỗ trợ chính thức base URI ngoài workspace. Handler phải idempotent, watcher phải được dispose theo extension lifecycle, và chỉ window đang focused mới xử lý auto-open.
 
 > [!IMPORTANT]
-> ### Schema Version: v5 hay giữ v4 với cấu trúc mới?
-> Khuyến nghị nâng lên **v5** vì:
-> - Cấu trúc manifest thay đổi breaking (`location.workspaceRoot` → `originWorkspaceRoot`)
-> - Không backward compatible theo quyết định của Chú
-> - Version number rõ ràng cho debugging
+> ### Schema và compatibility — Đã chốt
+> Chỉ hỗ trợ schema **v5**. Manifest bỏ `location.workspaceRoot` và không thêm `originWorkspaceRoot`. Xóa hoàn toàn parser/types/viewer cho v3/v4.
 
 > [!WARNING]
 > ### Artifact cũ trong workspace
 > Tất cả artifact đã tạo trong `<workspace>/.ai-artifacts/` hoặc `<workspace>/.codex-artifacts/` sẽ **không còn được nhận diện**. File vẫn tồn tại trên đĩa nhưng extension không mở, MCP không load.
+
+> [!WARNING]
+> ### Global path safety
+> Sau khi bỏ workspace validation, canonical containment dưới `~/.ai-artifacts/artifacts/` là security boundary duy nhất. Không được thay bằng string-prefix check; phải giữ direct-child, artifactId binding và symlink/junction rejection.
+
+> [!IMPORTANT]
+> ### Custom editor link
+> `file://` artifactLink hiện không bảo đảm mở Artifact Review. Cần deep-link/URI handler hoặc command đi qua `vscode.openWith`; file URL chỉ là đường dẫn file, không phải custom-editor contract.
 
 ---
 
@@ -294,6 +313,8 @@ npm.cmd run build   # Production build
 
 ### Manual Verification
 - Mở VS Code, trigger `create_artifact` qua MCP → xác nhận artifact tạo tại `~/.ai-artifacts/artifacts/`
-- Mở 2 cửa sổ VS Code khác workspace → xác nhận chỉ cửa sổ đúng workspace mới auto-open tab
+- Mở 2 cửa sổ VS Code → xác nhận chỉ cửa sổ đang focused auto-open tab
+- Không focus VS Code khi tạo → xác nhận không window nào auto-open; `reviewUrl`/lệnh mở vẫn vào đúng custom editor
+- Phát duplicate create events → xác nhận không tạo duplicate tab
 - Uninstall extension → xác nhận `~/.ai-artifacts/` không bị xóa
 - Install/uninstall MCP cho từng client → xác nhận MCP Client Drivers hoạt động bình thường
