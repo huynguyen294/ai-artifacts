@@ -179,6 +179,35 @@ export async function ensureSafeGlobalArtifactDirectory(
   return canonicalDirectory;
 }
 
+export type SafeGlobalArtifactHandle = {
+  artifactId: string;
+  artifactDirectory: string;
+  files: ReturnType<typeof artifactPaths>;
+};
+
+export async function ensureSafeGlobalArtifactHandle(
+  artifactPath: string,
+  options: GlobalArtifactsRootOptions = {},
+  expectedArtifactId?: string,
+): Promise<SafeGlobalArtifactHandle> {
+  if (!path.isAbsolute(artifactPath)) {
+    throw new Error("The artifact handle must be an absolute path to artifact.md.");
+  }
+
+  const candidateDirectory = path.dirname(artifactPath);
+  const artifactId = expectedArtifactId ?? path.basename(candidateDirectory);
+  const artifactDirectory = await ensureSafeGlobalArtifactDirectory(
+    artifactId,
+    candidateDirectory,
+    options,
+  );
+  const files = artifactPaths(artifactDirectory);
+  if (!sameFilesystemPath(artifactPath, files.artifactPath)) {
+    throw new Error("The artifact handle must point to artifact.md in the global artifact directory.");
+  }
+  return { artifactId, artifactDirectory, files };
+}
+
 export function assertManagedArtifactFilePath(
   artifactDirectory: string,
   filePath: string,

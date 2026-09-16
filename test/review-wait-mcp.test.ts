@@ -1597,27 +1597,27 @@ describe("artifact review MCP server v7", () => {
     expect(inspected.content[0].text).toContain("AI Artifacts supports version 5");
   });
 
-  it("generates correctly formatted and URL-encoded artifactUrl and artifactLink for paths with spaces and special characters", async () => {
+  it("generates correctly formatted and URL-encoded artifactUrl and artifactLink for paths with spaces, special characters, and Unicode", async () => {
     const fixture = await workspaceFixture();
-    const specialHome = path.join(path.dirname(fixture.workspace), "c# home (copy)");
+    const specialHome = path.join(path.dirname(fixture.workspace), "c# home (copy) – Việt Ω");
     await mkdir(specialHome);
     const client = startClient(fixture.registry, { CODEX_ARTIFACTS_TEST_USER_HOME: specialHome });
     await initialize(client);
 
-    const title = "[RFC] Feature \\\nPlan & Spec: (v1.0)";
+    const title = "[RFC Ω] Feature \\\nPlan & Spec: (v1.0)";
     const created = await createArtifact(client, fixture.workspace, { title });
     expect(created.artifactUrl).toMatch(/^file:\/\/\/.+\/artifact\.md$/);
     expect(created.artifactUrl).not.toContain("\\");
-    expect(created.artifactUrl).toContain("c%23%20home%20%28copy%29");
+    expect(created.artifactUrl).toContain("c%23%20home%20%28copy%29%20%E2%80%93%20Vi%E1%BB%87t%20%CE%A9");
     expect(created.artifactUrl).not.toContain("(");
     expect(created.artifactUrl).not.toContain(")");
     expect(created.artifactUrl).not.toContain("#");
-    expect(created.artifactLink).toBe(`[\\[RFC\\] Feature \\\\ Plan & Spec: (v1.0)](${created.artifactUrl})`);
+    expect(created.artifactLink).toBe(`[\\[RFC Ω\\] Feature \\\\ Plan & Spec: (v1.0)](${created.artifactUrl})`);
 
     const inspected = await callTool(client, "inspect_artifact_review", {
       artifactDirectory: created.artifactDirectory,
     });
     expect(inspected.structuredContent.artifactUrl).toBe(created.artifactUrl);
-    expect(inspected.structuredContent.artifactLink).toBe(`[\\[RFC\\] Feature \\\\ Plan & Spec: (v1.0)](${created.artifactUrl})`);
+    expect(inspected.structuredContent.artifactLink).toBe(`[\\[RFC Ω\\] Feature \\\\ Plan & Spec: (v1.0)](${created.artifactUrl})`);
   });
 });

@@ -1,6 +1,11 @@
 import * as vscode from "vscode";
 import { ArtifactReviewProvider } from "./artifact-review-provider";
 import {
+  ArtifactReviewOpenCoordinator,
+  setupGlobalArtifactReadyWatcher,
+} from "./artifact-review-open";
+import { ensureSafeGlobalArtifactsRoot } from "../shared/artifact-validation";
+import {
   checkAllIntegrations,
   getMcpConfigSnippet,
   getReviewSkillMarkdown,
@@ -19,46 +24,42 @@ import {
 } from "./workspace-integration-v4";
 import { WorkspaceRegistryPublisher } from "./workspace-registry-publisher";
 
-export function activate(context: vscode.ExtensionContext): void {
+export async function activate(context: vscode.ExtensionContext): Promise<void> {
   const provider = new ArtifactReviewProvider(context);
   const workspaceRegistryPublisher = new WorkspaceRegistryPublisher();
-
-  const artifactReadyWatcher = vscode.workspace.createFileSystemWatcher(
-    "**/{.ai-artifacts,.codex-artifacts}/artifacts/**/comments.json",
-    false,
-    true,
-    true,
-  );
-  artifactReadyWatcher.onDidCreate(async (commentsUri) => {
-    const autoOpen = vscode.workspace.getConfiguration("agentPlus").get<boolean>("autoOpenArtifactReview", true);
-    if (!autoOpen) return;
-
-    const artifactUri = vscode.Uri.joinPath(commentsUri, "..", "artifact.md");
-    try {
-      await vscode.workspace.fs.stat(artifactUri);
-      await vscode.commands.executeCommand("vscode.openWith", artifactUri, ArtifactReviewProvider.viewType);
-    } catch (error) {
-      console.error("Auto-opening artifact review failed:", error);
-    }
+  const artifactReviewOpenCoordinator = new ArtifactReviewOpenCoordinator<vscode.Uri>({
+    uriFromFilePath: (filePath) => vscode.Uri.file(filePath),
+    openWith: async (artifactUri) => {
+      await vscode.commands.executeCommand(
+        "vscode.openWith",
+        artifactUri,
+        ArtifactReviewProvider.viewType,
+      );
+    },
   });
 
   context.subscriptions.push(
-    artifactReadyWatcher,
     workspaceRegistryPublisher,
     vscode.window.registerCustomEditorProvider(ArtifactReviewProvider.viewType, provider, {
       webviewOptions: { retainContextWhenHidden: true },
       supportsMultipleEditorsPerDocument: false,
     }),
     vscode.commands.registerCommand("agentPlus.openArtifactReview", async () => {
-      const activeUri = vscode.window.activeTextEditor?.document.uri;
-      const selected = activeUri?.fsPath.endsWith("artifact.md")
-        ? activeUri
-        : (await vscode.window.showOpenDialog({
+      const activeTextUri = vscode.window.activeTextEditor?.document.uri;
+      const activeTabInput = vscode.window.tabGroups.activeTabGroup.activeTab?.input;
+      const activeCustomUri = activeTabInput instanceof vscode.TabInputCustom
+        && activeTabInput.viewType === ArtifactReviewProvider.viewType
+        ? activeTabInput.uri
+        : undefined;
+      const selected = activeTextUri?.fsPath.endsWith("artifact.md")
+        ? activeTextUri
+        : activeCustomUri ?? (await vscode.window.showOpenDialog({
             canSelectMany: false,
+            defaultUri: vscode.Uri.file(await ensureSafeGlobalArtifactsRoot()),
             filters: { "AI Artifact": ["md"] },
             openLabel: "Open artifact review",
           }))?.[0];
-      if (selected) await vscode.commands.executeCommand("vscode.openWith", selected, ArtifactReviewProvider.viewType);
+      if (selected) await artifactReviewOpenCoordinator.open(selected);
     }),
 
     // 1. All Detected
@@ -279,6 +280,31 @@ export function activate(context: vscode.ExtensionContext): void {
       await vscode.commands.executeCommand("agentPlus.installAllIntegrations");
     }),
   );
+
+  try {
+    const artifactReadyWatcher = await setupGlobalArtifactReadyWatcher<vscode.Uri, vscode.FileSystemWatcher>({
+      ensureGlobalArtifactsRoot: () => ensureSafeGlobalArtifactsRoot(),
+      createWatcher: (collectionRoot, pattern) => vscode.workspace.createFileSystemWatcher(
+        new vscode.RelativePattern(vscode.Uri.file(collectionRoot), pattern),
+        false,
+        true,
+        true,
+      ),
+      isAutoOpenEnabled: () => vscode.workspace.getConfiguration("agentPlus")
+        .get<boolean>("autoOpenArtifactReview", true),
+      isWindowFocused: () => vscode.window.state.focused,
+      artifactUriFromComments: (commentsUri) => vscode.Uri.joinPath(commentsUri, "..", "artifact.md"),
+      openArtifactReview: async (artifactUri) => {
+        await artifactReviewOpenCoordinator.open(artifactUri);
+      },
+      reportError: (error) => console.error("Auto-opening artifact review failed:", error),
+    });
+    context.subscriptions.push(artifactReadyWatcher);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error("Starting the global artifact watcher failed:", error);
+    void vscode.window.showErrorMessage(`AI Artifacts could not watch global artifact storage: ${message}`);
+  }
 }
 
 export function deactivate(): void {}

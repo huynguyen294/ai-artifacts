@@ -15,12 +15,11 @@ import {
 import {
   assertManagedArtifactFilePath,
   artifactPaths,
-  ensureSafeGlobalArtifactDirectory,
+  ensureSafeGlobalArtifactHandle,
   ensureSafeManagedArtifactFile,
   parseArtifactManifest,
   parseBoundCommentsDocument,
   parseBoundReviewSubmission,
-  sameFilesystemPath,
 } from "../shared/artifact-validation";
 import { parseMarkdownBlocks } from "../shared/markdown-blocks";
 import {
@@ -325,15 +324,11 @@ export class ArtifactStore {
     artifactDirectory: string;
     files: ReturnType<typeof artifactPaths>;
   }> {
-    const artifactDirectory = await ensureSafeGlobalArtifactDirectory(
-      artifactId,
-      this.artifactDirectory,
+    const { artifactDirectory, files } = await ensureSafeGlobalArtifactHandle(
+      this.artifactPath,
       this.globalRootOptions,
+      artifactId,
     );
-    const files = artifactPaths(artifactDirectory);
-    if (!sameFilesystemPath(this.artifactPath, files.artifactPath)) {
-      throw new Error("The artifact handle must point to artifact.md in the global artifact directory.");
-    }
     return { artifactDirectory, files };
   }
 

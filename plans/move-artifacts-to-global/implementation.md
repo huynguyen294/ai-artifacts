@@ -508,12 +508,66 @@ Hoàn thiện UX extension trên global storage trong khi giữ nguyên workspac
 
 - src/extension/extension.ts
 - src/shared/artifact-files.ts hoặc shared global-root helper đã tạo ở Phase 1
-- Helper mới dưới src/extension/ nếu cần
-- Test mới cho focus guard và open coordinator
+- Helper mới dưới src/extension/ cho watcher/open coordinator nếu cần
+- Test mới cho activation order, focus guard, path validation và open coordinator
+- package.json, MCP/skill contract và tests liên quan chỉ verify; chỉ sửa nếu phát hiện contract lệch Phase 2
 
-### Work package 3A — RelativePattern watcher
+### Quy tắc thực hiện và đánh giá từng substep
 
-- Trước khi đăng ký watcher, extension phải await shared `ensureSafeGlobalArtifactCollectionRoot()` để collection root đã tồn tại và vượt qua canonical/symlink/permission validation.
+- 3A1–3D là các checkpoint chẩn đoán; không coi Phase 3 hoàn tất hoặc handoff UX trước khi 3D pass.
+- Trước mỗi substep, AI phải đọc lại current source/tests, chạy `git status --short`, xác nhận checkpoint trước đã pass và báo cho Chú component dự kiến sửa.
+- Sau mỗi substep, AI phải chạy focused tests phù hợp và xuất báo cáo theo mẫu sau:
+
+```text
+## Phase 3 <substep> Evaluation
+
+- Components changed:
+- Behavior completed:
+- Automated verification:
+  - <command> -> PASS/FAIL, exit code, test count
+- Acceptance evidence:
+- Manual verification: NOT_REQUIRED / MANUAL_REQUIRED / PASS / FAIL
+- Regressions or remaining risks:
+- Stability assessment:
+- Substep decision: PASS / FAIL / BLOCKED
+- Ready for next substep: YES / NO
+```
+
+- AI chỉ được ghi `PASS` cho automated command đã thực sự chạy thành công; đọc code hoặc mock chưa đủ thay cho manual behavior của VS Code.
+- Nếu substep có manual verification, báo cáo phải ghi `MANUAL_REQUIRED`, nhắc trực tiếp Chú thực hiện, đưa checklist đơn giản trong plan và chờ Chú trả kết quả. AI không được tự suy đoán manual test đã pass.
+- AI phải chuẩn bị build/fixture/test data cần thiết trước khi nhờ Chú thao tác. Hướng dẫn cho Chú chỉ nên yêu cầu focus, click, chạy command palette hoặc quan sát tab; không yêu cầu Chú viết code.
+- Không xóa hoặc đổi tên real `~/.ai-artifacts` để tạo fresh-home test. Fresh-home manual phải dùng disposable OS profile, sandbox/VM hoặc isolated test home do AI chuẩn bị; nếu chưa có môi trường an toàn thì đánh dấu `MANUAL_REQUIRED`, không hạ tiêu chuẩn gate.
+- Sau manual feedback, AI phải ghi lại từng case PASS/FAIL và không sang substep tiếp theo nếu case bắt buộc fail.
+
+### Substep 3A1 — Testable watcher/open foundation
+
+Tạo boundary có thể test cho Phase 3 trước khi thay watcher production:
+
+- Tách logic chuẩn bị watcher, xử lý create event và mở artifact khỏi `activate()` thành helper nhỏ có dependency injection cho VS Code boundary.
+- Dùng shared global-root/path validation từ Phase 1–2; không tạo một path-safety contract thứ hai.
+- Định nghĩa một entrypoint mở review nhận exact `artifact.md` URI, validate global direct-child/artifact manifest trước khi gọi `openWith`.
+- Giữ `extension.ts` là composition root; không đưa lifecycle mutation vào watcher/open helper.
+- Chưa đổi production watcher glob trong 3A1 nếu test seam chưa đủ để chứng minh activation order và failure behavior.
+
+#### Verification 3A1
+
+Automated tests:
+
+- Valid exact global artifact URI đi qua validation và gọi đúng injected open function.
+- URI ngoài global root, nested artifact, sai filename, artifact-id mismatch, linked path hoặc invalid manifest bị từ chối trước open.
+- Helper không scan global storage, workspace hoặc tab list để tìm artifact.
+- Dependency failure được propagate/ghi nhận mà không tạo filesystem mutation ngoài safe root helper.
+- Existing Phase 2 Store/MCP tests tiếp tục pass.
+
+#### AI evaluation 3A1
+
+- Manual verification: `NOT_REQUIRED` vì 3A1 chỉ tạo testable boundary và chưa chuyển watcher production.
+- Báo cáo phải chỉ rõ helper nào là validation/open entrypoint, test nào chứng minh invalid target không tới `openWith`, và production behavior có còn nguyên hay không.
+- Chỉ cho phép sang 3A2 khi focused tests và `npm.cmd run check` pass.
+
+### Substep 3A2 — Global RelativePattern watcher cutover
+
+- Trước khi đăng ký watcher, extension phải await shared `ensureSafeGlobalArtifactsRoot()` để collection root đã tồn tại và vượt qua canonical/symlink/permission validation.
 - Không đăng ký watcher nếu root creation/validation thất bại; báo lỗi rõ và không tiếp tục với watcher ở trạng thái không chắc chắn.
 - Watch globalArtifactsRootUri với pattern \*/comments.json.
 - Chỉ xử lý create event.
@@ -523,7 +577,7 @@ Hoàn thiện UX extension trên global storage trong khi giữ nguyên workspac
 - Giữ semantics watcher hiện tại: xử lý `comments.json` create event, kể cả event phát sinh từ lifecycle transition; không thêm filter `reviewRound === 1`.
 - Dispose watcher trong context.subscriptions.
 
-#### Verification 3A
+#### Verification 3A2
 
 Automated/mock tests:
 
@@ -535,7 +589,7 @@ Automated/mock tests:
 - focused=true: gọi đúng artifact URI/viewType.
 - invalid manifest/path: không mở.
 - autoOpen=false: không mở.
-- duplicate event: handler idempotent.
+- Một create event tạo đúng một open request; concurrent duplicate-event dedup được kiểm chứng ở 3B cùng single-flight.
 - Round-transition create event giữ behavior mở/reveal hiện tại.
 
 Manual:
@@ -547,7 +601,19 @@ Manual:
 5. Focus window B và tạo artifact mới: chỉ B mở.
 6. Không focus VS Code và tạo artifact: không window nào mở.
 
-### Work package 3B — Open coordinator/tab dedup
+#### AI evaluation 3A2
+
+- Manual verification: `MANUAL_REQUIRED`; automated mocks không thay thế fresh-host và two-window behavior thật.
+- Trước khi nhắc Chú, AI phải build extension, chuẩn bị disposable/isolated home và một cách tạo fixture/artifact không chạm dữ liệu thật. Không được yêu cầu Chú xóa global artifacts hiện có.
+- Hướng dẫn đơn giản cho Chú:
+  1. Mở Extension Development Host theo lệnh/cấu hình AI đã chuẩn bị.
+  2. Khi AI báo sẵn sàng, tạo artifact thử thứ nhất và xác nhận nó tự mở.
+  3. Mở thêm một VS Code window; lần lượt focus A rồi B trước mỗi artifact thử và báo window nào mở review.
+  4. Chuyển focus ra ngoài VS Code, tạo artifact thử cuối và xác nhận không window nào tự mở.
+- AI ghi riêng kết quả `first artifact`, `window A`, `window B`, `no focused window`; cả bốn phải PASS để 3A2 pass.
+- Nếu không thể cung cấp isolated manual environment an toàn, quyết định là `MANUAL_REQUIRED`, không phải PASS; Chú có thể cho phép tiếp tục chuẩn bị 3B nhưng Phase 3 gate vẫn mở.
+
+### Substep 3B — Shared open coordinator/tab dedup
 
 Tạo một đường mở dùng chung cho watcher và command:
 
@@ -559,7 +625,7 @@ Không quét tab rồi cố focus một `TabInputCustom`, vì VS Code Tab API kh
 
 #### Verification 3B
 
-- Hai open requests đồng thời chỉ tạo một openWith call.
+- Hai open requests đồng thời, kể cả concurrent duplicate watcher events, chỉ tạo một openWith call.
 - Artifact khác không bị dedup nhầm.
 - In-flight Map luôn cleanup sau success/error.
 - supportsMultipleEditorsPerDocument vẫn false.
@@ -571,7 +637,18 @@ Manual:
 - Đóng/mở lại cùng artifact.
 - Mở hai artifact khác nhau.
 
-### Work package 3C — Regular file-link contract
+#### AI evaluation 3B
+
+- Manual verification: `MANUAL_REQUIRED` vì VS Code reuse/reveal tab là behavior của editor host, không có stable API hoặc unit mock đủ để chứng minh.
+- Trước khi nhắc Chú, AI phải mở sẵn một valid test artifact trong Extension Development Host và chuẩn bị command cần dùng.
+- Hướng dẫn đơn giản cho Chú:
+  1. Chạy **AI Artifacts: Open Artifact Review** hai lần cho cùng artifact và xác nhận chỉ có một review tab được reuse/reveal.
+  2. Đóng tab, chạy command lại và xác nhận tab mở lại bình thường.
+  3. Mở artifact thứ hai và xác nhận hai artifact khác nhau có hai review tabs riêng.
+- AI ghi số `openWith` calls từ automated test và kết quả tab quan sát từ Chú thành hai bằng chứng riêng.
+- Chỉ pass 3B khi same-artifact single-flight, cleanup after success/error, different-artifact isolation và manual reuse/reveal đều pass.
+
+### Substep 3C — Regular file-link contract
 
 - Không đăng ký URI handler và không thêm `onUri` activation.
 - MCP không trả `reviewUrl`.
@@ -596,14 +673,59 @@ Manual:
 - Dùng **Open Artifact Review** để xác nhận command mở đúng custom editor.
 - Thử regular file link có space, #, parentheses và Unicode.
 
+#### AI evaluation 3C
+
+- Manual verification: `MANUAL_REQUIRED` cho click behavior; encoding/contract absence vẫn phải có automated/static evidence riêng.
+- Trước khi nhắc Chú, AI phải tạo hoặc cung cấp một regular `artifactLink` test an toàn có path/title chứa space, `#`, parentheses và Unicode.
+- Hướng dẫn đơn giản cho Chú:
+  1. Click link AI cung cấp và xác nhận editor mở file; không cần custom editor tự mở từ link.
+  2. Chạy **AI Artifacts: Open Artifact Review** cho file đó và xác nhận custom review editor mở.
+  3. Báo lại link có mở đúng file hay không và command có mở đúng review editor hay không.
+- AI phải xác nhận bằng static search rằng không có `reviewUrl`, URI handler hoặc `onUri`; không được suy ra điều này chỉ từ manual click.
+- Chỉ pass 3C khi automated URL/link tests, static contract checks, invalid-command rejection và hai manual observations đều pass.
+
+### Substep 3D — Final Phase 3 gate và consolidated manual validation
+
+3D không thêm behavior mới. Nếu gate phát hiện regression, quay lại đúng substep sở hữu behavior đó, sửa và chạy lại focused verification trước khi lặp 3D.
+
+#### Automated gate 3D
+
+```powershell
+npm.cmd run check
+npm.cmd test
+npm.cmd run build:extension
+npm.cmd run build
+git diff --check
+```
+
+AI phải chạy thêm focused Phase 3 suite theo tên test thực tế đã tạo và báo riêng test count cho watcher, open coordinator và link contract.
+
+#### Manual gate 3D
+
+- Nếu 3A2, 3B hoặc 3C có code thay đổi sau manual run tương ứng, manual case bị ảnh hưởng phải chạy lại.
+- Critical cases bắt buộc có kết quả thật: fresh-home first artifact, focused two-window routing, no-focused-window no-open, same-URI reuse/reveal, second-artifact isolation, regular link click và command custom-editor open.
+- AI phải nhắc Chú rằng đây là final manual gate, gom các case còn thiếu/thay đổi thành một checklist ngắn và chờ phản hồi trước khi kết luận Phase 3.
+- Hướng dẫn đơn giản cho Chú:
+  1. Mở Extension Development Host/isolated environment mà AI đã chuẩn bị.
+  2. Làm lần lượt từng thao tác AI đánh số; sau mỗi thao tác chỉ cần trả lời “pass” hoặc mô tả điều thấy khác.
+  3. Không xóa, di chuyển hoặc chỉnh file global artifacts thật; AI chịu trách nhiệm tạo và dọn fixture thử nghiệm.
+
+#### AI evaluation 3D
+
+- Báo cáo phải dùng mẫu Phase 3 evaluation, liệt kê từng automated command và từng manual critical case.
+- `Manual verification` chỉ là `PASS` khi Chú đã xác nhận tất cả critical cases; nếu thiếu bất kỳ case nào thì giữ `MANUAL_REQUIRED`.
+- Phase 3 chỉ được đánh dấu PASS khi automated gate, manual gate, path-safety validation và no-real-user-data check đều pass.
+- Sau PASS, AI cập nhật progress report, audit commit scope và đề xuất checkpoint commit; không tự cài integration thật vì đó là Phase 4.
+
 ### Điều kiện qua gate Phase 3
 
-- Toàn bộ automated tests của 3A–3C pass.
+- Toàn bộ automated tests của 3A1–3C và final gate 3D pass.
 - Fresh-home first-artifact test pass; không chấp nhận watcher-delay race như một giới hạn đã biết.
 - Manual two-window test pass.
 - Watcher và command mở custom review editor qua `openWith`.
 - artifactLink được mô tả và kiểm thử đúng như regular file link.
 - Missed auto-open có fallback qua command hiện tại; không mở rộng UX recovery command trong scope này.
+- Không manual case nào được AI tự đánh dấu pass và không fixture nào chạm/xóa dữ liệu artifact thật của Chú.
 
 ### Đánh giá ổn định
 
