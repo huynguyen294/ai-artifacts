@@ -1,7 +1,13 @@
+import { randomUUID } from "node:crypto";
+import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { createInterface } from "node:readline";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { ArtifactStore } from "../src/extension/artifact-store";
+import { hasManagedCodexArtifactsMcp, upsertCodexArtifactsMcp } from "../src/extension/mcp-config";
+import { globalArtifactsRoot } from "../src/shared/artifact-files";
 
 // Mock vscode for any imports in workspace-integration-v4
 vi.mock("vscode", () => ({
@@ -18,8 +24,57 @@ import {
   checkAllIntegrations,
   skillAssetsAreCurrent,
   getReviewSkillMarkdown,
+  setupBaseMcpServer,
   type BaseIntegrationPaths,
 } from "../src/extension/workspace-integration-v4";
+
+const installedMcpProcesses: ChildProcessWithoutNullStreams[] = [];
+
+type InstalledMcpClient = {
+  request: (method: string, params?: Record<string, unknown>) => Promise<any>;
+  notify: (method: string, params?: Record<string, unknown>) => void;
+};
+
+function startInstalledMcp(
+  scriptPath: string,
+  environment: NodeJS.ProcessEnv,
+): InstalledMcpClient {
+  const processHandle = spawn(process.execPath, [scriptPath], {
+    stdio: ["pipe", "pipe", "pipe"],
+    env: { ...process.env, ...environment },
+  });
+  installedMcpProcesses.push(processHandle);
+  let nextId = 1;
+  let stderr = "";
+  const pending = new Map<number, { resolve: (value: any) => void; reject: (error: Error) => void }>();
+  processHandle.stderr.on("data", (chunk) => { stderr += chunk.toString(); });
+  createInterface({ input: processHandle.stdout }).on("line", (line) => {
+    const message = JSON.parse(line);
+    const waiter = pending.get(message.id);
+    if (!waiter) return;
+    pending.delete(message.id);
+    if (message.error) waiter.reject(new Error(message.error.message));
+    else waiter.resolve(message.result);
+  });
+  processHandle.on("exit", (code) => {
+    for (const waiter of pending.values()) {
+      waiter.reject(new Error(`Installed MCP server exited with ${code}: ${stderr}`));
+    }
+    pending.clear();
+  });
+  return {
+    request(method, params = {}) {
+      const id = nextId++;
+      return new Promise((resolve, reject) => {
+        pending.set(id, { resolve, reject });
+        processHandle.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id, method, params })}\n`);
+      });
+    },
+    notify(method, params = {}) {
+      processHandle.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", method, params })}\n`);
+    },
+  };
+}
 
 describe("Workspace Integration Asset Verifiers", () => {
   let tempDir: string;
@@ -55,6 +110,7 @@ describe("Workspace Integration Asset Verifiers", () => {
   });
 
   afterEach(async () => {
+    for (const processHandle of installedMcpProcesses.splice(0)) processHandle.kill();
     vi.restoreAllMocks();
     await fs.rm(tempDir, { recursive: true, force: true }).catch(() => {});
   });
@@ -165,5 +221,117 @@ describe("Workspace Integration Asset Verifiers", () => {
       expect(typeof client.isDetected).toBe("boolean");
       expect(["missing", "outdated", "ready", "configuration-conflict"]).toContain(client.status);
     }
+  });
+
+  it("installs the real bundle and skill into a temp home and completes the schema-v5 global contract", async () => {
+    const repositoryRoot = path.resolve(import.meta.dirname, "..");
+    const sourceBundle = path.join(repositoryRoot, "dist", "integration", "codex-artifacts-review-mcp.mjs");
+    await expect(fs.access(sourceBundle)).resolves.toBeUndefined();
+    vi.spyOn(os, "homedir").mockReturnValue(targetDir);
+    const context = {
+      extensionUri: { fsPath: repositoryRoot },
+      globalStorageUri: { fsPath: path.join(tempDir, "storage") },
+    } as any;
+
+    const { paths: installedPaths } = await setupBaseMcpServer(context);
+    expect(await baseScriptIsCurrent(installedPaths)).toBe(true);
+    expect(await skillAssetsAreCurrent(installedPaths)).toBe(true);
+    expect(await baseAssetsAreCurrent(installedPaths)).toBe(true);
+    expect(await fs.readFile(installedPaths.targetMcpScript)).toEqual(await fs.readFile(installedPaths.sourceMcpScript));
+    expect(await fs.readFile(installedPaths.targetLegacyMcpScript)).toEqual(await fs.readFile(installedPaths.sourceMcpScript));
+    for (const relativePath of [
+      "SKILL.md",
+      path.join("references", "artifact-contract.md"),
+      path.join("agents", "openai.yaml"),
+    ]) {
+      expect(await fs.readFile(path.join(installedPaths.targetSkill, relativePath))).toEqual(
+        await fs.readFile(path.join(installedPaths.sourceSkill, relativePath)),
+      );
+    }
+
+    const configPath = path.join(targetDir, ".codex", "config.toml");
+    const config = upsertCodexArtifactsMcp('model = "gpt-test"\n', installedPaths.targetMcpScript);
+    await fs.mkdir(path.dirname(configPath), { recursive: true });
+    await fs.writeFile(configPath, config, "utf8");
+    expect(hasManagedCodexArtifactsMcp(config, installedPaths.targetMcpScript)).toBe(true);
+    const configuredTools = [...config.matchAll(/^\[mcp_servers\.ai_artifacts\.tools\.([^\]]+)\]$/gm)]
+      .map((match) => match[1]);
+    const expectedTools = [
+      "resolve_artifact_workspace",
+      "create_artifact",
+      "wait_for_artifact_review",
+      "inspect_artifact_review",
+      "advance_and_wait_for_artifact",
+    ];
+    expect(configuredTools).toEqual(expectedTools);
+
+    const workspace = path.join(tempDir, "workspace");
+    const taggedFile = path.join(workspace, "AGENTS.md");
+    await fs.mkdir(workspace);
+    await fs.writeFile(taggedFile, "# Workspace\n", "utf8");
+    const instanceId = randomUUID();
+    const now = Date.now();
+    await fs.writeFile(path.join(installedPaths.workspacesDirectory, `${instanceId}.json`), `${JSON.stringify({
+      schemaVersion: 2,
+      instanceId,
+      processId: process.pid,
+      workspaceFile: null,
+      focused: true,
+      folders: [{ path: workspace, realPath: await fs.realpath(workspace) }],
+      activeFile: { path: taggedFile, workspaceRoot: workspace },
+      updatedAt: new Date(now).toISOString(),
+      expiresAt: new Date(now + 60_000).toISOString(),
+    }, null, 2)}\n`, "utf8");
+
+    const client = startInstalledMcp(installedPaths.targetMcpScript, {
+      NODE_ENV: "test",
+      CODEX_ARTIFACTS_TEST_USER_HOME: targetDir,
+      CODEX_ARTIFACTS_REGISTRY_DIRECTORY: installedPaths.workspacesDirectory,
+    });
+    const initialized = await client.request("initialize", { protocolVersion: "2025-06-18" });
+    expect(initialized.serverInfo.version).toBe("7.0.0");
+    client.notify("notifications/initialized");
+    const catalog = await client.request("tools/list");
+    expect(catalog.tools.map((tool: any) => tool.name)).toEqual(expectedTools);
+
+    const markdown = "# Installed lifecycle\n\nReview the installed schema-v5 bridge.\n";
+    const createResult = await client.request("tools/call", {
+      name: "create_artifact",
+      arguments: {
+        workspaceRoot: workspace,
+        workspaceEvidence: { kind: "tagged-file", filePath: taggedFile },
+        title: "Installed lifecycle",
+        kind: "implementation-plan",
+        markdown,
+      },
+    });
+    expect(createResult.isError, createResult.content?.[0]?.text).not.toBe(true);
+    const created = createResult.structuredContent;
+    expect(path.dirname(created.artifactDirectory)).toBe(await fs.realpath(globalArtifactsRoot({ userHome: targetDir })));
+    await expect(fs.access(path.join(workspace, ".ai-artifacts"))).rejects.toThrow();
+
+    const store = new ArtifactStore(created.artifactPath, { userHome: targetDir });
+    const loaded = await store.load();
+    expect(loaded.artifact).toMatchObject({
+      schemaVersion: 5,
+      artifactId: created.artifactId,
+      reviewRound: 1,
+      location: { workspaceRoot: workspace },
+    });
+    expect(loaded.markdown).toBe(markdown);
+    await store.submitReview("approve");
+    const reviewed = await client.request("tools/call", {
+      name: "wait_for_artifact_review",
+      arguments: {
+        artifactDirectory: created.artifactDirectory,
+        expectedReviewRound: 1,
+      },
+    });
+    expect(reviewed.isError, reviewed.content?.[0]?.text).not.toBe(true);
+    expect(reviewed.structuredContent).toMatchObject({
+      artifactId: created.artifactId,
+      reviewRound: 1,
+      decision: "approve",
+    });
   });
 });

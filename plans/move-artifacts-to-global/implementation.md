@@ -480,10 +480,12 @@ Contract/integration checks:
 
 ```powershell
 npm.cmd run check
-npx.cmd vitest run test/artifact-contracts.test.ts test/global-artifact-path.test.ts test/artifact-store.test.ts test/review-wait-mcp.test.ts test/skill-contract.test.ts test/mcp-config.test.ts test/workspace-integration.test.ts
 npm.cmd run build:integration
+npx.cmd vitest run test/artifact-contracts.test.ts test/global-artifact-path.test.ts test/artifact-store.test.ts test/review-wait-mcp.test.ts test/skill-contract.test.ts test/mcp-config.test.ts test/workspace-integration.test.ts
+npm.cmd test
 npm.cmd run build:extension
 npm.cmd run build
+git diff --check
 ```
 
 Tất cả pass. Chỉ khi đó mới tạo commit Phase 2 hoàn chỉnh. Không được merge, handoff, cài integration thật hoặc sang Phase 3 nếu shared schema, MCP, ArtifactStore, production skill/contract, config allowlist và temp-installed assets chưa hoàn thành round-trip v5/global-storage end-to-end.

@@ -11,7 +11,7 @@ The skill may call `resolve_artifact_workspace` before loading this reference. R
 - `{ kind: "tagged-file", filePath }` for a concrete file explicitly tagged by the user.
 - `{ kind: "resolved-workspace", selectionToken }` for a candidate chosen from the current resolver result by the agent or user.
 
-The server revalidates current registry scope, canonical root, tagged-file containment or the resolver grant before mutation. Cwd, untagged active files, project markers, folder order, and filesystem search results are not creation evidence. The official skill always sends `kind: "implementation-plan"`; the MCP keeps `kind` required for protocol compatibility. Creation results include `artifactUrl` (RFC 8089 `file:///...` URI) and `artifactLink` (`[${title}](${artifactUrl})`).
+The server revalidates current registry scope, canonical root, tagged-file containment or the resolver grant before mutation. Cwd, untagged active files, project markers, folder order, and filesystem search results are not creation evidence. The official skill always sends `kind: "implementation-plan"`; the MCP keeps `kind` required for protocol compatibility. The server stores the schema-v5 lifecycle in global AI Artifacts storage. `workspaceRoot` is retained as target metadata and ownership evidence; it is not the artifact storage location. Creation results include `artifactUrl` (RFC 8089 `file:///...` URI) and `artifactLink` (`[${title}](${artifactUrl})`). `artifactLink` is a regular file link, not a deep link, and does not guarantee that a custom editor opens.
 
 `wait_for_artifact_review` accepts `artifactDirectory`, `expectedReviewRound`, and optional `takeover`. It returns an existing submission immediately or owns the single transient waiter until Review, Proceed, Just save, cancellation, or takeover. A `revise` result includes a one-time `roundToken`, `artifactUrl`, and `artifactLink`.
 
@@ -29,25 +29,27 @@ The skill requires all five tools once when starting an artifact lifecycle in th
 artifact lifetime > waiter lifetime > chat-turn lifetime
 ```
 
-The artifact is persistent workspace data. A waiter is an in-memory connection for one exact artifact round. Cancellation, takeover, turn completion, or MCP restart may detach the waiter but never deletes or ends the artifact. Proceed and Just save end only the submitted round.
+The artifact is persistent global data associated with one target workspace. A waiter is an in-memory connection for one exact artifact round. Cancellation, takeover, turn completion, or MCP restart may detach the waiter but never deletes or ends the artifact. Proceed and Just save end only the submitted round.
 
 ## Directory
 
 ```text
-.ai-artifacts/artifacts/<server-generated-id>/
+~/.ai-artifacts/artifacts/<server-generated-id>/
   artifact.json
   artifact.md
   comments.json
   review-submission.json  # present only after submission
 ```
 
-All lifecycle files are server- or extension-owned. Agents must not create, update, or repair them directly. Schema-v3 artifacts remain viewable but read-only; schema v4 remains the writable format.
+All lifecycle files are server- or extension-owned. Agents must not create, update, or repair them directly. Schema v5 is the only supported lifecycle contract. Schemas 3 and 4 are unsupported and are not live-migrated.
 
 ## Workspace and handle ownership
 
 Before create, use only a tagged file or a candidate from the current resolver result. With no tagged file, call the resolver with the user's exact words before reading project files or drafting content. Do not scan folders to discover or normalize a workspace name. Select a sole `single-folder` candidate immediately because MCP has proved the workspace-folder choice is unambiguous. Otherwise choose a uniquely strongest candidate from its returned name, path, and match classification; ask the user only when no unique high-confidence choice exists. Only then read required instructions and relevant content in that folder. Resolver tokens are in-memory, one-time on successful creation, bound to the candidate and registry context, and expire after ten minutes. Expired, replayed, mismatched, or stale selections require resolution and another choice, with user input only when ambiguity remains.
 
 After create, never call the resolver for that artifact. For wait, inspection, advance, and reconnect, use only the exact `artifactDirectory` returned by creation or retained from an interrupted waiter. Keep a request/workspace → handle → round mapping when a chat owns multiple artifacts. Never select “the latest artifact” or infer a handle from cwd. If the handle is missing or ambiguous, ask the user.
+
+Treat the returned `artifactDirectory` as the exact global handle after creation. Never scan global storage to discover an artifact or resolve the workspace again for later lifecycle calls.
 
 Each lifecycle tool loads the exact artifact context and revalidates the manifest workspace internally. Success continues in the same tool call; failure occurs before waiter attachment or mutation.
 

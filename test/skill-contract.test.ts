@@ -96,6 +96,29 @@ describe("create-review-artifact skill contract", () => {
     expect(skill).toContain("Never takeover speculatively");
   });
 
+  it("defines schema-v5 global storage while retaining workspace ownership metadata", async () => {
+    const [skill, contract] = await Promise.all([
+      readFile(path.join(skillDirectory, "SKILL.md"), "utf8"),
+      readFile(path.join(skillDirectory, "references", "artifact-contract.md"), "utf8"),
+    ]);
+    expect(skill).toContain("schema-v5 lifecycle");
+    expect(skill).toContain("global `~/.ai-artifacts/artifacts/<artifact-id>/` collection");
+    expect(skill).toContain("`workspaceRoot` is target metadata and ownership evidence, not the storage location");
+    expect(skill).toContain("exact returned global `artifactDirectory`");
+    expect(contract).toContain("schema-v5 lifecycle in global AI Artifacts storage");
+    expect(contract).toContain("`workspaceRoot` is retained as target metadata and ownership evidence");
+    expect(contract).toContain("~/.ai-artifacts/artifacts/<server-generated-id>/");
+    expect(contract).toContain("Schema v5 is the only supported lifecycle contract");
+    expect(contract).toContain("Schemas 3 and 4 are unsupported and are not live-migrated");
+    expect(contract).toContain("exact global handle after creation");
+    expect(contract).toContain("Never scan global storage");
+    expect(skill).not.toContain("schema-v4");
+    expect(skill).not.toContain("schema v4");
+    expect(contract).not.toContain("schema-v4");
+    expect(contract).not.toContain("schema v4");
+    expect(contract).not.toContain("persistent workspace data");
+  });
+
   it("always creates implementation plans and treats Proceed as immediate execution authorization", async () => {
     const [skill, contract] = await Promise.all([
       readFile(path.join(skillDirectory, "SKILL.md"), "utf8"),
@@ -130,13 +153,18 @@ describe("create-review-artifact skill contract", () => {
     expect(contract).toContain("If commit state is uncertain, inspect the same exact handle before retrying");
   });
 
-  it("documents artifactUrl and artifactLink for re-opening artifacts", async () => {
+  it("documents artifactUrl and artifactLink as regular file links", async () => {
     const [skill, contract] = await Promise.all([
       readFile(path.join(skillDirectory, "SKILL.md"), "utf8"),
       readFile(path.join(skillDirectory, "references", "artifact-contract.md"), "utf8"),
     ]);
     expect(skill).toContain("artifactLink");
+    expect(skill).toContain("regular file link");
+    expect(skill).toContain("It is not a deep link and does not guarantee that a custom editor opens");
+    expect(skill).not.toContain("re-open the artifact review tab");
     expect(contract).toContain("artifactUrl");
     expect(contract).toContain("artifactLink");
+    expect(contract).toContain("`artifactLink` is a regular file link, not a deep link");
+    expect(contract).toContain("does not guarantee that a custom editor opens");
   });
 });

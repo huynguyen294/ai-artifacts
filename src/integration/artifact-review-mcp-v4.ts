@@ -4,13 +4,19 @@ import path from "node:path";
 import { createInterface } from "node:readline";
 import { pathToFileURL } from "node:url";
 import {
-  assertArtifactDirectory,
+  assertManagedArtifactFilePath,
+  assertGlobalArtifactDirectory,
   artifactPaths,
+  ensureSafeGlobalArtifactDirectory,
+  ensureSafeGlobalArtifactsRoot,
+  ensureSafeManagedArtifactFile,
+  parseArtifactManifest,
   parseBoundCommentsDocument,
   parseBoundReviewSubmission,
 } from "../shared/artifact-validation";
 import {
   ARTIFACT_SCHEMA_VERSION,
+  artifactIdSchema,
   artifactKindSchema,
   artifactManifestSchema,
   commentsDocumentSchema,
@@ -18,12 +24,12 @@ import {
   type ReviewDecision,
 } from "../shared/contracts";
 import {
-  ARTIFACT_COLLECTION_DIRECTORY,
   ARTIFACT_MARKDOWN_FILE,
   ARTIFACT_UPDATE_LOCK_FILE,
-  ARTIFACTS_DIRECTORY,
-  COMMENTS_FILE,
+  OWNER_ONLY_DIRECTORY_MODE,
+  OWNER_ONLY_FILE_MODE,
   REVIEW_SUBMISSION_FILE,
+  type GlobalArtifactsRootOptions,
 } from "../shared/artifact-files";
 import {
   resolveRegisteredWorkspaceRoot,
@@ -34,7 +40,7 @@ import {
 } from "../shared/workspace-registry";
 
 const SERVER_NAME = "codex-artifacts";
-const SERVER_VERSION = "6.0.0";
+const SERVER_VERSION = "7.0.0";
 const RESOLVE_WORKSPACE_TOOL_NAME = "resolve_artifact_workspace";
 const CREATE_TOOL_NAME = "create_artifact";
 const WAIT_TOOL_NAME = "wait_for_artifact_review";
@@ -43,6 +49,11 @@ const ADVANCE_AND_WAIT_TOOL_NAME = "advance_and_wait_for_artifact";
 const ROUND_TOKEN_TTL_MS = 60 * 60 * 1000;
 const WORKSPACE_SELECTION_TTL_MS = 10 * 60 * 1000;
 const MAX_MARKDOWN_BYTES = 2 * 1024 * 1024;
+const LIFECYCLE_JSON_READ_ATTEMPTS = 21;
+const LIFECYCLE_JSON_READ_RETRY_MS = 50;
+const testArtifactIds = process.env.NODE_ENV === "test"
+  ? (process.env.CODEX_ARTIFACTS_TEST_ARTIFACT_IDS ?? "").split(",").filter(Boolean)
+  : [];
 
 type JsonObject = Record<string, any>;
 
@@ -179,8 +190,101 @@ function approvedPlanAction(kind: string, decision: ReviewDecision): ReviewWaitR
   };
 }
 
-async function readJson(filePath: string): Promise<unknown> {
-  return JSON.parse(await fs.readFile(filePath, "utf8"));
+async function readManagedFile(artifactDirectory: string, filePath: string): Promise<string> {
+  const safeFilePath = await ensureSafeManagedArtifactFile(artifactDirectory, filePath);
+  return fs.readFile(safeFilePath, "utf8");
+}
+
+async function readManagedJson(artifactDirectory: string, filePath: string): Promise<unknown> {
+  return JSON.parse(await readManagedFile(artifactDirectory, filePath));
+}
+
+async function readOptionalManagedFile(
+  artifactDirectory: string,
+  filePath: string,
+): Promise<string | undefined> {
+  try {
+    return await readManagedFile(artifactDirectory, filePath);
+  } catch (error) {
+    if (errorCode(error) === "ENOENT") return undefined;
+    throw error;
+  }
+}
+
+async function managedFileExists(artifactDirectory: string, filePath: string): Promise<boolean> {
+  try {
+    await ensureSafeManagedArtifactFile(artifactDirectory, filePath);
+    return true;
+  } catch (error) {
+    if (errorCode(error) === "ENOENT") return false;
+    throw error;
+  }
+}
+
+async function writeNewManagedFile(
+  artifactDirectory: string,
+  filePath: string,
+  contents: string,
+): Promise<void> {
+  const safeFilePath = await ensureSafeManagedArtifactFile(
+    artifactDirectory,
+    filePath,
+    { allowMissing: true },
+  );
+  await fs.writeFile(safeFilePath, contents, {
+    encoding: "utf8",
+    flag: "wx",
+    mode: OWNER_ONLY_FILE_MODE,
+  });
+  await ensureSafeManagedArtifactFile(artifactDirectory, safeFilePath);
+}
+
+async function copyManagedFile(
+  artifactDirectory: string,
+  source: string,
+  target: string,
+  exclusive = false,
+): Promise<void> {
+  const safeSource = await ensureSafeManagedArtifactFile(artifactDirectory, source);
+  const safeTarget = await ensureSafeManagedArtifactFile(
+    artifactDirectory,
+    target,
+    { allowMissing: true },
+  );
+  await fs.copyFile(safeSource, safeTarget, exclusive ? constants.COPYFILE_EXCL : 0);
+  await ensureSafeManagedArtifactFile(artifactDirectory, safeTarget);
+}
+
+async function renameManagedFileToMissingTarget(
+  artifactDirectory: string,
+  source: string,
+  target: string,
+): Promise<void> {
+  const safeSource = await ensureSafeManagedArtifactFile(artifactDirectory, source);
+  const safeTarget = await ensureSafeManagedArtifactFile(
+    artifactDirectory,
+    target,
+    { allowMissing: true },
+  );
+  if (await managedFileExists(artifactDirectory, safeTarget)) {
+    throw new Error(`Artifact transaction target already exists: ${path.basename(safeTarget)}`);
+  }
+  await fs.rename(safeSource, safeTarget);
+  await ensureSafeManagedArtifactFile(artifactDirectory, safeTarget);
+}
+
+async function removeManagedFileIfExists(artifactDirectory: string, filePath: string): Promise<void> {
+  const safeFilePath = assertManagedArtifactFilePath(artifactDirectory, filePath);
+  try {
+    const stat = await fs.lstat(safeFilePath);
+    if (!stat.isFile() && !stat.isSymbolicLink()) {
+      throw new Error("UNSAFE_ARTIFACT_PATH: managed cleanup targets must be regular files or symbolic links.");
+    }
+  } catch (error) {
+    if (errorCode(error) === "ENOENT") return;
+    throw error;
+  }
+  await fs.unlink(safeFilePath);
 }
 
 function samePathKey(value: string): string {
@@ -188,45 +292,11 @@ function samePathKey(value: string): string {
   return process.platform === "win32" ? resolved.toLowerCase() : resolved;
 }
 
-function isPathInside(parent: string, child: string): boolean {
-  const relative = path.relative(parent, child);
-  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
-}
-
-async function assertNotSymlink(filePath: string): Promise<void> {
-  const stat = await fs.lstat(filePath);
-  if (stat.isSymbolicLink()) throw new Error("UNSAFE_ARTIFACT_PATH: symbolic links and junctions are not allowed in the artifact storage path.");
-  if (!stat.isDirectory()) throw new Error("UNSAFE_ARTIFACT_PATH: artifact storage components must be directories.");
-}
-
-async function ensureSafeDirectory(directory: string): Promise<void> {
-  try {
-    await assertNotSymlink(directory);
-    return;
-  } catch (error) {
-    if (errorCode(error) !== "ENOENT") throw error;
-  }
-  try {
-    await fs.mkdir(directory);
-  } catch (error) {
-    if (errorCode(error) !== "EEXIST") throw error;
-  }
-  await assertNotSymlink(directory);
-}
-
-async function safeArtifactCollectionRoot(workspaceRoot: string): Promise<string> {
-  const artifactsDirectory = path.join(workspaceRoot, ARTIFACTS_DIRECTORY);
-  const collectionDirectory = path.join(artifactsDirectory, ARTIFACT_COLLECTION_DIRECTORY);
-  await ensureSafeDirectory(artifactsDirectory);
-  await ensureSafeDirectory(collectionDirectory);
-  const [workspaceRealPath, collectionRealPath] = await Promise.all([
-    fs.realpath(workspaceRoot),
-    fs.realpath(collectionDirectory),
-  ]);
-  if (!isPathInside(workspaceRealPath, collectionRealPath)) {
-    throw new Error("UNSAFE_ARTIFACT_PATH: artifact storage resolves outside the registered workspace.");
-  }
-  return collectionRealPath;
+function globalRootOptions(): GlobalArtifactsRootOptions {
+  const testUserHome = process.env.NODE_ENV === "test"
+    ? process.env.CODEX_ARTIFACTS_TEST_USER_HOME
+    : undefined;
+  return testUserHome ? { userHome: testUserHome } : {};
 }
 
 function artifactSlug(title: string): string {
@@ -241,6 +311,8 @@ function artifactSlug(title: string): string {
 }
 
 function generatedArtifactId(title: string): string {
+  const testArtifactId = testArtifactIds.shift();
+  if (testArtifactId !== undefined) return artifactIdSchema.parse(testArtifactId);
   const date = new Date().toISOString().slice(0, 10).replaceAll("-", "");
   return `${artifactSlug(title)}-${date}-${randomUUID().slice(0, 8)}`;
 }
@@ -340,25 +412,32 @@ async function resolveCreateWorkspaceRoot(input: CreateArtifactInput): Promise<{
 }
 
 async function persistArtifact(input: CreateArtifactInput, workspaceRoot: string): Promise<ArtifactContext> {
-  const collectionRoot = await safeArtifactCollectionRoot(workspaceRoot);
+  const rootOptions = globalRootOptions();
+  const collectionRoot = await ensureSafeGlobalArtifactsRoot(rootOptions);
   const createdAt = new Date().toISOString();
   const reviewSessionId = randomUUID();
 
   for (let attempt = 0; attempt < 5; attempt++) {
     const artifactId = generatedArtifactId(input.title);
-    const artifactDirectory = path.join(collectionRoot, artifactId);
-    if (!isPathInside(collectionRoot, artifactDirectory) || samePathKey(path.dirname(artifactDirectory)) !== samePathKey(collectionRoot)) {
-      throw new Error("UNSAFE_ARTIFACT_PATH: generated artifact directory escaped the collection root.");
-    }
+    const artifactDirectory = assertGlobalArtifactDirectory(
+      artifactId,
+      path.join(collectionRoot, artifactId),
+      rootOptions,
+    );
     try {
-      await fs.mkdir(artifactDirectory);
+      await fs.mkdir(artifactDirectory, { mode: OWNER_ONLY_DIRECTORY_MODE });
     } catch (error) {
       if (errorCode(error) === "EEXIST") continue;
       throw error;
     }
 
-    const files = artifactPaths(artifactDirectory);
     try {
+      const safeArtifactDirectory = await ensureSafeGlobalArtifactDirectory(
+        artifactId,
+        artifactDirectory,
+        rootOptions,
+      );
+      const files = artifactPaths(safeArtifactDirectory);
       const manifest = artifactManifestSchema.parse({
         schemaVersion: ARTIFACT_SCHEMA_VERSION,
         kind: input.kind,
@@ -377,13 +456,21 @@ async function persistArtifact(input: CreateArtifactInput, workspaceRoot: string
         artifactSha256: sha256(input.markdown),
         comments: [],
       });
-      await fs.writeFile(files.manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, { encoding: "utf8", flag: "wx" });
+      await writeNewManagedFile(
+        safeArtifactDirectory,
+        files.manifestPath,
+        `${JSON.stringify(manifest, null, 2)}\n`,
+      );
       if (process.env.NODE_ENV === "test" && process.env.CODEX_ARTIFACTS_TEST_FAIL_CREATE === "after-manifest") {
         throw new Error("Injected artifact creation failure after manifest write.");
       }
-      await fs.writeFile(files.artifactPath, input.markdown, { encoding: "utf8", flag: "wx" });
-      await fs.writeFile(files.commentsPath, `${JSON.stringify(comments, null, 2)}\n`, { encoding: "utf8", flag: "wx" });
-      return loadArtifactContext(artifactDirectory);
+      await writeNewManagedFile(safeArtifactDirectory, files.artifactPath, input.markdown);
+      await writeNewManagedFile(
+        safeArtifactDirectory,
+        files.commentsPath,
+        `${JSON.stringify(comments, null, 2)}\n`,
+      );
+      return loadArtifactContext(safeArtifactDirectory);
     } catch (error) {
       try {
         await fs.rm(artifactDirectory, { recursive: true });
@@ -411,30 +498,57 @@ async function createArtifact(args: JsonObject | undefined): Promise<ArtifactCon
   }
 }
 
+async function retryTransientLifecycleJson<T>(read: () => Promise<T>): Promise<T> {
+  for (let attempt = 0; attempt < LIFECYCLE_JSON_READ_ATTEMPTS; attempt++) {
+    try {
+      return await read();
+    } catch (error) {
+      if (!(error instanceof SyntaxError) || attempt === LIFECYCLE_JSON_READ_ATTEMPTS - 1) throw error;
+      await new Promise((resolve) => setTimeout(resolve, LIFECYCLE_JSON_READ_RETRY_MS));
+    }
+  }
+  throw new Error("Lifecycle JSON remained unreadable after the bounded retry window.");
+}
+
 async function loadArtifactContext(rawDirectory: unknown): Promise<ArtifactContext> {
   if (typeof rawDirectory !== "string" || !path.isAbsolute(rawDirectory)) {
     throw new Error("artifactDirectory must be an absolute path.");
   }
-  const artifactDirectory = path.resolve(rawDirectory);
+  const rootOptions = globalRootOptions();
+  const candidateArtifactId = path.basename(path.resolve(rawDirectory));
+  const artifactDirectory = await ensureSafeGlobalArtifactDirectory(
+    candidateArtifactId,
+    rawDirectory,
+    rootOptions,
+  );
   const files = artifactPaths(artifactDirectory);
-  const [manifestRaw, markdown, commentsRaw] = await Promise.all([
-    readJson(files.manifestPath),
-    fs.readFile(files.artifactPath, "utf8"),
-    fs.readFile(files.commentsPath, "utf8"),
-  ]);
-  const manifest = artifactManifestSchema.parse(manifestRaw);
-  const workspaceRoot = assertArtifactDirectory(manifest, artifactDirectory);
+  const { manifest, markdown } = await retryTransientLifecycleJson(async () => {
+    const [manifestRaw, currentMarkdown, commentsRaw] = await Promise.all([
+      readManagedJson(artifactDirectory, files.manifestPath),
+      readManagedFile(artifactDirectory, files.artifactPath),
+      readManagedFile(artifactDirectory, files.commentsPath),
+    ]);
+    const currentManifest = parseArtifactManifest(manifestRaw);
+    if (currentManifest.artifactId !== candidateArtifactId) {
+      throw new Error("The global artifact directory basename does not match its artifact id.");
+    }
+    parseBoundCommentsDocument(JSON.parse(commentsRaw), {
+      schemaVersion: ARTIFACT_SCHEMA_VERSION,
+      artifactId: currentManifest.artifactId,
+      reviewRound: currentManifest.reviewRound,
+      artifactSha256: sha256(currentMarkdown),
+    });
+    return { manifest: currentManifest, markdown: currentMarkdown };
+  });
+  const workspaceRoot = manifest.location.workspaceRoot;
+  if (!path.isAbsolute(workspaceRoot)) {
+    throw new Error("The artifact workspace root must be an absolute path.");
+  }
   const registeredWorkspaceRoot = await resolveRegisteredWorkspaceRoot(workspaceRoot);
   if (samePathKey(registeredWorkspaceRoot) !== samePathKey(workspaceRoot)) {
     throw new Error("WORKSPACE_NOT_REGISTERED: the artifact workspace no longer matches its registered canonical path.");
   }
   const artifactSha256 = sha256(markdown);
-  parseBoundCommentsDocument(JSON.parse(commentsRaw), {
-    schemaVersion: ARTIFACT_SCHEMA_VERSION,
-    artifactId: manifest.artifactId,
-    reviewRound: manifest.reviewRound,
-    artifactSha256,
-  });
   return {
     artifactDirectory,
     artifactId: manifest.artifactId,
@@ -447,17 +561,12 @@ async function loadArtifactContext(rawDirectory: unknown): Promise<ArtifactConte
   };
 }
 
-async function readValidatedSubmission(context: ArtifactContext): Promise<ReviewWaitResult | undefined> {
-  let submissionRaw: string;
-  try {
-    submissionRaw = await fs.readFile(context.submissionPath, "utf8");
-  } catch (error) {
-    if (errorCode(error) === "ENOENT") return undefined;
-    throw error;
-  }
+async function readValidatedSubmissionOnce(context: ArtifactContext): Promise<ReviewWaitResult | undefined> {
+  const submissionRaw = await readOptionalManagedFile(context.artifactDirectory, context.submissionPath);
+  if (submissionRaw === undefined) return undefined;
   const [currentMarkdown, currentCommentsRaw] = await Promise.all([
-    fs.readFile(context.artifactPath, "utf8"),
-    fs.readFile(context.commentsPath, "utf8"),
+    readManagedFile(context.artifactDirectory, context.artifactPath),
+    readManagedFile(context.artifactDirectory, context.commentsPath),
   ]);
   const currentArtifactSha256 = sha256(currentMarkdown);
   const currentCommentsSha256 = sha256(currentCommentsRaw);
@@ -472,11 +581,9 @@ async function readValidatedSubmission(context: ArtifactContext): Promise<Review
     artifactId: context.artifactId,
     reviewRound: context.reviewRound,
     reviewSessionId: context.reviewSessionId,
-    threadId: undefined,
     artifactSha256: currentArtifactSha256,
     commentsSha256: currentCommentsSha256,
   });
-  if (submission.schemaVersion !== ARTIFACT_SCHEMA_VERSION) throw new Error("Legacy submissions cannot drive an MCP-owned lifecycle.");
   if (submission.decision === "revise" && currentComments.comments.length === 0) {
     throw new Error("A review request must include at least one comment.");
   }
@@ -499,6 +606,10 @@ async function readValidatedSubmission(context: ArtifactContext): Promise<Review
   };
 }
 
+async function readValidatedSubmission(context: ArtifactContext): Promise<ReviewWaitResult | undefined> {
+  return retryTransientLifecycleJson(() => readValidatedSubmissionOnce(context));
+}
+
 async function readArtifactInspection(context: ArtifactContext): Promise<{
   markdown: string;
   comments: ReturnType<typeof parseBoundCommentsDocument>;
@@ -508,8 +619,8 @@ async function readArtifactInspection(context: ArtifactContext): Promise<{
   submissionSha256?: string;
 }> {
   const [markdown, commentsRaw] = await Promise.all([
-    fs.readFile(context.artifactPath, "utf8"),
-    fs.readFile(context.commentsPath, "utf8"),
+    readManagedFile(context.artifactDirectory, context.artifactPath),
+    readManagedFile(context.artifactDirectory, context.commentsPath),
   ]);
   const artifactSha256 = sha256(markdown);
   const commentsSha256 = sha256(commentsRaw);
@@ -520,12 +631,7 @@ async function readArtifactInspection(context: ArtifactContext): Promise<{
     artifactSha256,
   });
 
-  let submissionRaw: string | undefined;
-  try {
-    submissionRaw = await fs.readFile(context.submissionPath, "utf8");
-  } catch (error) {
-    if (errorCode(error) !== "ENOENT") throw error;
-  }
+  const submissionRaw = await readOptionalManagedFile(context.artifactDirectory, context.submissionPath);
   if (submissionRaw === undefined) return { markdown, comments, artifactSha256, commentsSha256 };
 
   const submission = parseBoundReviewSubmission(JSON.parse(submissionRaw), {
@@ -533,13 +639,9 @@ async function readArtifactInspection(context: ArtifactContext): Promise<{
     artifactId: context.artifactId,
     reviewRound: context.reviewRound,
     reviewSessionId: context.reviewSessionId,
-    threadId: undefined,
     artifactSha256,
     commentsSha256,
   });
-  if (submission.schemaVersion !== ARTIFACT_SCHEMA_VERSION) {
-    throw new Error("Legacy submissions cannot drive an MCP-owned lifecycle.");
-  }
   return {
     markdown,
     comments,
@@ -666,16 +768,6 @@ async function waitForSubmission(
   }
 }
 
-async function exists(filePath: string): Promise<boolean> {
-  try {
-    await fs.access(filePath);
-    return true;
-  } catch (error) {
-    if (errorCode(error) === "ENOENT") return false;
-    throw error;
-  }
-}
-
 type BackupMode = "renamed" | "copied";
 
 function isWindowsReplaceBlock(error: unknown): boolean {
@@ -683,22 +775,46 @@ function isWindowsReplaceBlock(error: unknown): boolean {
   return code === "EPERM" || code === "EBUSY" || code === "EACCES";
 }
 
-async function backupTarget(target: string, backup: string): Promise<BackupMode> {
+async function backupTarget(
+  artifactDirectory: string,
+  target: string,
+  backup: string,
+): Promise<BackupMode> {
+  const safeTarget = await ensureSafeManagedArtifactFile(artifactDirectory, target);
+  const safeBackup = await ensureSafeManagedArtifactFile(
+    artifactDirectory,
+    backup,
+    { allowMissing: true },
+  );
+  if (await managedFileExists(artifactDirectory, safeBackup)) {
+    throw new Error(`Artifact transaction backup already exists: ${path.basename(safeBackup)}`);
+  }
   try {
     if (
       process.env.NODE_ENV === "test"
       && process.env.CODEX_ARTIFACTS_TEST_LOCK_ARTIFACT === "1"
-      && path.basename(target) === ARTIFACT_MARKDOWN_FILE
+      && path.basename(safeTarget) === ARTIFACT_MARKDOWN_FILE
     ) {
       throw Object.assign(new Error("Injected Windows editor lock."), { code: "EPERM" });
     }
-    await fs.rename(target, backup);
+    await fs.rename(safeTarget, safeBackup);
     return "renamed";
   } catch (error) {
     if (!isWindowsReplaceBlock(error)) throw error;
-    await fs.copyFile(target, backup, constants.COPYFILE_EXCL);
+    await copyManagedFile(artifactDirectory, safeTarget, safeBackup, true);
     return "copied";
   }
+}
+
+function generatedTransactionId(): string {
+  const testTransactionId = process.env.NODE_ENV === "test"
+    ? process.env.CODEX_ARTIFACTS_TEST_TRANSACTION_ID
+    : undefined;
+  const transactionId = testTransactionId ?? `${process.pid}-${Date.now()}-${randomUUID()}`;
+  if (!/^[a-zA-Z0-9_-]+$/.test(transactionId)) {
+    throw new Error("Invalid artifact transaction id.");
+  }
+  return transactionId;
 }
 
 async function commitReviewRound(
@@ -709,7 +825,7 @@ async function commitReviewRound(
   if (Buffer.byteLength(markdown, "utf8") > MAX_MARKDOWN_BYTES) {
     throw new Error(`markdown exceeds ${MAX_MARKDOWN_BYTES} bytes.`);
   }
-  const transactionId = `${process.pid}-${Date.now()}-${randomUUID()}`;
+  const transactionId = generatedTransactionId();
   const nextArtifactSha256 = sha256(markdown);
   const nextManifest = artifactManifestSchema.parse({
     ...context.manifest,
@@ -731,54 +847,92 @@ async function commitReviewRound(
   ];
   const backups = targets.map((target) => `${target}.previous-${transactionId}`);
   const lockPath = path.join(context.artifactDirectory, ARTIFACT_UPDATE_LOCK_FILE);
-  await fs.writeFile(lockPath, `${JSON.stringify({
-    artifactId: context.artifactId,
-    fromReviewRound: context.reviewRound,
-    toReviewRound: nextManifest.reviewRound,
-    startedAt: new Date().toISOString(),
-  })}\n`, { encoding: "utf8", flag: "wx" });
 
   const backupModes = new Map<number, BackupMode>();
   try {
-    await Promise.all([
-      fs.writeFile(staged[0]!, markdown, "utf8"),
-      fs.writeFile(staged[1]!, `${JSON.stringify(nextManifest, null, 2)}\n`, "utf8"),
-      fs.writeFile(staged[2]!, `${JSON.stringify(nextComments, null, 2)}\n`, "utf8"),
+    await writeNewManagedFile(context.artifactDirectory, lockPath, `${JSON.stringify({
+      artifactId: context.artifactId,
+      fromReviewRound: context.reviewRound,
+      toReviewRound: nextManifest.reviewRound,
+      startedAt: new Date().toISOString(),
+    })}\n`);
+    const stagedWrites = await Promise.allSettled([
+      writeNewManagedFile(context.artifactDirectory, staged[0]!, markdown),
+      writeNewManagedFile(
+        context.artifactDirectory,
+        staged[1]!,
+        `${JSON.stringify(nextManifest, null, 2)}\n`,
+      ),
+      writeNewManagedFile(
+        context.artifactDirectory,
+        staged[2]!,
+        `${JSON.stringify(nextComments, null, 2)}\n`,
+      ),
     ]);
+    const failedStagedWrite = stagedWrites.find(
+      (result): result is PromiseRejectedResult => result.status === "rejected",
+    );
+    if (failedStagedWrite) throw failedStagedWrite.reason;
     for (let index = 0; index < targets.length; index++) {
       const target = targets[index]!;
-      if (!await exists(target)) {
+      if (!await managedFileExists(context.artifactDirectory, target)) {
         if (index === 3) continue;
         throw new Error(`Artifact transaction target is missing: ${path.basename(target)}`);
       }
-      backupModes.set(index, await backupTarget(target, backups[index]!));
+      const backupMode = await backupTarget(context.artifactDirectory, target, backups[index]!);
+      backupModes.set(index, backupMode);
+      await ensureSafeManagedArtifactFile(context.artifactDirectory, backups[index]!);
     }
     if (process.env.NODE_ENV === "test" && process.env.CODEX_ARTIFACTS_TEST_FAIL_UPDATE === "after-backup") {
       throw new Error("Injected artifact update failure after backup.");
     }
     for (let index = 0; index < staged.length; index++) {
-      if (backupModes.get(index) === "copied") await fs.copyFile(staged[index]!, targets[index]!);
-      else await fs.rename(staged[index]!, targets[index]!);
+      if (backupModes.get(index) === "copied") {
+        await copyManagedFile(context.artifactDirectory, staged[index]!, targets[index]!);
+      } else {
+        await renameManagedFileToMissingTarget(context.artifactDirectory, staged[index]!, targets[index]!);
+      }
     }
     const submissionIndex = targets.length - 1;
-    if (backupModes.get(submissionIndex) === "copied") await fs.rm(targets[submissionIndex]!, { force: true });
-    await Promise.all(backups.map((backup) => fs.rm(backup, { force: true }).catch(() => {})));
+    if (backupModes.get(submissionIndex) === "copied") {
+      await removeManagedFileIfExists(context.artifactDirectory, targets[submissionIndex]!);
+    }
+    await Promise.all(backups.map((backup) => (
+      removeManagedFileIfExists(context.artifactDirectory, backup).catch(() => {})
+    )));
     return { manifest: nextManifest, artifactSha256: nextArtifactSha256 };
   } catch (error) {
+    const rollbackErrors: unknown[] = [];
     for (const index of [...backupModes.keys()].reverse()) {
       const backup = backups[index]!;
-      if (await exists(backup).catch(() => false)) {
-        if (backupModes.get(index) === "copied") await fs.copyFile(backup, targets[index]!).catch(() => {});
-        else {
-          await fs.rm(targets[index]!, { force: true }).catch(() => {});
-          await fs.rename(backup, targets[index]!).catch(() => {});
+      try {
+        if (await managedFileExists(context.artifactDirectory, backup)) {
+          if (backupModes.get(index) === "copied") {
+            await copyManagedFile(context.artifactDirectory, backup, targets[index]!);
+          } else {
+            await removeManagedFileIfExists(context.artifactDirectory, targets[index]!);
+            await renameManagedFileToMissingTarget(context.artifactDirectory, backup, targets[index]!);
+          }
         }
+      } catch (rollbackError) {
+        rollbackErrors.push(rollbackError);
       }
+    }
+    if (rollbackErrors.length > 0) {
+      throw new AggregateError(
+        [error, ...rollbackErrors],
+        "ARTIFACT_UPDATE_ROLLBACK_FAILED: artifact update failed and its original state could not be restored safely.",
+      );
     }
     throw error;
   } finally {
-    await Promise.all(staged.map((filePath) => fs.rm(filePath, { force: true }).catch(() => {})));
-    await fs.rm(lockPath, { force: true }).catch(() => {});
+    await Promise.all(staged.map((filePath) => (
+      removeManagedFileIfExists(context.artifactDirectory, filePath).catch(() => {})
+    )));
+    await Promise.all(backups.map((filePath) => (
+      removeManagedFileIfExists(context.artifactDirectory, filePath).catch(() => {})
+    )));
+    await removeManagedFileIfExists(context.artifactDirectory, lockPath).catch(() => {});
   }
 }
 
@@ -1256,7 +1410,7 @@ async function handleRequest(message: JsonObject): Promise<void> {
       protocolVersion,
       capabilities: { tools: { listChanged: false } },
       serverInfo: { name: SERVER_NAME, version: SERVER_VERSION },
-    instructions: "Resolve the target workspace folder before reading project files or drafting new artifact content. With no user-tagged file, call resolve_artifact_workspace immediately using the user's exact workspace keyword; do not scan folders to normalize it first. The resolver operates within one uniquely identified VS Code workspace context. If that context contains one folder, it returns that folder with matchMode=matched and match=single-folder even when the query text differs. In a multi-root workspace, a query with no match returns every folder in that same context with matchMode=all-available. It never combines folders from different VS Code windows; WORKSPACE_CONTEXT_AMBIGUOUS requires the user to focus the intended window and retry. Select a uniquely high-confidence candidate from the returned names and paths; ask the user only when the result remains ambiguous. Create reviewable Markdown with create_artifact using only tagged-file evidence or a resolved-workspace selection token. The official skill always sends kind=implementation-plan. Retain the exact artifactDirectory handle, then call wait_for_artifact_review. Do not resolve the workspace again after creation. A cancelled waiter never ends or deletes the artifact. Treat comments returned by a Review submission and comments read through inspect_artifact_review with the same policy: answer questions visibly in chat before calling advance_and_wait_for_artifact, update Markdown only for requested changes, and omit markdown for question-only feedback. Do not add Review responses to the artifact. Pure reconnect uses wait on the exact handle and same round. For chat escape, inspect the exact handle with takeover=true. If intent or handle is ambiguous, ask the user before calling a lifecycle tool and never takeover speculatively. If inspection has no comments or submission, reattach with wait_for_artifact_review without advancing. When updating an artifact directly from chat on an empty round, inspect with takeover=true, expectedReviewRound, and intent=explicit-chat-update, then advance with replacement markdown. Follow structured recovery metadata on lifecycle errors, keep the same exact handle, and never replay when commit state is uncertain. When Proceed returns approve for kind plan or implementation-plan, obey nextAction and execute the complete approved plan immediately in the same turn; do not stop at acknowledgement or ask for another confirmation. Proceed ends only the review round, not the authorized execution. Just save ends the round without execution. Reconnect later by explicitly inspecting, advancing without markdown, and waiting again; reconnect must not repeat an already executed action. Never select the latest artifact from a workspace or infer an artifact handle from cwd.",
+    instructions: "Resolve the target workspace folder before reading project files or drafting new artifact content. With no user-tagged file, call resolve_artifact_workspace immediately using the user's exact workspace keyword; do not scan folders to normalize it first. The resolver operates within one uniquely identified VS Code workspace context. If that context contains one folder, it returns that folder with matchMode=matched and match=single-folder even when the query text differs. In a multi-root workspace, a query with no match returns every folder in that same context with matchMode=all-available. It never combines folders from different VS Code windows; WORKSPACE_CONTEXT_AMBIGUOUS requires the user to focus the intended window and retry. Select a uniquely high-confidence candidate from the returned names and paths; ask the user only when the result remains ambiguous. Create reviewable Markdown with create_artifact using only tagged-file evidence or a resolved-workspace selection token. The official skill always sends kind=implementation-plan. Retain the exact artifactDirectory handle, then call wait_for_artifact_review. Do not resolve the workspace again after creation. A cancelled waiter never ends or deletes the artifact. Treat comments returned by a Review submission and comments read through inspect_artifact_review with the same policy: answer questions visibly in chat before calling advance_and_wait_for_artifact, update Markdown only for requested changes, and omit markdown for question-only feedback. Do not add Review responses to the artifact. Pure reconnect uses wait on the exact handle and same round. For chat escape, inspect the exact handle with takeover=true. If intent or handle is ambiguous, ask the user before calling a lifecycle tool and never takeover speculatively. If inspection has no comments or submission, reattach with wait_for_artifact_review without advancing. When updating an artifact directly from chat on an empty round, inspect with takeover=true, expectedReviewRound, and intent=explicit-chat-update, then advance with replacement markdown. Follow structured recovery metadata on lifecycle errors, keep the same exact handle, and never replay when commit state is uncertain. When Proceed returns approve for kind plan or implementation-plan, obey nextAction and execute the complete approved plan immediately in the same turn; do not stop at acknowledgement or ask for another confirmation. Proceed ends only the review round, not the authorized execution. Just save ends the round without execution. Reconnect later by explicitly inspecting, advancing without markdown, and waiting again; reconnect must not repeat an already executed action. After creation, use only the exact returned artifactDirectory for wait, inspect, advance, and reconnect. Never scan global artifact storage or a workspace to discover an artifact, and never infer an artifact handle from cwd.",
     });
     return;
   }
@@ -1283,11 +1437,11 @@ async function handleRequest(message: JsonObject): Promise<void> {
       {
         name: CREATE_TOOL_NAME,
         title: "Create artifact",
-        description: "Create a secure schema-v4 Markdown artifact inside a currently registered VS Code workspace folder and return its exact persistent handle without waiting.",
+        description: "Create a secure schema-v5 Markdown artifact in global AI Artifacts storage for a currently registered VS Code workspace target, and return its exact persistent handle without waiting.",
         inputSchema: {
           type: "object",
           properties: {
-            workspaceRoot: { type: "string", description: "Absolute path of a workspace folder currently open in VS Code." },
+            workspaceRoot: { type: "string", description: "Absolute path of the target workspace folder currently registered by VS Code. Used for ownership validation and retained as artifact metadata; it is not the artifact storage location." },
             workspaceEvidence: {
               description: "Creation evidence for this exact workspace. Only a user-tagged file or a candidate chosen from the current resolver result is accepted.",
               oneOf: [
