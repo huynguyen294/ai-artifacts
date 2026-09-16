@@ -4,6 +4,35 @@ All notable changes to the **AI Artifacts** (`agent-plus`) project will be docum
 
 Release history has been standardized and tracked starting from version **0.2.6**. Package builds prior to this version are not considered part of the official changelog.
 
+## [1.0.0] - 2026-09-16
+
+### Global schema-v5 lifecycle
+
+- Moved live artifact storage to the per-user `~/.ai-artifacts/artifacts/<id>/` collection while retaining `location.workspaceRoot` as validated target metadata.
+- Upgraded the only supported lifecycle contract to schema v5 and MCP server 7.0.0. Schemas v3/v4 and workspace-local lifecycles are rejected and are not live-migrated.
+- Preserved the five-tool contract: `resolve_artifact_workspace`, `create_artifact`, `wait_for_artifact_review`, `inspect_artifact_review`, and `advance_and_wait_for_artifact`.
+- Added canonical direct-child validation, linked-path rejection, owner-only POSIX directory/file modes, and rollback-safe create/advance behavior for global storage.
+
+### Focused auto-open and regular links
+
+- Replaced workspace globs with a validated watcher rooted at the global artifact collection; root creation completes before watcher registration so the first artifact is observable.
+- Auto-open now occurs only in the focused VS Code window and respects `agentPlus.autoOpenArtifactReview`.
+- Added one shared exact-handle open coordinator for watcher and command paths, with same-artifact single-flight behavior and `vscode.openWith` reuse/reveal.
+- Clarified that `artifactLink` is an RFC 8089 regular file link, not a deep link and not a guarantee that the custom editor opens.
+- Removed the `.codex-artifacts` custom-editor selector.
+
+### Integration synchronization and upgrade policy
+
+- Reinstall now replaces stale MCP/skill assets from packaged source, removes obsolete skill files and legacy runtime aliases, and reports configured clients as `outdated` until shared assets are current.
+- Verified install/reinstall/uninstall behavior for Codex, Cursor, Claude, Windsurf, and GitHub Copilot while preserving unrelated configuration.
+- Uninstall removes managed client/runtime/skill/registry state but deliberately retains `~/.ai-artifacts/`.
+- Version 1.0.0 is a hard compatibility cutoff. After upgrading, reinstall all integrations, restart the AI client, and start a new chat. Rollback requires reinstalling the matching older runtime and skill.
+
+### Documentation and validation
+
+- Updated README, philosophy, architecture, component ownership, contributor instructions, production skill contract, and release metadata for the global v5 model and shared-filesystem support boundary.
+- Added regression coverage for global path safety, POSIX permissions, schema rejection, first-artifact watcher behavior, multi-window focus routing, regular-link encoding, five-client synchronization, and uninstall data retention.
+
 ## [0.9.3] - 2026-09-11
 
 ### Skill Copy Command & Independent Skill Verification

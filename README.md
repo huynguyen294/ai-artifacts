@@ -8,7 +8,7 @@ With AI Artifacts, you can review proposals before code is written, guide agent 
 
 ## How It Works
 
-1. **Ask your AI to create an artifact** — In your AI chat, request a review artifact (e.g., _"Draft an example plan and produce a reviewable artifact"_). The agent generates an interactive Markdown document in your workspace.
+1. **Ask your AI to create an artifact** — In your AI chat, request a review artifact (e.g., _"Draft an example plan and produce a reviewable artifact"_). The agent generates an interactive Markdown document in the global user collection and associates it with the selected workspace.
 2. **Review & annotate inline** — The Artifact Review editor opens automatically. Highlight any text and attach inline comments with your feedback.
 3. **Submit your decision** — Click **Review** to send feedback back for revision, or **Proceed** to approve the plan and let the AI execute immediately.
 
@@ -24,11 +24,11 @@ With AI Artifacts, you can review proposals before code is written, guide agent 
 ### 1. Install the extension
 
 - **From Marketplace / Open VSX:** Search for `AI Artifacts` in the Extensions view (`Ctrl+Shift+X` / `Cmd+Shift+X`) and click **Install**.
-- **From VSIX release:** Download the latest [AI Artifacts VSIX](releases/ai-artifacts-0.9.3.vsix) and run:
+- **From VSIX release:** Download the latest [AI Artifacts VSIX](releases/ai-artifacts-1.0.0.vsix) and run:
   ```powershell
-  code --install-extension releases/ai-artifacts-0.9.3.vsix
+  code --install-extension releases/ai-artifacts-1.0.0.vsix
   # Or in Cursor:
-  cursor --install-extension releases/ai-artifacts-0.9.3.vsix
+  cursor --install-extension releases/ai-artifacts-1.0.0.vsix
   ```
 
 To build the VSIX yourself from source, follow [Development](#development) below.
@@ -58,12 +58,15 @@ The installer preserves all unrelated MCP configurations, custom skills, and wor
 
 ### 3. Reload and verify the integration
 
-After installing or upgrading:
+After installing or upgrading the extension, **reinstall every integration**. Updating the VS Code extension does not update MCP runtime or skill files that were installed previously.
 
-1. Reload the window (**Developer: Reload Window** from the Command Palette).
-2. Restart your AI chat extension or agent (Cursor, Codex, Windsurf, Claude, Copilot).
-3. Start a fresh chat conversation to load the newly registered MCP tools and skill.
-4. Verify readiness by running **AI Artifacts: Verify All Integrations** from the Command Palette.
+1. Run **AI Artifacts: Install All Detected Integrations**, or rerun each client-specific install command you use.
+2. Reload the window (**Developer: Reload Window** from the Command Palette).
+3. Restart your AI chat extension or agent (Cursor, Codex, Windsurf, Claude, Copilot).
+4. Start a fresh chat conversation to load the newly registered MCP tools and skill.
+5. Verify readiness by running **AI Artifacts: Verify All Integrations** from the Command Palette.
+
+The current catalog contains exactly five tools: `resolve_artifact_workspace`, `create_artifact`, `wait_for_artifact_review`, `inspect_artifact_review`, and `advance_and_wait_for_artifact`. A client that still exposes an older catalog must be reinstalled and restarted.
 
 ### 4. Verification & troubleshooting
 
@@ -97,7 +100,7 @@ AI Artifacts provides two comprehensive ways to remove MCP configurations and ru
   - Or choose a specific client: **`AI Artifacts: Uninstall Integration for GitHub Copilot`**, **`... for Cursor`**, **`... for Codex`**, **`... for Claude`**, or **`... for Windsurf`**.
 
 > [!IMPORTANT]
-> **Zero Project Data Loss:** Neither uninstall method will ever touch or delete your project repositories' `.ai-artifacts/` or `.codex-artifacts/` review history and documents.
+> **Artifact Data Is Retained:** Neither uninstall method deletes `~/.ai-artifacts/`. Uninstall removes only managed client configuration, the installed MCP runtime and skill, and the transient workspace registry. Delete the global artifact collection separately only when you intentionally want to erase review data.
 
 ### Compatibility & Supported Agents
 
@@ -110,6 +113,11 @@ AI Artifacts connects to your favorite AI coding agents using the Model Context 
 | **Windsurf** (Cascade)               | MCP Server (`mcp_config.json`)     | Plan review, inline feedback via MCP                     |
 | **Claude (VS Code Extension / MCP)** | MCP Server / Tool Integration      | Artifact creation, inspection, round advancement         |
 
+### Supported environments
+
+- **Supported:** local desktop VS Code-compatible extension hosts on Windows, macOS, and Linux, with Node.js and the MCP process running as the same OS user and accessing the same user filesystem.
+- **Unsupported in v1.0.0:** Remote SSH, WSL, dev containers, Codespaces, browser/virtual workspaces, and any split-host setup. Even when paths appear shared, these topologies are not part of the validated release matrix and must not be treated as interoperable.
+
 ### 6. Ask your AI to create a review artifact
 
 In your AI chat (Codex, Cursor, etc.), request a review artifact for your task:
@@ -121,17 +129,21 @@ Use $create-review-artifact to draft an implementation plan before writing code.
 
 Asking for a plan or Markdown document without explicitly requesting an artifact does not activate the review lifecycle. Explicit requests to inspect saved feedback or reconnect a known artifact can resume an existing lifecycle.
 
-The AI agent calls the MCP `create_artifact` tool, which generates an isolated review bundle in your workspace:
+The AI agent calls the MCP `create_artifact` tool, which generates an isolated schema-v5 review bundle in the global per-user collection:
 
 ```text
-.ai-artifacts/artifacts/<server-generated-id>/
+~/.ai-artifacts/artifacts/<server-generated-id>/
   artifact.json
   artifact.md
   comments.json
   review-submission.json  # Present after a decision is submitted
 ```
 
-By default, the custom **Artifact Review** editor opens automatically as soon as the artifact is created. This behavior is controlled by the `agentPlus.autoOpenArtifactReview` setting (defaults to `true`).
+`artifact.json` records `location.workspaceRoot` as target metadata and ownership evidence. The workspace path does not determine where lifecycle files are stored.
+
+By default, the custom **Artifact Review** editor opens automatically in the currently focused VS Code window as soon as an eligible artifact is created. If no VS Code window is focused, or `agentPlus.autoOpenArtifactReview` is disabled, no window is opened or focused. Use **AI Artifacts: Open Artifact Review** to open the custom editor manually.
+
+MCP results also include `artifactLink`, an ordinary encoded `file://` Markdown link. It opens the artifact file through the chat client and is not a deep link; it does not guarantee that the custom editor opens.
 
 ### 7. Review, annotate, and drive execution
 
@@ -154,23 +166,22 @@ When the current round has no saved comments or submission, you may request a co
 - **Safe Lifecycle:** Artifact data outlives transient MCP connections. Process restarts, waiter cancellations, or new chat turns never destroy unreviewed artifacts.
 - **Fail-Closed Workspace Ownership:** The agent must prove workspace ownership via explicit tagged files or an MCP-issued resolver token before creating an artifact. Cwd or fuzzy workspace guessing is rejected.
 - **Transactional Updates:** Multi-round revisions are transactional; failed commits automatically roll back, including the Windows editor-lock fallback.
-- **Local & Private:** Everything runs locally on your machine via stdio MCP. No code, markdown, or telemetry is sent to any external server.
+- **Local & Private:** Everything runs locally on your machine via stdio MCP. No code, Markdown, or telemetry is sent to an AI Artifacts server. Your configured AI client may still process content according to that client's own privacy policy.
 - **Content Sanitization:** Rendered with CommonMark/GFM with syntax highlighting (Shiki) and diagram rendering (Mermaid). Unsafe raw HTML, scripts, and remote protocols are disabled.
-- **State Storage:** `.ai-artifacts/` contains operational review state and normally should not be committed to Git. Legacy `.codex-artifacts/` remains fully readable and supported.
+- **Sensitive Local State:** `~/.ai-artifacts/` may contain source excerpts, specifications, comments, and decisions. On POSIX systems, managed artifact directories are tightened to owner-only `0700` and lifecycle files to `0600`; Windows uses the account and filesystem ACLs rather than claiming POSIX-mode guarantees.
 
 ## Compatibility and upgrades
 
-- Schema v4 is the only writable artifact lifecycle. Existing schema-v4 artifacts do not need migration.
-- Schema-v3 artifacts remain readable in Artifact Review but are read-only. Create a new schema-v4 artifact to continue reviewing their content.
-- Older `.codex-artifacts/` data is left untouched for backwards compatibility; the installer and extension do not delete user artifact data.
-- Version 0.9.2 standardizes artifact storage under `.ai-artifacts/` while maintaining 100% backwards compatibility for legacy `.codex-artifacts/`.
-- Version 0.9.0 adds workspace candidate resolution, the two-evidence creation contract, default `implementation-plan` creation, multi-handle/intent safety rules, and structured lifecycle recovery.
+- Version 1.0.0 supports only schema v5 stored under `~/.ai-artifacts/artifacts/`.
+- Schema v3/v4 and workspace-local `.ai-artifacts` or `.codex-artifacts` lifecycles are not opened, advanced, or migrated by v1.0.0. Existing files remain untouched on disk.
+- This is a hard compatibility cutoff. A rollback to a 0.9.x extension also requires reinstalling the matching older runtime and skill; do not use a 0.9.x runtime with v1.0.0 artifacts.
+- After every extension upgrade, reinstall integrations and restart the AI client before starting a new chat.
 
 ## Troubleshooting
 
 ### MCP tools are unavailable
 
-Run **Codex Artifacts: Install Global Codex Integration**, restart your AI extension/editor, and start a new chat. A chat that was already open cannot load tools installed afterward. Also verify that `node` is available in `PATH`.
+Run **AI Artifacts: Install All Detected Integrations** (or the command for that client), restart your AI extension/editor, and start a new chat. A chat that was already open cannot load tools installed afterward. Also verify that `node` is available in `PATH`.
 
 ### `WORKSPACE_NOT_REGISTERED`
 
@@ -203,7 +214,7 @@ Press `F5` to launch an Extension Development Host. Package and install locally:
 
 ```powershell
 npm run package
-code --install-extension releases/ai-artifacts-0.9.3.vsix
+code --install-extension releases/ai-artifacts-1.0.0.vsix
 ```
 
 ## Documentation
@@ -215,5 +226,4 @@ code --install-extension releases/ai-artifacts-0.9.3.vsix
 - [Artifact contract](skills/create-review-artifact/references/artifact-contract.md) — exact skill and MCP lifecycle contract.
 - [Changelog](CHANGELOG.md) — release history.
 - [Documentation change logs](docs/CHANGE_LOGS.md) — meaningful documentation and architecture decisions.
-- [Known follow-up work](TODO.md) — current improvement backlog.
 - [MIT License](LICENSE) — project license.

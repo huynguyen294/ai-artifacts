@@ -60,7 +60,7 @@ The core responsibility split is:
 | Review Webview           | Human review interaction                      | Ephemeral UI state and typed user intent                                     |
 | Markdown review pipeline | Document rendering and comment anchoring      | Parsed blocks and rendered annotations                                       |
 | Shared contracts         | Cross-process protocol definition             | Schemas, types, filenames, and binding rules                                 |
-| Integration manager      | Installation and verification                 | Extension-managed Codex MCP and skill configuration                          |
+| Integration manager      | Installation and verification                 | Extension-managed MCP runtime, skill, and supported-client configuration     |
 
 The governing lifetime relationship is `artifact lifetime > waiter lifetime > chat-turn lifetime`. Artifact files persist across cancellation, takeover, chat completion, and MCP restart. The MCP waiter registry is temporary process state, while the skill retains the exact artifact handle needed to inspect or reconnect that persistent state.
 
@@ -115,7 +115,7 @@ The skill must never create or edit `artifact.json`, `comments.json`, or `review
 - Validate tool arguments, artifact kind, title, Markdown size, workspace root, and typed workspace evidence.
 - Scope resolution to one unique VS Code workspace context, match its fresh folder candidates, and issue short-lived, context-bound, single-use resolver grants.
 - Generate the artifact ID and `reviewSessionId`.
-- Create a schema-v4 artifact at review round 1.
+- Create a schema-v5 artifact beneath the global per-user collection at review round 1.
 - Return the persistent artifact handle before attaching any waiter.
 - Attach one transient tool call to `review-submission.json`, or return an existing submission immediately.
 - Detect a submission through filesystem watching with periodic polling as a fallback.
@@ -192,10 +192,10 @@ The registry proves that a workspace is currently available and that the supplie
 - Schemas: [`src/shared/contracts.ts`](../src/shared/contracts.ts)
 - Binding validation: [`src/shared/artifact-validation.ts`](../src/shared/artifact-validation.ts)
 
-Each artifact uses this directory (with legacy `<workspace>/.codex-artifacts/artifacts/<artifactId>/` fully supported):
+Each artifact is a direct child of the global per-user collection:
 
 ```text
-<workspace>/.ai-artifacts/artifacts/<artifactId>/
+~/.ai-artifacts/artifacts/<artifactId>/
 ├── artifact.json
 ├── artifact.md
 ├── comments.json
@@ -213,6 +213,8 @@ Each artifact uses this directory (with legacy `<workspace>/.codex-artifacts/art
 
 The protocol is the communication medium between the independently running MCP process and VS Code extension. It is not a revision-history store.
 
+`artifact.json` stores `location.workspaceRoot` as target metadata and ownership context. The workspace does not contain the lifecycle files. Schemas v3/v4 and workspace-local artifact directories are rejected and are not live-migrated.
+
 ## 5. VS Code extension entry
 
 **Source**
@@ -225,12 +227,13 @@ The protocol is the communication medium between the independently running MCP p
 - Activate the extension.
 - Construct the review provider and workspace-registry publisher.
 - Register the `agentPlus.artifactReview` custom editor.
-- Watch for newly created artifact `comments.json` files.
-- Automatically open the corresponding `artifact.md` when configured.
+- Ensure and validate the global collection root before registering a direct-child `comments.json` create watcher.
+- Revalidate each exact artifact handle and automatically open the corresponding `artifact.md` only when configured and the current window is focused.
+- Coordinate concurrent opens by canonical artifact path and call `vscode.openWith` for VS Code reuse/reveal behavior.
 - Register commands to:
   - Open an artifact review.
-  - Install the global Codex integration.
-  - Verify the global Codex integration.
+  - Install, verify, and uninstall all supported integrations or one specific client.
+  - Copy the current MCP configuration or production skill.
 - Own and dispose top-level VS Code subscriptions.
 
 **Does not own**
@@ -308,7 +311,7 @@ The provider is the orchestration bridge between an untrusted webview and truste
 - Selection capture or rendering.
 - Continued Codex behavior after a decision.
 
-Schema-v3 artifacts are loaded for read-only viewing. Schema v4 is the only writable lifecycle.
+Only schema-v5 artifacts at exact validated global handles are loaded. Schemas v3/v4 and workspace-local artifacts are rejected before review state is exposed.
 
 ## 8. Review Webview
 
@@ -393,7 +396,7 @@ The parser, selection capture, renderer, and store must agree on the same visibl
 
 **Responsibilities**
 
-- Define schema-v4 and readable legacy schema-v3 manifests.
+- Define the schema-v5 manifest, comments, submission, and review-state contracts.
 - Define comments, review decisions, submissions, Markdown blocks, review state, and webview messages.
 - Validate all untrusted JSON and webview input.
 - Bind comments and submissions to the correct artifact lifecycle.
@@ -427,8 +430,9 @@ This layer is the protocol source of truth. A contract change must be propagated
 - Expose dedicated setup commands plus `AI Artifacts: Install All Detected Integrations` and `AI Artifacts: Copy MCP Configuration JSON`.
 - Verify whether installed assets and client configurations match the extension requirements.
 - Report ready, missing, outdated, or configuration-conflict states across environments.
+- Replace stale installed skill/runtime assets with the packaged source and remove obsolete files during reinstall.
 - Remove only recognized legacy Codex Artifacts hooks, scripts, and skill directories.
-- Preserve unrelated user configuration.
+- Preserve unrelated user configuration and all global artifact data during uninstall.
 
 **Does not own**
 
@@ -443,9 +447,9 @@ This layer is the protocol source of truth. A contract change must be propagated
 
 1. With a tagged file, the skill derives its containing workspace folder. Without one, it calls `resolve_artifact_workspace` before reading project content. A one-folder workspace returns `matched`/`single-folder` and is selected immediately. A multi-root workspace returns query matches or the `all-available` fallback; the skill asks only when the folder choice remains ambiguous. Resolver scope ambiguity across VS Code windows requires the user to focus the intended window and retry.
 2. Only after selection, the skill reads required instructions and relevant source in that workspace, then calls `create_artifact` with complete Markdown, `kind: "implementation-plan"`, and one of the two evidence variants. It retains the returned `artifactDirectory` and round in its exact-handle mapping.
-3. The MCP revalidates the workspace/evidence, creates the three initial schema-v4 files, and returns immediately.
-4. The skill calls `wait_for_artifact_review` with the exact handle. The MCP reserves waiter ownership.
-5. The extension opens the custom editor; provider, store, webview, and Markdown pipeline render and persist review comments as before.
+3. The MCP revalidates the workspace/evidence, creates the three initial schema-v5 files under `~/.ai-artifacts/artifacts/<artifactId>/`, and returns the exact global handle plus a regular file link.
+4. The skill calls `wait_for_artifact_review` with the exact handle. The MCP reserves waiter ownership; workspace evidence is not required again.
+5. When enabled and focused, the extension watcher validates the global handle and opens the custom editor; provider, store, webview, and Markdown pipeline render and persist review comments as before.
 6. The user submits Review (`revise`), Proceed (`approve`), or Just save (`save`); the store creates `review-submission.json` exactly once.
 7. The waiting MCP validates and returns the submission. Submitted Review includes a round token.
 8. For Review, the skill classifies feedback exactly as it does for chat escape: answer questions visibly, supply replacement Markdown only when changes are requested, then call `advance_and_wait_for_artifact`. Question-only Review omits Markdown.
@@ -497,7 +501,7 @@ This layer is the protocol source of truth. A contract change must be propagated
 | Continue after approval        | Executes directive| Decision + nextAction|                    |                               |           |                    |              |
 | Install MCP and skill          |                   |     Installed asset |                     | Owner via integration manager |           |                    |              |
 
-## 14. Active and legacy components
+## 14. Active and excluded legacy components
 
 The active implementation is:
 
@@ -512,7 +516,7 @@ Retained legacy sources include:
 - `src/integration/stamp-origin.ts`
 - `src/webview/App.tsx`
 
-Schema-v3 artifacts remain readable but are read-only. Legacy source is compatibility or migration context and must not be treated as the current execution path.
+Schemas v3/v4 and workspace-local artifacts are unsupported by the active runtime. Retained legacy source exists only as cleanup, historical, or test-workflow context and must not be treated as a compatibility path.
 
 ## 15. Verification ownership
 
@@ -520,7 +524,7 @@ Tests document the expected responsibility boundaries:
 
 | Area                                                                                   | Tests                                                                                           |
 | -------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
-| Artifact loading, comments, submissions, and schema-v3 read-only behavior              | `test/artifact-store.test.ts`                                                                   |
+| Global artifact loading, comments, submissions, schema-v3/v4 rejection, and permissions | `test/artifact-store.test.ts`, `test/global-artifact-path.test.ts`                              |
 | MCP creation, waiting, takeover, inspection, reconnect, token use, rollback, and safety | `test/review-wait-mcp.test.ts`                                                                 |
 | Workspace evidence and registry freshness/focus behavior                               | `test/workspace-registry.test.ts`                                                               |
 | Review button state and decision constraints                                           | `test/review-actions.test.ts`                                                                   |
@@ -528,6 +532,8 @@ Tests document the expected responsibility boundaries:
 | Safe links and protocols                                                               | `test/url-policy.test.ts`                                                                       |
 | Managed MCP and legacy-hook configuration                                              | `test/mcp-config.test.ts`, `test/hook-config.test.ts`, `test/global-integration-status.test.ts` |
 | Installed skill contract                                                               | `test/skill-contract.test.ts`                                                                   |
+| Global watcher, focused auto-open, exact-handle command, and open coordination          | `test/artifact-review-open.test.ts`, `test/artifact-link-contract.test.ts`                      |
+| Five-client install/reinstall/verify/uninstall and artifact retention                   | `test/workspace-integration.test.ts`, `test/mcp-client-drivers.test.ts`                         |
 
 For responsibility or protocol changes, update the shared contract first, trace every producer and consumer, and run:
 

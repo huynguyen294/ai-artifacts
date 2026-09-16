@@ -16,7 +16,7 @@ import {
   getVsCodeUserMcpPath,
   type McpClientDriver,
 } from "./mcp-clients/index";
-import { upsertJsonMcpServer } from "./mcp-clients/json-mcp-helper";
+import { upsertJsonMcpServer, writeTextFileAtomic } from "./mcp-clients/json-mcp-helper";
 import { cleanupBaseMcpServer } from "./mcp-clients/base-cleanup";
 
 export { cleanupBaseMcpServer } from "./mcp-clients/base-cleanup";
@@ -31,6 +31,12 @@ export type BaseIntegrationPaths = {
   sourceMcpScript: string;
   sourceSkill: string;
 };
+
+const REVIEW_SKILL_ASSETS = [
+  "SKILL.md",
+  path.join("references", "artifact-contract.md"),
+  path.join("agents", "openai.yaml"),
+];
 
 export function getCopilotConfigPath(context?: vscode.ExtensionContext): string {
   if (context?.globalStorageUri?.fsPath) {
@@ -71,19 +77,62 @@ async function sameFile(left: string, right: string): Promise<boolean> {
   }
 }
 
+async function pathExists(target: string): Promise<boolean> {
+  return fs.stat(target).then(() => true, (error: any) => {
+    if (error?.code === "ENOENT") return false;
+    throw error;
+  });
+}
+
 export async function skillAssetsAreCurrent(paths: BaseIntegrationPaths): Promise<boolean> {
-  const skillFiles = [
-    "SKILL.md",
-    path.join("references", "artifact-contract.md"),
-    path.join("agents", "openai.yaml"),
-  ];
-  const checks = skillFiles.map((relativePath) =>
+  const checks = REVIEW_SKILL_ASSETS.map((relativePath) =>
     sameFile(
       path.join(paths.sourceSkill, relativePath),
       path.join(paths.targetSkill, relativePath),
     ),
   );
   return (await Promise.all(checks)).every(Boolean);
+}
+
+async function replaceSkillDirectory(source: string, target: string): Promise<void> {
+  const targetParent = path.dirname(target);
+  await fs.mkdir(targetParent, { recursive: true });
+  const stagingRoot = await fs.mkdtemp(path.join(targetParent, ".create-review-artifact-install-"));
+  const stagedSkill = path.join(stagingRoot, "next");
+  const previousSkill = path.join(stagingRoot, "previous");
+  let previousMoved = false;
+  let keepRecoveryDirectory = false;
+
+  try {
+    await fs.cp(source, stagedSkill, { recursive: true, force: true });
+    try {
+      await fs.rename(target, previousSkill);
+      previousMoved = true;
+    } catch (error: any) {
+      if (error?.code !== "ENOENT") throw error;
+    }
+
+    try {
+      await fs.rename(stagedSkill, target);
+    } catch (error) {
+      if (previousMoved) {
+        try {
+          await fs.rename(previousSkill, target);
+        } catch (restoreError) {
+          keepRecoveryDirectory = true;
+          throw new AggregateError(
+            [error, restoreError],
+            `Failed to install the review skill and restore the previous copy. Recovery files remain at "${stagingRoot}".`,
+          );
+        }
+      }
+      throw error;
+    }
+  } finally {
+    if (!keepRecoveryDirectory) {
+      await fs.rm(stagingRoot, { recursive: true, force: true }).catch(() => {});
+    }
+  }
 }
 
 export async function baseScriptIsCurrent(paths: BaseIntegrationPaths): Promise<boolean> {
@@ -103,16 +152,30 @@ export async function setupBaseMcpServer(
 ): Promise<{ paths: BaseIntegrationPaths; assetsUpdated: boolean }> {
   const paths = getBaseIntegrationPaths(context);
 
+  // Validate every packaged source before replacing any installed asset.
+  await Promise.all([
+    fs.access(paths.sourceMcpScript),
+    ...REVIEW_SKILL_ASSETS.map((relativePath) =>
+      fs.access(path.join(paths.sourceSkill, relativePath)),
+    ),
+  ]);
+  const [assetsCurrent, legacyScriptPresent, legacySkillPresent] = await Promise.all([
+    baseAssetsAreCurrent(paths),
+    pathExists(paths.targetLegacyMcpScript),
+    pathExists(paths.targetLegacySkill),
+  ]);
+  const assetsUpdated = !assetsCurrent || legacyScriptPresent || legacySkillPresent;
+
   await fs.mkdir(paths.targetDirectory, { recursive: true });
   await fs.mkdir(paths.workspacesDirectory, { recursive: true });
 
-  // Copy primary server script and backward-compatible alias
-  await fs.copyFile(paths.sourceMcpScript, paths.targetMcpScript);
-  await fs.copyFile(paths.sourceMcpScript, paths.targetLegacyMcpScript);
+  // Install only the current runtime; upgrades require reinstalling client config.
+  const mcpContents = await fs.readFile(paths.sourceMcpScript, "utf8");
+  await writeTextFileAtomic(paths.targetMcpScript, mcpContents);
+  await fs.rm(paths.targetLegacyMcpScript, { force: true }).catch(() => {});
 
   // Deploy Agent Skill to ~/.agents/skills/create-review-artifact
-  await fs.mkdir(path.dirname(paths.targetSkill), { recursive: true });
-  await fs.cp(paths.sourceSkill, paths.targetSkill, { recursive: true, force: true });
+  await replaceSkillDirectory(paths.sourceSkill, paths.targetSkill);
 
   // Clean up legacy skill if present
   await fs.rm(paths.targetLegacySkill, { recursive: true, force: true }).catch(() => {});
@@ -120,7 +183,7 @@ export async function setupBaseMcpServer(
   // Clean up obsolete ~/.vscode/ai-artifacts/mcp.json if it exists
   await fs.rm(path.join(paths.targetDirectory, "mcp.json"), { force: true }).catch(() => {});
 
-  return { paths, assetsUpdated: true };
+  return { paths, assetsUpdated };
 }
 
 export function getMcpConfigSnippet(context: vscode.ExtensionContext): string {
@@ -289,6 +352,7 @@ export async function checkAllIntegrations(
     skillAssetsAreCurrent(paths),
     baseScriptIsCurrent(paths),
   ]);
+  const assetsCurrent = skillCurrent && baseCurrent;
   const copilotConfigPath = getCopilotConfigPath(context);
   const drivers = getAllClientDrivers(copilotConfigPath);
   const clients: ClientVerificationReport[] = [];
@@ -296,11 +360,14 @@ export async function checkAllIntegrations(
   for (const driver of drivers) {
     const isDetected = driver.isDetected();
     const checkResult = await driver.check(paths.targetMcpScript);
+    const status = checkResult.status === "ready" && !assetsCurrent
+      ? "outdated"
+      : checkResult.status;
     clients.push({
       id: driver.id,
       name: driver.name,
       isDetected,
-      status: checkResult.status,
+      status,
       ...(checkResult.detail ? { detail: checkResult.detail } : {}),
     });
   }

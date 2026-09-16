@@ -8,7 +8,7 @@ The core lifecycle rule is:
 artifact lifetime > waiter lifetime > chat-turn lifetime
 ```
 
-An artifact represents a request awaiting human review and persists within the workspace until the user explicitly acts upon it. A waiter is merely a temporary connection between an active MCP request and an artifact review round. Individual chat turns are shorter still.
+An artifact represents a request awaiting human review and persists in the user's global AI Artifacts collection until the user explicitly removes it. Its manifest retains the target workspace as metadata and ownership context, but lifecycle storage does not live in that workspace. A waiter is merely a temporary connection between an active MCP request and an artifact review round. Individual chat turns are shorter still.
 
 Therefore, cancellations, takeovers, concluding a chat turn, or restarting the MCP server must never delete or terminate an artifact. They only clear in-memory waiters or active round tokens. The AI can inspect the exact known artifact handle, obtain a fresh token from validated persistent state, and reconnect later.
 
@@ -57,8 +57,12 @@ AI Artifacts provides a dedicated review layer for AI-generated Markdown. It ena
 
 The agent skill triggers only when the user explicitly requests creating or updating an artifact, reading saved feedback, or reconnecting an existing lifecycle. The document type alone is never an auto-trigger condition.
 
-## Implementation status 0.9.2
+## Implementation status 1.0.0
 
-Version 0.9.2 standardizes the artifact storage directory under `.ai-artifacts/` with 100% backwards compatibility for legacy `.codex-artifacts/`. It retains artifact schema v4 and MCP server 6.0.0, expanding support to multiple AI coding assistants (Codex, Cursor, Windsurf, Claude) with centralized MCP assets and automated CI/CD releases. Workspace creation requires either tagged-file evidence or a validated candidate selection token from `resolve_artifact_workspace`. Workspace folder resolution occurs before the skill inspects the repository or drafts artifact content. The resolver normalizes separators, scopes candidates to a single focused VS Code context, and rejects cross-window ambiguity with `WORKSPACE_CONTEXT_AMBIGUOUS`.
+Version 1.0.0 uses artifact schema v5 and MCP server 7.0.0. Every lifecycle is stored beneath the per-user `~/.ai-artifacts/artifacts/` collection. `location.workspaceRoot` records the target repository for ownership validation and later workspace availability checks; it is not a storage path. Schemas v3/v4 and workspace-local artifact directories are outside the live protocol and are not migrated. This hard cutoff avoids ambiguous mixed-version writes: extension upgrades must be followed by integration reinstall and AI-client restart.
 
-The official skill creates `kind: "implementation-plan"`, verifies tool availability once per chat lifecycle, and manages exact handle-to-round mappings. Reconnect, saved comment inspection, and explicit chat updates follow an explicit decision table with fail-closed safety. Lifecycle errors supply structured recovery metadata so agents preserve handles and avoid duplicate commits. Round tokens remain in-memory, single-use, and state-bound with a 1-hour expiration. Schema v3 remains supported as read-only.
+Workspace creation requires either tagged-file evidence or a validated candidate selection token from `resolve_artifact_workspace`. Workspace folder resolution occurs before the skill inspects the repository or drafts artifact content. The resolver normalizes separators, scopes candidates to a single focused VS Code context, and rejects cross-window ambiguity with `WORKSPACE_CONTEXT_AMBIGUOUS`. After creation, all lifecycle operations use the exact global artifact handle and do not require workspace evidence again.
+
+The official skill requires exactly five tools, creates `kind: "implementation-plan"`, verifies tool availability once per chat lifecycle, and manages exact handle-to-round mappings. Reconnect, saved-comment inspection, and explicit chat updates follow an explicit decision table with fail-closed safety. Lifecycle errors supply structured recovery metadata so agents preserve handles and avoid duplicate commits. Round tokens remain in-memory, single-use, and state-bound with a one-hour expiration.
+
+Artifact Markdown, comments, and decisions may contain sensitive project information. Local-only transport does not make the files non-sensitive: POSIX runtime paths are restricted to owner-only directory/file modes, users remain responsible for their account and Windows filesystem ACLs, and uninstall deliberately retains `~/.ai-artifacts/` to prevent data loss.

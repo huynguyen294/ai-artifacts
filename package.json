@@ -3,7 +3,7 @@
   "displayName": "AI Artifacts - Interactive Planning & Review",
   "publisher": "huynguyen294",
   "description": "Interactive review editor for AI-generated planning artifacts, markdown specs, and proposals. Connects via MCP to Cursor, Codex, Windsurf, Claude, and more.",
-  "version": "0.9.3",
+  "version": "1.0.0",
   "type": "module",
   "license": "MIT",
   "icon": "media/icon.png",
@@ -129,9 +129,6 @@
         "selector": [
           {
             "filenamePattern": "**/.ai-artifacts/artifacts/**/artifact.md"
-          },
-          {
-            "filenamePattern": "**/.codex-artifacts/artifacts/**/artifact.md"
           }
         ],
         "priority": "default"
@@ -143,7 +140,7 @@
         "agentPlus.autoOpenArtifactReview": {
           "type": "boolean",
           "default": true,
-          "description": "Automatically open Artifact Review after Codex finishes creating a Markdown artifact."
+          "description": "Automatically open Artifact Review in the focused window after an AI agent creates a Markdown artifact."
         }
       }
     }

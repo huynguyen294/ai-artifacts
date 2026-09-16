@@ -14,6 +14,44 @@ Minor typos, formatting fixes, or cosmetic wording adjustments that do not chang
 
 Each entry includes the date, category, summary of changes, rationale, and affected components or files.
 
+## 2026-09-16 — Global schema-v5 storage and v1.0.0 compatibility cutoff
+
+### Changes
+
+- Moved the live lifecycle from workspace-local directories to the per-user `~/.ai-artifacts/artifacts/<artifactId>/` collection.
+- Made schema v5 the only supported manifest/comments/submission contract and MCP server 7.0.0 the matching runtime. Schemas v3/v4 are rejected and are not live-migrated.
+- Kept workspace identity in `artifact.json` as `location.workspaceRoot`; creation still requires tagged-file or resolver-token evidence, while later lifecycle calls use the exact global artifact handle.
+- Replaced workspace watcher globs with a validated global-root watcher, focused-window auto-open, exact-handle command opening, and same-artifact single-flight coordination.
+- Defined `artifactLink` as a regular encoded file link rather than a deep link.
+- Added owner-only POSIX directory/file modes for global lifecycle data and documented Windows ACL behavior separately.
+- Hardened reinstall to replace stale runtime/skill assets and remove obsolete files; verify reports configured clients as outdated when shared assets drift.
+- Kept uninstall ownership narrow: managed config/runtime/skill/registry state is removed, but `~/.ai-artifacts/` and unrelated user configuration are retained.
+- Removed the active `.codex-artifacts` custom-editor selector and synchronized release metadata to extension version 1.0.0.
+
+### Rationale
+
+- A single global collection lets artifacts outlive workspace movement and transient editor/MCP connections while preserving explicit repository ownership in the manifest.
+- A hard v5 cutoff avoids ambiguous mixed-version writes and makes upgrade/rollback behavior explicit: reinstall the runtime and skill that match the extension version.
+- Focus-gated opening and exact-handle validation prevent cross-window focus stealing and wrong-artifact binding.
+- Artifact content can contain sensitive project information, so storage permissions and uninstall retention must be explicit rather than inherited from ambient defaults.
+
+### Support and operational boundary
+
+- Local desktop Windows, macOS, and Linux are supported when the extension host and MCP process run as the same OS user and see the same user filesystem.
+- Remote SSH, WSL, dev containers, Codespaces, browser/virtual workspaces, and split-host topologies are unsupported in v1.0.0 because they have not passed the release matrix.
+- Updating the extension alone does not update installed integrations. Users must reinstall all integrations, restart the AI client, and start a new chat.
+
+### Affected components and files
+
+- `src/shared/contracts.ts`, `src/shared/artifact-files.ts`, `src/shared/artifact-validation.ts`
+- `src/integration/artifact-review-mcp-v4.ts`
+- `src/extension/artifact-store.ts`, `src/extension/artifact-review-open.ts`, `src/extension/extension.ts`
+- `src/extension/workspace-integration-v4.ts`, `src/extension/mcp-config.ts`, `src/extension/mcp-clients/`
+- `skills/create-review-artifact/`
+- `package.json`, `package-lock.json`, `README.md`
+- `docs/PHILOSOPHY.md`, `docs/ARCHITECTURE.md`, `docs/COMPONENTS.md`, `docs/INSTRUCTION.md`
+- Global lifecycle, watcher/open, skill/link, MCP, store, registry, and integration test suites
+
 ## 2026-09-11 — Clickable Artifact Review Link in MCP Server and Agent Chat
 
 ### Changes

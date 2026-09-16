@@ -95,7 +95,7 @@ function directListItemText(node: ListItem): string {
 }
 
 export function parseMarkdownBlocks(markdown: string): MarkdownBlock[] {
-  // Keep the legacy CRLF normalization so existing schema-v3 block IDs remain stable.
+  // Keep CRLF normalization so block IDs remain stable across platform line endings.
   const sourceMarkdown = markdown.replace(/\r\n/g, "\n");
   const tree = unified().use(remarkParse).use(remarkGfm).parse(sourceMarkdown) as Root;
   const legacyIds = createLegacyIdMap(sourceMarkdown);

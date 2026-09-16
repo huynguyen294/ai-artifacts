@@ -23,7 +23,7 @@ For an `approve` result whose artifact kind is `plan` or `implementation-plan`, 
 
 ## Availability and lifetime
 
-The skill requires all five tools once when starting an artifact lifecycle in the current chat. Use the current tool catalog; do not probe MCP resources or the filesystem. It does not repeat the check in later rounds unless a tool becomes unavailable, the MCP restarts, or a new chat begins. If the catalog is incomplete, ask the user to run **Codex Artifacts: Install Global Codex Integration**, restart Codex, and start a new chat.
+The skill requires all five tools once when starting an artifact lifecycle in the current chat. Use the current tool catalog; do not probe MCP resources or the filesystem. It does not repeat the check in later rounds unless a tool becomes unavailable, the MCP restarts, or a new chat begins. If the catalog is incomplete, ask the user to run **AI Artifacts: Install All Detected Integrations** (or the install command for their specific client), restart that AI client, and start a new chat.
 
 ```text
 artifact lifetime > waiter lifetime > chat-turn lifetime
