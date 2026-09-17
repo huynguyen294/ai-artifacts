@@ -38,8 +38,8 @@ describe("create-review-artifact skill contract", () => {
     expect(skill).toContain('`matchMode: "all-available"`');
     expect(skill).toContain("ask the user only when the strongest result is tied or otherwise ambiguous");
     expect(skill).toContain("uniquely high-confidence semantic match");
-    expect(skill).toContain("`WORKSPACE_CONTEXT_AMBIGUOUS`");
-    expect(skill).toContain("Do not combine or inspect folders from different windows");
+    expect(skill).toContain("When multiple active VS Code windows open the same workspace folder");
+    expect(skill).toContain("candidates grouped by window with selection tokens for disambiguation");
     expect(skill).toContain("Once exactly one target workspace folder is chosen, read [references/artifact-contract.md](references/artifact-contract.md)");
     expect(skill).toContain("before inspecting that folder or calling `create_artifact`");
     expect(contract).toContain("may call `resolve_artifact_workspace` before loading this reference");
@@ -50,7 +50,7 @@ describe("create-review-artifact skill contract", () => {
     expect(contract).toContain("expire after ten minutes");
     expect(contract).toContain('`agent plus`, `agent-plus`, and `agent_plus` match');
     expect(contract).toContain('`match: "single-folder"`');
-    expect(contract).toContain("It never combines folders from different VS Code windows");
+    expect(contract).toContain("the resolver groups candidates by window and assigns opaque selection tokens to disambiguate identical folders across windows");
   });
 
   it("uses one chat-visible feedback policy for Review and chat inspection", async () => {
@@ -86,6 +86,8 @@ describe("create-review-artifact skill contract", () => {
     expect(skill).toContain("before starting `advance_and_wait_for_artifact`");
     expect(skill).toContain("Never repeat the previously approved or saved action");
     expect(skill).toContain('intent: "explicit-chat-update"');
+    expect(skill).toContain('intent: "reconnect"');
+    expect(contract).toContain('`intent: "reconnect"`');
     expect(skill).toContain("Never ask the user to create dummy comments or click Review");
     expect(contract).toContain("artifact lifetime > waiter lifetime > chat-turn lifetime");
     expect(contract).toContain("Proceed and Just save end only the submitted round");
@@ -146,11 +148,26 @@ describe("create-review-artifact skill contract", () => {
       "ADVANCE_ROLLED_BACK",
       "ADVANCE_COMMITTED",
       "WORKSPACE_NOT_REGISTERED",
+      "WINDOW_SELECTION_REQUIRED",
+      "WINDOW_SELECTION_EXPIRED",
+      "WINDOW_CONNECTION_STALE",
+      "WINDOW_CONNECTION_MISMATCH",
+      "ARTIFACT_CONNECTION_INVALID",
+      "ARTIFACT_CONNECTION_WRITE_FAILED",
     ]) expect(skill).toContain(code);
-    expect(skill).toContain("never call `resolve_artifact_workspace` during recovery");
+    expect(skill).toContain("never call `resolve_artifact_workspace` during recovery after an artifact has been created");
     expect(skill).toContain("inspect the exact handle before retrying");
+    expect(skill).toContain("Stop automated recovery");
+    expect(skill).toContain("Do not retry inspect/reconnect or edit lifecycle files yourself");
+    expect(skill).toContain("For resume-wait intent, keep awaiting the in-flight call");
+    expect(skill).toContain('for pure reconnect, call `inspect_artifact_review` with `intent: "reconnect"` without takeover');
+    expect(skill).not.toContain("reconnect by waiting");
     expect(contract).toContain("useSameArtifactHandle: true");
-    expect(contract).toContain("If commit state is uncertain, inspect the same exact handle before retrying");
+    expect(contract).toContain("never call `resolve_artifact_workspace` after create");
+    expect(contract).toContain("Unless the error is explicitly non-retryable");
+    expect(contract).toContain("Do not retry inspect/reconnect or edit lifecycle files directly");
+    expect(contract).toContain("Keep awaiting the in-flight call for resume-wait intent");
+    expect(contract).toContain('use inspect with `intent: "reconnect"` and no takeover for pure reconnect');
   });
 
   it("documents artifactUrl and artifactLink as regular file links", async () => {

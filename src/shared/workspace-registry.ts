@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -52,20 +52,85 @@ export const workspaceEvidenceSchema = z.discriminatedUnion("kind", [
 
 export type WorkspaceEvidence = z.infer<typeof workspaceEvidenceSchema>;
 
-export type WorkspaceCandidateMatch = "exact-path" | "exact-name" | "similar-name" | "single-folder" | "available";
+export const workspaceCandidateMatchSchema = z.enum([
+  "exact-path",
+  "exact-name",
+  "similar-name",
+  "single-folder",
+  "available",
+]);
+export type WorkspaceCandidateMatch = z.infer<typeof workspaceCandidateMatchSchema>;
+
+export const resolvedFolderCandidateSchema = z.object({
+  candidateId: z.string().min(1),
+  name: z.string().min(1),
+  path: z.string().min(1),
+  match: workspaceCandidateMatchSchema,
+  selectionToken: z.string().uuid(),
+  expiresAt: z.string().datetime(),
+}).strict();
+export type ResolvedFolderCandidate = z.infer<typeof resolvedFolderCandidateSchema>;
+
+export const resolvedWindowGroupSchema = z.object({
+  windowInstanceId: z.string().uuid(),
+  focused: z.boolean(),
+  snapshotUpdatedAt: z.string().datetime(),
+  workspaceFile: z.string().nullable(),
+  activeFile: z.object({
+    path: z.string().min(1),
+    workspaceRoot: z.string().min(1),
+  }).strict().nullable(),
+  folders: z.array(resolvedFolderCandidateSchema),
+}).strict();
+export type ResolvedWindowGroup = z.infer<typeof resolvedWindowGroupSchema>;
+
+export const workspaceWindowSelectionGrantSchema = z.object({
+  query: z.string(),
+  candidateId: z.string().min(1),
+  workspaceRoot: z.string().min(1),
+  windowInstanceId: z.string().uuid(),
+  snapshotIdentity: z.string().min(1),
+  expiresAt: z.number().int().positive(),
+}).strict();
+export type WorkspaceWindowSelectionGrant = z.infer<typeof workspaceWindowSelectionGrantSchema>;
+
+export function workspaceCandidateId(windowInstanceId: string, workspaceRoot: string): string {
+  const canonical = path.resolve(workspaceRoot);
+  const normalizedPath = process.platform === "win32" ? canonical.toLowerCase() : canonical;
+  return createHash("sha256").update(`${windowInstanceId}:${normalizedPath}`).digest("hex").slice(0, 16);
+}
+
+export function snapshotIdentity(snapshot: { instanceId: string; updatedAt: string }): string {
+  return `${snapshot.instanceId}:${snapshot.updatedAt}`;
+}
 
 export type WorkspaceCandidateMatchMode = "matched" | "all-available" | "none";
 
 export type WorkspaceCandidate = {
+  candidateId: string;
   name: string;
   path: string;
   match: WorkspaceCandidateMatch;
 };
 
+export type WorkspaceCandidateWindow = {
+  windowInstanceId: string;
+  focused: boolean;
+  snapshotUpdatedAt: string;
+  workspaceFile: string | null;
+  activeFile: {
+    path: string;
+    workspaceRoot: string;
+  } | null;
+  snapshotIdentity: string;
+  folders: WorkspaceCandidate[];
+};
+
 export type WorkspaceCandidateResolution = {
   query: string;
-  contextKey: string;
+  contextKey?: string;
   matchMode: WorkspaceCandidateMatchMode;
+  windows: WorkspaceCandidateWindow[];
   candidates: WorkspaceCandidate[];
 };
 
@@ -275,8 +340,15 @@ export async function resolveWorkspaceCandidates(
     throw new Error("WORKSPACE_QUERY_INVALID: query must contain 2 to 500 characters.");
   }
   const snapshots = await readFreshWorkspaceSnapshots(directory, now);
-  const relevantSnapshots = selectSingleWorkspaceScope(snapshots);
-  const folders = uniqueRegisteredFolders(relevantSnapshots);
+  if (snapshots.length === 0) {
+    return {
+      query,
+      matchMode: "none",
+      windows: [],
+      candidates: [],
+    };
+  }
+
   const normalizedQuery = searchTerms(query);
   const absoluteQuery = path.isAbsolute(query);
   const rank: Record<WorkspaceCandidateMatch, number> = {
@@ -286,48 +358,147 @@ export async function resolveWorkspaceCandidates(
     "single-folder": 3,
     available: 4,
   };
-  const matchedCandidates = folders.flatMap((folder): WorkspaceCandidate[] => {
-    const name = path.basename(folder.path) || path.basename(folder.realPath);
-    const normalizedName = searchTerms(name);
-    const normalizedPath = searchTerms(folder.realPath);
-    let match: Exclude<WorkspaceCandidateMatch, "available"> | undefined;
-    if (absoluteQuery && (
-      sameFilesystemPath(folder.path, query)
-      || sameFilesystemPath(folder.realPath, query)
-    )) match = "exact-path";
-    else if (normalizedName === normalizedQuery) match = "exact-name";
-    else if (normalizedName.includes(normalizedQuery) || normalizedPath.includes(normalizedQuery)) {
-      match = "similar-name";
+
+  type ScoredCandidate = {
+    snapshot: WorkspaceRegistrySnapshot;
+    candidate: WorkspaceCandidate;
+  };
+
+  const matchedItems: ScoredCandidate[] = [];
+  let totalFolders = 0;
+  let singleSnapshot: WorkspaceRegistrySnapshot | undefined;
+  let singleFolder: { path: string; realPath: string } | undefined;
+
+  for (const snapshot of snapshots) {
+    totalFolders += snapshot.folders.length;
+    if (snapshot.folders.length === 1 && totalFolders === 1) {
+      singleSnapshot = snapshot;
+      singleFolder = snapshot.folders[0];
     }
-    return match ? [{ name, path: folder.realPath, match }] : [];
-  }).sort((left, right) => (
-    rank[left.match] - rank[right.match]
-    || left.name.localeCompare(right.name)
-    || left.path.localeCompare(right.path)
-  )).slice(0, 10);
-  const singleFolderCandidate = matchedCandidates.length === 0 && folders.length === 1
-    ? [{
-      name: path.basename(folders[0]!.path) || path.basename(folders[0]!.realPath),
-      path: folders[0]!.realPath,
-      match: "single-folder" as const,
-    }]
-    : [];
-  const candidates = matchedCandidates.length > 0
-    ? matchedCandidates
-    : singleFolderCandidate.length > 0
-      ? singleFolderCandidate
-      : folders.map((folder): WorkspaceCandidate => ({
-      name: path.basename(folder.path) || path.basename(folder.realPath),
-      path: folder.realPath,
-      match: "available",
-    })).sort((left, right) => left.name.localeCompare(right.name) || left.path.localeCompare(right.path));
+    for (const folder of snapshot.folders) {
+      const name = path.basename(folder.path) || path.basename(folder.realPath);
+      const normalizedName = searchTerms(name);
+      const normalizedPath = searchTerms(folder.realPath);
+      let match: Exclude<WorkspaceCandidateMatch, "available" | "single-folder"> | undefined;
+      if (absoluteQuery && (
+        sameFilesystemPath(folder.path, query)
+        || sameFilesystemPath(folder.realPath, query)
+      )) {
+        match = "exact-path";
+      } else if (normalizedName === normalizedQuery) {
+        match = "exact-name";
+      } else if (normalizedName.includes(normalizedQuery) || normalizedPath.includes(normalizedQuery)) {
+        match = "similar-name";
+      }
+      if (match) {
+        matchedItems.push({
+          snapshot,
+          candidate: {
+            candidateId: workspaceCandidateId(snapshot.instanceId, folder.realPath),
+            name,
+            path: folder.realPath,
+            match,
+          },
+        });
+      }
+    }
+  }
+
+  if (totalFolders === 0) {
+    return {
+      query,
+      matchMode: "none",
+      windows: [],
+      candidates: [],
+    };
+  }
+
+  if (matchedItems.length > 0) {
+    matchedItems.sort((left, right) => (
+      rank[left.candidate.match] - rank[right.candidate.match]
+      || left.candidate.name.localeCompare(right.candidate.name)
+      || left.candidate.path.localeCompare(right.candidate.path)
+    ));
+    const topMatches = matchedItems.slice(0, 10);
+    const windowMap = new Map<string, WorkspaceCandidateWindow>();
+    for (const item of topMatches) {
+      let win = windowMap.get(item.snapshot.instanceId);
+      if (!win) {
+        win = {
+          windowInstanceId: item.snapshot.instanceId,
+          focused: item.snapshot.focused,
+          snapshotUpdatedAt: item.snapshot.updatedAt,
+          workspaceFile: item.snapshot.workspaceFile,
+          activeFile: item.snapshot.activeFile,
+          snapshotIdentity: snapshotIdentity(item.snapshot),
+          folders: [],
+        };
+        windowMap.set(item.snapshot.instanceId, win);
+      }
+      win.folders.push(item.candidate);
+    }
+    return {
+      query,
+      matchMode: "matched",
+      windows: [...windowMap.values()],
+      candidates: topMatches.map((item) => item.candidate),
+    };
+  }
+
+  if (totalFolders === 1 && singleSnapshot && singleFolder) {
+    const name = path.basename(singleFolder.path) || path.basename(singleFolder.realPath);
+    const candidate: WorkspaceCandidate = {
+      candidateId: workspaceCandidateId(singleSnapshot.instanceId, singleFolder.realPath),
+      name,
+      path: singleFolder.realPath,
+      match: "single-folder",
+    };
+    return {
+      query,
+      matchMode: "matched",
+      windows: [{
+        windowInstanceId: singleSnapshot.instanceId,
+        focused: singleSnapshot.focused,
+        snapshotUpdatedAt: singleSnapshot.updatedAt,
+        workspaceFile: singleSnapshot.workspaceFile,
+        activeFile: singleSnapshot.activeFile,
+        snapshotIdentity: snapshotIdentity(singleSnapshot),
+        folders: [candidate],
+      }],
+      candidates: [candidate],
+    };
+  }
+
+  // All available fallback across all windows with registered folders
+  const windows: WorkspaceCandidateWindow[] = snapshots
+    .filter((s) => s.folders.length > 0)
+    .map((s) => {
+      const folders: WorkspaceCandidate[] = s.folders.map((f) => ({
+        candidateId: workspaceCandidateId(s.instanceId, f.realPath),
+        name: path.basename(f.path) || path.basename(f.realPath),
+        path: f.realPath,
+        match: "available" as const,
+      })).sort((left, right) => left.name.localeCompare(right.name) || left.path.localeCompare(right.path));
+      return {
+        windowInstanceId: s.instanceId,
+        focused: s.focused,
+        snapshotUpdatedAt: s.updatedAt,
+        workspaceFile: s.workspaceFile,
+        activeFile: s.activeFile,
+        snapshotIdentity: snapshotIdentity(s),
+        folders,
+      };
+    })
+    .sort((left, right) => (
+      (right.focused ? 1 : 0) - (left.focused ? 1 : 0)
+      || Date.parse(right.snapshotUpdatedAt) - Date.parse(left.snapshotUpdatedAt)
+    ));
+
   return {
     query,
-    contextKey: workspaceContextKey(relevantSnapshots, folders),
-    matchMode: matchedCandidates.length > 0 || singleFolderCandidate.length > 0
-      ? "matched"
-      : folders.length > 0 ? "all-available" : "none",
-    candidates,
+    matchMode: "all-available",
+    windows,
+    candidates: windows.flatMap((w) => w.folders),
   };
 }
 
@@ -340,17 +511,14 @@ export async function resolveWorkspaceRootForArtifactCreation(
   const registeredRoot = await resolveRegisteredWorkspaceRoot(requestedRoot, directory, now);
   const snapshots = await readFreshWorkspaceSnapshots(directory, now);
   const focusedSnapshots = snapshots.filter((snapshot) => snapshot.focused);
-  const relevantSnapshots = evidence.kind === "resolved-workspace"
-    ? selectSingleWorkspaceScope(snapshots)
-    : focusedSnapshots.length > 0 ? focusedSnapshots : snapshots;
-  const folders = uniqueRegisteredFolders(relevantSnapshots);
-  if (!folders.some((folder) => sameFilesystemPath(folder.realPath, registeredRoot))) {
-    throw new Error(
-      "WORKSPACE_EVIDENCE_MISMATCH: the requested workspace is not registered by the focused VS Code window.",
-    );
-  }
 
   if (evidence.kind === "tagged-file") {
+    const folders = snapshots.flatMap((s) => s.folders);
+    if (!folders.some((folder) => sameFilesystemPath(folder.realPath, registeredRoot))) {
+      throw new Error(
+        "WORKSPACE_EVIDENCE_MISMATCH: the requested workspace is not registered by any active VS Code window.",
+      );
+    }
     if (!path.isAbsolute(evidence.filePath)) {
       throw new Error("WORKSPACE_EVIDENCE_MISMATCH: a tagged file path must be absolute.");
     }
@@ -368,7 +536,7 @@ export async function resolveWorkspaceRootForArtifactCreation(
     return registeredRoot;
   }
 
-  // The MCP owns selection-token validation. This shared boundary still
-  // revalidates that the selected root belongs to the current registry scope.
+  // The MCP owns selection-token validation and binds windowInstanceId + canonical workspaceRoot.
+  // This shared boundary confirms that the selected root belongs to registered fresh snapshots.
   return registeredRoot;
 }

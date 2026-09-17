@@ -13,13 +13,20 @@ import {
   parseArtifactManifest,
   parseBoundCommentsDocument,
   parseBoundReviewSubmission,
+  sameFilesystemPath,
 } from "../shared/artifact-validation";
 import {
   ARTIFACT_SCHEMA_VERSION,
+  ArtifactConnectionInvalidError,
+  ArtifactConnectionWriteError,
+  WindowConnectionMismatchError,
+  WindowConnectionStaleError,
   artifactIdSchema,
   artifactKindSchema,
   artifactManifestSchema,
   commentsDocumentSchema,
+  WORKSPACE_SELECTION_TTL_MS,
+  type ArtifactConnection,
   type ArtifactManifest,
   type ReviewDecision,
 } from "../shared/contracts";
@@ -29,15 +36,27 @@ import {
   OWNER_ONLY_DIRECTORY_MODE,
   OWNER_ONLY_FILE_MODE,
   REVIEW_SUBMISSION_FILE,
+  managedWorkspaceRegistryDirectory,
   type GlobalArtifactsRootOptions,
 } from "../shared/artifact-files";
 import {
+  readFreshWorkspaceSnapshots,
   resolveRegisteredWorkspaceRoot,
   resolveWorkspaceCandidates,
   resolveWorkspaceRootForArtifactCreation,
+  workspaceCandidateId,
   workspaceEvidenceSchema,
+  workspaceRegistryDirectory,
+  type ResolvedFolderCandidate,
+  type ResolvedWindowGroup,
   type WorkspaceEvidence,
+  type WorkspaceWindowSelectionGrant,
 } from "../shared/workspace-registry";
+import {
+  commitArtifactConnectionRequest,
+  readArtifactConnection,
+  resolveArtifactConnectionTarget,
+} from "../shared/artifact-connection";
 
 const SERVER_NAME = "codex-artifacts";
 const SERVER_VERSION = "7.0.0";
@@ -47,7 +66,6 @@ const WAIT_TOOL_NAME = "wait_for_artifact_review";
 const INSPECT_TOOL_NAME = "inspect_artifact_review";
 const ADVANCE_AND_WAIT_TOOL_NAME = "advance_and_wait_for_artifact";
 const ROUND_TOKEN_TTL_MS = 60 * 60 * 1000;
-const WORKSPACE_SELECTION_TTL_MS = 10 * 60 * 1000;
 const MAX_MARKDOWN_BYTES = 2 * 1024 * 1024;
 const LIFECYCLE_JSON_READ_ATTEMPTS = 21;
 const LIFECYCLE_JSON_READ_RETRY_MS = 50;
@@ -131,12 +149,18 @@ type ArtifactRecoveryCode =
   | "ADVANCE_CANCELLED_BEFORE_COMMIT"
   | "ADVANCE_COMMITTED"
   | "ADVANCE_ROLLED_BACK"
-  | "WORKSPACE_NOT_REGISTERED";
+  | "WORKSPACE_NOT_REGISTERED"
+  | "WINDOW_SELECTION_REQUIRED"
+  | "WINDOW_SELECTION_EXPIRED"
+  | "WINDOW_CONNECTION_STALE"
+  | "WINDOW_CONNECTION_MISMATCH"
+  | "ARTIFACT_CONNECTION_INVALID"
+  | "ARTIFACT_CONNECTION_WRITE_FAILED";
 
 type ArtifactRecoveryMetadata = {
   code: ArtifactRecoveryCode;
   retryable: boolean;
-  expectedNextTool?: typeof INSPECT_TOOL_NAME | typeof WAIT_TOOL_NAME | typeof ADVANCE_AND_WAIT_TOOL_NAME;
+  expectedNextTool?: typeof INSPECT_TOOL_NAME | typeof WAIT_TOOL_NAME | typeof ADVANCE_AND_WAIT_TOOL_NAME | typeof RESOLVE_WORKSPACE_TOOL_NAME | typeof CREATE_TOOL_NAME;
   reuseRoundToken: boolean;
   useSameArtifactHandle: true;
   currentReviewRound?: number;
@@ -152,6 +176,35 @@ class ArtifactRecoveryError extends Error {
   }
 }
 
+class WindowSelectionRequiredError extends Error {
+  readonly status = "selection-required" as const;
+  readonly code = "WINDOW_SELECTION_REQUIRED" as const;
+  readonly retryable = true as const;
+  readonly lifecycleMutated = false as const;
+  readonly takeoverOccurred = false as const;
+  readonly expectedNextTool: typeof CREATE_TOOL_NAME | typeof INSPECT_TOOL_NAME;
+  readonly useSameArtifactHandle: boolean;
+  readonly windows: ResolvedWindowGroup[];
+  readonly candidates: ResolvedFolderCandidate[];
+
+  constructor(
+    message: string,
+    windows: ResolvedWindowGroup[],
+    candidates: ResolvedFolderCandidate[],
+    context: {
+      expectedNextTool: typeof CREATE_TOOL_NAME | typeof INSPECT_TOOL_NAME;
+      useSameArtifactHandle: boolean;
+    },
+  ) {
+    super(message);
+    this.name = "WindowSelectionRequiredError";
+    this.windows = windows;
+    this.candidates = candidates;
+    this.expectedNextTool = context.expectedNextTool;
+    this.useSameArtifactHandle = context.useSameArtifactHandle;
+  }
+}
+
 function recoveryError(
   code: ArtifactRecoveryCode,
   message: string,
@@ -160,12 +213,66 @@ function recoveryError(
   return new ArtifactRecoveryError(`${code}: ${message}`, { code, ...options });
 }
 
-function asLifecycleRecoveryError(error: unknown): unknown {
+type RecoveryContext = {
+  isCreate?: boolean;
+  isTaggedCreate?: boolean;
+};
+
+function asLifecycleRecoveryError(error: unknown, context: RecoveryContext = {}): unknown {
+  if (error instanceof WindowSelectionRequiredError) return error;
   if (error instanceof ArtifactRecoveryError) return error;
   const message = error instanceof Error ? error.message : String(error);
   if (message.startsWith("WORKSPACE_NOT_REGISTERED:")) {
     return recoveryError("WORKSPACE_NOT_REGISTERED", message.slice("WORKSPACE_NOT_REGISTERED:".length).trim(), {
       retryable: true,
+      reuseRoundToken: false,
+    });
+  }
+  if (message.startsWith("WINDOW_SELECTION_EXPIRED:") || message.startsWith("WORKSPACE_SELECTION_EXPIRED:")) {
+    const text = message.startsWith("WINDOW_SELECTION_EXPIRED:")
+      ? message.slice("WINDOW_SELECTION_EXPIRED:".length).trim()
+      : message.slice("WORKSPACE_SELECTION_EXPIRED:".length).trim();
+    const expectedNextTool = context.isCreate
+      ? (context.isTaggedCreate ? CREATE_TOOL_NAME : RESOLVE_WORKSPACE_TOOL_NAME)
+      : INSPECT_TOOL_NAME;
+    return recoveryError("WINDOW_SELECTION_EXPIRED", text, {
+      retryable: true,
+      expectedNextTool,
+      reuseRoundToken: false,
+    });
+  }
+  if (error instanceof WindowConnectionMismatchError || message.startsWith("WORKSPACE_EVIDENCE_MISMATCH:")) {
+    const text = error instanceof WindowConnectionMismatchError
+      ? message.slice("WINDOW_CONNECTION_MISMATCH:".length).trim()
+      : message.slice("WORKSPACE_EVIDENCE_MISMATCH:".length).trim();
+    const expectedNextTool = context.isCreate
+      ? (context.isTaggedCreate ? CREATE_TOOL_NAME : RESOLVE_WORKSPACE_TOOL_NAME)
+      : INSPECT_TOOL_NAME;
+    return recoveryError("WINDOW_CONNECTION_MISMATCH", text, {
+      retryable: false,
+      expectedNextTool,
+      reuseRoundToken: false,
+    });
+  }
+  if (error instanceof WindowConnectionStaleError) {
+    const text = message.slice("WINDOW_CONNECTION_STALE:".length).trim();
+    const expectedNextTool = context.isCreate ? CREATE_TOOL_NAME : INSPECT_TOOL_NAME;
+    return recoveryError("WINDOW_CONNECTION_STALE", text, {
+      retryable: true,
+      expectedNextTool,
+      reuseRoundToken: false,
+    });
+  }
+  if (error instanceof ArtifactConnectionInvalidError) {
+    return recoveryError("ARTIFACT_CONNECTION_INVALID", message.slice("ARTIFACT_CONNECTION_INVALID:".length).trim(), {
+      retryable: false,
+      reuseRoundToken: false,
+    });
+  }
+  if (error instanceof ArtifactConnectionWriteError) {
+    return recoveryError("ARTIFACT_CONNECTION_WRITE_FAILED", message.slice("ARTIFACT_CONNECTION_WRITE_FAILED:".length).trim(), {
+      retryable: true,
+      expectedNextTool: INSPECT_TOOL_NAME,
       reuseRoundToken: false,
     });
   }
@@ -323,6 +430,9 @@ type CreateArtifactInput = {
   title: string;
   kind: string;
   markdown: string;
+  connection?: {
+    selectionToken?: string;
+  };
 };
 
 function parseCreateArguments(args: JsonObject | undefined): CreateArtifactInput {
@@ -331,6 +441,8 @@ function parseCreateArguments(args: JsonObject | undefined): CreateArtifactInput
   const title = args?.title;
   const kind = args?.kind;
   const markdown = args?.markdown;
+  const connectionRaw = args?.connection;
+
   if (typeof workspaceRoot !== "string" || !path.isAbsolute(workspaceRoot)) {
     throw new Error("WORKSPACE_NOT_REGISTERED: workspaceRoot must be an absolute path.");
   }
@@ -351,10 +463,35 @@ function parseCreateArguments(args: JsonObject | undefined): CreateArtifactInput
   if (Buffer.byteLength(markdown, "utf8") > MAX_MARKDOWN_BYTES) {
     throw new Error(`INVALID_ARTIFACT_INPUT: markdown exceeds ${MAX_MARKDOWN_BYTES} bytes.`);
   }
-  return { workspaceRoot, workspaceEvidence: workspaceEvidence.data, title: title.trim(), kind, markdown };
+
+  let connection: { selectionToken?: string } | undefined;
+  if (connectionRaw !== undefined) {
+    if (typeof connectionRaw !== "object" || connectionRaw === null) {
+      throw new Error("INVALID_ARTIFACT_INPUT: connection must be an object.");
+    }
+    const connObj = connectionRaw as Record<string, unknown>;
+    if (connObj.selectionToken !== undefined) {
+      if (
+        typeof connObj.selectionToken !== "string"
+        || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(connObj.selectionToken)
+      ) {
+        throw new Error("INVALID_ARTIFACT_INPUT: connection.selectionToken must be a valid UUID.");
+      }
+      connection = { selectionToken: connObj.selectionToken };
+    }
+  }
+
+  return {
+    workspaceRoot,
+    workspaceEvidence: workspaceEvidence.data,
+    title: title.trim(),
+    kind,
+    markdown,
+    ...(connection ? { connection } : {}),
+  };
 }
 
-const workspaceSelectionGrants = new Map<string, WorkspaceSelectionGrant>();
+const workspaceSelectionGrants = new Map<string, WorkspaceWindowSelectionGrant>();
 const claimedWorkspaceSelectionTokens = new Set<string>();
 
 function pruneWorkspaceSelectionGrants(): void {
@@ -364,54 +501,147 @@ function pruneWorkspaceSelectionGrants(): void {
   }
 }
 
-function workspaceCandidateId(workspaceRoot: string): string {
-  return sha256(samePathKey(workspaceRoot)).slice(0, 16);
-}
-
 async function resolveCreateWorkspaceRoot(input: CreateArtifactInput): Promise<{
   workspaceRoot: string;
+  targetWindow: { windowInstanceId: string; workspaceRoot: string };
   selectionToken?: string;
 }> {
+  const rootOptions = globalRootOptions();
+  const registryDir = workspaceRegistryDirectory(rootOptions);
+
+  if (input.workspaceEvidence.kind === "resolved-workspace") {
+    const evidence = input.workspaceEvidence;
+    pruneWorkspaceSelectionGrants();
+    if (claimedWorkspaceSelectionTokens.has(evidence.selectionToken)) {
+      throw new Error("WORKSPACE_SELECTION_IN_USE: the selected workspace token is already being used.");
+    }
+    const grant = workspaceSelectionGrants.get(evidence.selectionToken);
+    if (!grant || grant.expiresAt <= Date.now()) {
+      throw new Error("WORKSPACE_SELECTION_EXPIRED: resolve the workspace again and choose a current candidate, asking the user only if the result is ambiguous.");
+    }
+    if (samePathKey(grant.workspaceRoot) !== samePathKey(input.workspaceRoot)) {
+      throw new Error("WORKSPACE_EVIDENCE_MISMATCH: the selection token does not belong to workspaceRoot.");
+    }
+    if (input.connection?.selectionToken && input.connection.selectionToken !== evidence.selectionToken) {
+      const connGrant = workspaceSelectionGrants.get(input.connection.selectionToken);
+      if (
+        !connGrant
+        || connGrant.windowInstanceId !== grant.windowInstanceId
+        || samePathKey(connGrant.workspaceRoot) !== samePathKey(grant.workspaceRoot)
+      ) {
+        throw new Error("WORKSPACE_EVIDENCE_MISMATCH: the connection selection token does not belong to the selected workspace.");
+      }
+    }
+    const snapshots = await readFreshWorkspaceSnapshots(registryDir);
+    const windowSnapshot = snapshots.find((s) => s.instanceId === grant.windowInstanceId);
+    if (!windowSnapshot) {
+      workspaceSelectionGrants.delete(evidence.selectionToken);
+      throw new Error("WORKSPACE_SELECTION_EXPIRED: the window is no longer open; resolve and select the workspace again.");
+    }
+    const folderStillPresent = windowSnapshot.folders.some((f) => sameFilesystemPath(f.realPath, grant.workspaceRoot));
+    if (!folderStillPresent) {
+      workspaceSelectionGrants.delete(evidence.selectionToken);
+      throw new Error("WORKSPACE_SELECTION_EXPIRED: the workspace folder is no longer open in the selected window; resolve and select the workspace again.");
+    }
+    if (workspaceCandidateId(grant.windowInstanceId, grant.workspaceRoot) !== grant.candidateId) {
+      workspaceSelectionGrants.delete(evidence.selectionToken);
+      throw new Error("WORKSPACE_SELECTION_EXPIRED: candidate identity mismatch; resolve and select the workspace again.");
+    }
+    claimedWorkspaceSelectionTokens.add(evidence.selectionToken);
+    try {
+      const workspaceRoot = await resolveWorkspaceRootForArtifactCreation(input.workspaceRoot, evidence, registryDir);
+      return {
+        workspaceRoot,
+        targetWindow: { windowInstanceId: grant.windowInstanceId, workspaceRoot },
+        selectionToken: evidence.selectionToken,
+      };
+    } catch (error) {
+      claimedWorkspaceSelectionTokens.delete(evidence.selectionToken);
+      throw error;
+    }
+  }
+
+  // Tagged-file evidence:
   const evidence = input.workspaceEvidence;
-  if (evidence.kind === "tagged-file") {
+  const workspaceRoot = await resolveWorkspaceRootForArtifactCreation(input.workspaceRoot, evidence, registryDir);
+
+  if (input.connection?.selectionToken) {
+    pruneWorkspaceSelectionGrants();
+    const connToken = input.connection.selectionToken;
+    if (claimedWorkspaceSelectionTokens.has(connToken)) {
+      throw new Error("WINDOW_SELECTION_EXPIRED: the connection selection token is already being used.");
+    }
+    const connGrant = workspaceSelectionGrants.get(connToken);
+    if (!connGrant || connGrant.expiresAt <= Date.now()) {
+      throw new Error("WINDOW_SELECTION_EXPIRED: resolve the workspace again and choose a current candidate, asking the user only if the result is ambiguous.");
+    }
+    if (samePathKey(connGrant.workspaceRoot) !== samePathKey(workspaceRoot)) {
+      throw new WindowConnectionMismatchError("the connection selection token does not belong to workspaceRoot.");
+    }
+    const snapshots = await readFreshWorkspaceSnapshots(registryDir);
+    const windowSnapshot = snapshots.find((s) => s.instanceId === connGrant.windowInstanceId);
+    if (!windowSnapshot) {
+      workspaceSelectionGrants.delete(connToken);
+      throw new Error("WINDOW_SELECTION_EXPIRED: the window is no longer open; resolve and select the workspace again.");
+    }
+    const folderStillPresent = windowSnapshot.folders.some((f) => sameFilesystemPath(f.realPath, connGrant.workspaceRoot));
+    if (!folderStillPresent) {
+      workspaceSelectionGrants.delete(connToken);
+      throw new Error("WINDOW_SELECTION_EXPIRED: the workspace folder is no longer open in the selected window; resolve and select the workspace again.");
+    }
+    claimedWorkspaceSelectionTokens.add(connToken);
     return {
-      workspaceRoot: await resolveWorkspaceRootForArtifactCreation(input.workspaceRoot, evidence),
+      workspaceRoot,
+      targetWindow: { windowInstanceId: connGrant.windowInstanceId, workspaceRoot },
+      selectionToken: connToken,
     };
   }
 
-  pruneWorkspaceSelectionGrants();
-  if (claimedWorkspaceSelectionTokens.has(evidence.selectionToken)) {
-    throw new Error("WORKSPACE_SELECTION_IN_USE: the selected workspace token is already being used.");
-  }
-  const grant = workspaceSelectionGrants.get(evidence.selectionToken);
-  if (!grant) {
-    throw new Error("WORKSPACE_SELECTION_EXPIRED: resolve the workspace again and choose a current candidate, asking the user only if the result is ambiguous.");
-  }
-  if (samePathKey(grant.workspaceRoot) !== samePathKey(input.workspaceRoot)) {
-    throw new Error("WORKSPACE_EVIDENCE_MISMATCH: the selection token does not belong to workspaceRoot.");
-  }
-  const current = await resolveWorkspaceCandidates(grant.query);
-  const candidateStillValid = current.candidates.some((candidate) => (
-    workspaceCandidateId(candidate.path) === grant.candidateId
-    && samePathKey(candidate.path) === samePathKey(grant.workspaceRoot)
-  ));
-  if (current.contextKey !== grant.contextKey || !candidateStillValid) {
-    workspaceSelectionGrants.delete(evidence.selectionToken);
-    throw new Error("WORKSPACE_SELECTION_EXPIRED: the workspace registry changed; resolve and select the workspace again.");
-  }
-  claimedWorkspaceSelectionTokens.add(evidence.selectionToken);
-  try {
+  // Preflight routing target
+  const targetResolution = await resolveArtifactConnectionTarget({
+    workspaceRoot,
+    directory: registryDir,
+  });
+
+  if (targetResolution.status === "matched") {
     return {
-      workspaceRoot: await resolveWorkspaceRootForArtifactCreation(input.workspaceRoot, evidence),
-      selectionToken: evidence.selectionToken,
+      workspaceRoot,
+      targetWindow: targetResolution.targetWindow,
     };
-  } catch (error) {
-    claimedWorkspaceSelectionTokens.delete(evidence.selectionToken);
-    throw error;
   }
+
+  if (targetResolution.status === "selection-required") {
+    for (const win of targetResolution.windows) {
+      for (const candidate of win.folders) {
+        workspaceSelectionGrants.set(candidate.selectionToken, {
+          query: candidate.name,
+          candidateId: candidate.candidateId,
+          workspaceRoot: candidate.path,
+          windowInstanceId: win.windowInstanceId,
+          snapshotIdentity: `${win.windowInstanceId}:${win.snapshotUpdatedAt}`,
+          expiresAt: Date.parse(candidate.expiresAt),
+        });
+      }
+    }
+    throw new WindowSelectionRequiredError(
+      "WINDOW_SELECTION_REQUIRED: multiple VS Code windows have this workspace open. Select the target window.",
+      targetResolution.windows,
+      targetResolution.candidates,
+      {
+        expectedNextTool: CREATE_TOOL_NAME,
+        useSameArtifactHandle: false,
+      },
+    );
+  }
+
+  throw new Error("WORKSPACE_NOT_REGISTERED: no active VS Code window was found for this workspace.");
 }
 
-async function persistArtifact(input: CreateArtifactInput, workspaceRoot: string): Promise<ArtifactContext> {
+async function persistArtifact(
+  input: CreateArtifactInput,
+  workspaceRoot: string,
+  targetWindow: { windowInstanceId: string; workspaceRoot: string },
+): Promise<{ context: ArtifactContext; connection: ArtifactConnection }> {
   const rootOptions = globalRootOptions();
   const collectionRoot = await ensureSafeGlobalArtifactsRoot(rootOptions);
   const createdAt = new Date().toISOString();
@@ -470,7 +700,18 @@ async function persistArtifact(input: CreateArtifactInput, workspaceRoot: string
         files.commentsPath,
         `${JSON.stringify(comments, null, 2)}\n`,
       );
-      return loadArtifactContext(safeArtifactDirectory);
+      if (process.env.NODE_ENV === "test" && process.env.CODEX_ARTIFACTS_TEST_FAIL_CREATE === "at-connection") {
+        throw new Error("Injected connection write failure.");
+      }
+      const connection = await commitArtifactConnectionRequest(
+        safeArtifactDirectory,
+        {
+          windowInstanceId: targetWindow.windowInstanceId,
+          source: "create",
+        },
+      );
+      const context = await loadArtifactContext(safeArtifactDirectory);
+      return { context, connection };
     } catch (error) {
       try {
         await fs.rm(artifactDirectory, { recursive: true });
@@ -486,13 +727,13 @@ async function persistArtifact(input: CreateArtifactInput, workspaceRoot: string
   throw new Error("ARTIFACT_CREATE_CONFLICT: could not allocate a unique artifact ID.");
 }
 
-async function createArtifact(args: JsonObject | undefined): Promise<ArtifactContext> {
+async function createArtifact(args: JsonObject | undefined): Promise<{ context: ArtifactContext; connection: ArtifactConnection }> {
   const input = parseCreateArguments(args);
-  const { workspaceRoot, selectionToken } = await resolveCreateWorkspaceRoot(input);
+  const { workspaceRoot, targetWindow, selectionToken } = await resolveCreateWorkspaceRoot(input);
   try {
-    const context = await persistArtifact(input, workspaceRoot);
+    const created = await persistArtifact(input, workspaceRoot, targetWindow);
     if (selectionToken) workspaceSelectionGrants.delete(selectionToken);
-    return context;
+    return created;
   } finally {
     if (selectionToken) claimedWorkspaceSelectionTokens.delete(selectionToken);
   }
@@ -1068,6 +1309,25 @@ function toolResult(value: unknown): JsonObject {
 
 function toolError(error: unknown): JsonObject {
   const message = error instanceof Error ? error.message : String(error);
+  if (error instanceof WindowSelectionRequiredError) {
+    const structuredContent = {
+      message,
+      code: error.code,
+      status: error.status,
+      retryable: error.retryable,
+      expectedNextTool: error.expectedNextTool,
+      lifecycleMutated: error.lifecycleMutated,
+      takeoverOccurred: error.takeoverOccurred,
+      useSameArtifactHandle: error.useSameArtifactHandle,
+      windows: error.windows,
+      candidates: error.candidates,
+    };
+    return {
+      content: [{ type: "text", text: message }],
+      structuredContent,
+      isError: true,
+    };
+  }
   if (error instanceof ArtifactRecoveryError) {
     const structuredContent = { message, ...error.recovery };
     return {
@@ -1082,7 +1342,7 @@ function toolError(error: unknown): JsonObject {
   };
 }
 
-function artifactHandle(context: ArtifactContext): JsonObject {
+function artifactHandle(context: ArtifactContext, connection?: ArtifactConnection): JsonObject {
   const artifactUrl = toArtifactFileUrl(context.artifactPath);
   const artifactLink = formatArtifactLink(context.manifest.title, artifactUrl);
   return {
@@ -1096,6 +1356,16 @@ function artifactHandle(context: ArtifactContext): JsonObject {
     artifactSha256: context.artifactSha256,
     kind: context.manifest.kind,
     workspaceRoot: context.workspaceRoot,
+    ...(connection ? {
+      connection: {
+        schemaVersion: connection.schemaVersion,
+        windowInstanceId: connection.windowInstanceId,
+        connectionRevision: connection.connectionRevision,
+        openRequestId: connection.openRequestId,
+        source: connection.source,
+        updatedAt: connection.updatedAt,
+      },
+    } : {}),
   };
 }
 
@@ -1124,34 +1394,48 @@ async function handleResolveWorkspaceTool(id: unknown, args: JsonObject | undefi
     }
     pruneWorkspaceSelectionGrants();
     const resolution = await resolveWorkspaceCandidates(query);
-    if (resolution.candidates.length === 0) {
-      respond(id, toolResult({ status: "not-found", matchMode: "none", candidates: [] }));
+    if (resolution.windows.length === 0) {
+      respond(id, toolResult({ status: "not-found", matchMode: "none", windows: [], candidates: [] }));
       return;
     }
-    const candidates = resolution.candidates.map((candidate) => {
-      const candidateId = workspaceCandidateId(candidate.path);
-      const selectionToken = randomUUID();
-      const expiresAt = Date.now() + WORKSPACE_SELECTION_TTL_MS;
-      workspaceSelectionGrants.set(selectionToken, {
-        query: resolution.query,
-        candidateId,
-        workspaceRoot: candidate.path,
-        contextKey: resolution.contextKey,
-        expiresAt,
+    const allCandidates: Array<Record<string, unknown>> = [];
+    const windows = resolution.windows.map((win) => {
+      const folders = win.folders.map((folder) => {
+        const selectionToken = randomUUID();
+        const expiresAt = Date.now() + WORKSPACE_SELECTION_TTL_MS;
+        workspaceSelectionGrants.set(selectionToken, {
+          query: resolution.query,
+          candidateId: folder.candidateId,
+          workspaceRoot: folder.path,
+          windowInstanceId: win.windowInstanceId,
+          snapshotIdentity: win.snapshotIdentity,
+          expiresAt,
+        });
+        const item = {
+          candidateId: folder.candidateId,
+          name: folder.name,
+          path: folder.path,
+          match: folder.match,
+          selectionToken,
+          expiresAt: new Date(expiresAt).toISOString(),
+        };
+        allCandidates.push(item);
+        return item;
       });
       return {
-        candidateId,
-        name: candidate.name,
-        path: candidate.path,
-        match: candidate.match,
-        selectionToken,
-        expiresAt: new Date(expiresAt).toISOString(),
+        windowInstanceId: win.windowInstanceId,
+        focused: win.focused,
+        snapshotUpdatedAt: win.snapshotUpdatedAt,
+        workspaceFile: win.workspaceFile,
+        activeFile: win.activeFile,
+        folders,
       };
     });
     respond(id, toolResult({
       status: "selection-required",
       matchMode: resolution.matchMode,
-      candidates,
+      windows,
+      candidates: allCandidates,
     }));
   } catch (error) {
     respond(id, toolError(error));
@@ -1159,11 +1443,12 @@ async function handleResolveWorkspaceTool(id: unknown, args: JsonObject | undefi
 }
 
 async function handleCreateTool(id: unknown, args: JsonObject | undefined): Promise<void> {
+  const isTaggedCreate = args?.workspaceEvidence?.kind === "tagged-file";
   try {
-    const context = await createArtifact(args);
-    respond(id, toolResult(artifactHandle(context)));
+    const { context, connection } = await createArtifact(args);
+    respond(id, toolResult(artifactHandle(context, connection)));
   } catch (error) {
-    respond(id, toolError(error));
+    respond(id, toolError(asLifecycleRecoveryError(error, { isCreate: true, isTaggedCreate })));
   }
 }
 
@@ -1213,7 +1498,7 @@ async function handleInspectTool(id: unknown, args: JsonObject | undefined): Pro
       throw new Error("artifactDirectory must be an absolute path.");
     }
     const intent = args?.intent;
-    if (intent !== undefined && intent !== "explicit-chat-update") {
+    if (intent !== undefined && intent !== "explicit-chat-update" && intent !== "reconnect") {
       throw new Error(`Invalid intent: ${String(intent)}.`);
     }
     if (intent === "explicit-chat-update" && args?.expectedReviewRound === undefined) {
@@ -1227,32 +1512,179 @@ async function handleInspectTool(id: unknown, args: JsonObject | undefined): Pro
     if (expectedReviewRound !== undefined && context.reviewRound !== expectedReviewRound) {
       throw roundMismatchError(context.reviewRound, expectedReviewRound);
     }
-    if (intent === "explicit-chat-update" && args?.takeover === true) {
-      const preTakeoverInspection = await readArtifactInspection(context);
-      if (preTakeoverInspection.comments.comments.length > 0 || preTakeoverInspection.submission) {
-        throw new Error("explicit-chat-update requires an empty review round without saved comments or a submission.");
+
+    const connectionRaw = args?.connection;
+    let connectionInput: { windowInstanceId?: string; selectionToken?: string } | undefined;
+    if (connectionRaw !== undefined) {
+      if (typeof connectionRaw !== "object" || connectionRaw === null) {
+        throw new Error("INVALID_ARTIFACT_INPUT: connection must be an object.");
+      }
+      const connObj = connectionRaw as Record<string, unknown>;
+      let windowInstanceId: string | undefined;
+      let selectionToken: string | undefined;
+      if (connObj.windowInstanceId !== undefined) {
+        if (
+          typeof connObj.windowInstanceId !== "string"
+          || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(connObj.windowInstanceId)
+        ) {
+          throw new Error("INVALID_ARTIFACT_INPUT: connection.windowInstanceId must be a valid UUID.");
+        }
+        windowInstanceId = connObj.windowInstanceId;
+      }
+      if (connObj.selectionToken !== undefined) {
+        if (
+          typeof connObj.selectionToken !== "string"
+          || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(connObj.selectionToken)
+        ) {
+          throw new Error("INVALID_ARTIFACT_INPUT: connection.selectionToken must be a valid UUID.");
+        }
+        selectionToken = connObj.selectionToken;
+      }
+      if (windowInstanceId || selectionToken) {
+        connectionInput = {
+          ...(windowInstanceId ? { windowInstanceId } : {}),
+          ...(selectionToken ? { selectionToken } : {}),
+        };
       }
     }
-    if (args?.takeover === true) {
-      await detachActiveArtifactWaiter(artifactDirectory);
-      context = await loadArtifactContext(artifactDirectory);
-      if (expectedReviewRound !== undefined && context.reviewRound !== expectedReviewRound) {
-        throw roundMismatchError(context.reviewRound, expectedReviewRound);
+
+    let targetReconnectWindow: { windowInstanceId: string; workspaceRoot: string } | undefined;
+
+    let claimedSelectionToken: string | undefined;
+    try {
+      // Routing preflight happens BEFORE takeover when intent is reconnect
+      if (intent === "reconnect") {
+        const rootOptions = globalRootOptions();
+        const registryDir = workspaceRegistryDirectory(rootOptions);
+        const workspaceRoot = context.workspaceRoot;
+
+        if (connectionInput?.selectionToken) {
+          pruneWorkspaceSelectionGrants();
+          const token = connectionInput.selectionToken;
+          if (claimedWorkspaceSelectionTokens.has(token)) {
+            throw new Error("WINDOW_SELECTION_EXPIRED: the connection selection token is already being used.");
+          }
+          const connGrant = workspaceSelectionGrants.get(token);
+          if (!connGrant || connGrant.expiresAt <= Date.now()) {
+            throw new Error("WINDOW_SELECTION_EXPIRED: resolve the workspace again and choose a current candidate, asking the user only if the result is ambiguous.");
+          }
+          if (samePathKey(connGrant.workspaceRoot) !== samePathKey(workspaceRoot)) {
+            throw new WindowConnectionMismatchError("the connection selection token does not belong to workspaceRoot.");
+          }
+          const snapshots = await readFreshWorkspaceSnapshots(registryDir);
+          const windowSnapshot = snapshots.find((s) => s.instanceId === connGrant.windowInstanceId);
+          if (!windowSnapshot) {
+            workspaceSelectionGrants.delete(token);
+            throw new Error("WINDOW_SELECTION_EXPIRED: the window is no longer open; resolve and select the workspace again.");
+          }
+          const folderStillPresent = windowSnapshot.folders.some((f) => sameFilesystemPath(f.realPath, connGrant.workspaceRoot));
+          if (!folderStillPresent) {
+            workspaceSelectionGrants.delete(token);
+            throw new Error("WINDOW_SELECTION_EXPIRED: the workspace folder is no longer open in the selected window; resolve and select the workspace again.");
+          }
+          claimedWorkspaceSelectionTokens.add(token);
+          claimedSelectionToken = token;
+          targetReconnectWindow = { windowInstanceId: connGrant.windowInstanceId, workspaceRoot };
+        } else {
+          const targetResolution = await resolveArtifactConnectionTarget({
+            workspaceRoot,
+            artifactDirectory: context.artifactDirectory,
+            ...(connectionInput?.windowInstanceId ? { connectionHint: { windowInstanceId: connectionInput.windowInstanceId } } : {}),
+            directory: registryDir,
+          });
+
+          if (targetResolution.status === "matched") {
+            targetReconnectWindow = targetResolution.targetWindow;
+          } else if (targetResolution.status === "selection-required") {
+            for (const win of targetResolution.windows) {
+              for (const candidate of win.folders) {
+                workspaceSelectionGrants.set(candidate.selectionToken, {
+                  query: candidate.name,
+                  candidateId: candidate.candidateId,
+                  workspaceRoot: candidate.path,
+                  windowInstanceId: win.windowInstanceId,
+                  snapshotIdentity: `${win.windowInstanceId}:${win.snapshotUpdatedAt}`,
+                  expiresAt: Date.parse(candidate.expiresAt),
+                });
+              }
+            }
+            throw new WindowSelectionRequiredError(
+              "WINDOW_SELECTION_REQUIRED: multiple VS Code windows have this workspace open. Select the target window.",
+              targetResolution.windows,
+              targetResolution.candidates,
+              {
+                expectedNextTool: INSPECT_TOOL_NAME,
+                useSameArtifactHandle: true,
+              },
+            );
+          } else {
+            throw new Error("WORKSPACE_NOT_REGISTERED: no active VS Code window was found for this workspace.");
+          }
+        }
+      }
+
+      if (intent === "explicit-chat-update" && args?.takeover === true) {
+        const preTakeoverInspection = await readArtifactInspection(context);
+        if (preTakeoverInspection.comments.comments.length > 0 || preTakeoverInspection.submission) {
+          throw new Error("explicit-chat-update requires an empty review round without saved comments or a submission.");
+        }
+      }
+
+      if (args?.takeover === true) {
+        await detachActiveArtifactWaiter(artifactDirectory);
+        context = await loadArtifactContext(artifactDirectory);
+        if (expectedReviewRound !== undefined && context.reviewRound !== expectedReviewRound) {
+          throw roundMismatchError(context.reviewRound, expectedReviewRound);
+        }
+      }
+
+      const inspection = await readArtifactInspection(context);
+      const { roundToken, roundTokenSource } = grantInspectedRound(
+        context,
+        inspection,
+        intent === "explicit-chat-update" ? intent : undefined,
+      );
+
+      let connection: ArtifactConnection | null = null;
+      if (intent === "reconnect" && targetReconnectWindow) {
+        try {
+          if (process.env.NODE_ENV === "test" && process.env.CODEX_ARTIFACTS_TEST_FAIL_RECONNECT === "invalid-state-at-connection") {
+            throw new ArtifactConnectionInvalidError("Injected invalid connection state during commit.");
+          }
+          connection = await commitArtifactConnectionRequest(context.artifactDirectory, {
+            windowInstanceId: targetReconnectWindow.windowInstanceId,
+            source: "inspect",
+          });
+          if (claimedSelectionToken) {
+            workspaceSelectionGrants.delete(claimedSelectionToken);
+          }
+        } catch (error) {
+          if (error instanceof ArtifactConnectionInvalidError || error instanceof ArtifactConnectionWriteError) {
+            throw error;
+          }
+          const detail = error instanceof Error ? error.message : String(error);
+          throw new ArtifactConnectionWriteError(`failed to update connection state: ${detail}`);
+        }
+      } else {
+        connection = await readArtifactConnection(context.artifactDirectory, { allowMissing: true });
+      }
+
+      respond(id, toolResult({
+        ...artifactHandle(context, connection ?? undefined),
+        manifest: context.manifest,
+        markdown: inspection.markdown,
+        comments: inspection.comments,
+        commentsSha256: inspection.commentsSha256,
+        submission: inspection.submission,
+        submissionSha256: inspection.submissionSha256,
+        roundToken,
+        ...(roundTokenSource ? { roundTokenSource } : {}),
+      }));
+    } finally {
+      if (claimedSelectionToken) {
+        claimedWorkspaceSelectionTokens.delete(claimedSelectionToken);
       }
     }
-    const inspection = await readArtifactInspection(context);
-    const { roundToken, roundTokenSource } = grantInspectedRound(context, inspection, intent);
-    respond(id, toolResult({
-      ...artifactHandle(context),
-      manifest: context.manifest,
-      markdown: inspection.markdown,
-      comments: inspection.comments,
-      commentsSha256: inspection.commentsSha256,
-      submission: inspection.submission,
-      submissionSha256: inspection.submissionSha256,
-      roundToken,
-      ...(roundTokenSource ? { roundTokenSource } : {}),
-    }));
   } catch (error) {
     respond(id, toolError(asLifecycleRecoveryError(error)));
   }
@@ -1410,7 +1842,7 @@ async function handleRequest(message: JsonObject): Promise<void> {
       protocolVersion,
       capabilities: { tools: { listChanged: false } },
       serverInfo: { name: SERVER_NAME, version: SERVER_VERSION },
-    instructions: "Resolve the target workspace folder before reading project files or drafting new artifact content. With no user-tagged file, call resolve_artifact_workspace immediately using the user's exact workspace keyword; do not scan folders to normalize it first. The resolver operates within one uniquely identified VS Code workspace context. If that context contains one folder, it returns that folder with matchMode=matched and match=single-folder even when the query text differs. In a multi-root workspace, a query with no match returns every folder in that same context with matchMode=all-available. It never combines folders from different VS Code windows; WORKSPACE_CONTEXT_AMBIGUOUS requires the user to focus the intended window and retry. Select a uniquely high-confidence candidate from the returned names and paths; ask the user only when the result remains ambiguous. Create reviewable Markdown with create_artifact using only tagged-file evidence or a resolved-workspace selection token. The official skill always sends kind=implementation-plan. Retain the exact artifactDirectory handle, then call wait_for_artifact_review. Do not resolve the workspace again after creation. A cancelled waiter never ends or deletes the artifact. Treat comments returned by a Review submission and comments read through inspect_artifact_review with the same policy: answer questions visibly in chat before calling advance_and_wait_for_artifact, update Markdown only for requested changes, and omit markdown for question-only feedback. Do not add Review responses to the artifact. Pure reconnect uses wait on the exact handle and same round. For chat escape, inspect the exact handle with takeover=true. If intent or handle is ambiguous, ask the user before calling a lifecycle tool and never takeover speculatively. If inspection has no comments or submission, reattach with wait_for_artifact_review without advancing. When updating an artifact directly from chat on an empty round, inspect with takeover=true, expectedReviewRound, and intent=explicit-chat-update, then advance with replacement markdown. Follow structured recovery metadata on lifecycle errors, keep the same exact handle, and never replay when commit state is uncertain. When Proceed returns approve for kind plan or implementation-plan, obey nextAction and execute the complete approved plan immediately in the same turn; do not stop at acknowledgement or ask for another confirmation. Proceed ends only the review round, not the authorized execution. Just save ends the round without execution. Reconnect later by explicitly inspecting, advancing without markdown, and waiting again; reconnect must not repeat an already executed action. After creation, use only the exact returned artifactDirectory for wait, inspect, advance, and reconnect. Never scan global artifact storage or a workspace to discover an artifact, and never infer an artifact handle from cwd.",
+    instructions: "Resolve the target workspace folder before reading project files or drafting new artifact content. With no user-tagged file, call resolve_artifact_workspace immediately using the user's exact workspace keyword; do not scan folders to normalize it first. The resolver operates within one uniquely identified VS Code workspace context. If that context contains one folder, it returns that folder with matchMode=matched and match=single-folder even when the query text differs. In a multi-root workspace, a query with no match returns every folder in that same context with matchMode=all-available. The resolver groups candidates by VS Code window; if multiple windows open the same workspace, it returns candidates with selection tokens for disambiguation. Select a uniquely high-confidence candidate from the returned names and paths; ask the user only when the result remains ambiguous. Create reviewable Markdown with create_artifact using only tagged-file evidence or a resolved-workspace selection token. The official skill always sends kind=implementation-plan. Retain the exact artifactDirectory handle, then call wait_for_artifact_review. Do not resolve the workspace again after creation. A cancelled waiter never ends or deletes the artifact. Treat comments returned by a Review submission and comments read through inspect_artifact_review with the same policy: answer questions visibly in chat before calling advance_and_wait_for_artifact, update Markdown only for requested changes, and omit markdown for question-only feedback. Do not add Review responses to the artifact. Pure reconnect uses inspect_artifact_review with intent=reconnect on the exact handle and same round to bind the active VS Code window and emit an open request; resuming waiting without reconnecting uses wait_for_artifact_review. For chat escape, inspect the exact handle with takeover=true. If intent or handle is ambiguous, ask the user before calling a lifecycle tool and never takeover speculatively. If inspection has no comments or submission, reattach with wait_for_artifact_review without advancing. When updating an artifact directly from chat on an empty round, inspect with takeover=true, expectedReviewRound, and intent=explicit-chat-update, then advance with replacement markdown. Follow structured recovery metadata on lifecycle errors, keep the same exact handle, and never replay when commit state is uncertain. When Proceed returns approve for kind plan or implementation-plan, obey nextAction and execute the complete approved plan immediately in the same turn; do not stop at acknowledgement or ask for another confirmation. Proceed ends only the review round, not the authorized execution. Just save ends the round without execution. Reconnect later by explicitly inspecting, advancing without markdown, and waiting again; reconnect must not repeat an already executed action. After creation, use only the exact returned artifactDirectory for wait, inspect, advance, and reconnect. Never scan global artifact storage or a workspace to discover an artifact, and never infer an artifact handle from cwd.",
     });
     return;
   }
@@ -1423,7 +1855,7 @@ async function handleRequest(message: JsonObject): Promise<void> {
       {
         name: RESOLVE_WORKSPACE_TOOL_NAME,
         title: "Resolve artifact workspace",
-        description: "Read one uniquely scoped fresh VS Code workspace context and return workspace-folder name/path candidates for the user's exact keyword. Common separators such as spaces, hyphens, underscores, dots, and slashes are normalized. A one-folder context returns matchMode=matched with match=single-folder even when the query differs. In a multi-root context, no query match returns every folder in that context with matchMode=all-available. The resolver never combines different VS Code windows and returns WORKSPACE_CONTEXT_AMBIGUOUS when the registry cannot identify one unique context. This tool never mutates lifecycle files. The caller may choose one uniquely high-confidence candidate and should ask the user only when the result is ambiguous.",
+        description: "Read one uniquely scoped fresh VS Code workspace context and return workspace-folder name/path candidates for the user's exact keyword. Common separators such as spaces, hyphens, underscores, dots, and slashes are normalized. A one-folder context returns matchMode=matched with match=single-folder even when the query differs. In a multi-root context, no query match returns every folder in that context with matchMode=all-available. The resolver groups folders by active VS Code window and provides selection tokens when disambiguation across multiple windows is required. This tool never mutates lifecycle files. The caller may choose one uniquely high-confidence candidate and should ask the user only when the result is ambiguous.",
         inputSchema: {
           type: "object",
           properties: {
@@ -1468,6 +1900,18 @@ async function handleRequest(message: JsonObject): Promise<void> {
             title: { type: "string", minLength: 1, maxLength: 200 },
             kind: { type: "string", pattern: "^[a-z][a-z0-9-]{0,63}$" },
             markdown: { type: "string", minLength: 1, maxLength: MAX_MARKDOWN_BYTES },
+            connection: {
+              type: "object",
+              description: "Optional routing connection parameters.",
+              properties: {
+                selectionToken: {
+                  type: "string",
+                  format: "uuid",
+                  description: "Optional window-selection token returned by an earlier create_artifact WINDOW_SELECTION_REQUIRED response for this tagged-file request.",
+                },
+              },
+              additionalProperties: false,
+            },
           },
           required: ["workspaceRoot", "workspaceEvidence", "title", "kind", "markdown"],
           additionalProperties: false,
@@ -1502,8 +1946,24 @@ async function handleRequest(message: JsonObject): Promise<void> {
             takeover: { type: "boolean", default: false },
             intent: {
               type: "string",
-              enum: ["explicit-chat-update"],
-              description: "Specify explicit-chat-update when the user explicitly requests changes in chat on a round without saved comments.",
+              enum: ["explicit-chat-update", "reconnect"],
+              description: "Specify reconnect to bind the artifact to an active VS Code window, or explicit-chat-update when the user explicitly requests changes in chat on a round without saved comments.",
+            },
+            connection: {
+              type: "object",
+              properties: {
+                windowInstanceId: {
+                  type: "string",
+                  minLength: 1,
+                  description: "Optional explicit windowInstanceId to reconnect this artifact to.",
+                },
+                selectionToken: {
+                  type: "string",
+                  format: "uuid",
+                  description: "Optional window-selection token returned by an earlier inspect_artifact_review reconnect response with WINDOW_SELECTION_REQUIRED for this exact artifact handle.",
+                },
+              },
+              additionalProperties: false,
             },
           },
           required: ["artifactDirectory"],

@@ -13,6 +13,8 @@ export const ARTIFACT_MARKDOWN_FILE = "artifact.md";
 export const COMMENTS_FILE = "comments.json";
 export const REVIEW_SUBMISSION_FILE = "review-submission.json";
 export const ARTIFACT_UPDATE_LOCK_FILE = ".artifact-update.lock";
+export const ARTIFACT_CONNECTION_FILE = "artifact-connection.json";
+export const ARTIFACT_CONNECTION_LOCK_FILE = ".artifact-connection.lock";
 
 export const OWNER_ONLY_DIRECTORY_MODE = 0o700;
 export const OWNER_ONLY_FILE_MODE = 0o600;

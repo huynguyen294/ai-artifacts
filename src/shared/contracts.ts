@@ -1,8 +1,64 @@
 import { z } from "zod";
 
 export const ARTIFACT_SCHEMA_VERSION = 5 as const;
+export const ARTIFACT_CONNECTION_SCHEMA_VERSION = 1 as const;
 export const artifactIdSchema = z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/);
 export const artifactKindSchema = z.string().regex(/^[a-z][a-z0-9-]{0,63}$/);
+
+export const artifactConnectionSourceSchema = z.enum(["create", "inspect"]);
+export type ArtifactConnectionSource = z.infer<typeof artifactConnectionSourceSchema>;
+
+export const artifactConnectionSchema = z.object({
+  schemaVersion: z.literal(ARTIFACT_CONNECTION_SCHEMA_VERSION),
+  windowInstanceId: z.string().uuid(),
+  connectionRevision: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+  openRequestId: z.string().uuid(),
+  source: artifactConnectionSourceSchema,
+  updatedAt: z.string().datetime(),
+}).strict();
+
+export type ArtifactConnection = z.infer<typeof artifactConnectionSchema>;
+
+export const WORKSPACE_SELECTION_TTL_MS = 10 * 60 * 1000;
+
+export class ArtifactConnectionInvalidError extends Error {
+  readonly code = "ARTIFACT_CONNECTION_INVALID" as const;
+  constructor(message: string) {
+    super(`ARTIFACT_CONNECTION_INVALID: ${message}`);
+    this.name = "ArtifactConnectionInvalidError";
+  }
+}
+
+export class ArtifactConnectionWriteError extends Error {
+  readonly code = "ARTIFACT_CONNECTION_WRITE_FAILED" as const;
+  constructor(message: string) {
+    super(`ARTIFACT_CONNECTION_WRITE_FAILED: ${message}`);
+    this.name = "ArtifactConnectionWriteError";
+  }
+}
+
+export class WindowConnectionStaleError extends Error {
+  readonly code = "WINDOW_CONNECTION_STALE" as const;
+  constructor(message: string) {
+    super(`WINDOW_CONNECTION_STALE: ${message}`);
+    this.name = "WindowConnectionStaleError";
+  }
+}
+
+export class WindowConnectionMismatchError extends Error {
+  readonly code = "WINDOW_CONNECTION_MISMATCH" as const;
+  constructor(message: string) {
+    super(`WINDOW_CONNECTION_MISMATCH: ${message}`);
+    this.name = "WindowConnectionMismatchError";
+  }
+}
+
+export const artifactConnectionHintSchema = z.object({
+  windowInstanceId: z.string().uuid().optional(),
+  selectionToken: z.string().uuid().optional(),
+}).strict();
+
+export type ArtifactConnectionHint = z.infer<typeof artifactConnectionHintSchema>;
 
 export const artifactManifestSchema = z.object({
   schemaVersion: z.literal(ARTIFACT_SCHEMA_VERSION),

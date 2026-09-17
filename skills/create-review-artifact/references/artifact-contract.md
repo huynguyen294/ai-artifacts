@@ -4,7 +4,7 @@
 
 The skill may call `resolve_artifact_workspace` before loading this reference. Read this contract after one target workspace folder is chosen and before inspecting that folder or calling any other MCP lifecycle tool.
 
-`resolve_artifact_workspace` accepts the exact workspace keyword or path from the user's message. It normalizes common separators, so names such as `agent plus`, `agent-plus`, and `agent_plus` match. It reads one uniquely identified fresh VS Code workspace context and returns stable workspace-folder name/path candidates with opaque, expiring selection tokens. If that context contains exactly one folder, the resolver returns `matchMode: "matched"` and `match: "single-folder"` even when the query text differs; the agent selects it immediately. If a query has no match in a multi-root workspace, the resolver returns every folder in that same context with `matchMode: "all-available"`. It never combines folders from different VS Code windows; `WORKSPACE_CONTEXT_AMBIGUOUS` requires the user to focus the intended window and retry. `status: "not-found"` is reserved for an empty fresh scope. It is read-only and never creates lifecycle files. The agent may choose one candidate when its name or path is the unique high-confidence match to the user's words; it asks the user only when the candidates remain ambiguous.
+`resolve_artifact_workspace` accepts the exact workspace keyword or path from the user's message. It normalizes common separators, so names such as `agent plus`, `agent-plus`, and `agent_plus` match. It reads fresh VS Code workspace contexts and returns stable workspace-folder name/path candidates with opaque, expiring selection tokens. If that context contains exactly one folder, the resolver returns `matchMode: "matched"` and `match: "single-folder"` even when the query text differs; the agent selects it immediately. If a query has no match in a multi-root workspace, the resolver returns every folder in that same context with `matchMode: "all-available"`. When multiple active VS Code windows open the workspace or multiple candidates exist, the resolver groups candidates by window and assigns opaque selection tokens to disambiguate identical folders across windows. `status: "not-found"` is reserved for an empty fresh scope. It is read-only and never creates lifecycle files. The agent may choose one candidate when its name or path is the unique high-confidence match to the user's words; it asks the user only when the candidates remain ambiguous.
 
 `create_artifact` accepts a verified absolute `workspaceRoot`, `title`, lowercase `kind`, complete `markdown`, and exactly one creation evidence variant:
 
@@ -13,13 +13,13 @@ The skill may call `resolve_artifact_workspace` before loading this reference. R
 
 The server revalidates current registry scope, canonical root, tagged-file containment or the resolver grant before mutation. Cwd, untagged active files, project markers, folder order, and filesystem search results are not creation evidence. The official skill always sends `kind: "implementation-plan"`; the MCP keeps `kind` required for protocol compatibility. The server stores the schema-v5 lifecycle in global AI Artifacts storage. `workspaceRoot` is retained as target metadata and ownership evidence; it is not the artifact storage location. Creation results include `artifactUrl` (RFC 8089 `file:///...` URI) and `artifactLink` (`[${title}](${artifactUrl})`). `artifactLink` is a regular file link, not a deep link, and does not guarantee that a custom editor opens.
 
-`wait_for_artifact_review` accepts `artifactDirectory`, `expectedReviewRound`, and optional `takeover`. It returns an existing submission immediately or owns the single transient waiter until Review, Proceed, Just save, cancellation, or takeover. A `revise` result includes a one-time `roundToken`, `artifactUrl`, and `artifactLink`.
+`wait_for_artifact_review` accepts `artifactDirectory`, `expectedReviewRound`, and optional `takeover`. It returns an existing submission immediately or owns the single transient waiter until Review, Proceed, Just save, cancellation, or takeover. A `revise` result includes a one-time `roundToken`, `artifactUrl`, and `artifactLink`. It maintains existing connection state without mutating `artifact-connection.json`.
 
 For an `approve` result whose artifact kind is `plan` or `implementation-plan`, the result includes `nextAction.type: "execute-approved-plan"` and an explicit instruction to execute the approved plan immediately in the same turn. Treat this as execution authorization, not an acknowledgement request.
 
-`inspect_artifact_review` accepts the exact `artifactDirectory`, optional `expectedReviewRound`, optional `takeover`, and optional `intent`. It immediately returns the validated manifest, Markdown, comments, optional submission, round, hashes, `artifactUrl`, and `artifactLink`. It returns a `roundToken` when saved comments or a submission make the round consumable, or when `intent` is `"explicit-chat-update"` on an empty round.
+`inspect_artifact_review` accepts the exact `artifactDirectory`, optional `expectedReviewRound`, optional `takeover`, optional `intent` (such as `"reconnect"` or `"explicit-chat-update"`), and optional `connection`. It immediately returns the validated manifest, Markdown, comments, optional submission, round, hashes, `artifactUrl`, and `artifactLink`. It returns a `roundToken` when saved comments or a submission make the round consumable, or when `intent` is `"explicit-chat-update"` on an empty round. When `intent` is `"reconnect"`, it rebinds the target window and writes connection state atomically.
 
-`advance_and_wait_for_artifact` accepts the exact `artifactDirectory`, `expectedReviewRound`, and `roundToken`, plus optional complete replacement `markdown`. It transactionally advances the same artifact and waits for the next round. Omitting Markdown preserves the exact `artifact.md` bytes and SHA while resetting handled comments and removing the old submission.
+`advance_and_wait_for_artifact` accepts the exact `artifactDirectory`, `expectedReviewRound`, and `roundToken`, plus optional complete replacement `markdown`. It transactionally advances the same artifact and waits for the next round while preserving existing connection state. Omitting Markdown preserves the exact `artifact.md` bytes and SHA while resetting handled comments and removing the old submission.
 
 ## Availability and lifetime
 
@@ -57,7 +57,8 @@ Each lifecycle tool loads the exact artifact context and revalidates the manifes
 
 | User intent | Tool flow |
 |---|---|
-| Reconnect or resume waiting without edits | Wait on the exact handle and same round. |
+| Pure reconnect to active window | Call `inspect_artifact_review` with the exact handle, current round, and `intent: "reconnect"` to rebind the window and emit an open request. |
+| Resume waiting without reconnecting | Wait on the exact handle and same round. |
 | Read saved comments/submission | Inspect the exact handle with `takeover: true`. |
 | Update an empty round directly from chat | Inspect with exact handle, round, takeover, and `intent: "explicit-chat-update"`. |
 | Intent or handle is ambiguous | Ask the user before any lifecycle call. Never takeover speculatively. |
@@ -74,7 +75,7 @@ Lifecycle errors keep human-readable text and may include:
 type ArtifactRecoveryError = {
   code: string;
   retryable: boolean;
-  expectedNextTool?: "inspect_artifact_review" | "wait_for_artifact_review" | "advance_and_wait_for_artifact";
+  expectedNextTool?: "create_artifact" | "inspect_artifact_review" | "wait_for_artifact_review" | "advance_and_wait_for_artifact" | "resolve_artifact_workspace";
   reuseRoundToken: boolean;
   useSameArtifactHandle: true;
   currentReviewRound?: number;
@@ -83,13 +84,19 @@ type ArtifactRecoveryError = {
 
 Recovery rules:
 
+- `WINDOW_SELECTION_REQUIRED`: ambiguous window context; retry with the chosen candidate's `connection.selectionToken` using `expectedNextTool` (`create_artifact` for tagged create or `inspect_artifact_review` for reconnect); present candidates to the user with concise labels like `Window 1 — focused (path...)` instead of raw UUIDs.
 - Invalid/expired/consumed tokens, wrong round, or changed state: inspect the same exact handle; do not replay old Markdown or actions.
 - Token in use: wait for the in-flight request; do not advance concurrently.
-- Active waiter: choose wait or intentional inspect/takeover from the user's intent.
+- Active waiter: do not start a second wait. Keep awaiting the in-flight call for resume-wait intent; use inspect with `intent: "reconnect"` and no takeover for pure reconnect; use takeover only for saved feedback or an explicit direct update.
 - Confirmed cancellation before commit or confirmed rollback may set `reuseRoundToken: true`.
 - `ADVANCE_COMMITTED` means the round changed successfully but waiting did not finish; never replay, and continue on the reported round.
 - Workspace unavailable after create: ask the user to reopen/restore that workspace; never resolve a replacement workspace.
-- If commit state is uncertain, inspect the same exact handle before retrying.
+- `WINDOW_SELECTION_EXPIRED`: for pre-create resolver grant, resolve workspace again; for tagged create, retry `create_artifact` without token; for reconnect, retry `inspect_artifact_review` on exact handle with `intent: "reconnect"` without token to refresh candidates; never call `resolve_artifact_workspace` after create.
+- `WINDOW_CONNECTION_MISMATCH`: candidate or hint does not match the target workspace; for reconnect, retry `inspect_artifact_review` on exact handle without token; never call `resolve_artifact_workspace`.
+- `WINDOW_CONNECTION_STALE`: targeted window is no longer open; retry `inspect_artifact_review` on exact handle with `intent: "reconnect"` to rebind an active window.
+- `ARTIFACT_CONNECTION_INVALID`: optional routing state is malformed or invalid and the skill cannot repair it. Stop automated recovery, retain the exact handle, report the corrupt `artifact-connection.json`, and ask the user to repair or remove it before reconnecting. Do not retry inspect/reconnect or edit lifecycle files directly.
+- `ARTIFACT_CONNECTION_WRITE_FAILED`: failed to update the connection state atomically; retry `inspect_artifact_review` on exact handle with `intent: "reconnect"`.
+- Unless the error is explicitly non-retryable, if commit state is uncertain, inspect the same exact handle before retrying.
 
 ## Decisions and chat feedback
 

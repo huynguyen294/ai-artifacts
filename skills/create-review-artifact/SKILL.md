@@ -17,7 +17,7 @@ Coordinate one reviewable Markdown artifact for one explicit user request.
      - `matchMode: "matched"` means either the resolver found one or more string matches, or the uniquely scoped VS Code workspace contains exactly one folder and returns it with `match: "single-folder"`. Use the ranking above and ask the user only when the strongest result is tied or otherwise ambiguous.
      - `matchMode: "all-available"` means the query did not match within a multi-root workspace, so the candidates are every fresh folder in that one workspace context. Select one only when its name or path is a uniquely high-confidence semantic match to the user's words; otherwise show the candidates and ask the user.
      - `status: "not-found"` with `matchMode: "none"` means no fresh workspace is available; ask the user to open the workspace or tag one of its files.
-     - `WORKSPACE_CONTEXT_AMBIGUOUS` means the registry cannot identify one VS Code workspace context. Ask the user to focus the intended VS Code window, then retry the same query. Do not combine or inspect folders from different windows.
+     - When multiple active VS Code windows open the same workspace folder, the resolver returns candidates grouped by window with selection tokens for disambiguation. Present candidates using concise labels such as `Window 1 — focused (path...)`; never display raw UUIDs to the user. Select the intended window candidate, or ask the user if the target window remains ambiguous.
      - After either a confident agent choice or an explicit user choice, call create with the exact candidate path and `{ kind: "resolved-workspace", selectionToken }`. If the selection expires or registry context changes, resolve and choose again, asking the user only if it is ambiguous.
    - Cwd, `environment_context`, untagged active files, workspace order, project markers, inferred folder names, and search results are never creation evidence.
 3. Once exactly one target workspace folder is chosen, read [references/artifact-contract.md](references/artifact-contract.md) before inspecting that folder or calling `create_artifact`, `wait_for_artifact_review`, `inspect_artifact_review`, or `advance_and_wait_for_artifact`. Then read the chosen folder's required instruction files and the minimum relevant documentation/source needed to produce the requested artifact. Do not inspect other roots.
@@ -52,7 +52,8 @@ Before calling a lifecycle tool, require both a uniquely matching exact handle a
 
 | Intent | Required flow |
 |---|---|
-| Pure reconnect, resume waiting, or continue without edits | Call `wait_for_artifact_review` with the exact handle and current round. Do not inspect, modify Markdown, or advance. |
+| Pure reconnect to active window | Call `inspect_artifact_review` with the exact handle, current round, and `intent: "reconnect"` to rebind the window and emit an open request. |
+| Resume waiting without reconnecting | Call `wait_for_artifact_review` with the exact handle and current round. |
 | Read saved review comments or submission | Call `inspect_artifact_review` with the exact handle and `takeover: true`. |
 | Explicitly update an empty round from chat | Call inspect with the exact handle, `takeover: true`, `expectedReviewRound`, and `intent: "explicit-chat-update"`. |
 
@@ -64,18 +65,24 @@ Before calling a lifecycle tool, require both a uniquely matching exact handle a
 
 ## Structured recovery
 
-Follow machine-readable recovery metadata returned by lifecycle errors. Keep the same exact artifact handle and never call `resolve_artifact_workspace` during recovery.
+Follow machine-readable recovery metadata returned by lifecycle errors. Keep the same exact artifact handle and never call `resolve_artifact_workspace` during recovery after an artifact has been created.
 
 | Error code | Required recovery |
 |---|---|
+| `WINDOW_SELECTION_REQUIRED` | Ambiguous window context. If `expectedNextTool: "create_artifact"`, present candidates using window labels, ask user if ambiguous, and retry `create_artifact` with the chosen `connection.selectionToken`. If `expectedNextTool: "inspect_artifact_review"`, retry `inspect_artifact_review` on the same handle with `intent: "reconnect"` and the chosen `connection.selectionToken`. |
 | `ROUND_TOKEN_INVALID_OR_EXPIRED`, `ROUND_TOKEN_ALREADY_CONSUMED`, `ROUND_MISMATCH`, `ROUND_STATE_CHANGED` | Inspect the same exact handle for current state and a fresh token. Do not replay old Markdown or actions. |
 | `ROUND_TOKEN_IN_USE` | Do not issue another advance. Wait for the in-flight request, then inspect only if its result is unclear. |
-| `ARTIFACT_ALREADY_WAITING` | Use the intent table: reconnect by waiting, or inspect with takeover only for saved feedback/direct update. |
+| `ARTIFACT_ALREADY_WAITING` | Another live waiter already owns the exact artifact. Do not start a second wait. For resume-wait intent, keep awaiting the in-flight call; for pure reconnect, call `inspect_artifact_review` with `intent: "reconnect"` without takeover; use takeover only for saved feedback or an explicit direct update. |
 | `ADVANCE_CANCELLED_BEFORE_COMMIT`, `ADVANCE_ROLLED_BACK` with `reuseRoundToken: true` | Retry the same advance only when the server explicitly confirms the token remains valid. |
 | `ADVANCE_COMMITTED` | Do not replay. Continue with the reported round using the hinted wait flow. |
 | `WORKSPACE_NOT_REGISTERED` | Ask the user to reopen or restore the artifact's workspace; do not resolve another workspace. |
+| `WINDOW_SELECTION_EXPIRED` | For pre-create resolver grant, call `resolve_artifact_workspace` again. For tagged create, retry `create_artifact` without connection token to refresh candidates. For reconnect, retry `inspect_artifact_review` on exact handle with `intent: "reconnect"` without connection token to refresh candidates; never call `resolve_artifact_workspace`. |
+| `WINDOW_CONNECTION_MISMATCH` | Selection token does not match target workspace. For reconnect, retry `inspect_artifact_review` on exact handle without connection token; do not call `resolve_artifact_workspace`. |
+| `WINDOW_CONNECTION_STALE` | The targeted window is no longer active. Retry `inspect_artifact_review` on exact handle with `intent: "reconnect"` to rebind an active window. |
+| `ARTIFACT_CONNECTION_INVALID` | Stored routing data is invalid or malformed and cannot be repaired by the skill. Stop automated recovery, retain the exact handle, report the corrupt `artifact-connection.json`, and ask the user to repair or remove that optional routing file before reconnecting. Do not retry inspect/reconnect or edit lifecycle files yourself. |
+| `ARTIFACT_CONNECTION_WRITE_FAILED` | Failed to update the connection state atomically. Retry `inspect_artifact_review` on the exact handle with `intent: "reconnect"`. |
 
-For any error that does not prove both “not committed” and `reuseRoundToken: true`, inspect the exact handle before retrying.
+Except for explicit non-retryable errors such as `ARTIFACT_CONNECTION_INVALID`, inspect the exact handle before retrying any error that does not prove both “not committed” and `reuseRoundToken: true`.
 
 ## Lifecycle rules
 

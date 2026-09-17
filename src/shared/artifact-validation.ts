@@ -1,17 +1,22 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import {
+  ARTIFACT_CONNECTION_SCHEMA_VERSION,
   ARTIFACT_SCHEMA_VERSION,
+  artifactConnectionSchema,
   artifactIdSchema,
   artifactManifestSchema,
   commentsDocumentSchema,
   reviewSubmissionSchema,
+  type ArtifactConnection,
   type ArtifactManifest,
   type CommentsDocument,
   type ReviewSubmission,
 } from "./contracts";
 import {
   ARTIFACTS_DIRECTORY,
+  ARTIFACT_CONNECTION_FILE,
+  ARTIFACT_CONNECTION_LOCK_FILE,
   ARTIFACT_MANIFEST_FILE,
   ARTIFACT_MARKDOWN_FILE,
   ARTIFACT_UPDATE_LOCK_FILE,
@@ -29,6 +34,8 @@ const MANAGED_ARTIFACT_FILES = new Set([
   COMMENTS_FILE,
   REVIEW_SUBMISSION_FILE,
   ARTIFACT_UPDATE_LOCK_FILE,
+  ARTIFACT_CONNECTION_FILE,
+  ARTIFACT_CONNECTION_LOCK_FILE,
 ]);
 const TRANSACTION_FILE_SUFFIX = /^\.(?:tmp|next|previous)-[a-zA-Z0-9_-]+$/;
 
@@ -105,6 +112,20 @@ export function parseArtifactManifest(rawArtifact: unknown): ArtifactManifest {
     );
   }
   return artifactManifestSchema.parse(rawArtifact);
+}
+
+export function parseArtifactConnection(rawConnection: unknown): ArtifactConnection {
+  if (
+    !rawConnection
+    || typeof rawConnection !== "object"
+    || !("schemaVersion" in rawConnection)
+    || rawConnection.schemaVersion !== ARTIFACT_CONNECTION_SCHEMA_VERSION
+  ) {
+    throw new Error(
+      `Unsupported artifact connection schema version. AI Artifacts supports version ${ARTIFACT_CONNECTION_SCHEMA_VERSION}.`,
+    );
+  }
+  return artifactConnectionSchema.parse(rawConnection);
 }
 
 export function sameFilesystemPath(left: string, right: string): boolean {
@@ -307,11 +328,13 @@ export function artifactPaths(artifactDirectory: string): {
   artifactPath: string;
   commentsPath: string;
   submissionPath: string;
+  connectionPath: string;
 } {
   return {
     manifestPath: path.join(artifactDirectory, ARTIFACT_MANIFEST_FILE),
     artifactPath: path.join(artifactDirectory, ARTIFACT_MARKDOWN_FILE),
     commentsPath: path.join(artifactDirectory, COMMENTS_FILE),
     submissionPath: path.join(artifactDirectory, REVIEW_SUBMISSION_FILE),
+    connectionPath: path.join(artifactDirectory, ARTIFACT_CONNECTION_FILE),
   };
 }

@@ -147,7 +147,8 @@ async function initialize(client: TestClient): Promise<void> {
   expect(initialized.instructions).toContain("Select a uniquely high-confidence candidate");
   expect(initialized.instructions).toContain("ask the user only when the result remains ambiguous");
   expect(initialized.instructions).toContain("match=single-folder");
-  expect(initialized.instructions).toContain("WORKSPACE_CONTEXT_AMBIGUOUS");
+  expect(initialized.instructions).toContain("groups candidates by VS Code window");
+  expect(initialized.instructions).toContain("Pure reconnect uses inspect_artifact_review with intent=reconnect");
   expect(initialized.instructions).toContain("After creation, use only the exact returned artifactDirectory");
   expect(initialized.instructions).toContain("Never scan global artifact storage or a workspace");
   expect(initialized.instructions).not.toContain("latest artifact from a workspace");
@@ -322,6 +323,14 @@ describe("artifact review MCP server v7", () => {
       "markdown",
     ]));
     expect(JSON.stringify(createTool.inputSchema)).toContain("resolved-workspace");
+    const createWindowTokenDescription = createTool.inputSchema.properties.connection.properties.selectionToken.description;
+    expect(createWindowTokenDescription).toContain("earlier create_artifact WINDOW_SELECTION_REQUIRED response");
+    expect(createWindowTokenDescription).not.toContain("resolve_artifact_workspace");
+    const inspectTool = tools.tools.find((tool: any) => tool.name === "inspect_artifact_review");
+    const reconnectTokenDescription = inspectTool.inputSchema.properties.connection.properties.selectionToken.description;
+    expect(reconnectTokenDescription).toContain("earlier inspect_artifact_review reconnect response");
+    expect(reconnectTokenDescription).toContain("this exact artifact handle");
+    expect(reconnectTokenDescription).not.toContain("resolve_artifact_workspace");
     expect(JSON.stringify(createTool.inputSchema)).not.toContain("user-selected-workspace");
 
     const created = await createArtifact(client, fixture.workspace);
@@ -339,6 +348,7 @@ describe("artifact review MCP server v7", () => {
       "artifact.json",
       "artifact.md",
       "comments.json",
+      "artifact-connection.json",
     ]));
     const manifest = JSON.parse(await readFile(path.join(created.artifactDirectory, "artifact.json"), "utf8"));
     expect(manifest).toMatchObject({
@@ -348,7 +358,7 @@ describe("artifact review MCP server v7", () => {
     });
     if (process.platform !== "win32") {
       expect((await stat(created.artifactDirectory)).mode & 0o777).toBe(OWNER_ONLY_DIRECTORY_MODE);
-      for (const fileName of ["artifact.json", "artifact.md", "comments.json"]) {
+      for (const fileName of ["artifact.json", "artifact.md", "comments.json", "artifact-connection.json"]) {
         expect((await stat(path.join(created.artifactDirectory, fileName))).mode & 0o777).toBe(OWNER_ONLY_FILE_MODE);
       }
     }
@@ -1270,7 +1280,7 @@ describe("artifact review MCP server v7", () => {
     const staleClient = startClient(stale.registry);
     await initialize(staleClient);
     const unresolved = await callTool(staleClient, "resolve_artifact_workspace", { query: "workspace" });
-    expect(unresolved.structuredContent).toEqual({ status: "not-found", matchMode: "none", candidates: [] });
+    expect(unresolved.structuredContent).toEqual({ status: "not-found", matchMode: "none", windows: [], candidates: [] });
     const staleResult = await callTool(staleClient, "create_artifact", {
       workspaceRoot: stale.workspace,
       workspaceEvidence: await taggedEvidence(stale.workspace),
@@ -1326,7 +1336,7 @@ describe("artifact review MCP server v7", () => {
       markdown: "# Replay\n",
     });
     expect(replay.isError).toBe(true);
-    expect(replay.content[0].text).toContain("WORKSPACE_SELECTION_EXPIRED");
+    expect(replay.content[0].text).toContain("WINDOW_SELECTION_EXPIRED");
 
     const legacyEvidence = await callTool(client, "create_artifact", {
       workspaceRoot: fixture.workspace,
@@ -1397,7 +1407,7 @@ describe("artifact review MCP server v7", () => {
     expect(created.workspaceRoot).toBe(await realpath(fixture.workspace));
   });
 
-  it("rejects resolver fallback across multiple unfocused VS Code workspace contexts", async () => {
+  it("groups candidates by window across multiple windows without ambiguous context error", async () => {
     const fixture = await workspaceFixture();
     const firstSnapshotPath = path.join(fixture.registry, (await readdir(fixture.registry))[0]!);
     const firstSnapshot = JSON.parse(await readFile(firstSnapshotPath, "utf8"));
@@ -1423,23 +1433,31 @@ describe("artifact review MCP server v7", () => {
     await initialize(client);
 
     const result = await callTool(client, "resolve_artifact_workspace", { query: "workspace" });
-    expect(result.isError).toBe(true);
-    expect(result.content[0].text).toContain("WORKSPACE_CONTEXT_AMBIGUOUS");
-    expect(result.content[0].text).toContain("focus the intended VS Code window");
+    expect(result.isError).toBeFalsy();
+    expect(result.structuredContent).toMatchObject({
+      status: "selection-required",
+      matchMode: "matched",
+      windows: [
+        {
+          windowInstanceId: firstSnapshot.instanceId,
+          folders: [{ name: "workspace", match: "exact-name" }],
+        },
+      ],
+    });
   });
 
-  it("invalidates a workspace selection when the current registry scope changes", async () => {
+  it("invalidates a workspace selection when the selected folder is removed from the window", async () => {
     const fixture = await workspaceFixture();
     const client = startClient(fixture.registry);
     await initialize(client);
     const resolved = await callTool(client, "resolve_artifact_workspace", { query: "workspace" });
     const selected = resolved.structuredContent.candidates[0];
 
-    const addedWorkspace = path.join(path.dirname(fixture.workspace), "added-workspace");
-    await mkdir(addedWorkspace);
+    const otherWorkspace = path.join(path.dirname(fixture.workspace), "other-workspace");
+    await mkdir(otherWorkspace);
     const snapshotPath = path.join(fixture.registry, (await readdir(fixture.registry))[0]!);
     const snapshot = JSON.parse(await readFile(snapshotPath, "utf8"));
-    snapshot.folders.push({ path: addedWorkspace, realPath: await realpath(addedWorkspace) });
+    snapshot.folders = [{ path: otherWorkspace, realPath: await realpath(otherWorkspace) }];
     await atomicWrite(snapshotPath, `${JSON.stringify(snapshot, null, 2)}\n`);
 
     const staleSelection = await callTool(client, "create_artifact", {
@@ -1453,9 +1471,31 @@ describe("artifact review MCP server v7", () => {
       markdown: "# Stale selection\n",
     });
     expect(staleSelection.isError).toBe(true);
-    expect(staleSelection.content[0].text).toContain("WORKSPACE_SELECTION_EXPIRED");
+    expect(staleSelection.content[0].text).toContain("WINDOW_SELECTION_EXPIRED");
     await expect(access(path.join(fixture.workspace, ARTIFACTS_DIRECTORY))).rejects.toThrow();
     await expect(access(fixture.globalRoot)).rejects.toThrow();
+  });
+
+  it("keeps workspace selection valid when window loses focus", async () => {
+    const fixture = await workspaceFixture();
+    const client = startClient(fixture.registry);
+    await initialize(client);
+    const resolved = await callTool(client, "resolve_artifact_workspace", { query: "workspace" });
+    const selected = resolved.structuredContent.candidates[0];
+
+    const snapshotPath = path.join(fixture.registry, (await readdir(fixture.registry))[0]!);
+    const snapshot = JSON.parse(await readFile(snapshotPath, "utf8"));
+    snapshot.focused = false;
+    await atomicWrite(snapshotPath, `${JSON.stringify(snapshot, null, 2)}\n`);
+
+    const created = await createArtifact(client, selected.path, {
+      title: "Unfocused window creation",
+      workspaceEvidence: {
+        kind: "resolved-workspace",
+        selectionToken: selected.selectionToken,
+      },
+    });
+    expect(created.workspaceRoot).toBe(await realpath(fixture.workspace));
   });
 
   it("rejects oversized Markdown and rolls back partial creation", async () => {
@@ -1619,5 +1659,663 @@ describe("artifact review MCP server v7", () => {
     });
     expect(inspected.structuredContent.artifactUrl).toBe(created.artifactUrl);
     expect(inspected.structuredContent.artifactLink).toBe(`[\\[RFC Ω\\] Feature \\\\ Plan & Spec: (v1.0)](${created.artifactUrl})`);
+  });
+
+  it("creates artifact with connection file, returns exact connection metadata, and preserves core contracts", async () => {
+    const fixture = await workspaceFixture();
+    const client = startClient(fixture.registry);
+    await initialize(client);
+
+    const registryFiles = await readdir(fixture.registry);
+    const snapshotRaw = await readFile(path.join(fixture.registry, registryFiles[0]!), "utf8");
+    const snapshot = JSON.parse(snapshotRaw);
+
+    const created = await createArtifact(client, fixture.workspace, { title: "Window routed plan" });
+    expect(created.connection).toBeDefined();
+    expect(created.connection).toMatchObject({
+      windowInstanceId: snapshot.instanceId,
+      connectionRevision: 1,
+      source: "create",
+    });
+    expect(created.connection.openRequestId).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+    );
+
+    const connPath = path.join(created.artifactDirectory, "artifact-connection.json");
+    const connContent = JSON.parse(await readFile(connPath, "utf8"));
+    expect(connContent).toEqual(created.connection);
+    expect(connContent).not.toHaveProperty("artifactId");
+    expect(connContent).not.toHaveProperty("workspaceRoot");
+  });
+
+  it("returns WINDOW_SELECTION_REQUIRED without creating artifact directory when tagged-file workspace is open in multiple windows", async () => {
+    const fixture = await workspaceFixture();
+    const now = Date.now();
+    const secondInstanceId = randomUUID();
+    await writeFile(path.join(fixture.registry, `${secondInstanceId}.json`), `${JSON.stringify({
+      schemaVersion: 2,
+      instanceId: secondInstanceId,
+      processId: process.pid,
+      workspaceFile: null,
+      focused: false,
+      folders: [{ path: fixture.workspace, realPath: await realpath(fixture.workspace) }],
+      activeFile: null,
+      updatedAt: new Date(now).toISOString(),
+      expiresAt: new Date(now + 60_000).toISOString(),
+    }, null, 2)}\n`, "utf8");
+
+    const client = startClient(fixture.registry);
+    await initialize(client);
+
+    const tagged = await taggedEvidence(fixture.workspace);
+    const result = await callTool(client, "create_artifact", {
+      workspaceRoot: fixture.workspace,
+      workspaceEvidence: tagged,
+      title: "Ambiguous window plan",
+      kind: "plan",
+      markdown: "# Plan\n",
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("WINDOW_SELECTION_REQUIRED");
+    expect(result.structuredContent).toMatchObject({
+      status: "selection-required",
+      windows: expect.arrayContaining([
+        expect.objectContaining({ windowInstanceId: secondInstanceId }),
+      ]),
+    });
+    expect(result.structuredContent.windows).toHaveLength(2);
+    expect(result.structuredContent.candidates).toHaveLength(2);
+
+    try {
+      const files = await readdir(fixture.globalRoot);
+      expect(files).toEqual([]);
+    } catch (err: any) {
+      expect(err.code).toBe("ENOENT");
+    }
+  });
+
+  it("allows disambiguating multi-window tagged-file creation using connection.selectionToken", async () => {
+    const fixture = await workspaceFixture();
+    const now = Date.now();
+    const secondInstanceId = randomUUID();
+    await writeFile(path.join(fixture.registry, `${secondInstanceId}.json`), `${JSON.stringify({
+      schemaVersion: 2,
+      instanceId: secondInstanceId,
+      processId: process.pid,
+      workspaceFile: null,
+      focused: false,
+      folders: [{ path: fixture.workspace, realPath: await realpath(fixture.workspace) }],
+      activeFile: null,
+      updatedAt: new Date(now).toISOString(),
+      expiresAt: new Date(now + 60_000).toISOString(),
+    }, null, 2)}\n`, "utf8");
+
+    const client = startClient(fixture.registry);
+    await initialize(client);
+
+    const tagged = await taggedEvidence(fixture.workspace);
+    const preflight = await callTool(client, "create_artifact", {
+      workspaceRoot: fixture.workspace,
+      workspaceEvidence: tagged,
+      title: "Disambiguated plan",
+      kind: "plan",
+      markdown: "# Plan\n",
+    });
+    expect(preflight.isError).toBe(true);
+
+    const targetCandidate = preflight.structuredContent.candidates.find(
+      (c: any) => preflight.structuredContent.windows.find(
+        (w: any) => w.windowInstanceId === secondInstanceId && w.folders.some((f: any) => f.candidateId === c.candidateId),
+      ),
+    );
+    expect(targetCandidate?.selectionToken).toBeDefined();
+
+    const created = await callTool(client, "create_artifact", {
+      workspaceRoot: fixture.workspace,
+      workspaceEvidence: tagged,
+      title: "Disambiguated plan",
+      kind: "plan",
+      markdown: "# Plan\n",
+      connection: {
+        selectionToken: targetCandidate.selectionToken,
+      },
+    });
+
+    expect(created.isError).toBeFalsy();
+    expect(created.structuredContent.connection).toMatchObject({
+      windowInstanceId: secondInstanceId,
+      connectionRevision: 1,
+      source: "create",
+    });
+  });
+
+  it("rejects mismatched connection.selectionToken before mutation when token belongs to another workspace", async () => {
+    const fixture = await workspaceFixture();
+    const root = path.dirname(fixture.workspace);
+    const otherWorkspace = path.join(root, "other-workspace");
+    await mkdir(otherWorkspace);
+    const now = Date.now();
+    const secondInstanceId = randomUUID();
+    await writeFile(path.join(fixture.registry, `${secondInstanceId}.json`), `${JSON.stringify({
+      schemaVersion: 2,
+      instanceId: secondInstanceId,
+      processId: process.pid,
+      workspaceFile: null,
+      focused: false,
+      folders: [{ path: otherWorkspace, realPath: await realpath(otherWorkspace) }],
+      activeFile: null,
+      updatedAt: new Date(now).toISOString(),
+      expiresAt: new Date(now + 60_000).toISOString(),
+    }, null, 2)}\n`, "utf8");
+
+    const client = startClient(fixture.registry);
+    await initialize(client);
+
+    const resolved = await callTool(client, "resolve_artifact_workspace", { query: "other-workspace" });
+    const otherToken = resolved.structuredContent.candidates[0].selectionToken;
+
+    const tagged = await taggedEvidence(fixture.workspace);
+    const result = await callTool(client, "create_artifact", {
+      workspaceRoot: fixture.workspace,
+      workspaceEvidence: tagged,
+      title: "Mismatched token plan",
+      kind: "plan",
+      markdown: "# Plan\n",
+      connection: {
+        selectionToken: otherToken,
+      },
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("WINDOW_CONNECTION_MISMATCH");
+    expect(result.structuredContent).toMatchObject({
+      code: "WINDOW_CONNECTION_MISMATCH",
+      retryable: false,
+      expectedNextTool: "create_artifact",
+    });
+
+    try {
+      const files = await readdir(fixture.globalRoot);
+      expect(files).toEqual([]);
+    } catch (err: any) {
+      expect(err.code).toBe("ENOENT");
+    }
+  });
+
+  it("rolls back newly allocated artifact directory if connection commit fails", async () => {
+    const fixture = await workspaceFixture();
+    const client = startClient(fixture.registry, { CODEX_ARTIFACTS_TEST_FAIL_CREATE: "at-connection" });
+    await initialize(client);
+
+    const result = await callTool(client, "create_artifact", {
+      workspaceRoot: fixture.workspace,
+      workspaceEvidence: await taggedEvidence(fixture.workspace),
+      title: "Connection failure rollback plan",
+      kind: "plan",
+      markdown: "# Plan\n",
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("Injected connection write failure");
+
+    try {
+      const files = await readdir(fixture.globalRoot);
+      expect(files).toEqual([]);
+    } catch (err: any) {
+      expect(err.code).toBe("ENOENT");
+    }
+  });
+
+  it("reconnects artifact with matching fresh window ID, updates revision and openRequestId, preserves round and comments", async () => {
+    const fixture = await workspaceFixture();
+    const client = startClient(fixture.registry);
+    await initialize(client);
+
+    const created = await createArtifact(client, fixture.workspace, { title: "Reconnect test plan" });
+    expect(created.connection).toBeDefined();
+    expect(created.connection.connectionRevision).toBe(1);
+    expect(created.connection.source).toBe("create");
+
+    const reconnected = await callTool(client, "inspect_artifact_review", {
+      artifactDirectory: created.artifactDirectory,
+      intent: "reconnect",
+    });
+
+    expect(reconnected.isError).toBeFalsy();
+    expect(reconnected.structuredContent.connection).toMatchObject({
+      windowInstanceId: created.connection.windowInstanceId,
+      connectionRevision: 2,
+      source: "inspect",
+    });
+    expect(reconnected.structuredContent.connection.openRequestId).not.toBe(created.connection.openRequestId);
+    expect(reconnected.structuredContent.connection.openRequestId).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+    );
+    expect(reconnected.structuredContent.manifest.reviewRound).toBe(1);
+
+    const diskConn = JSON.parse(await readFile(path.join(created.artifactDirectory, "artifact-connection.json"), "utf8"));
+    expect(diskConn).toEqual(reconnected.structuredContent.connection);
+  });
+
+  it("reconnects with stale window ID by falling back to unique matching workspace window", async () => {
+    const fixture = await workspaceFixture();
+    const client = startClient(fixture.registry);
+    await initialize(client);
+
+    const created = await createArtifact(client, fixture.workspace, { title: "Stale window fallback plan" });
+    const originalWindowId = created.connection.windowInstanceId;
+
+    const now = Date.now();
+    const freshInstanceId = randomUUID();
+    await writeFile(path.join(fixture.registry, `${freshInstanceId}.json`), `${JSON.stringify({
+      schemaVersion: 2,
+      instanceId: freshInstanceId,
+      processId: process.pid,
+      workspaceFile: null,
+      focused: false,
+      folders: [{ path: fixture.workspace, realPath: await realpath(fixture.workspace) }],
+      activeFile: null,
+      updatedAt: new Date(now).toISOString(),
+      expiresAt: new Date(now + 60_000).toISOString(),
+    }, null, 2)}\n`, "utf8");
+
+    await rm(path.join(fixture.registry, `${originalWindowId}.json`), { force: true });
+
+    // Reconnect WITHOUT connection hint: falls back to unique matching fresh window
+    const reconnectedNoHint = await callTool(client, "inspect_artifact_review", {
+      artifactDirectory: created.artifactDirectory,
+      intent: "reconnect",
+    });
+
+    expect(reconnectedNoHint.isError).toBeFalsy();
+    expect(reconnectedNoHint.structuredContent.connection).toMatchObject({
+      windowInstanceId: freshInstanceId,
+      connectionRevision: 2,
+      source: "inspect",
+    });
+
+    // Reconnect WITH explicit stale hint: fails with WINDOW_CONNECTION_STALE without fallback
+    const reconnectedWithStaleHint = await callTool(client, "inspect_artifact_review", {
+      artifactDirectory: created.artifactDirectory,
+      intent: "reconnect",
+      connection: {
+        windowInstanceId: originalWindowId,
+      },
+    });
+
+    expect(reconnectedWithStaleHint.isError).toBe(true);
+    expect(reconnectedWithStaleHint.content[0].text).toContain("WINDOW_CONNECTION_STALE");
+    expect(reconnectedWithStaleHint.structuredContent).toMatchObject({
+      code: "WINDOW_CONNECTION_STALE",
+      retryable: true,
+      expectedNextTool: "inspect_artifact_review",
+    });
+  });
+
+  it("returns WINDOW_SELECTION_REQUIRED on reconnect when multi-window ambiguous without detaching active waiter", async () => {
+    const fixture = await workspaceFixture();
+    const client = startClient(fixture.registry);
+    await initialize(client);
+
+    const created = await createArtifact(client, fixture.workspace, { title: "Ambiguous reconnect plan" });
+    const originalWindowId = created.connection.windowInstanceId;
+
+    const waiting = callToolTracked(client, "wait_for_artifact_review", {
+      artifactDirectory: created.artifactDirectory,
+      expectedReviewRound: 1,
+    });
+    await waiting.sent;
+
+    // Remove original window and introduce two fresh windows for the same workspace
+    await rm(path.join(fixture.registry, `${originalWindowId}.json`), { force: true });
+    const now = Date.now();
+    const secondInstanceId = randomUUID();
+    const thirdInstanceId = randomUUID();
+    for (const winId of [secondInstanceId, thirdInstanceId]) {
+      await writeFile(path.join(fixture.registry, `${winId}.json`), `${JSON.stringify({
+        schemaVersion: 2,
+        instanceId: winId,
+        processId: process.pid,
+        workspaceFile: null,
+        focused: false,
+        folders: [{ path: fixture.workspace, realPath: await realpath(fixture.workspace) }],
+        activeFile: null,
+        updatedAt: new Date(now).toISOString(),
+        expiresAt: new Date(now + 60_000).toISOString(),
+      }, null, 2)}\n`, "utf8");
+    }
+
+    const reconnectAttempt = await callTool(client, "inspect_artifact_review", {
+      artifactDirectory: created.artifactDirectory,
+      intent: "reconnect",
+      takeover: true,
+    });
+
+    expect(reconnectAttempt.isError).toBe(true);
+    expect(reconnectAttempt.content[0].text).toContain("WINDOW_SELECTION_REQUIRED");
+    expect(reconnectAttempt.structuredContent).toMatchObject({
+      code: "WINDOW_SELECTION_REQUIRED",
+      status: "selection-required",
+      retryable: true,
+      expectedNextTool: "inspect_artifact_review",
+      lifecycleMutated: false,
+      takeoverOccurred: false,
+      useSameArtifactHandle: true,
+      windows: expect.any(Array),
+      candidates: expect.any(Array),
+    });
+
+    const store = new ArtifactStore(created.artifactPath, { userHome: fixture.userHome });
+    await store.submitReview("approve");
+
+    const waitResult = await waiting.promise;
+    expect(waitResult.isError).toBeFalsy();
+    expect(waitResult.structuredContent.decision).toBe("approve");
+  });
+
+  it("reconnect creates valid v1 connection on artifact missing artifact-connection.json", async () => {
+    const fixture = await workspaceFixture();
+    const client = startClient(fixture.registry);
+    await initialize(client);
+
+    const created = await createArtifact(client, fixture.workspace, { title: "Missing connection test" });
+    const connPath = path.join(created.artifactDirectory, "artifact-connection.json");
+    await rm(connPath, { force: true });
+
+    const plainInspect = await callTool(client, "inspect_artifact_review", {
+      artifactDirectory: created.artifactDirectory,
+    });
+    expect(plainInspect.isError).toBeFalsy();
+    expect(plainInspect.structuredContent.connection).toBeUndefined();
+
+    const reconnected = await callTool(client, "inspect_artifact_review", {
+      artifactDirectory: created.artifactDirectory,
+      intent: "reconnect",
+    });
+    expect(reconnected.isError).toBeFalsy();
+    expect(reconnected.structuredContent.connection).toMatchObject({
+      connectionRevision: 1,
+      source: "inspect",
+    });
+    const diskConn = JSON.parse(await readFile(connPath, "utf8"));
+    expect(diskConn).toEqual(reconnected.structuredContent.connection);
+  });
+
+  it("returns ARTIFACT_CONNECTION_WRITE_FAILED recovery error and leaves lifecycle files untouched on reconnect failure", async () => {
+    const fixture = await workspaceFixture();
+    const client = startClient(fixture.registry);
+    await initialize(client);
+
+    const created = await createArtifact(client, fixture.workspace, { title: "Failing reconnect plan" });
+    const connPath = path.join(created.artifactDirectory, "artifact-connection.json");
+    const originalConnRaw = await readFile(connPath, "utf8");
+    const manifestRaw = await readFile(path.join(created.artifactDirectory, "artifact.json"), "utf8");
+
+    const failingClient = startClient(fixture.registry, { CODEX_ARTIFACTS_TEST_FAIL_CONNECTION_WRITE: "rename" });
+    await initialize(failingClient);
+
+    const result = await callTool(failingClient, "inspect_artifact_review", {
+      artifactDirectory: created.artifactDirectory,
+      intent: "reconnect",
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("failed to write artifact connection");
+    expect(result.structuredContent).toMatchObject({
+      code: "ARTIFACT_CONNECTION_WRITE_FAILED",
+      retryable: true,
+      expectedNextTool: "inspect_artifact_review",
+    });
+
+    expect(await readFile(connPath, "utf8")).toBe(originalConnRaw);
+    expect(await readFile(path.join(created.artifactDirectory, "artifact.json"), "utf8")).toBe(manifestRaw);
+
+    const entries = await readdir(created.artifactDirectory);
+    expect(entries.filter((entry) => entry.includes(".tmp-"))).toEqual([]);
+    await expect(access(path.join(created.artifactDirectory, ".artifact-connection.lock"))).rejects.toThrow();
+  });
+
+  it("preserves ARTIFACT_CONNECTION_INVALID classification when invalid state is detected during connection commit", async () => {
+    const fixture = await workspaceFixture();
+    const client = startClient(fixture.registry);
+    await initialize(client);
+
+    const created = await createArtifact(client, fixture.workspace, { title: "Invalid commit-state plan" });
+    const connPath = path.join(created.artifactDirectory, "artifact-connection.json");
+    const originalConnRaw = await readFile(connPath, "utf8");
+
+    const failingClient = startClient(fixture.registry, {
+      CODEX_ARTIFACTS_TEST_FAIL_RECONNECT: "invalid-state-at-connection",
+    });
+    await initialize(failingClient);
+
+    const result = await callTool(failingClient, "inspect_artifact_review", {
+      artifactDirectory: created.artifactDirectory,
+      intent: "reconnect",
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.structuredContent).toMatchObject({
+      code: "ARTIFACT_CONNECTION_INVALID",
+      retryable: false,
+      useSameArtifactHandle: true,
+    });
+    expect(result.structuredContent).not.toHaveProperty("expectedNextTool");
+    expect(await readFile(connPath, "utf8")).toBe(originalConnRaw);
+  });
+
+  it("prevents replay of selectionToken on reconnect and returns WINDOW_SELECTION_EXPIRED", async () => {
+    const fixture = await workspaceFixture();
+    const now = Date.now();
+    const secondInstanceId = randomUUID();
+    await writeFile(path.join(fixture.registry, `${secondInstanceId}.json`), `${JSON.stringify({
+      schemaVersion: 2,
+      instanceId: secondInstanceId,
+      processId: process.pid,
+      workspaceFile: null,
+      focused: false,
+      folders: [{ path: fixture.workspace, realPath: await realpath(fixture.workspace) }],
+      activeFile: null,
+      updatedAt: new Date(now).toISOString(),
+      expiresAt: new Date(now + 60_000).toISOString(),
+    }, null, 2)}\n`, "utf8");
+
+    const client = startClient(fixture.registry);
+    await initialize(client);
+
+    const resolved = await callTool(client, "resolve_artifact_workspace", { query: path.basename(fixture.workspace) });
+    const targetCandidate = resolved.structuredContent.candidates.find(
+      (c: any) => c.path === fixture.workspace && resolved.structuredContent.windows.find((w: any) => w.windowInstanceId === secondInstanceId && w.folders.some((f: any) => f.candidateId === c.candidateId)),
+    );
+    expect(targetCandidate?.selectionToken).toBeDefined();
+
+    const created = await callTool(client, "create_artifact", {
+      workspaceRoot: fixture.workspace,
+      workspaceEvidence: await taggedEvidence(fixture.workspace),
+      title: "Replay prevention plan",
+      kind: "plan",
+      markdown: "# Plan\n",
+      connection: {
+        selectionToken: targetCandidate.selectionToken,
+      },
+    });
+    expect(created.isError).toBeFalsy();
+
+    // Replay the same selection token on inspect reconnect -> MUST FAIL with WINDOW_SELECTION_EXPIRED
+    const replayed = await callTool(client, "inspect_artifact_review", {
+      artifactDirectory: created.structuredContent.artifactDirectory,
+      intent: "reconnect",
+      connection: {
+        selectionToken: targetCandidate.selectionToken,
+      },
+    });
+    expect(replayed.isError).toBe(true);
+    expect(replayed.content[0].text).toContain("WINDOW_SELECTION_EXPIRED");
+    expect(replayed.structuredContent).toMatchObject({
+      code: "WINDOW_SELECTION_EXPIRED",
+      retryable: true,
+      expectedNextTool: "inspect_artifact_review",
+      useSameArtifactHandle: true,
+    });
+  });
+
+  it("wait_for_artifact_review and advance_and_wait_for_artifact do not modify artifact-connection.json", async () => {
+    const fixture = await workspaceFixture();
+    const client = startClient(fixture.registry);
+    await initialize(client);
+
+    const created = await createArtifact(client, fixture.workspace, { title: "Preserved connection plan" });
+    const connPath = path.join(created.artifactDirectory, "artifact-connection.json");
+    const initialConn = JSON.parse(await readFile(connPath, "utf8"));
+
+    const store = new ArtifactStore(created.artifactPath, { userHome: fixture.userHome });
+    const loaded = await store.load();
+    const paragraph = loaded.blocks.find((block) => block.type === "paragraph")!;
+    const quote = "review bridge";
+    const start = paragraph.text.indexOf(quote);
+    await store.addComment({
+      blockId: paragraph.id,
+      selection: { quote, start, end: start + quote.length },
+      body: "Needs revision",
+    });
+
+    const waiting = callToolTracked(client, "wait_for_artifact_review", {
+      artifactDirectory: created.artifactDirectory,
+      expectedReviewRound: 1,
+    });
+    await waiting.sent;
+    await store.submitReview("revise");
+    const waitResult = await waiting.promise;
+    expect(waitResult.structuredContent.decision).toBe("revise");
+
+    expect(JSON.parse(await readFile(connPath, "utf8"))).toEqual(initialConn);
+
+    const advancing = callToolTracked(client, "advance_and_wait_for_artifact", {
+      artifactDirectory: created.artifactDirectory,
+      expectedReviewRound: 1,
+      roundToken: waitResult.structuredContent.roundToken,
+      markdown: "# Artifact Round 2\n\nUpdated content.\n",
+    });
+    await advancing.sent;
+    await waitForRound(created.artifactDirectory, 2);
+
+    const manifest = JSON.parse(await readFile(path.join(created.artifactDirectory, "artifact.json"), "utf8"));
+    expect(manifest.reviewRound).toBe(2);
+
+    const connAfterAdvance = JSON.parse(await readFile(connPath, "utf8"));
+    expect(connAfterAdvance).toEqual(initialConn);
+    expect((await cancelAndRead(client, advancing)).isError).toBe(true);
+  });
+
+  it("tagged create ambiguity returns WINDOW_SELECTION_REQUIRED with expectedNextTool create_artifact and no directory created", async () => {
+    const fixture = await workspaceFixture();
+    const now = Date.now();
+    const secondInstanceId = randomUUID();
+    await writeFile(path.join(fixture.registry, `${secondInstanceId}.json`), `${JSON.stringify({
+      schemaVersion: 2,
+      instanceId: secondInstanceId,
+      processId: process.pid,
+      workspaceFile: null,
+      focused: false,
+      folders: [{ path: fixture.workspace, realPath: await realpath(fixture.workspace) }],
+      activeFile: null,
+      updatedAt: new Date(now).toISOString(),
+      expiresAt: new Date(now + 60_000).toISOString(),
+    }, null, 2)}\n`, "utf8");
+
+    const client = startClient(fixture.registry);
+    await initialize(client);
+
+    const ambiguousCreate = await callTool(client, "create_artifact", {
+      workspaceRoot: fixture.workspace,
+      workspaceEvidence: await taggedEvidence(fixture.workspace),
+      title: "Ambiguous tagged plan",
+      kind: "plan",
+      markdown: "# Plan\n",
+    });
+
+    expect(ambiguousCreate.isError).toBe(true);
+    expect(ambiguousCreate.content[0].text).toContain("WINDOW_SELECTION_REQUIRED");
+    expect(ambiguousCreate.structuredContent).toMatchObject({
+      code: "WINDOW_SELECTION_REQUIRED",
+      status: "selection-required",
+      retryable: true,
+      expectedNextTool: "create_artifact",
+      lifecycleMutated: false,
+      takeoverOccurred: false,
+      useSameArtifactHandle: false,
+      windows: expect.any(Array),
+      candidates: expect.any(Array),
+    });
+
+    // Verify retry with chosen token succeeds
+    const token = ambiguousCreate.structuredContent.candidates[0].selectionToken;
+    const successfulCreate = await callTool(client, "create_artifact", {
+      workspaceRoot: fixture.workspace,
+      workspaceEvidence: await taggedEvidence(fixture.workspace),
+      title: "Ambiguous tagged plan",
+      kind: "plan",
+      markdown: "# Plan\n",
+      connection: {
+        selectionToken: token,
+      },
+    });
+    expect(successfulCreate.isError).toBeFalsy();
+
+    // Verify token replay on tagged create returns WINDOW_SELECTION_EXPIRED with expectedNextTool create_artifact
+    const replayed = await callTool(client, "create_artifact", {
+      workspaceRoot: fixture.workspace,
+      workspaceEvidence: await taggedEvidence(fixture.workspace),
+      title: "Replayed tagged plan",
+      kind: "plan",
+      markdown: "# Plan\n",
+      connection: {
+        selectionToken: token,
+      },
+    });
+    expect(replayed.isError).toBe(true);
+    expect(replayed.structuredContent).toMatchObject({
+      code: "WINDOW_SELECTION_EXPIRED",
+      retryable: true,
+      expectedNextTool: "create_artifact",
+    });
+  });
+
+  it("malformed connection JSON reconnect fails with ARTIFACT_CONNECTION_INVALID before takeover and preserves waiter", async () => {
+    const fixture = await workspaceFixture();
+    const client = startClient(fixture.registry);
+    await initialize(client);
+
+    const created = await createArtifact(client, fixture.workspace, { title: "Corrupt connection test" });
+    const connPath = path.join(created.artifactDirectory, "artifact-connection.json");
+    await writeFile(connPath, "{ corrupt json ... invalid", "utf8");
+
+    const waiting = callToolTracked(client, "wait_for_artifact_review", {
+      artifactDirectory: created.artifactDirectory,
+      expectedReviewRound: 1,
+    });
+    await waiting.sent;
+
+    const failedReconnect = await callTool(client, "inspect_artifact_review", {
+      artifactDirectory: created.artifactDirectory,
+      intent: "reconnect",
+    });
+
+    expect(failedReconnect.isError).toBe(true);
+    expect(failedReconnect.structuredContent).toMatchObject({
+      code: "ARTIFACT_CONNECTION_INVALID",
+      retryable: false,
+      useSameArtifactHandle: true,
+    });
+    expect(failedReconnect.structuredContent).not.toHaveProperty("expectedNextTool");
+
+    // Waiter must still be alive and receive review
+    const store = new ArtifactStore(created.artifactPath, { userHome: fixture.userHome });
+    await store.submitReview("approve");
+
+    const waitResult = await waiting.promise;
+    expect(waitResult.isError).toBeFalsy();
+    expect(waitResult.structuredContent.decision).toBe("approve");
   });
 });
