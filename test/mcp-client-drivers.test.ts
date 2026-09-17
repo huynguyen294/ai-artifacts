@@ -67,8 +67,8 @@ describe("JSON MCP Helper", () => {
 
   it("normalizes Windows backslashes when writing and checking MCP servers in .vscode/mcp.json", async () => {
     const targetFile = path.join(tempDir, ".vscode", "mcp.json");
-    const windowsPath = "C:\\Users\\Admin\\.vscode\\ai-artifacts\\ai-artifacts-review-mcp.mjs";
-    const forwardSlashPath = "C:/Users/Admin/.vscode/ai-artifacts/ai-artifacts-review-mcp.mjs";
+    const windowsPath = "C:\\Users\\Admin\\.ai-artifacts\\managed\\runtime\\ai-artifacts-review-mcp.mjs";
+    const forwardSlashPath = "C:/Users/Admin/.ai-artifacts/managed/runtime/ai-artifacts-review-mcp.mjs";
 
     await upsertJsonMcpServer(targetFile, "ai_artifacts", windowsPath);
 
@@ -84,8 +84,8 @@ describe("JSON MCP Helper", () => {
 
   it("normalizes mixed slashes and case variations when checking MCP servers", async () => {
     const targetFile = path.join(tempDir, ".vscode", "mcp.json");
-    const storedPath = "C:/Users/Admin/AppData/Roaming/.vscode/ai-artifacts/ai-artifacts-review-mcp.mjs";
-    const mixedQueryPath = "c:\\Users\\Admin/AppData\\Roaming/.vscode\\ai-artifacts\\ai-artifacts-review-mcp.mjs";
+    const storedPath = "C:/Users/Admin/AppData/Roaming/.ai-artifacts/managed/runtime/ai-artifacts-review-mcp.mjs";
+    const mixedQueryPath = "c:\\Users\\Admin/AppData\\Roaming/.ai-artifacts\\managed\\runtime\\ai-artifacts-review-mcp.mjs";
 
     await upsertJsonMcpServer(targetFile, "ai_artifacts", storedPath);
 
@@ -134,7 +134,7 @@ describe("Client Drivers", () => {
     // Override configPath getter via prototype or custom property for isolation
     Object.defineProperty(cursorDriver, "configPath", { value: customConfig });
 
-    const scriptPath = "C:/Users/Admin/.vscode/ai-artifacts/ai-artifacts-review-mcp.mjs";
+    const scriptPath = "C:/Users/Admin/.ai-artifacts/managed/runtime/ai-artifacts-review-mcp.mjs";
     await cursorDriver.install(scriptPath);
 
     const check = await cursorDriver.check(scriptPath);
@@ -152,7 +152,7 @@ describe("Client Drivers", () => {
     await fs.writeFile(customConfig, JSON.stringify({ opusProMigrationComplete: true }), "utf8");
     Object.defineProperty(claudeDriver, "configPath", { value: customConfig });
 
-    const scriptPath = "/Users/test/.vscode/ai-artifacts/ai-artifacts-review-mcp.mjs";
+    const scriptPath = "/Users/test/.ai-artifacts/managed/runtime/ai-artifacts-review-mcp.mjs";
     await claudeDriver.install(scriptPath);
 
     const check = await claudeDriver.check(scriptPath);
@@ -349,14 +349,14 @@ describe("Client Drivers", () => {
     process.env.CODEX_HOME = tempHome;
     try {
       const codexDriver = new CodexClientDriver();
-      const scriptPath = "C:/Users/Admin/.vscode/ai-artifacts/ai-artifacts-review-mcp.mjs";
+      const scriptPath = "C:/Users/Admin/.ai-artifacts/managed/runtime/ai-artifacts-review-mcp.mjs";
       const displacedConfig = [
         'model = "gpt-5.6-sol"',
         "",
         "# >>> AI Artifacts review MCP >>>",
         "[mcp_servers.ai_artifacts]",
         'command = "node"',
-        'args = ["C:\\\\Users\\\\Admin\\\\.vscode\\\\ai-artifacts\\\\ai-artifacts-review-mcp.mjs"]',
+        'args = ["C:\\\\Users\\\\Admin\\\\.ai-artifacts\\\\managed\\\\runtime\\\\ai-artifacts-review-mcp.mjs"]',
         "tool_timeout_sec = 3600",
         'default_tools_approval_mode = "approve"',
         "",

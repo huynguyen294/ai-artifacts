@@ -27,15 +27,21 @@ export function normalizePathForComparison(targetPath: string): string {
   return process.platform === "win32" ? resolved.toLowerCase() : resolved;
 }
 
-export async function writeTextFileAtomic(filePath: string, contents: string): Promise<void> {
+export async function writeTextFileAtomic(filePath: string, contents: string, mode?: number): Promise<void> {
   await fs.mkdir(path.dirname(filePath), { recursive: true });
   const temporaryPath = `${filePath}.ai-artifacts-${process.pid}-${Date.now()}.tmp`;
-  await fs.writeFile(temporaryPath, contents, "utf8");
+  await fs.writeFile(temporaryPath, contents, { encoding: "utf8", ...(mode !== undefined ? { mode } : {}) });
+  if (mode !== undefined && process.platform !== "win32") {
+    await fs.chmod(temporaryPath, mode);
+  }
 
   try {
     for (let attempt = 0; attempt < 3; attempt += 1) {
       try {
         await fs.rename(temporaryPath, filePath);
+        if (mode !== undefined && process.platform !== "win32") {
+          await fs.chmod(filePath, mode);
+        }
         return;
       } catch (error: any) {
         if (attempt < 2 && (error?.code === "EPERM" || error?.code === "EBUSY" || error?.code === "EACCES")) {
@@ -44,6 +50,9 @@ export async function writeTextFileAtomic(filePath: string, contents: string): P
         }
         if (error?.code === "EPERM" || error?.code === "EACCES" || error?.code === "EBUSY" || error?.code === "EXDEV") {
           await fs.copyFile(temporaryPath, filePath);
+          if (mode !== undefined && process.platform !== "win32") {
+            await fs.chmod(filePath, mode);
+          }
           return;
         }
         throw error;

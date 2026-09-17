@@ -61,7 +61,7 @@ Advancing always increments the round and resets handled comments. A question-on
 
 ## Workspace registry
 
-Each running extension window writes an atomic snapshot under `~/.vscode/ai-artifacts/workspaces/` (or `CODEX_ARTIFACTS_REGISTRY_DIRECTORY`) and refreshes it every 15 seconds. Schema-v2 snapshots expire after 45 seconds and contain canonical workspace folders, focus state, and the active file/root when available.
+Each running extension window writes an atomic snapshot under `~/.ai-artifacts/managed/workspaces/` (or `CODEX_ARTIFACTS_REGISTRY_DIRECTORY`) and refreshes it every 15 seconds. Schema-v2 snapshots expire after 45 seconds and contain canonical workspace folders, focus state, and the active file/root when available.
 
 Creation accepts exactly two typed evidence variants. `tagged-file` proves ownership through an existing user-tagged file contained by the registered root. Without a tagged file, `resolve_artifact_workspace` runs before project-file reads or artifact drafting. It matches separator-normalized user words against the folders in one uniquely scoped workspace context. A one-folder context is intrinsically unambiguous and returns `single-folder`; only a multi-root context can fall back to all folders as `available`. Multiple distinct unfocused or concurrently focused window contexts fail closed instead of being combined. `resolved-workspace` proves the chosen candidate came from that resolver call through a ten-minute, context-bound, single-use token. The skill may choose a uniquely strongest candidate from the returned name, path, and match classification; it asks the user only when no unique high-confidence choice exists. Only then may the skill read the chosen folder. Later lifecycle calls use only the exact artifact handle; they never call the resolver or infer “latest artifact” from cwd or a workspace scan.
 
@@ -73,7 +73,7 @@ Creation accepts exactly two typed evidence variants. `tagged-file` proves owner
 - Canonical containment is checked before mutation; linked artifact storage paths are rejected.
 - Create rollback may remove only the exact newly allocated directory.
 - Advance stages the next round and restores prior files if commit fails. A narrow in-place fallback handles Windows editor locks.
-- Installer cleanup recognizes only extension-managed MCP blocks, hook entries, scripts, runtime files, registry snapshots, and legacy skill directories. Unrelated user configuration is preserved, and `~/.ai-artifacts/` is retained on uninstall.
+- Installer cleanup recognizes only extension-managed MCP blocks, hook entries, scripts, runtime files under `~/.ai-artifacts/managed/`, legacy `~/.vscode/ai-artifacts/` assets, registry snapshots, and managed skill directories. Unrelated user configuration is preserved, and user review data in `~/.ai-artifacts/artifacts/` is retained on uninstall.
 
 ## Extension watcher and editor opening
 
@@ -83,7 +83,7 @@ The manual **AI Artifacts: Open Artifact Review** command uses the active Artifa
 
 ## Deployment and filesystem support
 
-The supported v1.0.0 topology requires a local desktop VS Code-compatible extension host and MCP process running as the same OS user, resolving the same home, and seeing the same `~/.ai-artifacts/` and `~/.vscode/ai-artifacts/` filesystem. Windows, macOS, and Linux are the declared local targets. Remote SSH, WSL, dev containers, Codespaces, browser/virtual workspaces, and split-host topologies are unsupported in v1.0.0 because their producer/consumer filesystem boundary has not passed the release matrix.
+The supported v1.0.0 topology requires a local desktop VS Code-compatible extension host and MCP process running as the same OS user, resolving the same home, and seeing the same `~/.ai-artifacts/` filesystem. Windows, macOS, and Linux are the declared local targets. Remote SSH, WSL, dev containers, Codespaces, browser/virtual workspaces, and split-host topologies are unsupported in v1.0.0 because their producer/consumer filesystem boundary has not passed the release matrix.
 
 ## Compatibility
 

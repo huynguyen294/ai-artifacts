@@ -28,7 +28,7 @@ import {
   setupBaseMcpServer,
   uninstallAllDetectedIntegrations,
   type BaseIntegrationPaths,
-} from "../src/extension/workspace-integration-v4";
+} from "../src/extension/workspace-integration";
 
 const installedMcpProcesses: ChildProcessWithoutNullStreams[] = [];
 
@@ -37,10 +37,7 @@ type InstalledMcpClient = {
   notify: (method: string, params?: Record<string, unknown>) => void;
 };
 
-function startInstalledMcp(
-  scriptPath: string,
-  environment: NodeJS.ProcessEnv,
-): InstalledMcpClient {
+function startInstalledMcp(scriptPath: string, environment: NodeJS.ProcessEnv): InstalledMcpClient {
   const processHandle = spawn(process.execPath, [scriptPath], {
     stdio: ["pipe", "pipe", "pipe"],
     env: { ...process.env, ...environment },
@@ -49,7 +46,9 @@ function startInstalledMcp(
   let nextId = 1;
   let stderr = "";
   const pending = new Map<number, { resolve: (value: any) => void; reject: (error: Error) => void }>();
-  processHandle.stderr.on("data", (chunk) => { stderr += chunk.toString(); });
+  processHandle.stderr.on("data", (chunk) => {
+    stderr += chunk.toString();
+  });
   createInterface({ input: processHandle.stdout }).on("line", (line) => {
     const message = JSON.parse(line);
     const waiter = pending.get(message.id);
@@ -90,10 +89,10 @@ describe("Workspace Integration Asset Verifiers", () => {
     targetDir = path.join(tempDir, "target");
 
     paths = {
-      targetDirectory: path.join(targetDir, ".vscode", "ai-artifacts"),
-      workspacesDirectory: path.join(targetDir, ".vscode", "ai-artifacts", "workspaces"),
-      targetMcpScript: path.join(targetDir, ".vscode", "ai-artifacts", "server.mjs"),
-      targetLegacyMcpScript: path.join(targetDir, ".vscode", "ai-artifacts", "legacy.mjs"),
+      targetDirectory: path.join(targetDir, ".ai-artifacts", "managed"),
+      workspacesDirectory: path.join(targetDir, ".ai-artifacts", "managed", "workspaces"),
+      targetMcpScript: path.join(targetDir, ".ai-artifacts", "managed", "runtime", "ai-artifacts-review-mcp.mjs"),
+      targetLegacyMcpScript: path.join(targetDir, ".vscode", "ai-artifacts", "ai-artifacts-review-mcp.mjs"),
       targetSkill: path.join(targetDir, ".agents", "skills", "create-review-artifact"),
       targetLegacySkill: path.join(targetDir, ".agents", "skills", "create-plan-artifact"),
       sourceMcpScript: path.join(sourceDir, "dist", "server.mjs"),
@@ -239,7 +238,9 @@ describe("Workspace Integration Asset Verifiers", () => {
     expect(await baseScriptIsCurrent(installedPaths)).toBe(true);
     expect(await skillAssetsAreCurrent(installedPaths)).toBe(true);
     expect(await baseAssetsAreCurrent(installedPaths)).toBe(true);
-    expect(await fs.readFile(installedPaths.targetMcpScript)).toEqual(await fs.readFile(installedPaths.sourceMcpScript));
+    expect(await fs.readFile(installedPaths.targetMcpScript)).toEqual(
+      await fs.readFile(installedPaths.sourceMcpScript),
+    );
     await expect(fs.access(installedPaths.targetLegacyMcpScript)).rejects.toThrow();
     for (const relativePath of [
       "SKILL.md",
@@ -256,8 +257,9 @@ describe("Workspace Integration Asset Verifiers", () => {
     await fs.mkdir(path.dirname(configPath), { recursive: true });
     await fs.writeFile(configPath, config, "utf8");
     expect(hasManagedCodexArtifactsMcp(config, installedPaths.targetMcpScript)).toBe(true);
-    const configuredTools = [...config.matchAll(/^\[mcp_servers\.ai_artifacts\.tools\.([^\]]+)\]$/gm)]
-      .map((match) => match[1]);
+    const configuredTools = [...config.matchAll(/^\[mcp_servers\.ai_artifacts\.tools\.([^\]]+)\]$/gm)].map(
+      (match) => match[1],
+    );
     const expectedTools = [
       "resolve_artifact_workspace",
       "create_artifact",
@@ -273,17 +275,25 @@ describe("Workspace Integration Asset Verifiers", () => {
     await fs.writeFile(taggedFile, "# Workspace\n", "utf8");
     const instanceId = randomUUID();
     const now = Date.now();
-    await fs.writeFile(path.join(installedPaths.workspacesDirectory, `${instanceId}.json`), `${JSON.stringify({
-      schemaVersion: 2,
-      instanceId,
-      processId: process.pid,
-      workspaceFile: null,
-      focused: true,
-      folders: [{ path: workspace, realPath: await fs.realpath(workspace) }],
-      activeFile: { path: taggedFile, workspaceRoot: workspace },
-      updatedAt: new Date(now).toISOString(),
-      expiresAt: new Date(now + 60_000).toISOString(),
-    }, null, 2)}\n`, "utf8");
+    await fs.writeFile(
+      path.join(installedPaths.workspacesDirectory, `${instanceId}.json`),
+      `${JSON.stringify(
+        {
+          schemaVersion: 2,
+          instanceId,
+          processId: process.pid,
+          workspaceFile: null,
+          focused: true,
+          folders: [{ path: workspace, realPath: await fs.realpath(workspace) }],
+          activeFile: { path: taggedFile, workspaceRoot: workspace },
+          updatedAt: new Date(now).toISOString(),
+          expiresAt: new Date(now + 60_000).toISOString(),
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
 
     const client = startInstalledMcp(installedPaths.targetMcpScript, {
       NODE_ENV: "test",
@@ -309,7 +319,9 @@ describe("Workspace Integration Asset Verifiers", () => {
     });
     expect(createResult.isError, createResult.content?.[0]?.text).not.toBe(true);
     const created = createResult.structuredContent;
-    expect(path.dirname(created.artifactDirectory)).toBe(await fs.realpath(globalArtifactsRoot({ userHome: targetDir })));
+    expect(path.dirname(created.artifactDirectory)).toBe(
+      await fs.realpath(globalArtifactsRoot({ userHome: targetDir })),
+    );
     await expect(fs.access(path.join(workspace, ".ai-artifacts"))).rejects.toThrow();
 
     const store = new ArtifactStore(created.artifactPath, { userHome: targetDir });
@@ -343,17 +355,14 @@ describe("Workspace Integration Asset Verifiers", () => {
     const cursorConfig = path.join(targetDir, ".cursor", "mcp.json");
     const claudeConfig = path.join(targetDir, ".claude.json");
     const windsurfConfig = path.join(targetDir, ".codeium", "windsurf", "mcp_config.json");
-    const globalStoragePath = path.join(
-      targetDir,
-      "Code",
-      "User",
-      "globalStorage",
-      "huynguyen294.ai-artifacts",
-    );
+    const globalStoragePath = path.join(targetDir, "Code", "User", "globalStorage", "huynguyen294.ai-artifacts");
     const copilotConfig = path.resolve(globalStoragePath, "..", "..", "mcp.json");
     const codexConfig = path.join(codexHome, "config.toml");
     const artifactsRoot = globalArtifactsRoot({ userHome: targetDir });
+    const productRoot = path.join(targetDir, ".ai-artifacts");
     const retainedArtifact = path.join(artifactsRoot, "retained-artifact", "artifact.md");
+    const unrelatedSiblingFile = path.join(productRoot, "unrelated-sibling.txt");
+    const unrelatedSkill = path.join(targetDir, ".agents", "skills", "unrelated-skill", "SKILL.md");
     const originalCodexHome = process.env.CODEX_HOME;
 
     vi.spyOn(os, "homedir").mockReturnValue(targetDir);
@@ -369,16 +378,44 @@ describe("Workspace Integration Asset Verifiers", () => {
         fs.mkdir(path.dirname(retainedArtifact), { recursive: true }),
         fs.mkdir(path.join(targetDir, ".vscode", "ai-artifacts"), { recursive: true }),
         fs.mkdir(path.join(targetDir, ".agents", "skills", "create-plan-artifact"), { recursive: true }),
+        fs.mkdir(path.dirname(unrelatedSiblingFile), { recursive: true }),
+        fs.mkdir(path.dirname(unrelatedSkill), { recursive: true }),
       ]);
       await Promise.all([
-        fs.writeFile(cursorConfig, `${JSON.stringify({ theme: "dark", mcpServers: { keep_cursor: { command: "keep" } } }, null, 2)}\n`, "utf8"),
-        fs.writeFile(claudeConfig, `${JSON.stringify({ opusProMigrationComplete: true, mcpServers: { keep_claude: { command: "keep" } } }, null, 2)}\n`, "utf8"),
-        fs.writeFile(windsurfConfig, `${JSON.stringify({ telemetry: false, mcpServers: { keep_windsurf: { command: "keep" } } }, null, 2)}\n`, "utf8"),
-        fs.writeFile(copilotConfig, `${JSON.stringify({ inputs: [{ id: "keep-input" }], servers: { keep_copilot: { type: "http", url: "https://example.test" } } }, null, 2)}\n`, "utf8"),
+        fs.writeFile(
+          cursorConfig,
+          `${JSON.stringify({ theme: "dark", mcpServers: { keep_cursor: { command: "keep" } } }, null, 2)}\n`,
+          "utf8",
+        ),
+        fs.writeFile(
+          claudeConfig,
+          `${JSON.stringify({ opusProMigrationComplete: true, mcpServers: { keep_claude: { command: "keep" } } }, null, 2)}\n`,
+          "utf8",
+        ),
+        fs.writeFile(
+          windsurfConfig,
+          `${JSON.stringify({ telemetry: false, mcpServers: { keep_windsurf: { command: "keep" } } }, null, 2)}\n`,
+          "utf8",
+        ),
+        fs.writeFile(
+          copilotConfig,
+          `${JSON.stringify({ inputs: [{ id: "keep-input" }], servers: { keep_copilot: { type: "http", url: "https://example.test" } } }, null, 2)}\n`,
+          "utf8",
+        ),
         fs.writeFile(codexConfig, 'model = "gpt-test"\n\n[mcp_servers.keep_codex]\ncommand = "keep"\n', "utf8"),
         fs.writeFile(retainedArtifact, "# Retain me\n", "utf8"),
-        fs.writeFile(path.join(targetDir, ".vscode", "ai-artifacts", "codex-artifacts-review-mcp.mjs"), "// legacy runtime\n", "utf8"),
-        fs.writeFile(path.join(targetDir, ".agents", "skills", "create-plan-artifact", "SKILL.md"), "# Legacy skill\n", "utf8"),
+        fs.writeFile(unrelatedSiblingFile, "do not touch me\n", "utf8"),
+        fs.writeFile(unrelatedSkill, "# Unrelated skill\n", "utf8"),
+        fs.writeFile(
+          path.join(targetDir, ".vscode", "ai-artifacts", "codex-artifacts-review-mcp.mjs"),
+          "// legacy runtime\n",
+          "utf8",
+        ),
+        fs.writeFile(
+          path.join(targetDir, ".agents", "skills", "create-plan-artifact", "SKILL.md"),
+          "# Legacy skill\n",
+          "utf8",
+        ),
       ]);
 
       const context = {
@@ -394,14 +431,21 @@ describe("Workspace Integration Asset Verifiers", () => {
         "Claude",
         "Windsurf",
       ]);
-      await expect(fs.access(path.join(targetDir, ".vscode", "ai-artifacts", "codex-artifacts-review-mcp.mjs"))).rejects.toThrow();
+      await expect(
+        fs.access(path.join(targetDir, ".vscode", "ai-artifacts", "codex-artifacts-review-mcp.mjs")),
+      ).rejects.toThrow();
       await expect(fs.access(path.join(targetDir, ".agents", "skills", "create-plan-artifact"))).rejects.toThrow();
 
       let report = await checkAllIntegrations(context);
       expect(report.baseCurrent).toBe(true);
       expect(report.skillCurrent).toBe(true);
-      expect(report.clients.filter((client) => client.isDetected).map((client) => client.status))
-        .toEqual(["ready", "ready", "ready", "ready", "ready"]);
+      expect(report.clients.filter((client) => client.isDetected).map((client) => client.status)).toEqual([
+        "ready",
+        "ready",
+        "ready",
+        "ready",
+        "ready",
+      ]);
 
       const currentSetup = await setupBaseMcpServer(context);
       expect(currentSetup.assetsUpdated).toBe(false);
@@ -413,15 +457,25 @@ describe("Workspace Integration Asset Verifiers", () => {
       report = await checkAllIntegrations(context);
       expect(report.baseCurrent).toBe(false);
       expect(report.skillCurrent).toBe(false);
-      expect(report.clients.filter((client) => client.isDetected).map((client) => client.status))
-        .toEqual(["outdated", "outdated", "outdated", "outdated", "outdated"]);
+      expect(report.clients.filter((client) => client.isDetected).map((client) => client.status)).toEqual([
+        "outdated",
+        "outdated",
+        "outdated",
+        "outdated",
+        "outdated",
+      ]);
 
       await installAllDetectedIntegrations(context);
       expect(await baseAssetsAreCurrent(installedPaths)).toBe(true);
       await expect(fs.access(path.join(installedPaths.targetSkill, "obsolete-instruction.md"))).rejects.toThrow();
       report = await checkAllIntegrations(context);
-      expect(report.clients.filter((client) => client.isDetected).map((client) => client.status))
-        .toEqual(["ready", "ready", "ready", "ready", "ready"]);
+      expect(report.clients.filter((client) => client.isDetected).map((client) => client.status)).toEqual([
+        "ready",
+        "ready",
+        "ready",
+        "ready",
+        "ready",
+      ]);
 
       const cursorBeforeUninstall = JSON.parse(await fs.readFile(cursorConfig, "utf8"));
       const claudeBeforeUninstall = JSON.parse(await fs.readFile(claudeConfig, "utf8"));
@@ -429,17 +483,45 @@ describe("Workspace Integration Asset Verifiers", () => {
       const copilotBeforeUninstall = JSON.parse(await fs.readFile(copilotConfig, "utf8"));
       const codexBeforeUninstall = await fs.readFile(codexConfig, "utf8");
       expect(cursorBeforeUninstall).toMatchObject({ theme: "dark", mcpServers: { keep_cursor: { command: "keep" } } });
-      expect(claudeBeforeUninstall).toMatchObject({ opusProMigrationComplete: true, mcpServers: { keep_claude: { command: "keep" } } });
-      expect(windsurfBeforeUninstall).toMatchObject({ telemetry: false, mcpServers: { keep_windsurf: { command: "keep" } } });
-      expect(copilotBeforeUninstall).toMatchObject({ inputs: [{ id: "keep-input" }], servers: { keep_copilot: { type: "http" } } });
+      expect(claudeBeforeUninstall).toMatchObject({
+        opusProMigrationComplete: true,
+        mcpServers: { keep_claude: { command: "keep" } },
+      });
+      expect(windsurfBeforeUninstall).toMatchObject({
+        telemetry: false,
+        mcpServers: { keep_windsurf: { command: "keep" } },
+      });
+      expect(copilotBeforeUninstall).toMatchObject({
+        inputs: [{ id: "keep-input" }],
+        servers: { keep_copilot: { type: "http" } },
+      });
       expect(codexBeforeUninstall).toContain('model = "gpt-test"');
       expect(codexBeforeUninstall).toContain("[mcp_servers.keep_codex]");
+
+      const crypto = await import("node:crypto");
+      const beforeHash = crypto
+        .createHash("sha256")
+        .update(await fs.readFile(retainedArtifact))
+        .digest("hex");
 
       const uninstall = await uninstallAllDetectedIntegrations(context);
       expect(uninstall.uninstalledClients).toEqual(firstInstall.installedClients);
       await expect(fs.access(installedPaths.targetDirectory)).rejects.toThrow();
       await expect(fs.access(installedPaths.targetSkill)).rejects.toThrow();
+      await expect(fs.access(path.join(targetDir, ".vscode", "ai-artifacts"))).rejects.toThrow();
+      await expect(fs.access(productRoot)).resolves.toBeUndefined();
+      await expect(fs.readFile(unrelatedSiblingFile, "utf8")).resolves.toBe("do not touch me\n");
+      await expect(fs.readFile(unrelatedSkill, "utf8")).resolves.toBe("# Unrelated skill\n");
+
+      const afterHash = crypto
+        .createHash("sha256")
+        .update(await fs.readFile(retainedArtifact))
+        .digest("hex");
+      expect(afterHash).toBe(beforeHash);
       await expect(fs.readFile(retainedArtifact, "utf8")).resolves.toBe("# Retain me\n");
+
+      // Idempotent double uninstall
+      await expect(uninstallAllDetectedIntegrations(context)).resolves.not.toThrow();
 
       const cursorAfterUninstall = JSON.parse(await fs.readFile(cursorConfig, "utf8"));
       const claudeAfterUninstall = JSON.parse(await fs.readFile(claudeConfig, "utf8"));
@@ -447,9 +529,18 @@ describe("Workspace Integration Asset Verifiers", () => {
       const copilotAfterUninstall = JSON.parse(await fs.readFile(copilotConfig, "utf8"));
       const codexAfterUninstall = await fs.readFile(codexConfig, "utf8");
       expect(cursorAfterUninstall).toMatchObject({ theme: "dark", mcpServers: { keep_cursor: { command: "keep" } } });
-      expect(claudeAfterUninstall).toMatchObject({ opusProMigrationComplete: true, mcpServers: { keep_claude: { command: "keep" } } });
-      expect(windsurfAfterUninstall).toMatchObject({ telemetry: false, mcpServers: { keep_windsurf: { command: "keep" } } });
-      expect(copilotAfterUninstall).toMatchObject({ inputs: [{ id: "keep-input" }], servers: { keep_copilot: { type: "http" } } });
+      expect(claudeAfterUninstall).toMatchObject({
+        opusProMigrationComplete: true,
+        mcpServers: { keep_claude: { command: "keep" } },
+      });
+      expect(windsurfAfterUninstall).toMatchObject({
+        telemetry: false,
+        mcpServers: { keep_windsurf: { command: "keep" } },
+      });
+      expect(copilotAfterUninstall).toMatchObject({
+        inputs: [{ id: "keep-input" }],
+        servers: { keep_copilot: { type: "http" } },
+      });
       expect(cursorAfterUninstall.mcpServers.ai_artifacts).toBeUndefined();
       expect(claudeAfterUninstall.mcpServers.ai_artifacts).toBeUndefined();
       expect(windsurfAfterUninstall.mcpServers.ai_artifacts).toBeUndefined();

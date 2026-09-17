@@ -18,6 +18,14 @@ import {
 } from "./mcp-clients/index";
 import { upsertJsonMcpServer, writeTextFileAtomic } from "./mcp-clients/json-mcp-helper";
 import { cleanupBaseMcpServer } from "./mcp-clients/base-cleanup";
+import {
+  OWNER_ONLY_FILE_MODE,
+  aiArtifactsRoot,
+  managedAssetsRoot,
+  managedMcpScriptPath,
+  managedWorkspaceRegistryDirectory,
+} from "../shared/artifact-files";
+import { ensureManagedDirectory } from "../shared/artifact-validation";
 
 export { cleanupBaseMcpServer } from "./mcp-clients/base-cleanup";
 
@@ -47,16 +55,21 @@ export function getCopilotConfigPath(context?: vscode.ExtensionContext): string 
   return getVsCodeUserMcpPath();
 }
 
-export function getBaseIntegrationPaths(context: vscode.ExtensionContext): BaseIntegrationPaths {
-  const targetDirectory = path.join(os.homedir(), ".vscode", "ai-artifacts");
-  const agentSkillsDirectory = path.join(os.homedir(), ".agents", "skills");
+export function getBaseIntegrationPaths(
+  context: vscode.ExtensionContext,
+  options?: { userHome?: string },
+): BaseIntegrationPaths {
+  const userHome = options?.userHome ?? os.homedir();
+  const targetDirectory = managedAssetsRoot({ userHome });
+  const agentSkillsDirectory = path.join(userHome, ".agents", "skills");
+  const legacyDirectory = path.join(userHome, ".vscode", "ai-artifacts");
   return {
     targetDirectory,
-    targetMcpScript: path.join(targetDirectory, "ai-artifacts-review-mcp.mjs"),
-    targetLegacyMcpScript: path.join(targetDirectory, "codex-artifacts-review-mcp.mjs"),
+    targetMcpScript: managedMcpScriptPath({ userHome }),
+    targetLegacyMcpScript: path.join(legacyDirectory, "ai-artifacts-review-mcp.mjs"),
     targetSkill: path.join(agentSkillsDirectory, "create-review-artifact"),
     targetLegacySkill: path.join(agentSkillsDirectory, "create-plan-artifact"),
-    workspacesDirectory: path.join(targetDirectory, "workspaces"),
+    workspacesDirectory: managedWorkspaceRegistryDirectory({ userHome }),
     sourceMcpScript: vscode.Uri.joinPath(
       context.extensionUri,
       "dist",
@@ -149,8 +162,9 @@ export async function baseAssetsAreCurrent(paths: BaseIntegrationPaths): Promise
 
 export async function setupBaseMcpServer(
   context: vscode.ExtensionContext,
+  options?: { userHome?: string },
 ): Promise<{ paths: BaseIntegrationPaths; assetsUpdated: boolean }> {
-  const paths = getBaseIntegrationPaths(context);
+  const paths = getBaseIntegrationPaths(context, options);
 
   // Validate every packaged source before replacing any installed asset.
   await Promise.all([
@@ -166,12 +180,16 @@ export async function setupBaseMcpServer(
   ]);
   const assetsUpdated = !assetsCurrent || legacyScriptPresent || legacySkillPresent;
 
-  await fs.mkdir(paths.targetDirectory, { recursive: true });
-  await fs.mkdir(paths.workspacesDirectory, { recursive: true });
+  const userHome = options?.userHome ?? os.homedir();
+  const root = aiArtifactsRoot({ userHome });
+  await ensureManagedDirectory(root);
+  await ensureManagedDirectory(paths.targetDirectory);
+  await ensureManagedDirectory(path.dirname(paths.targetMcpScript));
+  await ensureManagedDirectory(paths.workspacesDirectory);
 
   // Install only the current runtime; upgrades require reinstalling client config.
   const mcpContents = await fs.readFile(paths.sourceMcpScript, "utf8");
-  await writeTextFileAtomic(paths.targetMcpScript, mcpContents);
+  await writeTextFileAtomic(paths.targetMcpScript, mcpContents, OWNER_ONLY_FILE_MODE);
   await fs.rm(paths.targetLegacyMcpScript, { force: true }).catch(() => {});
 
   // Deploy Agent Skill to ~/.agents/skills/create-review-artifact
@@ -181,7 +199,8 @@ export async function setupBaseMcpServer(
   await fs.rm(paths.targetLegacySkill, { recursive: true, force: true }).catch(() => {});
 
   // Clean up obsolete ~/.vscode/ai-artifacts/mcp.json if it exists
-  await fs.rm(path.join(paths.targetDirectory, "mcp.json"), { force: true }).catch(() => {});
+  const legacyDirectory = path.join(userHome, ".vscode", "ai-artifacts");
+  await fs.rm(path.join(legacyDirectory, "mcp.json"), { force: true }).catch(() => {});
 
   return { paths, assetsUpdated };
 }
@@ -225,6 +244,23 @@ export async function installAllDetectedIntegrations(
       await driver.install(paths.targetMcpScript);
       installedClients.push(driver.name);
     }
+  }
+
+  // Verify all detected clients before cleaning up legacy runtime
+  let allReady = true;
+  for (const driver of drivers) {
+    if (driver.isDetected()) {
+      const check = await driver.check(paths.targetMcpScript);
+      if (check.status !== "ready") {
+        allReady = false;
+        break;
+      }
+    }
+  }
+
+  if (allReady) {
+    const legacyBaseDir = path.join(os.homedir(), ".vscode", "ai-artifacts");
+    await fs.rm(legacyBaseDir, { recursive: true, force: true }).catch(() => {});
   }
 
   return { installedClients };
@@ -281,7 +317,7 @@ export async function installWindsurfIntegration(
 // 7. Uninstall all detected integrations
 export async function uninstallAllDetectedIntegrations(
   context?: vscode.ExtensionContext,
-  options?: { cleanupBase?: boolean },
+  options?: { cleanupBase?: boolean; userHome?: string },
 ): Promise<{ uninstalledClients: string[] }> {
   const copilotConfigPath = getCopilotConfigPath(context);
   const drivers = getAllClientDrivers(copilotConfigPath);
@@ -297,7 +333,7 @@ export async function uninstallAllDetectedIntegrations(
   }
 
   if (options?.cleanupBase !== false) {
-    await cleanupBaseMcpServer();
+    await cleanupBaseMcpServer(options?.userHome ? { userHome: options.userHome } : undefined);
   }
 
   return { uninstalledClients };

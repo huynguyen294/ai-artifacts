@@ -60,7 +60,7 @@ async function assertDirectoryEntry(directory: string): Promise<void> {
   }
 }
 
-async function enforceOwnerOnlyDirectory(directory: string): Promise<void> {
+export async function enforceOwnerOnlyDirectory(directory: string): Promise<void> {
   if (process.platform === "win32") return;
   await fs.chmod(directory, OWNER_ONLY_DIRECTORY_MODE);
   const stat = await fs.lstat(directory);
@@ -69,13 +69,13 @@ async function enforceOwnerOnlyDirectory(directory: string): Promise<void> {
   }
 }
 
-async function ensureManagedDirectory(directory: string): Promise<void> {
+export async function ensureManagedDirectory(directory: string): Promise<void> {
   try {
     await assertDirectoryEntry(directory);
   } catch (error) {
     if (errorCode(error) !== "ENOENT") throw error;
     try {
-      await fs.mkdir(directory, { mode: OWNER_ONLY_DIRECTORY_MODE });
+      await fs.mkdir(directory, { recursive: true, mode: OWNER_ONLY_DIRECTORY_MODE });
     } catch (mkdirError) {
       if (errorCode(mkdirError) !== "EEXIST") throw mkdirError;
     }
@@ -84,7 +84,7 @@ async function ensureManagedDirectory(directory: string): Promise<void> {
   await enforceOwnerOnlyDirectory(directory);
 }
 
-async function enforceOwnerOnlyFile(filePath: string): Promise<void> {
+export async function enforceOwnerOnlyFile(filePath: string): Promise<void> {
   if (process.platform === "win32") return;
   await fs.chmod(filePath, OWNER_ONLY_FILE_MODE);
   const stat = await fs.lstat(filePath);

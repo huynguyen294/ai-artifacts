@@ -416,7 +416,7 @@ This layer is the protocol source of truth. A contract change must be propagated
 
 **Source**
 
-- Installer: [`src/extension/workspace-integration-v4.ts`](../src/extension/workspace-integration-v4.ts)
+- Installer: [`src/extension/workspace-integration.ts`](../src/extension/workspace-integration.ts)
 - Client drivers: [`src/extension/mcp-clients/`](../src/extension/mcp-clients/)
 - MCP configuration: [`src/extension/mcp-config.ts`](../src/extension/mcp-config.ts)
 - Status classification: [`src/extension/global-integration-status.ts`](../src/extension/global-integration-status.ts)
@@ -424,15 +424,15 @@ This layer is the protocol source of truth. A contract change must be propagated
 
 **Responsibilities**
 
-- Deploy the centralized MCP server runtime into `~/.vscode/ai-artifacts/`.
+- Deploy the centralized MCP server runtime into `~/.ai-artifacts/managed/runtime/`.
 - Deploy the bundled skill into the global agent-skills directory (`~/.agents/skills/create-review-artifact/`).
 - Provide dedicated, non-destructive configuration drivers for Codex (`config.toml`), Cursor (`mcp.json`), Claude Code (`.claude.json`), Windsurf (`mcp_config.json`), and GitHub Copilot (`Code/User/mcp.json`).
 - Expose dedicated setup commands plus `AI Artifacts: Install All Detected Integrations` and `AI Artifacts: Copy MCP Configuration JSON`.
 - Verify whether installed assets and client configurations match the extension requirements.
 - Report ready, missing, outdated, or configuration-conflict states across environments.
 - Replace stale installed skill/runtime assets with the packaged source and remove obsolete files during reinstall.
-- Remove only recognized legacy Codex Artifacts hooks, scripts, and skill directories.
-- Preserve unrelated user configuration and all global artifact data during uninstall.
+- Remove only recognized legacy Codex Artifacts hooks, scripts, legacy `.vscode/ai-artifacts/` assets, and skill directories.
+- Preserve unrelated user configuration and all global user review data (`~/.ai-artifacts/artifacts/`) during uninstall.
 
 **Does not own**
 
@@ -507,7 +507,7 @@ The active implementation is:
 
 - `ArtifactReviewProvider`, not `PlanReviewProvider`.
 - `ReviewApp.tsx`, imported by `src/webview/main.tsx`, not the retained `src/webview/App.tsx`.
-- `artifact-review-mcp-v4.ts`, built into `codex-artifacts-review-mcp.mjs`.
+- `artifact-review-mcp-v4.ts`, built into `codex-artifacts-review-mcp.mjs` (and deployed as `ai-artifacts-review-mcp.mjs` under `~/.ai-artifacts/managed/runtime/`).
 
 Retained legacy sources include:
 

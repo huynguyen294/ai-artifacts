@@ -3,7 +3,17 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { z } from "zod";
-import { sameFilesystemPath } from "./artifact-validation";
+import {
+  GlobalArtifactsRootOptions,
+  OWNER_ONLY_FILE_MODE,
+  managedAssetsRoot,
+  managedWorkspaceRegistryDirectory,
+} from "./artifact-files";
+import {
+  enforceOwnerOnlyDirectory,
+  enforceOwnerOnlyFile,
+  sameFilesystemPath,
+} from "./artifact-validation";
 
 export const WORKSPACE_REGISTRY_SCHEMA_VERSION = 2 as const;
 export const WORKSPACE_REGISTRY_HEARTBEAT_MS = 15_000;
@@ -59,17 +69,23 @@ export type WorkspaceCandidateResolution = {
   candidates: WorkspaceCandidate[];
 };
 
-export function aiArtifactsDataDirectory(): string {
-  return path.join(os.homedir(), ".vscode", "ai-artifacts");
+/**
+ * @deprecated Use managedAssetsRoot() from "./artifact-files" instead.
+ */
+export function aiArtifactsDataDirectory(options?: GlobalArtifactsRootOptions): string {
+  return managedAssetsRoot(options);
 }
 
-export function codexArtifactsDataDirectory(): string {
-  return aiArtifactsDataDirectory();
+/**
+ * @deprecated Use managedAssetsRoot() from "./artifact-files" instead.
+ */
+export function codexArtifactsDataDirectory(options?: GlobalArtifactsRootOptions): string {
+  return aiArtifactsDataDirectory(options);
 }
 
-export function workspaceRegistryDirectory(): string {
+export function workspaceRegistryDirectory(options?: GlobalArtifactsRootOptions): string {
   const override = process.env.CODEX_ARTIFACTS_REGISTRY_DIRECTORY?.trim();
-  return override ? path.resolve(override) : path.join(aiArtifactsDataDirectory(), "workspaces");
+  return override ? path.resolve(override) : managedWorkspaceRegistryDirectory(options);
 }
 
 export function createWorkspaceInstanceId(): string {
@@ -81,9 +97,12 @@ function snapshotPath(instanceId: string, directory = workspaceRegistryDirectory
 }
 
 async function atomicWrite(filePath: string, contents: string): Promise<void> {
-  await fs.mkdir(path.dirname(filePath), { recursive: true });
+  const directory = path.dirname(filePath);
+  await fs.mkdir(directory, { recursive: true });
+  await enforceOwnerOnlyDirectory(directory);
   const temporaryPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
-  await fs.writeFile(temporaryPath, contents, { encoding: "utf8", flag: "wx" });
+  await fs.writeFile(temporaryPath, contents, { encoding: "utf8", flag: "wx", mode: OWNER_ONLY_FILE_MODE });
+  await enforceOwnerOnlyFile(temporaryPath);
   try {
     await fs.rename(temporaryPath, filePath);
   } catch (error) {
@@ -93,6 +112,7 @@ async function atomicWrite(filePath: string, contents: string): Promise<void> {
   } finally {
     await fs.rm(temporaryPath, { force: true }).catch(() => {});
   }
+  await enforceOwnerOnlyFile(filePath);
 }
 
 export async function publishWorkspaceSnapshot(

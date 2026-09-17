@@ -71,7 +71,7 @@ describe("Codex Artifacts MCP config", () => {
       "# >>> AI Artifacts review MCP >>>",
       "[mcp_servers.ai_artifacts]",
       'command = "node"',
-      'args = ["C:\\\\Users\\\\Admin\\\\.vscode\\\\ai-artifacts\\\\ai-artifacts-review-mcp.mjs"]',
+      'args = ["C:\\\\Users\\\\Admin\\\\.ai-artifacts\\\\managed\\\\runtime\\\\ai-artifacts-review-mcp.mjs"]',
       "tool_timeout_sec = 3600",
       'default_tools_approval_mode = "approve"',
       "",
@@ -98,7 +98,7 @@ describe("Codex Artifacts MCP config", () => {
       "# <<< AI Artifacts review MCP <<<",
     ].join("\n");
 
-    const scriptPath = "C:/Users/Admin/.vscode/ai-artifacts/ai-artifacts-review-mcp.mjs";
+    const scriptPath = "C:/Users/Admin/.ai-artifacts/managed/runtime/ai-artifacts-review-mcp.mjs";
 
     // 1. Check recognizes the config as ready despite displaced marker and slash differences
     expect(hasManagedCodexArtifactsMcp(displacedConfig, scriptPath)).toBe(true);

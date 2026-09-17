@@ -43,7 +43,7 @@ If product intent, documentation, tests, and implementation disagree, call out t
 - Workspace-folder ownership requires a user-tagged file or an MCP-issued resolver token for a candidate chosen from the user's workspace words. The resolver must scope candidates to one unique VS Code workspace context and never merge folders from different windows. Cwd, `environment_context`, workspace order, project markers, and filesystem search results cannot establish ownership by themselves.
 - Fail before filesystem mutation when workspace ownership is missing, ambiguous, stale, unregistered, or unsafe.
 - Preserve unrelated user skills, hooks, MCP configuration, and project files during install, upgrade, cleanup, or migration.
-- Preserve `~/.ai-artifacts/` during integration or extension uninstall. Artifact deletion is a separate explicit user action.
+- Preserve user review data in `~/.ai-artifacts/artifacts/` during integration or extension uninstall. Only exact extension-owned runtime assets under `~/.ai-artifacts/managed/` are removable managed state; artifact deletion is a separate explicit user action.
 - Treat artifact Markdown, comments, and decisions as potentially sensitive local data. Preserve owner-only POSIX modes and never claim POSIX-mode guarantees on Windows.
 - Extension upgrades require reinstalling integrations and restarting the AI client; do not add mixed-version compatibility without an explicit architecture decision.
 
@@ -62,7 +62,7 @@ If product intent, documentation, tests, and implementation disagree, call out t
 - `src/integration/artifact-review-mcp-v4.ts`: historical filename for the current MCP 7.0.0/schema-v5 tools, artifact creation, waiter ownership/takeover, round grants, inspection, and transactional round commits.
 - `src/extension/artifact-store.ts`: trusted artifact loading, comment writes, and submission writes.
 - `src/extension/workspace-registry-publisher.ts`: live VS Code workspace heartbeat.
-- `src/extension/workspace-integration-v4.ts`: centralized MCP installation, base runtime provisioning, and legacy cleanup.
+- `src/extension/workspace-integration.ts`: centralized MCP installation, base runtime provisioning, and legacy cleanup.
 - `src/extension/mcp-clients/`: dedicated configuration drivers for Codex, Cursor, Claude Code, Windsurf, and GitHub Copilot (VS Code).
 - `src/webview/`: review UI and typed messages to the extension host; no direct filesystem or process access.
 - `src/shared/`: shared schemas, file contracts, validation, and workspace registry rules.

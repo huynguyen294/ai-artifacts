@@ -14,6 +14,45 @@ Minor typos, formatting fixes, or cosmetic wording adjustments that do not chang
 
 Each entry includes the date, category, summary of changes, rationale, and affected components or files.
 
+## 2026-09-16 — Consolidate installer assets and workspace registry under ~/.ai-artifacts/managed
+
+### Changes
+
+- Relocated extension-managed MCP server runtime from `~/.vscode/ai-artifacts/` to `~/.ai-artifacts/managed/runtime/ai-artifacts-review-mcp.mjs`.
+- Relocated live workspace heartbeat registry snapshots from `~/.vscode/ai-artifacts/workspaces/` to `~/.ai-artifacts/managed/workspaces/`.
+- Introduced canonical path helpers in `src/shared/artifact-files.ts`: `aiArtifactsRoot`, `artifactCollectionRoot`, `managedAssetsRoot`, `managedRuntimeDirectory`, `managedMcpScriptPath`, and `managedWorkspaceRegistryDirectory`.
+- Enforced owner-only permissions on POSIX for managed directories (`0700`) and runtime/registry files (`0600`).
+- Updated integration installers, verifiers, and client drivers (Codex, Cursor, Claude Code, Windsurf, GitHub Copilot) to target the new managed runtime path.
+- Established strict cleanup boundaries: uninstall removes `~/.ai-artifacts/managed/`, legacy `~/.vscode/ai-artifacts/`, and managed skills, while permanently preserving user review data in `~/.ai-artifacts/artifacts/`.
+
+### Rationale
+
+- Separating user review data (`artifacts/`) from extension-managed runtime state (`managed/`) under `~/.ai-artifacts/` creates a clean single product root without entangling assets in `~/.vscode/`.
+- Decouples AI Artifacts from VS Code-specific folders, reflecting multi-client support (Cursor, Claude, Windsurf, Codex).
+- Eliminates Windows file-locking conflicts on running runtime scripts during upgrades.
+
+### Affected components and files
+
+- `src/shared/artifact-files.ts`
+- `src/shared/artifact-validation.ts`
+- `src/shared/workspace-registry.ts`
+- `src/extension/workspace-integration.ts` (renamed from `workspace-integration-v4.ts`)
+- `src/extension/mcp-clients/base-cleanup.ts`
+- `src/extension/mcp-clients/json-mcp-helper.ts`
+- `src/extension/extension.ts`
+- `test/global-artifact-path.test.ts`
+- `test/workspace-registry.test.ts`
+- `test/workspace-integration.test.ts`
+- `test/mcp-client-drivers.test.ts`
+- `test/mcp-config.test.ts`
+- `README.md`
+- `docs/ARCHITECTURE.md`
+- `docs/COMPONENTS.md`
+- `docs/INSTRUCTION.md`
+- `docs/PHILOSOPHY.md`
+- `CHANGELOG.md`
+- `plans/installer.md`
+
 ## 2026-09-16 — Global schema-v5 storage and v1.0.0 compatibility cutoff
 
 ### Changes

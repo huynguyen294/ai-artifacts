@@ -12,6 +12,7 @@ import {
   resolveWorkspaceCandidates,
   resolveWorkspaceRootForArtifactCreation,
   workspaceEvidenceSchema,
+  workspaceRegistryDirectory,
 } from "../src/shared/workspace-registry";
 
 const temporaryDirectories: string[] = [];
@@ -239,5 +240,11 @@ describe("workspace registry", () => {
     await mkdir(workspace);
     await publish(fixture.registry, [workspace]);
     await expect(resolveRegisteredWorkspaceRoot(workspace.toUpperCase(), fixture.registry)).resolves.toBe(await realpath(workspace));
+  });
+
+  it("resolves the default workspace registry directory under managed assets", async () => {
+    const fixture = await rootFixture();
+    const defaultRegistry = workspaceRegistryDirectory({ userHome: fixture.root });
+    expect(defaultRegistry).toBe(path.join(fixture.root, ".ai-artifacts", "managed", "workspaces"));
   });
 });

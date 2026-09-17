@@ -23,9 +23,11 @@ Release history has been standardized and tracked starting from version **0.2.6*
 
 ### Integration synchronization and upgrade policy
 
-- Reinstall now replaces stale MCP/skill assets from packaged source, removes obsolete skill files and legacy runtime aliases, and reports configured clients as `outdated` until shared assets are current.
+- Consolidated extension-managed runtime and workspace registry assets out of `~/.vscode/ai-artifacts/` into a dedicated `~/.ai-artifacts/managed/` subtree with explicit ownership boundaries.
+- Relocated MCP runtime to `~/.ai-artifacts/managed/runtime/ai-artifacts-review-mcp.mjs` and live workspace heartbeat registry snapshots to `~/.ai-artifacts/managed/workspaces/`.
+- Reinstall replaces stale MCP/skill assets from packaged source, removes obsolete skill files and legacy runtime aliases, and reports configured clients as `outdated` until shared assets are current.
 - Verified install/reinstall/uninstall behavior for Codex, Cursor, Claude, Windsurf, and GitHub Copilot while preserving unrelated configuration.
-- Uninstall removes managed client/runtime/skill/registry state but deliberately retains `~/.ai-artifacts/`.
+- Uninstall removes `~/.ai-artifacts/managed/`, legacy `~/.vscode/ai-artifacts/`, and managed skills while deliberately retaining all user review data in `~/.ai-artifacts/artifacts/`.
 - Version 1.0.0 is a hard compatibility cutoff. After upgrading, reinstall all integrations, restart the AI client, and start a new chat. Rollback requires reinstalling the matching older runtime and skill.
 
 ### Documentation and validation

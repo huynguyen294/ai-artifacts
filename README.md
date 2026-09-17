@@ -37,7 +37,7 @@ To build the VSIX yourself from source, follow [Development](#development) below
 
 Open the Command Palette (`Ctrl+Shift+P` on Windows/Linux or `Cmd+Shift+P` on macOS) and choose your preferred setup command:
 
-- **`AI Artifacts: Install All Detected Integrations`**: Deploys the centralized MCP runtime to `~/.vscode/ai-artifacts/` and automatically configures all detected AI environments on your machine.
+- **`AI Artifacts: Install All Detected Integrations`**: Deploys the centralized MCP runtime to `~/.ai-artifacts/managed/runtime/` and automatically configures all detected AI environments on your machine.
 - Or choose the dedicated installer for your specific AI client:
   - **`AI Artifacts: Install Integration for GitHub Copilot`**: Automatically configures VS Code User global configuration (`Code/User/mcp.json`) for GitHub Copilot.
   - **`AI Artifacts: Install Integration for Cursor`**: Automatically configures `~/.cursor/mcp.json`.
@@ -49,9 +49,9 @@ Open the Command Palette (`Ctrl+Shift+P` on Windows/Linux or `Cmd+Shift+P` on ma
 
 ```text
 # Centralized runtime & skill assets:
-~/.vscode/ai-artifacts/ai-artifacts-review-mcp.mjs      # Centralized MCP runtime server
-~/.vscode/ai-artifacts/workspaces/                      # Live workspace heartbeat registry
-~/.agents/skills/create-review-artifact/                 # Shared agent skill & instructions
+~/.ai-artifacts/managed/runtime/ai-artifacts-review-mcp.mjs  # Centralized MCP runtime server
+~/.ai-artifacts/managed/workspaces/                          # Live workspace heartbeat registry
+~/.agents/skills/create-review-artifact/                     # Shared agent skill & instructions
 ```
 
 The installer preserves all unrelated MCP configurations, custom skills, and workspace files.
@@ -70,14 +70,14 @@ The current catalog contains exactly five tools: `resolve_artifact_workspace`, `
 
 ### 4. Verification & troubleshooting
 
-To ensure AI Artifacts is ready, verify the two core components (**MCP** and **Skills**):
+To ensure AI Artifacts is ready, verify the components and consult common troubleshooting steps if needed:
 
 #### 1. Automated check via command
 
 Run **`AI Artifacts: Verify All Integrations`** from the Command Palette (`Ctrl+Shift+P` / `Cmd+Shift+P`):
 
 - **Skill (.agents):** Must report **Ready** (confirms `create-review-artifact` is deployed to `~/.agents/skills/`).
-- **Base (.vscode):** Must report **Ready** (confirms central MCP runtime server is deployed to `~/.vscode/ai-artifacts/`).
+- **Base (.vscode):** Must report **Ready** (confirms central MCP runtime server is deployed to `~/.ai-artifacts/managed/runtime/`).
 - **Clients:** Shows detected configuration state for each AI editor.
 
 #### 2. Agent customization check (or manual setup)
@@ -90,17 +90,25 @@ If the verify command reports `missing` (or you prefer manual setup), check dire
 > [!NOTE]
 > **Prerequisites:** Requires **Node.js** in `PATH` to run the MCP server. Always reload the window and start a fresh chat turn after changing configurations.
 
+#### 3. Common runtime errors & recovery
+
+- **MCP tools are unavailable:** Run **AI Artifacts: Install All Detected Integrations** (or the command for that client), restart your AI extension/editor, and start a fresh chat (a chat that was already open cannot load tools installed afterward). Also verify that `node` is available in `PATH`.
+- **`WORKSPACE_NOT_REGISTERED`:** Open or add the exact target folder in the VS Code / Cursor window running AI Artifacts, wait briefly for the registry heartbeat, and retry. Do not substitute the first workspace folder or create the artifact directly.
+- **Workspace selection expired or evidence does not match:** If no file was tagged, resolve again and choose a current name/path candidate, asking the user only if the result is ambiguous. If a file was tagged, verify that it still exists inside the intended registered workspace.
+- **A round token expired or the MCP restarted:** The existing content remains intact. Ask the AI agent to inspect the exact artifact path again to obtain a fresh token and reconnect.
+- **A configuration conflict is reported:** Remove or rename the unmanaged `[mcp_servers.ai_artifacts]` entry in your configuration file, then run the installer again.
+
 ### 5. Uninstalling and cleanup
 
 AI Artifacts provides two comprehensive ways to remove MCP configurations and runtime assets:
 
-- **Automatic Cleanup upon Extension Uninstall:** When you uninstall the AI Artifacts extension from VS Code or Cursor (`Extensions -> Uninstall`), an automated lifecycle hook (`vscode:uninstall`) runs a standalone script that automatically removes the `ai_artifacts` MCP configuration from all detected AI clients and completely deletes base runtime assets (`~/.vscode/ai-artifacts/` and `~/.agents/skills/create-review-artifact/`).
+- **Automatic Cleanup upon Extension Uninstall:** When you uninstall the AI Artifacts extension from VS Code or Cursor (`Extensions -> Uninstall`), an automated lifecycle hook (`vscode:uninstall`) runs a standalone script that automatically removes the `ai_artifacts` MCP configuration from all detected AI clients and completely deletes base runtime assets (`~/.ai-artifacts/managed/`, legacy `~/.vscode/ai-artifacts/`, and `~/.agents/skills/create-review-artifact/`).
 - **Manual Cleanup via Command Palette:** If you want to disconnect MCP integrations while keeping the VS Code extension active, open the Command Palette (`Ctrl+Shift+P` / `Cmd+Shift+P`):
   - **`AI Artifacts: Uninstall All Detected Integrations`**: Removes MCP configs from all detected editors and clears base runtime assets.
   - Or choose a specific client: **`AI Artifacts: Uninstall Integration for GitHub Copilot`**, **`... for Cursor`**, **`... for Codex`**, **`... for Claude`**, or **`... for Windsurf`**.
 
 > [!IMPORTANT]
-> **Artifact Data Is Retained:** Neither uninstall method deletes `~/.ai-artifacts/`. Uninstall removes only managed client configuration, the installed MCP runtime and skill, and the transient workspace registry. Delete the global artifact collection separately only when you intentionally want to erase review data.
+> **Artifact Data Is Retained:** Neither uninstall method deletes user review data in `~/.ai-artifacts/artifacts/`. Uninstall removes only managed client configuration, installed MCP runtime assets (`~/.ai-artifacts/managed/`), legacy `~/.vscode/ai-artifacts/`, and the managed skill. Delete the global artifact collection separately only when you intentionally want to erase review data.
 
 ### Compatibility & Supported Agents
 
@@ -176,28 +184,6 @@ When the current round has no saved comments or submission, you may request a co
 - Schema v3/v4 and workspace-local `.ai-artifacts` or `.codex-artifacts` lifecycles are not opened, advanced, or migrated by v1.0.0. Existing files remain untouched on disk.
 - This is a hard compatibility cutoff. A rollback to a 0.9.x extension also requires reinstalling the matching older runtime and skill; do not use a 0.9.x runtime with v1.0.0 artifacts.
 - After every extension upgrade, reinstall integrations and restart the AI client before starting a new chat.
-
-## Troubleshooting
-
-### MCP tools are unavailable
-
-Run **AI Artifacts: Install All Detected Integrations** (or the command for that client), restart your AI extension/editor, and start a new chat. A chat that was already open cannot load tools installed afterward. Also verify that `node` is available in `PATH`.
-
-### `WORKSPACE_NOT_REGISTERED`
-
-Open or add the exact target folder in the VS Code / Cursor window running AI Artifacts, wait briefly for the registry heartbeat, and retry. Do not substitute the first workspace folder or create the artifact directly.
-
-### Workspace selection expired or evidence does not match
-
-If no file was tagged, resolve again and choose a current name/path candidate, asking the user only if the result is ambiguous. If a file was tagged, verify that it still exists inside the intended registered workspace.
-
-### A round token expired or the MCP restarted
-
-The existing content remains intact. Ask the AI agent to inspect the exact artifact path again to obtain a fresh token and reconnect.
-
-### A configuration conflict is reported
-
-Remove or rename the unmanaged `[mcp_servers.ai_artifacts]` entry in your configuration file, then run the installer again.
 
 ## Development
 

@@ -1,9 +1,6 @@
 import * as vscode from "vscode";
 import { ArtifactReviewProvider } from "./artifact-review-provider";
-import {
-  ArtifactReviewOpenCoordinator,
-  setupGlobalArtifactReadyWatcher,
-} from "./artifact-review-open";
+import { ArtifactReviewOpenCoordinator, setupGlobalArtifactReadyWatcher } from "./artifact-review-open";
 import { ensureSafeGlobalArtifactsRoot } from "../shared/artifact-validation";
 import {
   checkAllIntegrations,
@@ -21,7 +18,7 @@ import {
   uninstallCopilotIntegration,
   uninstallCursorIntegration,
   uninstallWindsurfIntegration,
-} from "./workspace-integration-v4";
+} from "./workspace-integration";
 import { WorkspaceRegistryPublisher } from "./workspace-registry-publisher";
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
@@ -30,11 +27,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const artifactReviewOpenCoordinator = new ArtifactReviewOpenCoordinator<vscode.Uri>({
     uriFromFilePath: (filePath) => vscode.Uri.file(filePath),
     openWith: async (artifactUri) => {
-      await vscode.commands.executeCommand(
-        "vscode.openWith",
-        artifactUri,
-        ArtifactReviewProvider.viewType,
-      );
+      await vscode.commands.executeCommand("vscode.openWith", artifactUri, ArtifactReviewProvider.viewType);
     },
   });
 
@@ -47,18 +40,21 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.commands.registerCommand("agentPlus.openArtifactReview", async () => {
       const activeTextUri = vscode.window.activeTextEditor?.document.uri;
       const activeTabInput = vscode.window.tabGroups.activeTabGroup.activeTab?.input;
-      const activeCustomUri = activeTabInput instanceof vscode.TabInputCustom
-        && activeTabInput.viewType === ArtifactReviewProvider.viewType
-        ? activeTabInput.uri
-        : undefined;
+      const activeCustomUri =
+        activeTabInput instanceof vscode.TabInputCustom && activeTabInput.viewType === ArtifactReviewProvider.viewType
+          ? activeTabInput.uri
+          : undefined;
       const selected = activeTextUri?.fsPath.endsWith("artifact.md")
         ? activeTextUri
-        : activeCustomUri ?? (await vscode.window.showOpenDialog({
-            canSelectMany: false,
-            defaultUri: vscode.Uri.file(await ensureSafeGlobalArtifactsRoot()),
-            filters: { "AI Artifact": ["md"] },
-            openLabel: "Open artifact review",
-          }))?.[0];
+        : (activeCustomUri ??
+          (
+            await vscode.window.showOpenDialog({
+              canSelectMany: false,
+              defaultUri: vscode.Uri.file(await ensureSafeGlobalArtifactsRoot()),
+              filters: { "AI Artifact": ["md"] },
+              openLabel: "Open artifact review",
+            })
+          )?.[0]);
       if (selected) await artifactReviewOpenCoordinator.open(selected);
     }),
 
@@ -72,7 +68,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
           );
         } else {
           void vscode.window.showInformationMessage(
-            "AI Artifacts base MCP server was set up in ~/.vscode/ai-artifacts/. No additional external clients were detected.",
+            "AI Artifacts base MCP server was set up in ~/.ai-artifacts/managed/runtime/. No additional external clients were detected.",
           );
         }
       } catch (error) {
@@ -186,9 +182,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       try {
         const result = await uninstallAllDetectedIntegrations(context);
         const count = result.uninstalledClients.length;
-        const msg = count > 0
-          ? `AI Artifacts: Uninstalled integrations from ${result.uninstalledClients.join(", ")} and cleaned up base assets.`
-          : "AI Artifacts: Cleaned up base assets. No configured client integrations found.";
+        const msg =
+          count > 0
+            ? `AI Artifacts: Uninstalled integrations from ${result.uninstalledClients.join(", ")} and cleaned up base assets.`
+            : "AI Artifacts: Cleaned up base assets. No configured client integrations found.";
         void vscode.window.showInformationMessage(msg);
       } catch (error) {
         void vscode.window.showErrorMessage(error instanceof Error ? error.message : String(error));
@@ -284,14 +281,15 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   try {
     const artifactReadyWatcher = await setupGlobalArtifactReadyWatcher<vscode.Uri, vscode.FileSystemWatcher>({
       ensureGlobalArtifactsRoot: () => ensureSafeGlobalArtifactsRoot(),
-      createWatcher: (collectionRoot, pattern) => vscode.workspace.createFileSystemWatcher(
-        new vscode.RelativePattern(vscode.Uri.file(collectionRoot), pattern),
-        false,
-        true,
-        true,
-      ),
-      isAutoOpenEnabled: () => vscode.workspace.getConfiguration("agentPlus")
-        .get<boolean>("autoOpenArtifactReview", true),
+      createWatcher: (collectionRoot, pattern) =>
+        vscode.workspace.createFileSystemWatcher(
+          new vscode.RelativePattern(vscode.Uri.file(collectionRoot), pattern),
+          false,
+          true,
+          true,
+        ),
+      isAutoOpenEnabled: () =>
+        vscode.workspace.getConfiguration("agentPlus").get<boolean>("autoOpenArtifactReview", true),
       isWindowFocused: () => vscode.window.state.focused,
       artifactUriFromComments: (commentsUri) => vscode.Uri.joinPath(commentsUri, "..", "artifact.md"),
       openArtifactReview: async (artifactUri) => {

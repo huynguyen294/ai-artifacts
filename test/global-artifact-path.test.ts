@@ -9,10 +9,20 @@ import {
   ARTIFACT_MARKDOWN_FILE,
   ARTIFACT_UPDATE_LOCK_FILE,
   COMMENTS_FILE,
+  MANAGED_ASSETS_DIRECTORY,
+  MANAGED_MCP_SCRIPT_FILE,
+  MANAGED_RUNTIME_DIRECTORY,
+  MANAGED_WORKSPACES_DIRECTORY,
   OWNER_ONLY_DIRECTORY_MODE,
   OWNER_ONLY_FILE_MODE,
   REVIEW_SUBMISSION_FILE,
+  aiArtifactsRoot,
+  artifactCollectionRoot,
   globalArtifactsRoot,
+  managedAssetsRoot,
+  managedMcpScriptPath,
+  managedRuntimeDirectory,
+  managedWorkspaceRegistryDirectory,
 } from "../src/shared/artifact-files";
 import {
   assertGlobalArtifactDirectory,
@@ -54,11 +64,41 @@ describe("global artifact path foundation", () => {
     expect(() => globalArtifactsRoot({ userHome: "relative-home" })).toThrow("must be an absolute path");
   });
 
+  it("resolves canonical product root and managed asset paths", () => {
+    const root = aiArtifactsRoot({ userHome });
+    const collection = artifactCollectionRoot({ userHome });
+    const managed = managedAssetsRoot({ userHome });
+    const runtime = managedRuntimeDirectory({ userHome });
+    const mcpScript = managedMcpScriptPath({ userHome });
+    const workspaces = managedWorkspaceRegistryDirectory({ userHome });
+
+    expect(root).toBe(path.join(userHome, ARTIFACTS_DIRECTORY));
+    expect(collection).toBe(path.join(root, ARTIFACT_COLLECTION_DIRECTORY));
+    expect(managed).toBe(path.join(root, MANAGED_ASSETS_DIRECTORY));
+    expect(runtime).toBe(path.join(managed, MANAGED_RUNTIME_DIRECTORY));
+    expect(mcpScript).toBe(path.join(runtime, MANAGED_MCP_SCRIPT_FILE));
+    expect(workspaces).toBe(path.join(managed, MANAGED_WORKSPACES_DIRECTORY));
+
+    // Artifacts collection and managed assets are siblings, never nested
+    expect(path.dirname(collection)).toBe(root);
+    expect(path.dirname(managed)).toBe(root);
+    expect(collection).not.toBe(managed);
+
+    // Relative user home rejection
+    expect(() => aiArtifactsRoot({ userHome: "relative" })).toThrow("must be an absolute path");
+    expect(() => managedAssetsRoot({ userHome: "relative" })).toThrow("must be an absolute path");
+    expect(() => managedRuntimeDirectory({ userHome: "relative" })).toThrow("must be an absolute path");
+    expect(() => managedMcpScriptPath({ userHome: "relative" })).toThrow("must be an absolute path");
+    expect(() => managedWorkspaceRegistryDirectory({ userHome: "relative" })).toThrow("must be an absolute path");
+  });
+
   it("uses the explicit test seam without reading the real user home", () => {
     vi.spyOn(os, "homedir").mockImplementation(() => {
       throw new Error("real home must not be read");
     });
     expect(globalArtifactsRoot({ userHome })).toContain(userHome);
+    expect(aiArtifactsRoot({ userHome })).toContain(userHome);
+    expect(managedAssetsRoot({ userHome })).toContain(userHome);
   });
 
   it("uses os.homedir for the production resolver without touching that home in tests", () => {
@@ -66,6 +106,8 @@ describe("global artifact path foundation", () => {
     expect(globalArtifactsRoot()).toBe(
       path.join(userHome, ARTIFACTS_DIRECTORY, ARTIFACT_COLLECTION_DIRECTORY),
     );
+    expect(aiArtifactsRoot()).toBe(path.join(userHome, ARTIFACTS_DIRECTORY));
+    expect(managedAssetsRoot()).toBe(path.join(userHome, ARTIFACTS_DIRECTORY, MANAGED_ASSETS_DIRECTORY));
   });
 
   it("creates and canonicalizes a missing owner-only collection root", async () => {
