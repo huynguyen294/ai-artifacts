@@ -1,5 +1,20 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
-import type { ExtensionToWebviewMessage, MarkdownBlock, ReviewComment, ReviewDecision, ReviewState, SendStatus } from "../shared/contracts";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type MouseEvent as ReactMouseEvent,
+  type ReactNode,
+} from "react";
+import type {
+  ExtensionToWebviewMessage,
+  MarkdownBlock,
+  ReviewComment,
+  ReviewDecision,
+  ReviewState,
+  SendStatus,
+} from "../shared/contracts";
 import { vscode } from "./vscode-api";
 import { MarkdownRenderer } from "./MarkdownRenderer";
 import { SelectionCommentPopover, type SelectionDraft } from "./SelectionCommentPopover";
@@ -8,7 +23,7 @@ import { CommentsDrawer } from "./CommentsDrawer";
 import { deriveReviewActions } from "./review-actions";
 
 function elementOf(node: Node): Element | null {
-  return node.nodeType === Node.ELEMENT_NODE ? node as Element : node.parentElement;
+  return node.nodeType === Node.ELEMENT_NODE ? (node as Element) : node.parentElement;
 }
 
 function effectiveNode(node: Node, offset: number, isEnd: boolean): Node {
@@ -113,8 +128,8 @@ export function App(): ReactNode {
     const listener = (event: MessageEvent<ExtensionToWebviewMessage>): void => {
       const message = event.data;
       if (message.type === "state") {
-        const roundChanged = reviewRoundRef.current !== undefined
-          && reviewRoundRef.current !== message.state.artifact.reviewRound;
+        const roundChanged =
+          reviewRoundRef.current !== undefined && reviewRoundRef.current !== message.state.artifact.reviewRound;
         reviewRoundRef.current = message.state.artifact.reviewRound;
         setState(message.state);
         setError(undefined);
@@ -128,11 +143,13 @@ export function App(): ReactNode {
         if (message.state.submission) {
           setSendStatus("submitted");
           setSubmittingDecision(undefined);
-          setSendMessage(message.state.submission.decision === "revise"
-            ? "Review comments returned to the waiting Codex turn."
-            : message.state.submission.decision === "save"
-              ? undefined
-              : "Artifact approved. Return to the Codex chat to continue.");
+          setSendMessage(
+            message.state.submission.decision === "revise"
+              ? "Review comments returned to the waiting AI turn."
+              : message.state.submission.decision === "save"
+                ? undefined
+                : "Artifact approved. Return to the AI chat to continue.",
+          );
         } else {
           setSendStatus("idle");
           setSendMessage(undefined);
@@ -201,8 +218,9 @@ export function App(): ReactNode {
   };
 
   const jumpToComment = (comment: ReviewComment): void => {
-    const mark = [...document.querySelectorAll<HTMLElement>("[data-comment-ids]")]
-      .find((element) => element.dataset.commentIds?.split(",").includes(comment.id));
+    const mark = [...document.querySelectorAll<HTMLElement>("[data-comment-ids]")].find((element) =>
+      element.dataset.commentIds?.split(",").includes(comment.id),
+    );
     if (!mark) return;
     mark.scrollIntoView({ behavior: "smooth", block: "center" });
     mark.focus({ preventScroll: true });
@@ -240,9 +258,7 @@ export function App(): ReactNode {
     lifecycleReadOnly: state.lifecycle.readOnly,
     ...(submittingDecision ? { submittingDecision } : {}),
   });
-  const selectedComment = activeComment
-    ? comments.find((comment) => comment.id === activeComment.id)
-    : undefined;
+  const selectedComment = activeComment ? comments.find((comment) => comment.id === activeComment.id) : undefined;
   const blockedTitle = state.lifecycle.readOnly
     ? state.lifecycle.message
     : hasUnsavedComment
@@ -253,20 +269,52 @@ export function App(): ReactNode {
     <div className="app-shell">
       <header className="topbar">
         <div className="artifact-heading">
-          <span className="eyebrow">{state.artifact.kind.toUpperCase()} · ROUND {state.artifact.reviewRound}</span>
+          <span className="eyebrow">
+            {state.artifact.kind.toUpperCase()} · ROUND {state.artifact.reviewRound}
+          </span>
           <h1>{state.artifact.title}</h1>
         </div>
         <div className="topbar-actions">
-          <button className="icon-button copy-button" onClick={() => void copyMarkdown()} aria-label="Copy Markdown" title="Copy Markdown">
+          <button
+            className="icon-button copy-button"
+            onClick={() => void copyMarkdown()}
+            aria-label="Copy Markdown"
+            title="Copy Markdown"
+          >
             {copied ? "✓" : "⧉"}
           </button>
-          <button className="ghost" disabled={actions.save.disabled} title={blockedTitle} onClick={() => submitDecision("save")}>{actions.save.label}</button>
-          <button className={actions.revise.primary ? "primary" : "ghost"} disabled={actions.revise.disabled} title={blockedTitle} onClick={() => submitDecision("revise")}>{actions.revise.label}</button>
-          <button className={actions.approve.primary ? "primary" : "ghost"} disabled={actions.approve.disabled} title={blockedTitle} onClick={() => submitDecision("approve")}>{actions.approve.label}</button>
+          <button
+            className="ghost"
+            disabled={actions.save.disabled}
+            title={blockedTitle}
+            onClick={() => submitDecision("save")}
+          >
+            {actions.save.label}
+          </button>
+          <button
+            className={actions.revise.primary ? "primary" : "ghost"}
+            disabled={actions.revise.disabled}
+            title={blockedTitle}
+            onClick={() => submitDecision("revise")}
+          >
+            {actions.revise.label}
+          </button>
+          <button
+            className={actions.approve.primary ? "primary" : "ghost"}
+            disabled={actions.approve.disabled}
+            title={blockedTitle}
+            onClick={() => submitDecision("approve")}
+          >
+            {actions.approve.label}
+          </button>
         </div>
       </header>
 
-      {(error || sendMessage || state.lifecycle.message) && <div className={`notice ${sendStatus === "error" || error ? "error" : sendStatus}`}>{error ?? sendMessage ?? state.lifecycle.message}</div>}
+      {(error || sendMessage || state.lifecycle.message) && (
+        <div className={`notice ${sendStatus === "error" || error ? "error" : sendStatus}`}>
+          {error ?? sendMessage ?? state.lifecycle.message}
+        </div>
+      )}
 
       <nav className="review-utility-bar" aria-label="Artifact review tools">
         <button
@@ -277,15 +325,25 @@ export function App(): ReactNode {
           onClick={() => setDrawerOpen(true)}
         >
           <svg aria-hidden="true" width="14" height="14" viewBox="0 0 16 16" fill="none">
-            <path d="M2.5 3.75C2.5 2.78 3.28 2 4.25 2h7.5c.97 0 1.75.78 1.75 1.75v5.5c0 .97-.78 1.75-1.75 1.75H7l-3.1 2.4c-.58.45-1.4.04-1.4-.7V3.75Z" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round"/>
+            <path
+              d="M2.5 3.75C2.5 2.78 3.28 2 4.25 2h7.5c.97 0 1.75.78 1.75 1.75v5.5c0 .97-.78 1.75-1.75 1.75H7l-3.1 2.4c-.58.45-1.4.04-1.4-.7V3.75Z"
+              stroke="currentColor"
+              strokeWidth="1.2"
+              strokeLinejoin="round"
+            />
           </svg>
           <span>View comments</span>
-          <span className="comment-count-badge" aria-label={`${comments.length} comments`}>{comments.length}</span>
+          <span className="comment-count-badge" aria-label={`${comments.length} comments`}>
+            {comments.length}
+          </span>
         </button>
       </nav>
 
       <main className="document-workspace">
-        <article className="artifact-document" onMouseUp={isSubmitted || state.lifecycle.readOnly ? undefined : beginComment}>
+        <article
+          className="artifact-document"
+          onMouseUp={isSubmitted || state.lifecycle.readOnly ? undefined : beginComment}
+        >
           <MarkdownRenderer
             markdown={state.markdown}
             blocks={state.blocks}
@@ -300,7 +358,10 @@ export function App(): ReactNode {
           draft={draft}
           body={body}
           onBodyChange={setBody}
-          onCancel={() => { setDraft(null); setBody(""); }}
+          onCancel={() => {
+            setDraft(null);
+            setBody("");
+          }}
           onSubmit={submitComment}
         />
       )}

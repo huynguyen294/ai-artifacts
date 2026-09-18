@@ -16,7 +16,7 @@ type SelectionDraft = {
 };
 
 function elementOf(node: Node): Element | null {
-  return node.nodeType === Node.ELEMENT_NODE ? node as Element : node.parentElement;
+  return node.nodeType === Node.ELEMENT_NODE ? (node as Element) : node.parentElement;
 }
 
 function getEffectiveNode(node: Node, offset: number, isEnd: boolean): Node {
@@ -133,9 +133,19 @@ function ArtifactBlock({ block, comments }: { block: MarkdownBlock; comments: Re
     const Heading = `h${level}` as ElementType;
     return <Heading {...common}>{content}</Heading>;
   }
-  if (block.type === "list-item") return <div {...common} className={`${common.className} list-item`}>{content}</div>;
+  if (block.type === "list-item")
+    return (
+      <div {...common} className={`${common.className} list-item`}>
+        {content}
+      </div>
+    );
   if (block.type === "quote") return <blockquote {...common}>{content}</blockquote>;
-  if (block.type === "code") return <pre {...common}><code>{content}</code></pre>;
+  if (block.type === "code")
+    return (
+      <pre {...common}>
+        <code>{content}</code>
+      </pre>
+    );
   return <p {...common}>{content}</p>;
 }
 
@@ -178,10 +188,10 @@ export function App(): ReactNode {
           const decision = message.state.submission.decision;
           setSendMessage(
             decision === "revise"
-              ? "Review comments returned to the waiting Codex turn."
+              ? "Review comments returned to the waiting AI turn."
               : decision === "save"
                 ? undefined
-                : "Artifact approved. Return to the Codex chat to continue.",
+                : "Artifact approved. Return to the AI chat to continue.",
           );
         } else {
           setSendStatus("idle");
@@ -248,7 +258,9 @@ export function App(): ReactNode {
     <div className="app-shell">
       <header className="topbar">
         <div>
-          <span className="eyebrow">{state.artifact.kind.toUpperCase()} · ROUND {state.artifact.reviewRound}</span>
+          <span className="eyebrow">
+            {state.artifact.kind.toUpperCase()} · ROUND {state.artifact.reviewRound}
+          </span>
           <h1>{state.artifact.title}</h1>
         </div>
         <div className="topbar-actions">
@@ -259,9 +271,24 @@ export function App(): ReactNode {
             title={copied ? "Copied!" : "Copy Markdown"}
           >
             {copied ? (
-              <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M13.5 4.5L6.5 11.5L2.5 7.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                <path
+                  d="M13.5 4.5L6.5 11.5L2.5 7.5"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
             ) : (
-              <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5" stroke="currentColor" strokeWidth="1.2"/><path d="M10.5 5.5V3.5C10.5 2.67 9.83 2 9 2H3.5C2.67 2 2 2.67 2 3.5V9C2 9.83 2.67 10.5 3.5 10.5H5.5" stroke="currentColor" strokeWidth="1.2"/></svg>
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                <rect x="5.5" y="5.5" width="8" height="8" rx="1.5" stroke="currentColor" strokeWidth="1.2" />
+                <path
+                  d="M10.5 5.5V3.5C10.5 2.67 9.83 2 9 2H3.5C2.67 2 2 2.67 2 3.5V9C2 9.83 2.67 10.5 3.5 10.5H5.5"
+                  stroke="currentColor"
+                  strokeWidth="1.2"
+                />
+              </svg>
             )}
           </button>
           <span className="comment-count">{state.comments.comments.length} comments</span>
@@ -293,9 +320,7 @@ export function App(): ReactNode {
       </header>
 
       {(error || sendMessage) && (
-        <div className={`notice ${sendStatus === "error" || error ? "error" : sendStatus}`}>
-          {error ?? sendMessage}
-        </div>
+        <div className={`notice ${sendStatus === "error" || error ? "error" : sendStatus}`}>{error ?? sendMessage}</div>
       )}
 
       <div className="workspace">
@@ -322,8 +347,12 @@ export function App(): ReactNode {
                 rows={4}
               />
               <div className="editor-actions">
-                <button className="ghost" onClick={() => setDraft(null)}>Cancel</button>
-                <button className="primary" disabled={!body.trim()} onClick={submitComment}>Comment</button>
+                <button className="ghost" onClick={() => setDraft(null)}>
+                  Cancel
+                </button>
+                <button className="primary" disabled={!body.trim()} onClick={submitComment}>
+                  Comment
+                </button>
               </div>
             </section>
           )}
@@ -333,14 +362,19 @@ export function App(): ReactNode {
             {state.comments.comments.map((comment, index) => (
               <section className="comment-card" key={comment.id}>
                 <div className="comment-meta">
-                  <span>#{index + 1}{comment.block.heading ? ` · ${comment.block.heading}` : ""}</span>
+                  <span>
+                    #{index + 1}
+                    {comment.block.heading ? ` · ${comment.block.heading}` : ""}
+                  </span>
                   <button
                     className="icon-button delete-comment-button"
                     disabled={isSubmitted}
                     aria-label="Delete comment"
                     title="Delete comment"
                     onClick={() => vscode.postMessage({ type: "removeComment", commentId: comment.id })}
-                  >×</button>
+                  >
+                    ×
+                  </button>
                 </div>
                 <blockquote>{comment.selection.quote}</blockquote>
                 <p>{comment.body}</p>

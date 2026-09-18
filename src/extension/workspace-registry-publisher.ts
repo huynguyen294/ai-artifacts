@@ -41,9 +41,8 @@ export class WorkspaceRegistryPublisher implements vscode.Disposable {
           workspaceFolders.map((folder) => canonicalWorkspaceFolder(folder.uri.fsPath)),
         );
         const activeUri = vscode.window.activeTextEditor?.document.uri;
-        const activeWorkspaceFolder = activeUri?.scheme === "file"
-          ? vscode.workspace.getWorkspaceFolder(activeUri)
-          : undefined;
+        const activeWorkspaceFolder =
+          activeUri?.scheme === "file" ? vscode.workspace.getWorkspaceFolder(activeUri) : undefined;
         const activeFolderIndex = activeWorkspaceFolder
           ? workspaceFolders.findIndex((folder) => folder.uri.toString() === activeWorkspaceFolder.uri.toString())
           : -1;
@@ -56,14 +55,15 @@ export class WorkspaceRegistryPublisher implements vscode.Disposable {
           workspaceFile: vscode.workspace.workspaceFile?.fsPath ?? null,
           focused: vscode.window.state.focused,
           folders,
-          activeFile: activeUri?.scheme === "file" && activeRoot
-            ? { path: activeUri.fsPath, workspaceRoot: activeRoot.realPath }
-            : null,
+          activeFile:
+            activeUri?.scheme === "file" && activeRoot
+              ? { path: activeUri.fsPath, workspaceRoot: activeRoot.realPath }
+              : null,
           updatedAt: new Date(now).toISOString(),
           expiresAt: new Date(now + WORKSPACE_REGISTRY_TTL_MS).toISOString(),
         });
       })
-      .catch((error) => console.error("Publishing the Codex Artifacts workspace registry failed:", error));
+      .catch((error) => console.error("Publishing the AI Artifacts workspace registry failed:", error));
   }
 
   dispose(): void {

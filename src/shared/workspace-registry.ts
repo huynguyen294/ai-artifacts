@@ -9,45 +9,54 @@ import {
   managedAssetsRoot,
   managedWorkspaceRegistryDirectory,
 } from "./artifact-files";
-import {
-  enforceOwnerOnlyDirectory,
-  enforceOwnerOnlyFile,
-  sameFilesystemPath,
-} from "./artifact-validation";
+import { enforceOwnerOnlyDirectory, enforceOwnerOnlyFile, sameFilesystemPath } from "./artifact-validation";
 
 export const WORKSPACE_REGISTRY_SCHEMA_VERSION = 2 as const;
 export const WORKSPACE_REGISTRY_HEARTBEAT_MS = 15_000;
 export const WORKSPACE_REGISTRY_TTL_MS = 45_000;
 
-export const workspaceRegistrySnapshotSchema = z.object({
-  schemaVersion: z.literal(WORKSPACE_REGISTRY_SCHEMA_VERSION),
-  instanceId: z.string().uuid(),
-  processId: z.number().int().positive(),
-  workspaceFile: z.string().nullable(),
-  focused: z.boolean(),
-  folders: z.array(z.object({
-    path: z.string().min(1),
-    realPath: z.string().min(1),
-  }).strict()),
-  activeFile: z.object({
-    path: z.string().min(1),
-    workspaceRoot: z.string().min(1),
-  }).strict().nullable(),
-  updatedAt: z.string().datetime(),
-  expiresAt: z.string().datetime(),
-}).strict();
+export const workspaceRegistrySnapshotSchema = z
+  .object({
+    schemaVersion: z.literal(WORKSPACE_REGISTRY_SCHEMA_VERSION),
+    instanceId: z.string().uuid(),
+    processId: z.number().int().positive(),
+    workspaceFile: z.string().nullable(),
+    focused: z.boolean(),
+    folders: z.array(
+      z
+        .object({
+          path: z.string().min(1),
+          realPath: z.string().min(1),
+        })
+        .strict(),
+    ),
+    activeFile: z
+      .object({
+        path: z.string().min(1),
+        workspaceRoot: z.string().min(1),
+      })
+      .strict()
+      .nullable(),
+    updatedAt: z.string().datetime(),
+    expiresAt: z.string().datetime(),
+  })
+  .strict();
 
 export type WorkspaceRegistrySnapshot = z.infer<typeof workspaceRegistrySnapshotSchema>;
 
 export const workspaceEvidenceSchema = z.discriminatedUnion("kind", [
-  z.object({
-    kind: z.literal("tagged-file"),
-    filePath: z.string().min(1),
-  }).strict(),
-  z.object({
-    kind: z.literal("resolved-workspace"),
-    selectionToken: z.string().uuid(),
-  }).strict(),
+  z
+    .object({
+      kind: z.literal("tagged-file"),
+      filePath: z.string().min(1),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("resolved-workspace"),
+      selectionToken: z.string().uuid(),
+    })
+    .strict(),
 ]);
 
 export type WorkspaceEvidence = z.infer<typeof workspaceEvidenceSchema>;
@@ -61,37 +70,46 @@ export const workspaceCandidateMatchSchema = z.enum([
 ]);
 export type WorkspaceCandidateMatch = z.infer<typeof workspaceCandidateMatchSchema>;
 
-export const resolvedFolderCandidateSchema = z.object({
-  candidateId: z.string().min(1),
-  name: z.string().min(1),
-  path: z.string().min(1),
-  match: workspaceCandidateMatchSchema,
-  selectionToken: z.string().uuid(),
-  expiresAt: z.string().datetime(),
-}).strict();
+export const resolvedFolderCandidateSchema = z
+  .object({
+    candidateId: z.string().min(1),
+    name: z.string().min(1),
+    path: z.string().min(1),
+    match: workspaceCandidateMatchSchema,
+    selectionToken: z.string().uuid(),
+    expiresAt: z.string().datetime(),
+  })
+  .strict();
 export type ResolvedFolderCandidate = z.infer<typeof resolvedFolderCandidateSchema>;
 
-export const resolvedWindowGroupSchema = z.object({
-  windowInstanceId: z.string().uuid(),
-  focused: z.boolean(),
-  snapshotUpdatedAt: z.string().datetime(),
-  workspaceFile: z.string().nullable(),
-  activeFile: z.object({
-    path: z.string().min(1),
-    workspaceRoot: z.string().min(1),
-  }).strict().nullable(),
-  folders: z.array(resolvedFolderCandidateSchema),
-}).strict();
+export const resolvedWindowGroupSchema = z
+  .object({
+    windowInstanceId: z.string().uuid(),
+    focused: z.boolean(),
+    snapshotUpdatedAt: z.string().datetime(),
+    workspaceFile: z.string().nullable(),
+    activeFile: z
+      .object({
+        path: z.string().min(1),
+        workspaceRoot: z.string().min(1),
+      })
+      .strict()
+      .nullable(),
+    folders: z.array(resolvedFolderCandidateSchema),
+  })
+  .strict();
 export type ResolvedWindowGroup = z.infer<typeof resolvedWindowGroupSchema>;
 
-export const workspaceWindowSelectionGrantSchema = z.object({
-  query: z.string(),
-  candidateId: z.string().min(1),
-  workspaceRoot: z.string().min(1),
-  windowInstanceId: z.string().uuid(),
-  snapshotIdentity: z.string().min(1),
-  expiresAt: z.number().int().positive(),
-}).strict();
+export const workspaceWindowSelectionGrantSchema = z
+  .object({
+    query: z.string(),
+    candidateId: z.string().min(1),
+    workspaceRoot: z.string().min(1),
+    windowInstanceId: z.string().uuid(),
+    snapshotIdentity: z.string().min(1),
+    expiresAt: z.number().int().positive(),
+  })
+  .strict();
 export type WorkspaceWindowSelectionGrant = z.infer<typeof workspaceWindowSelectionGrantSchema>;
 
 export function workspaceCandidateId(windowInstanceId: string, workspaceRoot: string): string {
@@ -213,18 +231,20 @@ export async function readFreshWorkspaceSnapshots(
     if (code === "ENOENT") return [];
     throw error;
   }
-  const snapshots = await Promise.all(entries
-    .filter((entry) => entry.endsWith(".json"))
-    .map(async (entry): Promise<WorkspaceRegistrySnapshot | undefined> => {
-      try {
-        const parsed = workspaceRegistrySnapshotSchema.parse(JSON.parse(
-          await fs.readFile(path.join(directory, entry), "utf8"),
-        ));
-        return Date.parse(parsed.expiresAt) > now ? parsed : undefined;
-      } catch {
-        return undefined;
-      }
-    }));
+  const snapshots = await Promise.all(
+    entries
+      .filter((entry) => entry.endsWith(".json"))
+      .map(async (entry): Promise<WorkspaceRegistrySnapshot | undefined> => {
+        try {
+          const parsed = workspaceRegistrySnapshotSchema.parse(
+            JSON.parse(await fs.readFile(path.join(directory, entry), "utf8")),
+          );
+          return Date.parse(parsed.expiresAt) > now ? parsed : undefined;
+        } catch {
+          return undefined;
+        }
+      }),
+  );
   return snapshots.filter((snapshot): snapshot is WorkspaceRegistrySnapshot => Boolean(snapshot));
 }
 
@@ -244,14 +264,14 @@ export async function resolveRegisteredWorkspaceRoot(
   }
   const snapshots = await readFreshWorkspaceSnapshots(directory, now);
   for (const snapshot of snapshots) {
-    const match = snapshot.folders.find((folder) => (
-      sameFilesystemPath(folder.path, requestedRoot)
-      && sameFilesystemPath(folder.realPath, requestedRealPath)
-    ));
+    const match = snapshot.folders.find(
+      (folder) =>
+        sameFilesystemPath(folder.path, requestedRoot) && sameFilesystemPath(folder.realPath, requestedRealPath),
+    );
     if (match) return requestedRealPath;
   }
   throw new Error(
-    "WORKSPACE_NOT_REGISTERED: open or add the target folder in VS Code, then retry after Codex Artifacts refreshes its workspace registry.",
+    "WORKSPACE_NOT_REGISTERED: open or add the target folder in VS Code, then retry after AI Artifacts refreshes its workspace registry.",
   );
 }
 
@@ -278,9 +298,7 @@ function workspaceSnapshotScopeKey(snapshot: WorkspaceRegistrySnapshot): string 
   });
 }
 
-function selectSingleWorkspaceScope(
-  snapshots: readonly WorkspaceRegistrySnapshot[],
-): WorkspaceRegistrySnapshot[] {
+function selectSingleWorkspaceScope(snapshots: readonly WorkspaceRegistrySnapshot[]): WorkspaceRegistrySnapshot[] {
   const focusedSnapshots = snapshots.filter((snapshot) => snapshot.focused);
   const candidates = focusedSnapshots.length > 0 ? focusedSnapshots : snapshots;
   const scopes = new Map<string, WorkspaceRegistrySnapshot[]>();
@@ -323,11 +341,11 @@ function workspaceContextKey(
   return snapshot
     ? workspaceSnapshotScopeKey(snapshot)
     : JSON.stringify({
-      workspaceFile: null,
-      folders: folders
-        .map((folder) => searchPathText(folder.realPath))
-        .sort((left, right) => left.localeCompare(right)),
-    });
+        workspaceFile: null,
+        folders: folders
+          .map((folder) => searchPathText(folder.realPath))
+          .sort((left, right) => left.localeCompare(right)),
+      });
 }
 
 export async function resolveWorkspaceCandidates(
@@ -380,10 +398,7 @@ export async function resolveWorkspaceCandidates(
       const normalizedName = searchTerms(name);
       const normalizedPath = searchTerms(folder.realPath);
       let match: Exclude<WorkspaceCandidateMatch, "available" | "single-folder"> | undefined;
-      if (absoluteQuery && (
-        sameFilesystemPath(folder.path, query)
-        || sameFilesystemPath(folder.realPath, query)
-      )) {
+      if (absoluteQuery && (sameFilesystemPath(folder.path, query) || sameFilesystemPath(folder.realPath, query))) {
         match = "exact-path";
       } else if (normalizedName === normalizedQuery) {
         match = "exact-name";
@@ -414,11 +429,12 @@ export async function resolveWorkspaceCandidates(
   }
 
   if (matchedItems.length > 0) {
-    matchedItems.sort((left, right) => (
-      rank[left.candidate.match] - rank[right.candidate.match]
-      || left.candidate.name.localeCompare(right.candidate.name)
-      || left.candidate.path.localeCompare(right.candidate.path)
-    ));
+    matchedItems.sort(
+      (left, right) =>
+        rank[left.candidate.match] - rank[right.candidate.match] ||
+        left.candidate.name.localeCompare(right.candidate.name) ||
+        left.candidate.path.localeCompare(right.candidate.path),
+    );
     const topMatches = matchedItems.slice(0, 10);
     const windowMap = new Map<string, WorkspaceCandidateWindow>();
     for (const item of topMatches) {
@@ -456,15 +472,17 @@ export async function resolveWorkspaceCandidates(
     return {
       query,
       matchMode: "matched",
-      windows: [{
-        windowInstanceId: singleSnapshot.instanceId,
-        focused: singleSnapshot.focused,
-        snapshotUpdatedAt: singleSnapshot.updatedAt,
-        workspaceFile: singleSnapshot.workspaceFile,
-        activeFile: singleSnapshot.activeFile,
-        snapshotIdentity: snapshotIdentity(singleSnapshot),
-        folders: [candidate],
-      }],
+      windows: [
+        {
+          windowInstanceId: singleSnapshot.instanceId,
+          focused: singleSnapshot.focused,
+          snapshotUpdatedAt: singleSnapshot.updatedAt,
+          workspaceFile: singleSnapshot.workspaceFile,
+          activeFile: singleSnapshot.activeFile,
+          snapshotIdentity: snapshotIdentity(singleSnapshot),
+          folders: [candidate],
+        },
+      ],
       candidates: [candidate],
     };
   }
@@ -473,12 +491,14 @@ export async function resolveWorkspaceCandidates(
   const windows: WorkspaceCandidateWindow[] = snapshots
     .filter((s) => s.folders.length > 0)
     .map((s) => {
-      const folders: WorkspaceCandidate[] = s.folders.map((f) => ({
-        candidateId: workspaceCandidateId(s.instanceId, f.realPath),
-        name: path.basename(f.path) || path.basename(f.realPath),
-        path: f.realPath,
-        match: "available" as const,
-      })).sort((left, right) => left.name.localeCompare(right.name) || left.path.localeCompare(right.path));
+      const folders: WorkspaceCandidate[] = s.folders
+        .map((f) => ({
+          candidateId: workspaceCandidateId(s.instanceId, f.realPath),
+          name: path.basename(f.path) || path.basename(f.realPath),
+          path: f.realPath,
+          match: "available" as const,
+        }))
+        .sort((left, right) => left.name.localeCompare(right.name) || left.path.localeCompare(right.path));
       return {
         windowInstanceId: s.instanceId,
         focused: s.focused,
@@ -489,10 +509,11 @@ export async function resolveWorkspaceCandidates(
         folders,
       };
     })
-    .sort((left, right) => (
-      (right.focused ? 1 : 0) - (left.focused ? 1 : 0)
-      || Date.parse(right.snapshotUpdatedAt) - Date.parse(left.snapshotUpdatedAt)
-    ));
+    .sort(
+      (left, right) =>
+        (right.focused ? 1 : 0) - (left.focused ? 1 : 0) ||
+        Date.parse(right.snapshotUpdatedAt) - Date.parse(left.snapshotUpdatedAt),
+    );
 
   return {
     query,

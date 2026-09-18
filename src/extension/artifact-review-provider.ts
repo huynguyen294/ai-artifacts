@@ -12,10 +12,7 @@ export class ArtifactReviewProvider implements vscode.CustomTextEditorProvider {
 
   constructor(private readonly context: vscode.ExtensionContext) {}
 
-  async resolveCustomTextEditor(
-    document: vscode.TextDocument,
-    panel: vscode.WebviewPanel,
-  ): Promise<void> {
+  async resolveCustomTextEditor(document: vscode.TextDocument, panel: vscode.WebviewPanel): Promise<void> {
     const store = new ArtifactStore(document.uri.fsPath);
     let sending = false;
 
@@ -60,15 +57,20 @@ export class ArtifactReviewProvider implements vscode.CustomTextEditorProvider {
           case "submitReview":
             if (sending) return;
             sending = true;
-            await post({ type: "sendState", status: "submitting", message: "Returning this decision to the waiting Codex turn…" });
+            await post({
+              type: "sendState",
+              status: "submitting",
+              message: "Returning this decision to the waiting AI turn…",
+            });
             try {
               await store.submitReview(message.decision);
               await refresh();
-              const text = message.decision === "revise"
-                ? "Review comments returned to the waiting Codex turn."
-                : message.decision === "save"
-                  ? undefined
-                  : "Artifact approved. Return to the Codex chat to continue.";
+              const text =
+                message.decision === "revise"
+                  ? "Review comments returned to the waiting AI turn."
+                  : message.decision === "save"
+                    ? undefined
+                    : "Artifact approved. Return to the AI chat to continue.";
               await post({
                 type: "sendState",
                 status: "submitted",
@@ -94,7 +96,10 @@ export class ArtifactReviewProvider implements vscode.CustomTextEditorProvider {
       if (event.document.uri.toString() === document.uri.toString()) void refresh();
     });
     const fileWatcher = vscode.workspace.createFileSystemWatcher(
-      new vscode.RelativePattern(store.artifactDirectory, "{artifact.json,artifact.md,comments.json,review-submission.json}"),
+      new vscode.RelativePattern(
+        store.artifactDirectory,
+        "{artifact.json,artifact.md,comments.json,review-submission.json}",
+      ),
     );
     fileWatcher.onDidCreate(() => void refresh());
     fileWatcher.onDidChange(() => void refresh());
@@ -108,10 +113,18 @@ export class ArtifactReviewProvider implements vscode.CustomTextEditorProvider {
   }
 
   private html(webview: vscode.Webview): string {
-    const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, "dist", "webview", "review.js"));
-    const styleUri = webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, "dist", "webview", "review.css"));
-    const shikiUri = webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, "dist", "webview", "shiki.js"));
-    const mermaidUri = webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, "dist", "webview", "mermaid.js"));
+    const scriptUri = webview.asWebviewUri(
+      vscode.Uri.joinPath(this.context.extensionUri, "dist", "webview", "review.js"),
+    );
+    const styleUri = webview.asWebviewUri(
+      vscode.Uri.joinPath(this.context.extensionUri, "dist", "webview", "review.css"),
+    );
+    const shikiUri = webview.asWebviewUri(
+      vscode.Uri.joinPath(this.context.extensionUri, "dist", "webview", "shiki.js"),
+    );
+    const mermaidUri = webview.asWebviewUri(
+      vscode.Uri.joinPath(this.context.extensionUri, "dist", "webview", "mermaid.js"),
+    );
     const token = nonce();
     return `<!doctype html>
 <html lang="en">
