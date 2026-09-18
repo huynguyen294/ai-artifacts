@@ -14,6 +14,39 @@ Minor typos, formatting fixes, or cosmetic wording adjustments that do not chang
 
 Each entry includes the date, category, summary of changes, rationale, and affected components or files.
 
+## 2026-09-18 — Window-routed artifact connections and MCP 8.0.0 cutover
+
+### Changes
+
+- Changed workspace resolution from one focused context to fresh candidates grouped by live VS Code window. Focus remains a ranking hint, while each selection token binds an exact `windowInstanceId + workspaceRoot` tuple.
+- Added optional schema-v1 `artifact-connection.json` as UI-routing state containing only the target window, connection revision, open-request ID, source, and timestamp. `artifact.json` remains the source of truth for artifact identity and workspace ownership.
+- Made create commit the initial connection and made `inspect_artifact_review` with reconnect intent revalidate/rebind a live target window. Tagged-file evidence remains ownership proof; its optional connection token only disambiguates the window.
+- Replaced focus-gated comments-file auto-open with per-window `artifact-connection.json` create/change handling. Non-target windows ignore requests; the matching window can open while unfocused, deduplicates successful request IDs, and retains same-artifact single-flight coordination.
+- Kept the public MCP surface at exactly five tools. Wait and advance preserve connection state and cannot rebind.
+- Kept extension/package version at unreleased `1.0.0`, artifact schema at v5, and connection schema at v1; increased the bundled MCP runtime to 8.0.0 for the breaking grouped-resolver and reconnect contract.
+- Updated the production skill, artifact contract, MCP self-description, current-state documentation, release notes, and integration contract expectations as one atomic cutover.
+
+### Rationale
+
+- Focus alone cannot identify the intended VS Code window when the same workspace is open more than once. Persisting a narrow routing request lets every extension window observe the same filesystem event while only the selected instance opens the artifact.
+- Separating artifact identity from optional UI routing preserves schema-v5 lifecycle compatibility, exact-handle recovery, and user data during uninstall or rollback.
+- A major MCP version prevents an older installed skill/runtime pair from silently interpreting the new resolver and reconnect semantics incorrectly.
+
+### Compatibility, deployment, and rollback boundary
+
+- Extension 1.0.0, MCP 8.0.0, artifact schema v5, connection schema v1, and the matching skill must be installed together. Updating the extension alone is insufficient; integrations must be reinstalled and the AI client restarted.
+- Optional connection files are user artifact data. Uninstall and rollback must not delete or migrate them; older code may ignore them.
+- Automated source/build verification does not prove installed-host or multi-window behavior. Those claims remain gated on the final exact-build manual verification.
+
+### Affected components and files
+
+- `src/shared/workspace-registry.ts`, `src/shared/contracts.ts`, `src/shared/artifact-connection.ts`, `src/shared/artifact-files.ts`
+- `src/integration/artifact-review-mcp-v4.ts`
+- `src/extension/artifact-review-open.ts`, `src/extension/extension.ts`, `src/extension/workspace-registry-publisher.ts`
+- `skills/create-review-artifact/`
+- `package.json`, `README.md`, `docs/PHILOSOPHY.md`, `docs/ARCHITECTURE.md`, `docs/COMPONENTS.md`, `docs/INSTRUCTION.md`, `CHANGELOG.md`
+- Workspace registry, artifact connection, MCP lifecycle, extension open, skill contract, release contract, and integration test suites
+
 ## 2026-09-16 — Consolidate installer assets and workspace registry under ~/.ai-artifacts/managed
 
 ### Changes

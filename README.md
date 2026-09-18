@@ -66,7 +66,7 @@ After installing or upgrading the extension, **reinstall every integration**. Up
 4. Start a fresh chat conversation to load the newly registered MCP tools and skill.
 5. Verify readiness by running **AI Artifacts: Verify All Integrations** from the Command Palette.
 
-The current catalog contains exactly five tools: `resolve_artifact_workspace`, `create_artifact`, `wait_for_artifact_review`, `inspect_artifact_review`, and `advance_and_wait_for_artifact`. A client that still exposes an older catalog must be reinstalled and restarted.
+Version 1.0.0 ships MCP server 8.0.0. The catalog contains exactly five tools: `resolve_artifact_workspace`, `create_artifact`, `wait_for_artifact_review`, `inspect_artifact_review`, and `advance_and_wait_for_artifact`. A client that still reports MCP 7.0.0 or exposes an older catalog must be reinstalled and restarted.
 
 ### 4. Verification & troubleshooting
 
@@ -94,7 +94,7 @@ If the verify command reports `missing` (or you prefer manual setup), check dire
 
 - **MCP tools are unavailable:** Run **AI Artifacts: Install All Detected Integrations** (or the command for that client), restart your AI extension/editor, and start a fresh chat (a chat that was already open cannot load tools installed afterward). Also verify that `node` is available in `PATH`.
 - **`WORKSPACE_NOT_REGISTERED`:** Open or add the exact target folder in the VS Code / Cursor window running AI Artifacts, wait briefly for the registry heartbeat, and retry. Do not substitute the first workspace folder or create the artifact directly.
-- **Workspace selection expired or evidence does not match:** If no file was tagged, resolve again and choose a current name/path candidate, asking the user only if the result is ambiguous. If a file was tagged, verify that it still exists inside the intended registered workspace.
+- **Workspace/window selection expired or evidence does not match:** Before creation, resolve again when no file was tagged, or retry tagged-file creation without the expired window token. After creation, keep the exact artifact handle and retry `inspect_artifact_review` with reconnect intent; never resolve a replacement workspace for an existing artifact.
 - **A round token expired or the MCP restarted:** The existing content remains intact. Ask the AI agent to inspect the exact artifact path again to obtain a fresh token and reconnect.
 - **A configuration conflict is reported:** Remove or rename the unmanaged `[mcp_servers.ai_artifacts]` entry in your configuration file, then run the installer again.
 
@@ -145,11 +145,12 @@ The AI agent calls the MCP `create_artifact` tool, which generates an isolated s
   artifact.md
   comments.json
   review-submission.json  # Present after a decision is submitted
+  artifact-connection.json # Optional schema-v1 target-window routing state
 ```
 
-`artifact.json` records `location.workspaceRoot` as target metadata and ownership evidence. The workspace path does not determine where lifecycle files are stored.
+`artifact.json` records `location.workspaceRoot` and remains the source of truth for artifact identity and workspace ownership. The workspace path does not determine where lifecycle files are stored. Optional `artifact-connection.json` contains only UI-routing state (`windowInstanceId`, connection revision, open-request ID, source, and timestamp); it never replaces the manifest.
 
-By default, the custom **Artifact Review** editor opens automatically in the currently focused VS Code window as soon as an eligible artifact is created. If no VS Code window is focused, or `agentPlus.autoOpenArtifactReview` is disabled, no window is opened or focused. Use **AI Artifacts: Open Artifact Review** to open the custom editor manually.
+By default, creation commits a connection request for the selected VS Code window, and only that window opens the custom **Artifact Review** editor. The target may be unfocused; other windows ignore the event. Focus is a selection hint, not routing identity. Reconnecting the exact artifact can rebind it to another live window without changing Markdown, comments, submission, or review round. If `agentPlus.autoOpenArtifactReview` is disabled, connection state is still committed but no editor opens automatically. Use **AI Artifacts: Open Artifact Review** to open the custom editor manually.
 
 MCP results also include `artifactLink`, an ordinary encoded `file://` Markdown link. It opens the artifact file through the chat client and is not a deep link; it does not guarantee that the custom editor opens.
 
@@ -173,6 +174,7 @@ When the current round has no saved comments or submission, you may request a co
 
 - **Safe Lifecycle:** Artifact data outlives transient MCP connections. Process restarts, waiter cancellations, or new chat turns never destroy unreviewed artifacts.
 - **Fail-Closed Workspace Ownership:** The agent must prove workspace ownership via explicit tagged files or an MCP-issued resolver token before creating an artifact. Cwd or fuzzy workspace guessing is rejected.
+- **Targeted Window Routing:** Resolver candidates remain grouped by live VS Code window. Selection tokens bind an exact window/workspace tuple, and non-target windows ignore connection events.
 - **Transactional Updates:** Multi-round revisions are transactional; failed commits automatically roll back, including the Windows editor-lock fallback.
 - **Local & Private:** Everything runs locally on your machine via stdio MCP. No code, Markdown, or telemetry is sent to an AI Artifacts server. Your configured AI client may still process content according to that client's own privacy policy.
 - **Content Sanitization:** Rendered with CommonMark/GFM with syntax highlighting (Shiki) and diagram rendering (Mermaid). Unsafe raw HTML, scripts, and remote protocols are disabled.
@@ -181,6 +183,7 @@ When the current round has no saved comments or submission, you may request a co
 ## Compatibility and upgrades
 
 - Version 1.0.0 supports only schema v5 stored under `~/.ai-artifacts/artifacts/`.
+- Version 1.0.0 ships MCP server 8.0.0 and optional connection schema v1 while preserving the exact five-tool catalog.
 - Schema v3/v4 and workspace-local `.ai-artifacts` or `.codex-artifacts` lifecycles are not opened, advanced, or migrated by v1.0.0. Existing files remain untouched on disk.
 - This is a hard compatibility cutoff. A rollback to a 0.9.x extension also requires reinstalling the matching older runtime and skill; do not use a 0.9.x runtime with v1.0.0 artifacts.
 - After every extension upgrade, reinstall integrations and restart the AI client before starting a new chat.

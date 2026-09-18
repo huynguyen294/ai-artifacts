@@ -40,7 +40,9 @@ If product intent, documentation, tests, and implementation disagree, call out t
 - Schema v5 is the only readable and writable lifecycle. Schema-v3/v4 and workspace-local artifacts are rejected and are not live-migrated.
 - `location.workspaceRoot` is target metadata and ownership context, not the lifecycle storage location.
 - After creation, wait/inspect/advance/reconnect use the exact global artifact handle; workspace evidence is not requested again.
-- Workspace-folder ownership requires a user-tagged file or an MCP-issued resolver token for a candidate chosen from the user's workspace words. The resolver must scope candidates to one unique VS Code workspace context and never merge folders from different windows. Cwd, `environment_context`, workspace order, project markers, and filesystem search results cannot establish ownership by themselves.
+- Workspace-folder ownership requires a user-tagged file or an MCP-issued resolver token for a candidate chosen from the user's workspace words. The resolver returns candidates grouped by fresh VS Code window and never erases their window identity. Focus is only a ranking hint; it is not ownership evidence or a routing requirement. Multiple windows require user selection only when no unique strongest candidate exists. Cwd, `environment_context`, workspace order, project markers, and filesystem search results cannot establish ownership by themselves.
+- `artifact.json` is the source of truth for artifact identity and `location.workspaceRoot`. Optional schema-v1 `artifact-connection.json` contains only UI-routing state. Its selection token binds an exact window/workspace tuple; tagged-file evidence remains the ownership proof.
+- Create and explicit reconnect may commit connection state. Wait and advance preserve that state and must not rebind or emit another open request. Reconnect recovery always keeps the exact artifact handle and never calls the workspace resolver after creation.
 - Fail before filesystem mutation when workspace ownership is missing, ambiguous, stale, unregistered, or unsafe.
 - Preserve unrelated user skills, hooks, MCP configuration, and project files during install, upgrade, cleanup, or migration.
 - Preserve user review data in `~/.ai-artifacts/artifacts/` during integration or extension uninstall. Only exact extension-owned runtime assets under `~/.ai-artifacts/managed/` are removable managed state; artifact deletion is a separate explicit user action.
@@ -59,13 +61,13 @@ If product intent, documentation, tests, and implementation disagree, call out t
 
 ## Ownership map
 
-- `src/integration/artifact-review-mcp-v4.ts`: historical filename for the current MCP 7.0.0/schema-v5 tools, artifact creation, waiter ownership/takeover, round grants, inspection, and transactional round commits.
+- `src/integration/artifact-review-mcp-v4.ts`: historical filename for the current MCP 8.0.0/schema-v5 tools, grouped window/workspace resolution, connection commits, artifact creation, waiter ownership/takeover, round grants, inspection, and transactional round commits.
 - `src/extension/artifact-store.ts`: trusted artifact loading, comment writes, and submission writes.
 - `src/extension/workspace-registry-publisher.ts`: live VS Code workspace heartbeat.
 - `src/extension/workspace-integration.ts`: centralized MCP installation, base runtime provisioning, and legacy cleanup.
 - `src/extension/mcp-clients/`: dedicated configuration drivers for Codex, Cursor, Claude Code, Windsurf, and GitHub Copilot (VS Code).
 - `src/webview/`: review UI and typed messages to the extension host; no direct filesystem or process access.
-- `src/shared/`: shared schemas, file contracts, validation, and workspace registry rules.
+- `src/shared/`: shared schemas, file contracts, artifact-connection safety/persistence, validation, and grouped workspace registry rules.
 - `skills/create-review-artifact/`: Codex trigger and lifecycle orchestration contract.
 - `test/`: executable regression coverage for contracts and failure behavior.
 
@@ -83,4 +85,4 @@ On shells where `npm` is directly executable, the equivalent `npm run ...` comma
 
 For lifecycle changes, cover at least create, wait, takeover inspection, Review, question-only and Markdown advancement, Proceed, Just save, reconnect, token state binding/replay, cancellation, concurrency, rollback, and explicit rejection of unsupported schemas as applicable.
 
-For workspace changes, cover focused-window scoping, single-folder matching, cross-window ambiguity, duplicate snapshots of one context, tagged-file evidence, separator-normalized exact/similar matches, unique high-confidence agent choice, ambiguous user selection, multi-root all-available fallback, empty-scope not-found, stale/replayed resolver tokens, registry changes, exact-root matching, containment, and linked-path rejection as applicable.
+For workspace changes, cover grouped-window results, focus-as-ranking-hint behavior, single-folder matching, unique cross-window matches, duplicate workspace paths across windows, tagged-file evidence, separator-normalized exact/similar matches, unique high-confidence agent choice, tied user selection, all-available fallback, empty-scope not-found, stale/replayed window/workspace selection tokens, registry changes, exact-root matching, containment, and linked-path rejection as applicable.

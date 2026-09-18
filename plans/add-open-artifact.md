@@ -720,53 +720,197 @@ Có thể revert watcher về comments-created behavior trong khi giữ connecti
 
 ## Phase 3 — Đồng bộ skill, docs, runtime và integration contract
 
+> Trạng thái: **implementation complete, install pending**. Source, focused/full tests và production build đã pass; chưa cài exact build hoặc chạy manual multi-window gate.
+
 ### Mục tiêu
 
-Đưa toàn bộ producer, consumer, installed skill, packaged runtime và product documentation sang cùng contract mà không thêm tool công khai hoặc để mixed-version behavior không được hỗ trợ.
+Đưa source skill, artifact contract, MCP self-description, product docs, release notes, integration fixture và built runtime sang cùng window-routed connection contract. Phase này phải loại bỏ wording focused-window cũ nhưng không thêm public MCP tool, không đổi artifact schema và không cài bất kỳ development build nào vào môi trường thật.
 
-### Thay đổi
+### Quyết định version và compatibility đã khóa
 
-- Update `skills/create-review-artifact/SKILL.md` và artifact contract.
-- Giữ exact five-tool availability check; không thay client allowlists bằng tool mới.
-- Update MCP instructions, README, architecture, philosophy và changelog theo behavior mới.
-- Ghi thay đổi kiến trúc vào `docs/CHANGE_LOGS.md` theo project rule.
-- Rebuild managed runtime/package và chuẩn bị exact build cho gate cuối; Chú chỉ reinstall integrations và restart AI client một lần trong phần install/manual cuối plan.
+- Extension/package giữ nguyên `1.0.0` vì version này chưa release; không tạo release `1.1.0` cho feature này.
+- MCP runtime tăng major từ `7.0.0` lên `8.0.0` vì grouped resolver response và reconnect/window-selection semantics là breaking contract đối với skill/runtime cũ.
+- Artifact lifecycle schema giữ nguyên `v5`; không đổi `artifact.json`, comments hoặc submission schema chỉ để phản ánh routing.
+- `artifact-connection.json` tiếp tục dùng schema độc lập `v1` và là optional routing state.
+- Public MCP catalog vẫn đúng năm tool hiện có. Client configuration/allowlist không có `open_artifact`, `connect_artifact` hoặc tool thứ sáu.
+- Đây là atomic extension + MCP + skill cutover. Mixed `1.0.0` extension với MCP 7/skill cũ không được support; reinstall integrations và restart AI client chỉ thực hiện ở manual gate cuối.
+
+### 3A. Hoàn thiện source skill và artifact contract
+
+#### Files
+
+- `skills/create-review-artifact/SKILL.md`
+- `skills/create-review-artifact/references/artifact-contract.md`
+- `test/skill-contract.test.ts`
+
+#### Nội dung phải đồng bộ
+
+- Mô tả resolver response theo từng window group: `windowInstanceId`, focus hint, snapshot metadata và `folders[]`; không flatten folders thành một focused scope duy nhất.
+- Focus chỉ là ranking hint. Nhiều window không tự động đồng nghĩa phải hỏi user; skill tự chọn khi chỉ có một strongest candidate đủ bằng chứng và chỉ hỏi khi các candidate mạnh nhất vẫn tied/ambiguous.
+- Với resolved-workspace create, dùng exact candidate `selectionToken` trong `workspaceEvidence` như hiện tại. Với tagged-file create bị `WINDOW_SELECTION_REQUIRED`, retry cùng create request bằng `connection.selectionToken` của window user đã chọn.
+- Ghi rõ create result trả exact artifact handle cùng connection metadata: `schemaVersion`, `windowInstanceId`, `connectionRevision`, `openRequestId`, `source`, `updatedAt`.
+- Reconnect luôn bắt đầu từ exact `artifactDirectory` qua `inspect_artifact_review` với `intent: "reconnect"`. Input routing có thể dùng `connection.windowInstanceId` làm hint hoặc `connection.selectionToken` sau `WINDOW_SELECTION_REQUIRED`.
+- Sau create, không gọi `resolve_artifact_workspace` để reconnect hoặc khôi phục token. Token reconnect hết hạn/stale phải retry `inspect_artifact_review` trên cùng handle để nhận candidate mới; không thay artifact handle và không suy diễn từ cwd/latest artifact.
+- Tagged file vẫn là workspace ownership evidence; selection token chỉ chọn window chứa đúng workspace đã được xác minh, không thay thế identity trong `artifact.json`.
+- `wait_for_artifact_review` và `advance_and_wait_for_artifact` chỉ giữ nguyên connection; chúng không được rebind hoặc tạo open request mới.
+- Skill không được tạo, sửa, xóa hoặc repair `artifact-connection.json` trực tiếp.
+- Tests phải khóa exact input fields, error recovery, result connection fields và wording “ask only on true tie”; không chỉ kiểm tra keyword rời rạc.
+
+### 3B. Đồng bộ MCP runtime contract và version
+
+#### Files
+
+- `src/integration/artifact-review-mcp-v4.ts` — giữ historical filename, không rename trong feature này
+- `test/review-wait-mcp.test.ts`
+- `test/mcp-config.test.ts`
+
+#### Nội dung phải đồng bộ
+
+- Đổi `SERVER_VERSION` sang `8.0.0`; không đổi package/extension version `1.0.0`.
+- Viết lại initialize instructions và tool descriptions để resolver được mô tả là grouped by live VS Code windows, không còn nói chỉ đọc “one uniquely identified/focused context”.
+- Nêu rõ resolver có thể trả candidate từ nhiều window, focus chỉ hỗ trợ ranking, và selection token bind exact `windowInstanceId + workspaceRoot`.
+- Đồng bộ create schema/documentation cho `connection.selectionToken` của tagged-file ambiguity và inspect schema/documentation cho `connection.windowInstanceId`/`connection.selectionToken` của reconnect.
+- Đồng bộ create/inspect result documentation với persisted connection metadata và invariant `artifact.json` mới là identity/workspace source of truth.
+- Sửa text của `WINDOW_SELECTION_EXPIRED`, `WINDOW_CONNECTION_MISMATCH` và `WINDOW_CONNECTION_STALE` để recovery sau create luôn dùng `inspect_artifact_review` trên exact handle; không hướng agent resolve workspace lại.
+- Giữ structured recovery metadata, exact five-tool catalog và current lifecycle semantics. Version bump không được kéo theo schema bump hoặc public API thứ sáu.
+- Test initialize response báo MCP `8.0.0`, instructions không chứa recovery/focus wording cũ, tool schemas chứa đúng connection inputs và `tools/list` vẫn đúng năm tool.
+
+### 3C. Đồng bộ current-state product documentation và settings copy
+
+#### Files
+
+- `README.md`
+- `docs/PHILOSOPHY.md`
+- `docs/ARCHITECTURE.md`
+- `docs/COMPONENTS.md`
+- `docs/INSTRUCTION.md`
+- `package.json`
+- `test/release-contract.test.ts`
+
+#### Nội dung theo từng tài liệu
+
+- `README.md`:
+  - thêm optional `artifact-connection.json` vào artifact directory layout;
+  - thay focused-window auto-open bằng target-window routing qua connection request;
+  - giải thích target window có thể không focus, non-target windows im lặng, setting disabled chỉ chặn UI open chứ không chặn connection commit;
+  - mô tả reconnect/rebind cùng exact handle và upgrade requirement cho MCP 8/skill đồng bộ.
+- `docs/PHILOSOPHY.md`:
+  - tách artifact identity/lifecycle truth khỏi ephemeral UI routing state;
+  - khẳng định focus không phải identity hoặc authorization evidence, chỉ là hint để xếp hạng;
+  - nhiều windows chỉ cần user choice khi evidence không tạo được unique strongest target;
+  - cập nhật implementation status thành extension `1.0.0`, MCP `8.0.0`, artifact schema `v5`, connection schema `v1`.
+- `docs/ARCHITECTURE.md`:
+  - cập nhật diagram/file set và data flow `registry -> resolver/create|inspect -> artifact-connection.json -> per-window watcher -> openWith`;
+  - mô tả grouped resolver, exact window/workspace token binding, create commit và reconnect rebind;
+  - ghi schema/invariants của connection file, revision ordering, request-ID dedupe, target matching và non-target ignore;
+  - thay comments-created/focus-gated watcher description bằng create/change connection watcher, bounded read retry, path revalidation và artifact-path single-flight;
+  - giữ manual command độc lập với automatic connection events và cập nhật compatibility section sang MCP `8.0.0`.
+- `docs/COMPONENTS.md`:
+  - cập nhật ownership của workspace registry/resolver, connection persistence helper, MCP lifecycle handlers và extension open coordinator;
+  - thêm `artifact-connection.json` vào file ownership table nhưng không coi nó là lifecycle identity;
+  - sửa end-to-end flow và test ownership map để phản ánh create/change watcher, target match, request dedupe và reconnect;
+  - loại bỏ mô tả extension chỉ mở khi current window focused hoặc watcher theo `comments.json`.
+- `docs/INSTRUCTION.md`:
+  - cập nhật critical invariants cho grouped windows, focus-as-hint, exact-handle reconnect và wait/advance no-rebind;
+  - cập nhật ownership map từ MCP `7.0.0` sang `8.0.0` và thêm connection routing boundary;
+  - giữ nguyên schema-v5-only, global storage, fail-closed path safety và install/restart policy.
+- `package.json`:
+  - giữ `version: "1.0.0"`;
+  - sửa description của `agentPlus.autoOpenArtifactReview` để nói target/connected VS Code window thay vì focused window;
+  - không đổi command IDs, activation surface hoặc public setting key.
+- `test/release-contract.test.ts` khóa version matrix và các current-state wording quan trọng để docs không quay lại focused-window/MCP 7 contract.
+
+### 3D. Đồng bộ release notes và architecture decision log
+
+#### Files
+
+- `CHANGELOG.md`
+- `docs/CHANGE_LOGS.md`
+
+#### Nội dung phải đồng bộ
+
+- Cập nhật ngay trong release section `1.0.0`; không thêm `1.1.0` vì `1.0.0` chưa phát hành.
+- Trong `CHANGELOG.md`, thay các bullet MCP `7.0.0`/focused auto-open hiện tại bằng final behavior MCP `8.0.0` và window-routed connection; không để hai bullet cùng release tự mâu thuẫn.
+- Thêm subsection cho grouped workspace/window resolution, optional connection state, create/reconnect routing, non-target isolation và preservation của artifact lifecycle.
+- Không ghi “released”, “installed verified”, “manual multi-window passed” hoặc publish date mới trước Phase 4 và manual gate cuối. Nếu header date là release date dự kiến, chỉ chốt ngày khi thực sự publish.
+- Thêm entry mới ngày triển khai vào `docs/CHANGE_LOGS.md` cho architecture decision; không rewrite entry lịch sử 2026-09-16 như thể behavior cũ chưa từng tồn tại.
+- Entry kiến trúc phải ghi rationale, affected components, version matrix, no-new-tool decision, optional connection-file retention và rollback/install boundary.
+
+### 3E. Đồng bộ managed runtime, installed skill fixture và integration tests
+
+#### Files
+
+- `src/extension/workspace-integration.ts` chỉ sửa nếu packaging/copy contract thực sự cần; không refactor installer khi byte-copy hiện tại đã đúng
+- `test/workspace-integration.test.ts`
+- `test/mcp-client-drivers.test.ts`
+- Runtime/skill build inputs hiện có
+
+#### Nội dung phải đồng bộ
+
+- Giữ installer copy runtime và ba skill assets từ packaged source theo cơ chế atomic/byte comparison hiện tại.
+- Mở rộng installed-bundle test để initialize packaged runtime và assert MCP `8.0.0`, exact five tools, grouped resolver response, create result connection metadata và reconnect làm tăng revision/đổi request ID.
+- Assert installed skill/contract có grouped selection, tagged-create window retry, exact-handle reconnect và no-rebind rules; không chỉ so file tồn tại.
+- Giữ client drivers/config shape nguyên trạng vì không có tool mới. Tests phải chứng minh không thêm allowlist entry/tool section và Codex config vẫn chỉ khai báo năm tool hiện tại.
+- `build:integration` tạo bundle từ source; không edit generated `dist/`, managed runtime trong user home hoặc installed global skill bằng tay.
+- Phase 3 không chạy install/reinstall thật. VSIX/package exact build và installed-host evidence thuộc Phase 4 và phần manual cuối.
+
+### 3F. Consistency sweep trước khi đóng Phase 3
+
+- Search toàn repo active docs/source/tests cho `MCP server 7.0.0`, `SERVER_VERSION = "7.0.0"`, “focused window”, comments-created watcher và `WORKSPACE_CONTEXT_AMBIGUOUS` recovery cũ.
+- Phân loại từng hit: current-state wording phải sửa; historical changelog/archived plan có thể giữ nếu được ghi rõ là lịch sử; test fixture chỉ giữ version cũ khi cố ý test incompatibility.
+- So sánh side-by-side source skill, artifact contract, MCP initialize instructions, README, architecture và installed-skill fixture theo các flow: resolved create, tagged create ambiguity, reconnect ambiguity, stale window và disabled auto-open.
+- Kiểm tra `git diff` để bảo toàn thay đổi có sẵn của Chú trong plan/skill/contract và không format lại các vùng không liên quan.
+
+### Thứ tự triển khai và gate cục bộ
+
+1. Khóa source skill + artifact contract và bổ sung `skill-contract` assertions.
+2. Cập nhật MCP version/instructions/error text và chạy focused MCP tests.
+3. Đồng bộ README, Philosophy, Architecture, Components, Instruction và package setting copy.
+4. Cập nhật `CHANGELOG.md` trong `1.0.0` và thêm architecture entry mới vào `docs/CHANGE_LOGS.md`.
+5. Mở rộng installed-bundle/release contract tests, rebuild integration runtime rồi chạy consistency sweep.
+6. Chỉ chuyển Phase 3 sang `implementation complete, install pending` khi mọi automated gate bên dưới pass; không cài hoặc manual-test giữa các substep.
 
 ### Automated verification
 
 ```powershell
-npm.cmd test -- test/skill-contract.test.ts test/mcp-config.test.ts test/mcp-client-drivers.test.ts test/workspace-integration.test.ts
+npm.cmd test -- test/skill-contract.test.ts test/review-wait-mcp.test.ts test/mcp-config.test.ts test/mcp-client-drivers.test.ts test/workspace-integration.test.ts test/release-contract.test.ts
+npm.cmd run check
 npm.cmd run build:integration
 npm.cmd run build
 ```
 
 Kiểm tra tự động tối thiểu:
 
-- Skill hỏi user chỉ khi strongest candidate tied.
-- Resolver/create/inspect source, runtime bundle, installed skill và docs đồng bộ.
+- Skill hỏi user chỉ khi strongest candidate tied và có exact recovery cho tagged-create/reconnect ambiguity.
+- Resolver/create/inspect source, runtime bundle, installed skill và docs đồng bộ với MCP `8.0.0`.
 - `tools/list` vẫn đúng năm tool.
 - Không có `open_artifact` trong source tool surface, MCP config hoặc client tests.
 - Client configs không thêm allowlist entry mới.
-- Built runtime chứa grouped resolver, connection schema và inspect reconnect contract mới.
-- Installed skill fixture chứa grouped selection/reconnect rules và không còn wording cross-window cũ.
+- Built runtime chứa grouped resolver, connection schema v1, create connection result và inspect reconnect contract mới.
+- Installed skill fixture chứa grouped selection/tagged-create/reconnect/no-rebind rules và không còn wording cross-window cũ.
+- Current-state docs không còn MCP 7/focused-only/comments-watcher contract; historical entries không bị biến thành current behavior.
+- `package.json` và lockfile vẫn ở extension `1.0.0`; chỉ MCP server report `8.0.0`.
 
 ### AI review gate
 
 - Diff source skill, copied/installed skill fixture, MCP instructions và architecture docs để tìm contract drift.
 - Kiểm tra README/settings wording không còn nói auto-open chỉ trong focused window.
-- Kiểm tra package version/runtime version assumptions được khóa và changelog không claim release gates đã pass trước Phase 4.
+- Kiểm tra version matrix nhất quán: extension `1.0.0`, MCP `8.0.0`, artifact schema `v5`, connection schema `v1`.
+- Kiểm tra changelog chỉ bổ sung release `1.0.0`, không tạo `1.1.0` và không claim release/manual gates đã pass trước Phase 4.
 - Kiểm tra không sửa generated `dist/` bằng tay; chỉ build từ source.
+- Kiểm tra mọi reconnect recovery sau create giữ exact handle và không gọi resolver lại.
 
 ### Điều kiện hoàn tất implementation
 
-- Skill/docs/runtime/client tests và builds pass.
-- Source và packaged runtime dùng cùng contract/version; package sẵn sàng cho installed-build gate cuối.
+- Skill/docs/runtime/release/client tests, typecheck và builds pass.
+- Source và built integration runtime dùng cùng MCP `8.0.0` contract; extension/package vẫn `1.0.0` và sẵn sàng cho packaged-build gate cuối.
 - Tool count vẫn năm và không có public open/connect tool.
+- Không còn current-state contract drift giữa skill, MCP instructions, README, Philosophy, Architecture, Components, Instruction, settings copy và changelogs.
 - Việc cài extension, reinstall integrations, restart AI client và manual smoke được thực hiện một lần ở cuối plan. Trước gate đó Phase 3 chỉ được ghi `implementation complete, install pending`.
 
 ### Rollback checkpoint
 
-Rollback phải áp dụng đồng thời extension/runtime/skill/docs về checkpoint Phase 2-compatible. Không rollback một consumer riêng lẻ. Commit gợi ý: `document and package window-routed artifact connections`.
+Rollback phải áp dụng đồng thời MCP version/instructions, skill, current-state docs, release notes và integration expectations về checkpoint Phase 2-compatible. Không rollback một consumer hoặc chỉ hạ version string riêng lẻ. Không đụng vào user artifacts/connection files. Commit gợi ý: `document and package window-routed artifact connections`.
 
 ## Phase 4 — Full regression, packaged runtime và release gate
 
@@ -879,8 +1023,11 @@ Nếu release gate fail, không publish. Rollback đồng bộ về checkpoint t
 - `README.md`
 - `docs/ARCHITECTURE.md`
 - `docs/PHILOSOPHY.md`
+- `docs/COMPONENTS.md`
+- `docs/INSTRUCTION.md`
 - `docs/CHANGE_LOGS.md`
 - `CHANGELOG.md`
+- `package.json`
 
 ### Tests
 
@@ -888,7 +1035,10 @@ Nếu release gate fail, không publish. Rollback đồng bộ về checkpoint t
 - `test/review-wait-mcp.test.ts`
 - `test/artifact-review-open.test.ts`
 - `test/skill-contract.test.ts`
-- Packaging/integration fixtures nếu contract response/input thay đổi
+- `test/mcp-config.test.ts`
+- `test/mcp-client-drivers.test.ts`
+- `test/workspace-integration.test.ts`
+- `test/release-contract.test.ts`
 
 ## Phụ lục B — Cutover và rollback toàn feature
 
@@ -897,7 +1047,7 @@ Nếu release gate fail, không publish. Rollback đồng bộ về checkpoint t
 - Artifact schema v5 giữ nguyên. `artifact-connection.json` dùng schema riêng và optional, nên rollback code không cần sửa/xóa user artifacts.
 - Nếu targeted watcher có lỗi sau release, rollback extension/runtime/skill về commit trước; connection files còn lại được code cũ bỏ qua và phải được giữ như user artifact data.
 - Không xóa hoặc migrate connection files trong uninstall/rollback.
-- Vì resolver response shape và reconnect semantics thay đổi, MCP runtime version nên tăng major; exact extension/release version được khóa trước implementation cutover.
+- Version matrix đã khóa cho cutover: extension/package `1.0.0`, MCP runtime `8.0.0`, artifact schema `v5`, connection schema `v1`.
 
 ## Phụ lục C — Điều kiện hoàn tất toàn feature
 
@@ -940,17 +1090,17 @@ Nếu không xác nhận được installed build hoặc integration vẫn dùng
 
 ## 3. Manual Verification Matrix — Chú cần chạy
 
-| # | Kịch bản | Thao tác | Kết quả bắt buộc | Trạng thái |
-| -: | --- | --- | --- | :---: |
-| **1** | Hai windows khác folder | Mở Window A với folder A và Window B với folder B. Yêu cầu tạo artifact cho folder A bằng wording rõ ràng. | Chỉ Window A tự mở `Artifact Review`; Window B không mở và không hiện lỗi của A. | Chờ Chú xác nhận |
-| **2** | Hai windows cùng repo, có focus hint | Mở cùng repo ở hai windows, focus Window 1 rồi yêu cầu tạo artifact ở `window đang focus`. | Chỉ Window 1 mở review; Window 2 im lặng. | Chờ Chú xác nhận |
-| **3** | Hai windows cùng repo, không đủ evidence | Giữ hai windows cùng repo nhưng không nêu window và không cung cấp tín hiệu phân biệt. | AI hỏi Chú chọn window; không tự đoán và không tạo artifact trước khi lựa chọn được xác nhận. | Chờ Chú xác nhận |
-| **4** | Target window không focus | Bắt đầu create cho target window rồi chuyển focus sang ứng dụng khác trước connection event. | Target window vẫn nhận request và tab review đã mở khi Chú quay lại; focus không phải điều kiện routing. | Chờ Chú xác nhận |
-| **5** | Window reload và stale binding | Reload/đóng target window, mở lại workspace rồi reconnect exact artifact handle. | Stale instance ID không mở nhầm window; flow resolve/rebind tới instance đang sống và mở đúng artifact. | Chờ Chú xác nhận |
-| **6** | Auto-open disabled/enabled | Tắt `agentPlus.autoOpenArtifactReview`, tạo/reconnect artifact; sau đó bật lại và reconnect lần nữa. | Khi tắt, connection vẫn update nhưng UI không tự mở. Khi bật, request mới mở đúng target window. | Chờ Chú xác nhận |
-| **7** | Reconnect giữ nguyên lifecycle | Đóng tab review rồi yêu cầu reconnect exact artifact handle. | Inspect/reconnect mở lại cùng artifact; không đổi Markdown, review round hoặc lặp Review/Proceed/Save cũ. | Chờ Chú xác nhận |
-| **8** | Rebind sang window khác | Từ một registered window khác, reconnect exact artifact và chọn/rebind target mới. | Target mới mở; window cũ không tự mở. Connection target đổi mà artifact ownership/lifecycle không đổi. | Chờ Chú xác nhận |
-| **9** | Lifecycle smoke đại diện | Trên installed build, hoàn thành một path đại diện trong `Review`, `Proceed` hoặc `Just save` theo trạng thái artifact. | Action chỉ thực hiện một lần; waiter, round token và review state không bị connection feature làm lặp hoặc hỏng. | Chờ Chú xác nhận |
+|     # | Kịch bản                                 | Thao tác                                                                                                                | Kết quả bắt buộc                                                                                                 |    Trạng thái    |
+| ----: | ---------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- | :--------------: |
+| **1** | Hai windows khác folder                  | Mở Window A với folder A và Window B với folder B. Yêu cầu tạo artifact cho folder A bằng wording rõ ràng.              | Chỉ Window A tự mở `Artifact Review`; Window B không mở và không hiện lỗi của A.                                 | Chờ Chú xác nhận |
+| **2** | Hai windows cùng repo, có focus hint     | Mở cùng repo ở hai windows, focus Window 1 rồi yêu cầu tạo artifact ở `window đang focus`.                              | Chỉ Window 1 mở review; Window 2 im lặng.                                                                        | Chờ Chú xác nhận |
+| **3** | Hai windows cùng repo, không đủ evidence | Giữ hai windows cùng repo nhưng không nêu window và không cung cấp tín hiệu phân biệt.                                  | AI hỏi Chú chọn window; không tự đoán và không tạo artifact trước khi lựa chọn được xác nhận.                    | Chờ Chú xác nhận |
+| **4** | Target window không focus                | Bắt đầu create cho target window rồi chuyển focus sang ứng dụng khác trước connection event.                            | Target window vẫn nhận request và tab review đã mở khi Chú quay lại; focus không phải điều kiện routing.         | Chờ Chú xác nhận |
+| **5** | Window reload và stale binding           | Reload/đóng target window, mở lại workspace rồi reconnect exact artifact handle.                                        | Stale instance ID không mở nhầm window; flow resolve/rebind tới instance đang sống và mở đúng artifact.          | Chờ Chú xác nhận |
+| **6** | Auto-open disabled/enabled               | Tắt `agentPlus.autoOpenArtifactReview`, tạo/reconnect artifact; sau đó bật lại và reconnect lần nữa.                    | Khi tắt, connection vẫn update nhưng UI không tự mở. Khi bật, request mới mở đúng target window.                 | Chờ Chú xác nhận |
+| **7** | Reconnect giữ nguyên lifecycle           | Đóng tab review rồi yêu cầu reconnect exact artifact handle.                                                            | Inspect/reconnect mở lại cùng artifact; không đổi Markdown, review round hoặc lặp Review/Proceed/Save cũ.        | Chờ Chú xác nhận |
+| **8** | Rebind sang window khác                  | Từ một registered window khác, reconnect exact artifact và chọn/rebind target mới.                                      | Target mới mở; window cũ không tự mở. Connection target đổi mà artifact ownership/lifecycle không đổi.           | Chờ Chú xác nhận |
+| **9** | Lifecycle smoke đại diện                 | Trên installed build, hoàn thành một path đại diện trong `Review`, `Proceed` hoặc `Just save` theo trạng thái artifact. | Action chỉ thực hiện một lần; waiter, round token và review state không bị connection feature làm lặp hoặc hỏng. | Chờ Chú xác nhận |
 
 ## 4. Optional diagnostics khi cần điều tra
 

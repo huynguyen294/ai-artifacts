@@ -59,7 +59,7 @@ import {
 } from "../shared/artifact-connection";
 
 const SERVER_NAME = "codex-artifacts";
-const SERVER_VERSION = "7.0.0";
+const SERVER_VERSION = "8.0.0";
 const RESOLVE_WORKSPACE_TOOL_NAME = "resolve_artifact_workspace";
 const CREATE_TOOL_NAME = "create_artifact";
 const WAIT_TOOL_NAME = "wait_for_artifact_review";
@@ -1566,7 +1566,7 @@ async function handleInspectTool(id: unknown, args: JsonObject | undefined): Pro
           }
           const connGrant = workspaceSelectionGrants.get(token);
           if (!connGrant || connGrant.expiresAt <= Date.now()) {
-            throw new Error("WINDOW_SELECTION_EXPIRED: resolve the workspace again and choose a current candidate, asking the user only if the result is ambiguous.");
+            throw new Error("WINDOW_SELECTION_EXPIRED: retry inspect_artifact_review on this exact artifact handle with intent=reconnect and no connection token to refresh the window candidates.");
           }
           if (samePathKey(connGrant.workspaceRoot) !== samePathKey(workspaceRoot)) {
             throw new WindowConnectionMismatchError("the connection selection token does not belong to workspaceRoot.");
@@ -1575,12 +1575,12 @@ async function handleInspectTool(id: unknown, args: JsonObject | undefined): Pro
           const windowSnapshot = snapshots.find((s) => s.instanceId === connGrant.windowInstanceId);
           if (!windowSnapshot) {
             workspaceSelectionGrants.delete(token);
-            throw new Error("WINDOW_SELECTION_EXPIRED: the window is no longer open; resolve and select the workspace again.");
+            throw new Error("WINDOW_SELECTION_EXPIRED: the selected window is no longer open; retry inspect_artifact_review on this exact artifact handle with intent=reconnect and no connection token.");
           }
           const folderStillPresent = windowSnapshot.folders.some((f) => sameFilesystemPath(f.realPath, connGrant.workspaceRoot));
           if (!folderStillPresent) {
             workspaceSelectionGrants.delete(token);
-            throw new Error("WINDOW_SELECTION_EXPIRED: the workspace folder is no longer open in the selected window; resolve and select the workspace again.");
+            throw new Error("WINDOW_SELECTION_EXPIRED: the workspace folder is no longer open in the selected window; retry inspect_artifact_review on this exact artifact handle with intent=reconnect and no connection token.");
           }
           claimedWorkspaceSelectionTokens.add(token);
           claimedSelectionToken = token;
@@ -1842,7 +1842,35 @@ async function handleRequest(message: JsonObject): Promise<void> {
       protocolVersion,
       capabilities: { tools: { listChanged: false } },
       serverInfo: { name: SERVER_NAME, version: SERVER_VERSION },
-    instructions: "Resolve the target workspace folder before reading project files or drafting new artifact content. With no user-tagged file, call resolve_artifact_workspace immediately using the user's exact workspace keyword; do not scan folders to normalize it first. The resolver operates within one uniquely identified VS Code workspace context. If that context contains one folder, it returns that folder with matchMode=matched and match=single-folder even when the query text differs. In a multi-root workspace, a query with no match returns every folder in that same context with matchMode=all-available. The resolver groups candidates by VS Code window; if multiple windows open the same workspace, it returns candidates with selection tokens for disambiguation. Select a uniquely high-confidence candidate from the returned names and paths; ask the user only when the result remains ambiguous. Create reviewable Markdown with create_artifact using only tagged-file evidence or a resolved-workspace selection token. The official skill always sends kind=implementation-plan. Retain the exact artifactDirectory handle, then call wait_for_artifact_review. Do not resolve the workspace again after creation. A cancelled waiter never ends or deletes the artifact. Treat comments returned by a Review submission and comments read through inspect_artifact_review with the same policy: answer questions visibly in chat before calling advance_and_wait_for_artifact, update Markdown only for requested changes, and omit markdown for question-only feedback. Do not add Review responses to the artifact. Pure reconnect uses inspect_artifact_review with intent=reconnect on the exact handle and same round to bind the active VS Code window and emit an open request; resuming waiting without reconnecting uses wait_for_artifact_review. For chat escape, inspect the exact handle with takeover=true. If intent or handle is ambiguous, ask the user before calling a lifecycle tool and never takeover speculatively. If inspection has no comments or submission, reattach with wait_for_artifact_review without advancing. When updating an artifact directly from chat on an empty round, inspect with takeover=true, expectedReviewRound, and intent=explicit-chat-update, then advance with replacement markdown. Follow structured recovery metadata on lifecycle errors, keep the same exact handle, and never replay when commit state is uncertain. When Proceed returns approve for kind plan or implementation-plan, obey nextAction and execute the complete approved plan immediately in the same turn; do not stop at acknowledgement or ask for another confirmation. Proceed ends only the review round, not the authorized execution. Just save ends the round without execution. Reconnect later by explicitly inspecting, advancing without markdown, and waiting again; reconnect must not repeat an already executed action. After creation, use only the exact returned artifactDirectory for wait, inspect, advance, and reconnect. Never scan global artifact storage or a workspace to discover an artifact, and never infer an artifact handle from cwd.",
+    instructions: [
+      "Resolve the target workspace folder before reading project files or drafting new artifact content.",
+      "With no user-tagged file, call resolve_artifact_workspace immediately using the user's exact workspace keyword; do not scan folders to normalize it first.",
+      "The resolver returns fresh candidates grouped by VS Code window, including window identity, focus as a ranking hint, snapshot context, and folders.",
+      "Focus is not workspace ownership evidence or a routing requirement; multiple windows alone do not require a question.",
+      "Select a uniquely high-confidence candidate across all returned window groups and ask the user only when the strongest candidates remain tied or otherwise ambiguous.",
+      "If the registry contains one folder overall, it returns matchMode=matched and match=single-folder even when the query text differs; a query with no match returns fresh folders grouped by window with matchMode=all-available.",
+      "Each selection token binds an exact windowInstanceId and workspaceRoot.",
+      "Create reviewable Markdown with create_artifact using only tagged-file evidence or a resolved-workspace selection token; tagged-file ownership remains required when a connection.selectionToken selects among windows.",
+      "The official skill always sends kind=implementation-plan.",
+      "Create returns the exact artifactDirectory and committed connection metadata; retain both, then call wait_for_artifact_review.",
+      "Do not resolve the workspace again after creation.",
+      "A cancelled waiter never ends or deletes the artifact.",
+      "Treat comments returned by a Review submission and comments read through inspect_artifact_review with the same policy: answer questions visibly in chat before calling advance_and_wait_for_artifact, update Markdown only for requested changes, and omit markdown for question-only feedback.",
+      "Do not add Review responses to the artifact.",
+      "Pure reconnect uses inspect_artifact_review with intent=reconnect on the exact handle and same round; connection.windowInstanceId is only a hint, and a WINDOW_SELECTION_REQUIRED retry uses the chosen connection.selectionToken.",
+      "Reconnect can target an unfocused live window and returns the committed connection revision and open request ID; resuming waiting without reconnecting uses wait_for_artifact_review.",
+      "For chat escape, inspect the exact handle with takeover=true.",
+      "If intent or handle is ambiguous, ask the user before calling a lifecycle tool and never takeover speculatively.",
+      "If inspection has no comments or submission, reattach with wait_for_artifact_review without advancing.",
+      "When updating an artifact directly from chat on an empty round, inspect with takeover=true, expectedReviewRound, and intent=explicit-chat-update, then advance with replacement markdown.",
+      "Follow structured recovery metadata on lifecycle errors, keep the same exact handle, and never replay when commit state is uncertain.",
+      "When Proceed returns approve for kind plan or implementation-plan, obey nextAction and execute the complete approved plan immediately in the same turn; do not stop at acknowledgement or ask for another confirmation.",
+      "Proceed ends only the review round, not the authorized execution.",
+      "Just save ends the round without execution.",
+      "Reconnect later by explicitly inspecting, advancing without markdown, and waiting again; reconnect must not repeat an already executed action.",
+      "After creation, use only the exact returned artifactDirectory for wait, inspect, advance, and reconnect.",
+      "Never scan global artifact storage or a workspace to discover an artifact, and never infer an artifact handle from cwd.",
+    ].join(" "),
     });
     return;
   }
@@ -1855,7 +1883,7 @@ async function handleRequest(message: JsonObject): Promise<void> {
       {
         name: RESOLVE_WORKSPACE_TOOL_NAME,
         title: "Resolve artifact workspace",
-        description: "Read one uniquely scoped fresh VS Code workspace context and return workspace-folder name/path candidates for the user's exact keyword. Common separators such as spaces, hyphens, underscores, dots, and slashes are normalized. A one-folder context returns matchMode=matched with match=single-folder even when the query differs. In a multi-root context, no query match returns every folder in that context with matchMode=all-available. The resolver groups folders by active VS Code window and provides selection tokens when disambiguation across multiple windows is required. This tool never mutates lifecycle files. The caller may choose one uniquely high-confidence candidate and should ask the user only when the result is ambiguous.",
+        description: "Read fresh VS Code workspace snapshots and return workspace-folder candidates grouped by live window for the user's exact keyword. Common separators such as spaces, hyphens, underscores, dots, and slashes are normalized. Focus is a ranking hint, not ownership evidence or a routing requirement. A registry with one folder overall returns matchMode=matched with match=single-folder even when the query differs. No query match returns fresh folders grouped by window with matchMode=all-available. Each selection token binds the exact window and workspace tuple. This tool never mutates lifecycle files. The caller may choose one uniquely high-confidence candidate across all groups and should ask the user only when the strongest candidates remain tied or otherwise ambiguous.",
         inputSchema: {
           type: "object",
           properties: {
@@ -1869,7 +1897,7 @@ async function handleRequest(message: JsonObject): Promise<void> {
       {
         name: CREATE_TOOL_NAME,
         title: "Create artifact",
-        description: "Create a secure schema-v5 Markdown artifact in global AI Artifacts storage for a currently registered VS Code workspace target, and return its exact persistent handle without waiting.",
+        description: "Create a secure schema-v5 Markdown artifact in global AI Artifacts storage for a currently registered VS Code workspace target, atomically commit its schema-v1 window-routing connection, and return the exact persistent handle plus connection metadata without waiting.",
         inputSchema: {
           type: "object",
           properties: {
@@ -1937,7 +1965,7 @@ async function handleRequest(message: JsonObject): Promise<void> {
       {
         name: INSPECT_TOOL_NAME,
         title: "Inspect artifact review",
-        description: "Read the current manifest, Markdown, comments, optional submission, and validated hashes for an exact artifact. Takeover first cancels and drains its current waiter. Returns a one-time round token when saved feedback is present or when intent is explicit-chat-update.",
+        description: "Read the current manifest, Markdown, comments, optional submission, connection metadata, and validated hashes for an exact artifact. With intent=reconnect, revalidate and atomically bind a target live VS Code window without requiring focus. Takeover first cancels and drains its current waiter. Returns a one-time round token when saved feedback is present or when intent is explicit-chat-update.",
         inputSchema: {
           type: "object",
           properties: {
@@ -1955,7 +1983,7 @@ async function handleRequest(message: JsonObject): Promise<void> {
                 windowInstanceId: {
                   type: "string",
                   minLength: 1,
-                  description: "Optional explicit windowInstanceId to reconnect this artifact to.",
+                  description: "Optional live windowInstanceId hint for reconnect. The server revalidates it against the workspace stored in the exact artifact manifest.",
                 },
                 selectionToken: {
                   type: "string",

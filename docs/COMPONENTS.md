@@ -51,9 +51,9 @@ The core responsibility split is:
 | Component                | Primary responsibility                        | State or resources it owns                                                   |
 | ------------------------ | --------------------------------------------- | ---------------------------------------------------------------------------- |
 | Codex skill              | Agent-side lifecycle and chat policy           | Exact artifact handle, complete proposed Markdown, and current tool result    |
-| Artifact Review MCP      | Artifact persistence and waiter coordination  | Artifact creation, waiter registry, round grants, and round transactions      |
-| Workspace Registry       | Evidence of currently open VS Code workspaces | Short-lived workspace snapshots                                              |
-| Artifact file protocol   | Persistent lifecycle communication            | Manifest, Markdown, comments, and submitted decision                         |
+| Artifact Review MCP      | Artifact persistence, routing, and waiters     | Artifact creation, connection commits, waiter registry, grants, transactions |
+| Workspace Registry       | Evidence of currently open VS Code workspaces | Short-lived, per-window workspace snapshots                                  |
+| Artifact file protocol   | Persistent lifecycle and routing communication | Manifest, Markdown, comments, decision, and optional connection state         |
 | Extension entry          | VS Code activation and composition            | Commands, watchers, and provider registration                                |
 | Artifact Review Provider | Webview/extension orchestration               | One custom-editor session and its subscriptions                              |
 | Artifact Store           | Trusted artifact persistence adapter          | Validated review state, comments, and submission writes                      |
@@ -77,13 +77,15 @@ The governing lifetime relationship is `artifact lifetime > waiter lifetime > ch
 - Resolve the target workspace folder before reading project files or drafting artifact content, through either a user-tagged file or a resolver candidate chosen by the skill or user.
 - Produce one complete Markdown document.
 - When no file was tagged, call `resolve_artifact_workspace` before reading the contract or taking any project action; do not scan folders first. Immediately select a sole `single-folder` candidate supplied by MCP. Otherwise choose a uniquely high-confidence candidate from the returned names, paths, and match classifications, and require user selection only when the result remains ambiguous. After choosing, read the contract before inspecting the folder or calling any lifecycle tool.
-- Call `create_artifact` with `kind: "implementation-plan"`, retain an exact request/workspace-to-handle mapping, then call `wait_for_artifact_review` for the default flow.
+- Preserve resolver candidates by window. Treat focus only as a ranking hint, select a unique strongest candidate across groups, and ask the user only when the strongest window/workspace targets remain tied.
+- Call `create_artifact` with `kind: "implementation-plan"`, retain an exact request/workspace-to-handle mapping and returned connection metadata, then call `wait_for_artifact_review` for the default flow. Tagged-file ambiguity retries the same create with `connection.selectionToken`; the tagged file remains ownership evidence.
 - Interpret the returned decision.
 - Apply one feedback policy to submitted `revise` and chat-inspected comments: answer questions visibly, update Markdown only for requested changes, and advance unchanged Markdown for question-only rounds.
 - For chat escape, inspect the exact interrupted handle with takeover before applying that shared policy.
 - For an explicit chat update on an empty round, inspect the exact handle with `intent: "explicit-chat-update"`, replace the Markdown, and advance without requiring a UI comment or Review submission.
 - Reattach the same round when inspection has no feedback; ask for a path instead of guessing when the exact handle is ambiguous.
 - Use the intent decision table before reconnect/inspection/chat update and never takeover when the intent or exact handle is ambiguous.
+- Reconnect only through `inspect_artifact_review` on the exact handle. A window ID is a hint; an ambiguous reconnect retries inspect with the selected `connection.selectionToken`. Never call the resolver after creation.
 - Follow structured lifecycle recovery metadata, keep the same handle, and never replay an update whose commit state is uncertain.
 - For `approve` on `plan` or `implementation-plan`, obey the MCP `execute-approved-plan` directive and execute the complete approved plan immediately; for other kinds, continue only with the action implied by the original request.
 - For `save`, ask for a destination and copy the Markdown without performing the proposed work.
@@ -96,7 +98,7 @@ The governing lifetime relationship is `artifact lifetime > waiter lifetime > ch
 - Token creation or validation.
 - Waiter ownership, cancellation, or takeover mechanics.
 
-The skill must never create or edit `artifact.json`, `comments.json`, or `review-submission.json` directly.
+The skill must never create or edit `artifact.json`, `comments.json`, `review-submission.json`, or `artifact-connection.json` directly.
 
 ## 2. Artifact Review MCP
 
@@ -113,15 +115,16 @@ The skill must never create or edit `artifact.json`, `comments.json`, or `review
   - `inspect_artifact_review`
   - `advance_and_wait_for_artifact`
 - Validate tool arguments, artifact kind, title, Markdown size, workspace root, and typed workspace evidence.
-- Scope resolution to one unique VS Code workspace context, match its fresh folder candidates, and issue short-lived, context-bound, single-use resolver grants.
+- Group fresh resolver candidates by VS Code window and issue short-lived, exact window/workspace-bound, single-use selection grants.
 - Generate the artifact ID and `reviewSessionId`.
 - Create a schema-v5 artifact beneath the global per-user collection at review round 1.
-- Return the persistent artifact handle before attaching any waiter.
+- Select a live target window, atomically commit connection state, and return the persistent artifact handle plus connection metadata before attaching any waiter.
 - Attach one transient tool call to `review-submission.json`, or return an existing submission immediately.
 - Detect a submission through filesystem watching with periodic polling as a fallback.
 - Validate that the submission belongs to the same schema, artifact, session, round, Markdown hash, and comments hash.
 - Reserve at most one live waiter per canonical artifact directory and let cancellation/takeover detach it without touching lifecycle files.
 - Inspect validated Markdown, comments, and optional submission even when no Review submission exists.
+- For explicit reconnect, validate a window hint or selection token against the manifest workspace and atomically commit a new revision/open-request ID without changing lifecycle state.
 - Grant in-memory, single-use, one-hour round tokens after submitted `revise` or a consumable chat inspection.
 - Bind tokens to artifact/session/round plus artifact, comments, and submission hashes/presence.
 - Transactionally preserve or replace Markdown, increment `reviewRound`, reset comments, remove the previous submission, and wait for the next decision.
@@ -131,7 +134,8 @@ The skill must never create or edit `artifact.json`, `comments.json`, or `review
 
 **Owns and may write**
 
-- Initial `artifact.json`, `artifact.md`, and `comments.json`.
+- Initial `artifact.json`, `artifact.md`, `comments.json`, and `artifact-connection.json`.
+- Connection revisions and `.artifact-connection.lock` for create/reconnect commits.
 - New-round Markdown, manifest, and empty comments state.
 - Temporary staged files, backups, and `.artifact-update.lock`.
 - In-memory active waiter registry and round-token grants.
@@ -170,9 +174,9 @@ The MCP-side resolver:
 
 - Reads only fresh, schema-valid snapshots.
 - Canonicalizes the requested workspace and rejects stale or unregistered roots.
-- Scopes resolver candidates to one unique VS Code workspace context and never combines distinct windows.
-- Normalizes common name separators and resolves exact-path, exact-name, and similar-name folder candidates; a sole folder is returned as `single-folder` and selected without agent inference.
-- In a multi-root workspace, returns every folder in the same scope as `available` when no query match exists; returns `not-found` only when the fresh scope is empty and `WORKSPACE_CONTEXT_AMBIGUOUS` when no unique window context can be identified.
+- Preserves each fresh snapshot as a window group with stable instance ID, focus hint, snapshot context, and folder candidates.
+- Normalizes common name separators and resolves exact-path, exact-name, and similar-name folder candidates across groups; a sole registered folder is returned as `single-folder` and selected without agent inference.
+- Returns fresh folders grouped as `available` when no query match exists and `not-found` only when the fresh scope is empty. Multiple windows are not an error by themselves; focus influences ordering but does not erase window identity.
 - Validates either `tagged-file` containment or an MCP-owned `resolved-workspace` grant.
 - Fails closed when evidence, selection context, registration, or containment is stale or invalid.
 
@@ -200,6 +204,8 @@ Each artifact is a direct child of the global per-user collection:
 ├── artifact.md
 ├── comments.json
 ├── review-submission.json   # exists after submission
+├── artifact-connection.json # optional schema-v1 UI-routing state
+├── .artifact-connection.lock # temporary during create/reconnect routing commit
 └── .artifact-update.lock   # temporary during a round update
 ```
 
@@ -209,11 +215,15 @@ Each artifact is a direct child of the global per-user collection:
 | `artifact.md`            | MCP                                                        | Store the complete Markdown for the current round                                                  |
 | `comments.json`          | Artifact Store during review; MCP when opening a new round | Store block-bound comments and bind them to the current artifact hash and round                    |
 | `review-submission.json` | Artifact Store                                             | Record the immutable `revise`, `approve`, or `save` decision for one round                         |
+| `artifact-connection.json` | MCP                                                      | Store only target window, connection revision, open-request ID, source, and timestamp              |
+| `.artifact-connection.lock` | MCP                                                      | Serialize connection commits without changing lifecycle state                                      |
 | `.artifact-update.lock`  | MCP                                                        | Prevent readers from observing an incomplete multi-file update                                     |
 
 The protocol is the communication medium between the independently running MCP process and VS Code extension. It is not a revision-history store.
 
 `artifact.json` stores `location.workspaceRoot` as target metadata and ownership context. The workspace does not contain the lifecycle files. Schemas v3/v4 and workspace-local artifact directories are rejected and are not live-migrated.
+
+`artifact.json` remains identity/workspace truth. Optional `artifact-connection.json` is routing state only: revisions order successful create/reconnect commits, and open-request IDs deduplicate watcher events. Wait and advance preserve it unchanged.
 
 ## 5. VS Code extension entry
 
@@ -227,9 +237,10 @@ The protocol is the communication medium between the independently running MCP p
 - Activate the extension.
 - Construct the review provider and workspace-registry publisher.
 - Register the `agentPlus.artifactReview` custom editor.
-- Ensure and validate the global collection root before registering a direct-child `comments.json` create watcher.
-- Revalidate each exact artifact handle and automatically open the corresponding `artifact.md` only when configured and the current window is focused.
-- Coordinate concurrent opens by canonical artifact path and call `vscode.openWith` for VS Code reuse/reveal behavior.
+- Ensure and validate the global collection root before registering direct-child `artifact-connection.json` create/change events.
+- Revalidate the connection path, manifest binding, and linked-path safety on each bounded read attempt; ignore events whose target instance ID does not match the current window.
+- Automatically open the corresponding `artifact.md` when configured and targeted, even if that window is unfocused. Disabling auto-open does not undo the MCP connection commit.
+- Deduplicate successful open-request IDs, coordinate concurrent opens by canonical artifact path, and call `vscode.openWith` for VS Code reuse/reveal behavior. Failed opens remain retryable.
 - Register commands to:
   - Open an artifact review.
   - Install, verify, and uninstall all supported integrations or one specific client.
@@ -391,16 +402,18 @@ The parser, selection capture, renderer, and store must agree on the same visibl
 **Source**
 
 - [`src/shared/contracts.ts`](../src/shared/contracts.ts)
+- [`src/shared/artifact-connection.ts`](../src/shared/artifact-connection.ts)
 - [`src/shared/artifact-validation.ts`](../src/shared/artifact-validation.ts)
 - [`src/shared/artifact-files.ts`](../src/shared/artifact-files.ts)
 
 **Responsibilities**
 
-- Define the schema-v5 manifest, comments, submission, and review-state contracts.
+- Define the schema-v5 manifest/comments/submission contracts and the independent schema-v1 artifact-connection contract.
 - Define comments, review decisions, submissions, Markdown blocks, review state, and webview messages.
 - Validate all untrusted JSON and webview input.
 - Bind comments and submissions to the correct artifact lifecycle.
 - Verify canonical artifact directory placement.
+- Validate, read, and atomically commit exact-handle connection routing with linked-path protection and bounded transient-read retry.
 - Define canonical lifecycle filenames.
 
 This layer is the protocol source of truth. A contract change must be propagated to every producer and consumer rather than locally patched in one process.
@@ -445,11 +458,11 @@ This layer is the protocol source of truth. A contract change must be propagated
 
 ### Default submission flow
 
-1. With a tagged file, the skill derives its containing workspace folder. Without one, it calls `resolve_artifact_workspace` before reading project content. A one-folder workspace returns `matched`/`single-folder` and is selected immediately. A multi-root workspace returns query matches or the `all-available` fallback; the skill asks only when the folder choice remains ambiguous. Resolver scope ambiguity across VS Code windows requires the user to focus the intended window and retry.
-2. Only after selection, the skill reads required instructions and relevant source in that workspace, then calls `create_artifact` with complete Markdown, `kind: "implementation-plan"`, and one of the two evidence variants. It retains the returned `artifactDirectory` and round in its exact-handle mapping.
-3. The MCP revalidates the workspace/evidence, creates the three initial schema-v5 files under `~/.ai-artifacts/artifacts/<artifactId>/`, and returns the exact global handle plus a regular file link.
+1. With a tagged file, the skill derives its containing workspace folder. Without one, it calls `resolve_artifact_workspace` before reading project content. Candidates stay grouped by window; a sole registered folder returns `matched`/`single-folder`, otherwise the skill picks one unique strongest match and asks only on a true tie. Focus is a ranking hint, not a routing requirement.
+2. Only after selection, the skill reads required instructions and relevant source in that workspace, then calls `create_artifact` with complete Markdown, `kind: "implementation-plan"`, and one of the two evidence variants. Tagged-file ambiguity retries create with the selected window token. The skill retains the returned `artifactDirectory`, round, and connection metadata.
+3. The MCP revalidates workspace ownership and the selected live window, creates the initial schema-v5 files plus schema-v1 connection state under `~/.ai-artifacts/artifacts/<artifactId>/`, and returns the exact global handle plus a regular file link.
 4. The skill calls `wait_for_artifact_review` with the exact handle. The MCP reserves waiter ownership; workspace evidence is not required again.
-5. When enabled and focused, the extension watcher validates the global handle and opens the custom editor; provider, store, webview, and Markdown pipeline render and persist review comments as before.
+5. Every extension window observes the connection event, but only the matching `windowInstanceId` validates and opens the custom editor when enabled. The target may be unfocused; non-target windows remain silent. Provider, store, webview, and Markdown pipeline render and persist review comments as before.
 6. The user submits Review (`revise`), Proceed (`approve`), or Just save (`save`); the store creates `review-submission.json` exactly once.
 7. The waiting MCP validates and returns the submission. Submitted Review includes a round token.
 8. For Review, the skill classifies feedback exactly as it does for chat escape: answer questions visibly, supply replacement Markdown only when changes are requested, then call `advance_and_wait_for_artifact`. Question-only Review omits Markdown.
@@ -477,6 +490,9 @@ This layer is the protocol source of truth. A contract change must be propagated
 ### Reconnect rules
 
 - Reconnect uses an exact artifact handle from the conversation or a path supplied by the user. No component selects the newest workspace artifact.
+- `inspect_artifact_review` with reconnect intent validates the manifest workspace against live window snapshots. A window ID is a hint; a tie returns candidates and retries inspect with the chosen selection token.
+- A successful reconnect increments `connectionRevision`, creates a new `openRequestId`, and may rebind another live window without changing Markdown, comments, submission, review round, or round tokens.
+- Wait and advance preserve connection state and never rebind.
 - MCP restart loses waiter/token memory, not artifact state. Inspection can issue a fresh token.
 - Explicit reconnect after Proceed/Just save inspects and advances without Markdown; it does not repeat the previous approved or saved action.
 
@@ -526,13 +542,14 @@ Tests document the expected responsibility boundaries:
 | -------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
 | Global artifact loading, comments, submissions, schema-v3/v4 rejection, and permissions | `test/artifact-store.test.ts`, `test/global-artifact-path.test.ts`                              |
 | MCP creation, waiting, takeover, inspection, reconnect, token use, rollback, and safety | `test/review-wait-mcp.test.ts`                                                                 |
-| Workspace evidence and registry freshness/focus behavior                               | `test/workspace-registry.test.ts`                                                               |
+| Workspace evidence, grouped windows, selection grants, and focus-as-hint behavior      | `test/workspace-registry.test.ts`                                                               |
+| Connection schema, atomic commits, retries, path safety, and target resolution          | `test/artifact-connection.test.ts`                                                              |
 | Review button state and decision constraints                                           | `test/review-actions.test.ts`                                                                   |
 | Markdown blocks and rendered annotation behavior                                       | `test/markdown-blocks.test.ts`, `test/markdown-renderer.test.tsx`                               |
 | Safe links and protocols                                                               | `test/url-policy.test.ts`                                                                       |
 | Managed MCP and legacy-hook configuration                                              | `test/mcp-config.test.ts`, `test/hook-config.test.ts`, `test/global-integration-status.test.ts` |
 | Installed skill contract                                                               | `test/skill-contract.test.ts`                                                                   |
-| Global watcher, focused auto-open, exact-handle command, and open coordination          | `test/artifact-review-open.test.ts`, `test/artifact-link-contract.test.ts`                      |
+| Connection watcher, targeted unfocused auto-open, dedupe, exact-handle command, and open coordination | `test/artifact-review-open.test.ts`, `test/artifact-link-contract.test.ts`          |
 | Five-client install/reinstall/verify/uninstall and artifact retention                   | `test/workspace-integration.test.ts`, `test/mcp-client-drivers.test.ts`                         |
 
 For responsibility or protocol changes, update the shared contract first, trace every producer and consumer, and run:

@@ -301,10 +301,38 @@ describe("Workspace Integration Asset Verifiers", () => {
       CODEX_ARTIFACTS_REGISTRY_DIRECTORY: installedPaths.workspacesDirectory,
     });
     const initialized = await client.request("initialize", { protocolVersion: "2025-06-18" });
-    expect(initialized.serverInfo.version).toBe("7.0.0");
+    expect(initialized.serverInfo.version).toBe("8.0.0");
+    expect(initialized.instructions).toContain("grouped by VS Code window");
+    expect(initialized.instructions).toContain("connection.selectionToken");
     client.notify("notifications/initialized");
     const catalog = await client.request("tools/list");
     expect(catalog.tools.map((tool: any) => tool.name)).toEqual(expectedTools);
+
+    const installedSkill = await fs.readFile(path.join(installedPaths.targetSkill, "SKILL.md"), "utf8");
+    const installedContract = await fs.readFile(
+      path.join(installedPaths.targetSkill, "references", "artifact-contract.md"),
+      "utf8",
+    );
+    expect(installedSkill).toContain("Resolver results are grouped by VS Code window");
+    expect(installedSkill).toContain("retry the same create request with the candidate's `connection.selectionToken`");
+    expect(installedSkill).toContain("Reconnect never requires the target window to be focused");
+    expect(installedContract).toContain("schema-v1 UI-routing state only");
+    expect(installedContract).toContain("wait and advance preserve it unchanged");
+
+    const resolution = await client.request("tools/call", {
+      name: "resolve_artifact_workspace",
+      arguments: { query: workspace },
+    });
+    expect(resolution.isError, resolution.content?.[0]?.text).not.toBe(true);
+    expect(resolution.structuredContent).toMatchObject({
+      status: "selection-required",
+      matchMode: "matched",
+      windows: [{
+        windowInstanceId: instanceId,
+        focused: true,
+        folders: [{ path: await fs.realpath(workspace), match: "exact-path" }],
+      }],
+    });
 
     const markdown = "# Installed lifecycle\n\nReview the installed schema-v5 bridge.\n";
     const createResult = await client.request("tools/call", {
@@ -319,6 +347,15 @@ describe("Workspace Integration Asset Verifiers", () => {
     });
     expect(createResult.isError, createResult.content?.[0]?.text).not.toBe(true);
     const created = createResult.structuredContent;
+    expect(created.connection).toMatchObject({
+      schemaVersion: 1,
+      windowInstanceId: instanceId,
+      connectionRevision: 1,
+      source: "create",
+    });
+    expect(created.connection.openRequestId).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+    );
     expect(path.dirname(created.artifactDirectory)).toBe(
       await fs.realpath(globalArtifactsRoot({ userHome: targetDir })),
     );
@@ -333,6 +370,27 @@ describe("Workspace Integration Asset Verifiers", () => {
       location: { workspaceRoot: workspace },
     });
     expect(loaded.markdown).toBe(markdown);
+
+    const reconnectResult = await client.request("tools/call", {
+      name: "inspect_artifact_review",
+      arguments: {
+        artifactDirectory: created.artifactDirectory,
+        expectedReviewRound: 1,
+        intent: "reconnect",
+        connection: { windowInstanceId: instanceId },
+      },
+    });
+    expect(reconnectResult.isError, reconnectResult.content?.[0]?.text).not.toBe(true);
+    expect(reconnectResult.structuredContent.connection).toMatchObject({
+      schemaVersion: 1,
+      windowInstanceId: instanceId,
+      connectionRevision: 2,
+      source: "inspect",
+    });
+    expect(reconnectResult.structuredContent.connection.openRequestId).not.toBe(created.connection.openRequestId);
+    expect(reconnectResult.structuredContent.reviewRound).toBe(1);
+    expect(reconnectResult.structuredContent.artifactSha256).toBe(created.artifactSha256);
+
     await store.submitReview("approve");
     const reviewed = await client.request("tools/call", {
       name: "wait_for_artifact_review",

@@ -137,7 +137,7 @@ function startClient(registry: string, extraEnvironment: NodeJS.ProcessEnv = {})
 
 async function initialize(client: TestClient): Promise<void> {
   const initialized = await client.request("initialize", { protocolVersion: "2025-06-18" });
-  expect(initialized.serverInfo.version).toBe("7.0.0");
+  expect(initialized.serverInfo.version).toBe("8.0.0");
   expect(initialized.instructions).toContain("resolve_artifact_workspace");
   expect(initialized.instructions).toContain("create_artifact");
   expect(initialized.instructions).toContain("inspect_artifact_review");
@@ -145,9 +145,15 @@ async function initialize(client: TestClient): Promise<void> {
   expect(initialized.instructions).toContain("Do not add Review responses to the artifact");
   expect(initialized.instructions).toContain("execute the complete approved plan immediately");
   expect(initialized.instructions).toContain("Select a uniquely high-confidence candidate");
-  expect(initialized.instructions).toContain("ask the user only when the result remains ambiguous");
+  expect(initialized.instructions).toContain("ask the user only when the strongest candidates remain tied or otherwise ambiguous");
   expect(initialized.instructions).toContain("match=single-folder");
-  expect(initialized.instructions).toContain("groups candidates by VS Code window");
+  expect(initialized.instructions).toContain("grouped by VS Code window");
+  expect(initialized.instructions).toContain("Focus is not workspace ownership evidence or a routing requirement");
+  expect(initialized.instructions).toContain("multiple windows alone do not require a question");
+  expect(initialized.instructions).toContain("connection.windowInstanceId is only a hint");
+  expect(initialized.instructions).toContain("connection.selectionToken");
+  expect(initialized.instructions).toContain("Reconnect can target an unfocused live window");
+  expect(initialized.instructions).not.toContain("one uniquely identified VS Code workspace context");
   expect(initialized.instructions).toContain("Pure reconnect uses inspect_artifact_review with intent=reconnect");
   expect(initialized.instructions).toContain("After creation, use only the exact returned artifactDirectory");
   expect(initialized.instructions).toContain("Never scan global artifact storage or a workspace");
@@ -292,7 +298,7 @@ afterEach(async () => {
   await Promise.all(temporaryDirectories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })));
 });
 
-describe("artifact review MCP server v7", () => {
+describe("artifact review MCP server v8", () => {
   it("lists the resolver plus four lifecycle tools and creates a detached schema-v5 global artifact immediately", async () => {
     const fixture = await workspaceFixture();
     const client = startClient(fixture.registry);
@@ -2152,6 +2158,8 @@ describe("artifact review MCP server v7", () => {
     });
     expect(replayed.isError).toBe(true);
     expect(replayed.content[0].text).toContain("WINDOW_SELECTION_EXPIRED");
+    expect(replayed.content[0].text).toContain("retry inspect_artifact_review on this exact artifact handle");
+    expect(replayed.content[0].text).not.toContain("resolve the workspace again");
     expect(replayed.structuredContent).toMatchObject({
       code: "WINDOW_SELECTION_EXPIRED",
       retryable: true,

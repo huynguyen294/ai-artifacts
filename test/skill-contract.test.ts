@@ -39,7 +39,10 @@ describe("create-review-artifact skill contract", () => {
     expect(skill).toContain("ask the user only when the strongest result is tied or otherwise ambiguous");
     expect(skill).toContain("uniquely high-confidence semantic match");
     expect(skill).toContain("When multiple active VS Code windows open the same workspace folder");
-    expect(skill).toContain("candidates grouped by window with selection tokens for disambiguation");
+    expect(skill).toContain("Resolver results are grouped by VS Code window");
+    expect(skill).toContain("Window focus is a ranking hint, not workspace ownership evidence or a routing requirement");
+    expect(skill).toContain("Multiple windows do not automatically require a question");
+    expect(skill).toContain("Each candidate's opaque selection token binds the exact window and workspace tuple");
     expect(skill).toContain("Once exactly one target workspace folder is chosen, read [references/artifact-contract.md](references/artifact-contract.md)");
     expect(skill).toContain("before inspecting that folder or calling `create_artifact`");
     expect(contract).toContain("may call `resolve_artifact_workspace` before loading this reference");
@@ -50,7 +53,10 @@ describe("create-review-artifact skill contract", () => {
     expect(contract).toContain("expire after ten minutes");
     expect(contract).toContain('`agent plus`, `agent-plus`, and `agent_plus` match');
     expect(contract).toContain('`match: "single-folder"`');
-    expect(contract).toContain("the resolver groups candidates by window and assigns opaque selection tokens to disambiguate identical folders across windows");
+    expect(contract).toContain("returns stable candidates grouped into `windows`");
+    expect(contract).toContain("Focus is only a ranking hint, not ownership evidence or a routing requirement");
+    expect(contract).toContain("multiple windows alone do not require a question");
+    expect(contract).toContain("binds an exact `windowInstanceId + workspaceRoot` tuple");
   });
 
   it("uses one chat-visible feedback policy for Review and chat inspection", async () => {
@@ -114,11 +120,32 @@ describe("create-review-artifact skill contract", () => {
     expect(contract).toContain("Schemas 3 and 4 are unsupported and are not live-migrated");
     expect(contract).toContain("exact global handle after creation");
     expect(contract).toContain("Never scan global storage");
+    expect(contract).toContain("Optional `artifact-connection.json` is schema-v1 UI-routing state only");
+    expect(contract).toContain("`artifact.json` remains the source of truth for artifact identity");
+    expect(contract).toContain("Create and reconnect may commit this file; wait and advance preserve it unchanged");
     expect(skill).not.toContain("schema-v4");
     expect(skill).not.toContain("schema v4");
     expect(contract).not.toContain("schema-v4");
     expect(contract).not.toContain("schema v4");
     expect(contract).not.toContain("persistent workspace data");
+  });
+
+  it("documents tagged-create window selection and exact-handle reconnect routing", async () => {
+    const [skill, contract] = await Promise.all([
+      readFile(path.join(skillDirectory, "SKILL.md"), "utf8"),
+      readFile(path.join(skillDirectory, "references", "artifact-contract.md"), "utf8"),
+    ]);
+
+    expect(skill).toContain("retry the same create request with the candidate's `connection.selectionToken`");
+    expect(skill).toContain("the token chooses a window but does not replace tagged-file ownership evidence");
+    expect(skill).toContain("`schemaVersion`, `windowInstanceId`, `connectionRevision`, `openRequestId`, `source`, and `updatedAt`");
+    expect(skill).toContain("An optional `connection.windowInstanceId` is only a hint");
+    expect(skill).toContain("retry the same inspect call with its `connection.selectionToken`");
+    expect(skill).toContain("Reconnect never requires the target window to be focused");
+    expect(contract).toContain("the tagged file remains the ownership evidence");
+    expect(contract).toContain("`connection.windowInstanceId` is an optimization hint");
+    expect(contract).toContain("returns the committed connection metadata");
+    expect(contract).toContain("Focus is not required");
   });
 
   it("always creates implementation plans and treats Proceed as immediate execution authorization", async () => {
