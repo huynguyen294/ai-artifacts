@@ -64,6 +64,18 @@ async function waitForManifestReadRetry(): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ARTIFACT_MANIFEST_READ_RETRY_MS));
 }
 
+const ARTIFACT_CONNECTION_READ_ATTEMPTS = 5;
+const ARTIFACT_CONNECTION_READ_RETRY_MS = 15;
+
+function isTransientConnectionRouteError(error: unknown): boolean {
+  const code = errorCode(error);
+  return code === "ENOENT" || code === "EBUSY" || code === "EACCES" || code === "EPERM";
+}
+
+async function waitForConnectionReadRetry(): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, ARTIFACT_CONNECTION_READ_RETRY_MS));
+}
+
 async function acquireConnectionLock(artifactDirectory: string): Promise<string> {
   const lockPath = path.join(artifactDirectory, ARTIFACT_CONNECTION_LOCK_FILE);
   const safeLockPath = await ensureSafeManagedArtifactFile(
@@ -336,6 +348,100 @@ export async function validateArtifactConnectionParent(
     artifactDirectory: safeDirectory,
     workspaceRoot: manifest.location.workspaceRoot,
   };
+}
+
+export type ReadArtifactConnectionRouteOptions = {
+  allowMissing?: boolean;
+  boundedRetry?: boolean;
+  rootOptions?: GlobalArtifactsRootOptions;
+};
+
+export async function readArtifactConnectionRoute(
+  artifactDirectory: string,
+  options: ReadArtifactConnectionRouteOptions = {},
+): Promise<ArtifactConnection | null> {
+  const { allowMissing = true, boundedRetry = true, rootOptions } = options;
+  const resolvedRootOptions = defaultGlobalRootOptions(rootOptions);
+  const candidateArtifactId = path.basename(path.resolve(artifactDirectory));
+  const maxAttempts = boundedRetry ? ARTIFACT_CONNECTION_READ_ATTEMPTS : 1;
+
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const canRetry = attempt < maxAttempts - 1;
+    try {
+      const safeDirectory = await ensureSafeGlobalArtifactDirectory(
+        candidateArtifactId,
+        artifactDirectory,
+        resolvedRootOptions,
+      );
+
+      const filePath = path.join(safeDirectory, ARTIFACT_CONNECTION_FILE);
+      const safeFilePath = await ensureSafeManagedArtifactFile(
+        safeDirectory,
+        filePath,
+        { allowMissing: true },
+      );
+
+      const raw = await fs.readFile(safeFilePath, "utf8");
+      if (!raw.trim()) {
+        if (canRetry) {
+          await waitForConnectionReadRetry();
+          continue;
+        }
+        throw new ArtifactConnectionInvalidError("artifact-connection.json is empty.");
+      }
+
+      let json: unknown;
+      try {
+        json = JSON.parse(raw);
+      } catch (err) {
+        if (canRetry) {
+          await waitForConnectionReadRetry();
+          continue;
+        }
+        throw new ArtifactConnectionInvalidError(
+          `malformed JSON in artifact-connection.json: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+
+      try {
+        return parseArtifactConnection(json);
+      } catch (err) {
+        throw new ArtifactConnectionInvalidError(
+          `invalid artifact connection schema: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    } catch (error) {
+      if (error instanceof ArtifactConnectionInvalidError) {
+        throw error;
+      }
+
+      const message = error instanceof Error ? error.message : String(error);
+      if (
+        message.includes("UNSAFE_ARTIFACT_PATH") ||
+        message.includes("UNSAFE_ARTIFACT_PERMISSIONS") ||
+        message.includes("direct child") ||
+        message.includes("does not match its artifact id") ||
+        message.includes("escapes the user home") ||
+        message.includes("escapes the global collection root")
+      ) {
+        throw error;
+      }
+
+      if (isTransientConnectionRouteError(error) && canRetry) {
+        await waitForConnectionReadRetry();
+        continue;
+      }
+
+      if (errorCode(error) === "ENOENT") {
+        if (allowMissing) return null;
+        throw error;
+      }
+
+      throw error;
+    }
+  }
+
+  return null;
 }
 
 export type ReadArtifactConnectionOptions = {

@@ -1,6 +1,6 @@
 import * as vscode from "vscode";
 import { ArtifactReviewProvider } from "./artifact-review-provider";
-import { ArtifactReviewOpenCoordinator, setupGlobalArtifactReadyWatcher } from "./artifact-review-open";
+import { ArtifactReviewOpenCoordinator, setupGlobalArtifactConnectionWatcher } from "./artifact-review-open";
 import { ensureSafeGlobalArtifactsRoot } from "../shared/artifact-validation";
 import {
   checkAllIntegrations,
@@ -279,25 +279,25 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   );
 
   try {
-    const artifactReadyWatcher = await setupGlobalArtifactReadyWatcher<vscode.Uri, vscode.FileSystemWatcher>({
+    const artifactConnectionWatcher = await setupGlobalArtifactConnectionWatcher<vscode.Uri, vscode.FileSystemWatcher>({
       ensureGlobalArtifactsRoot: () => ensureSafeGlobalArtifactsRoot(),
       createWatcher: (collectionRoot, pattern) =>
         vscode.workspace.createFileSystemWatcher(
           new vscode.RelativePattern(vscode.Uri.file(collectionRoot), pattern),
           false,
-          true,
+          false,
           true,
         ),
+      localWindowInstanceId: () => workspaceRegistryPublisher.currentInstanceId,
       isAutoOpenEnabled: () =>
         vscode.workspace.getConfiguration("agentPlus").get<boolean>("autoOpenArtifactReview", true),
-      isWindowFocused: () => vscode.window.state.focused,
-      artifactUriFromComments: (commentsUri) => vscode.Uri.joinPath(commentsUri, "..", "artifact.md"),
+      artifactUriFromConnection: (connectionUri) => vscode.Uri.joinPath(connectionUri, "..", "artifact.md"),
       openArtifactReview: async (artifactUri) => {
         await artifactReviewOpenCoordinator.open(artifactUri);
       },
-      reportError: (error) => console.error("Auto-opening artifact review failed:", error),
+      reportError: (error) => console.error("Targeted auto-opening artifact review failed:", error),
     });
-    context.subscriptions.push(artifactReadyWatcher);
+    context.subscriptions.push(artifactConnectionWatcher);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     console.error("Starting the global artifact watcher failed:", error);

@@ -7,7 +7,8 @@ import {
   type SafeGlobalArtifactHandle,
 } from "../shared/artifact-validation";
 import type { ArtifactManifest } from "../shared/contracts";
-import type { GlobalArtifactsRootOptions } from "../shared/artifact-files";
+import { ARTIFACT_CONNECTION_FILE, type GlobalArtifactsRootOptions } from "../shared/artifact-files";
+import { readArtifactConnectionRoute } from "../shared/artifact-connection";
 
 export type ArtifactFileUri = {
   readonly fsPath: string;
@@ -85,45 +86,107 @@ export class ArtifactReviewOpenCoordinator<TUri extends ArtifactFileUri> {
   }
 }
 
-export type ArtifactReadyHandlerDependencies<TUri> = {
+export type TargetedArtifactConnectionHandlerDependencies<TUri extends ArtifactFileUri> = {
+  localWindowInstanceId: () => string;
   isAutoOpenEnabled: () => boolean;
-  isWindowFocused: () => boolean;
-  artifactUriFromComments: (commentsUri: TUri) => TUri;
+  artifactUriFromConnection: (connectionUri: TUri) => TUri;
   openArtifactReview: (artifactUri: TUri) => Promise<void>;
   reportError: (error: unknown) => void;
+  rootOptions?: GlobalArtifactsRootOptions;
 };
 
-export function createArtifactReadyHandler<TUri>(
-  dependencies: ArtifactReadyHandlerDependencies<TUri>,
-): (commentsUri: TUri) => Promise<void> {
-  return async (commentsUri) => {
+export function createTargetedArtifactConnectionHandler<TUri extends ArtifactFileUri>(
+  dependencies: TargetedArtifactConnectionHandlerDependencies<TUri>,
+): (connectionUri: TUri) => Promise<void> {
+  const completedOpenRequestIds = new Set<string>();
+  const inFlightOpenRequests = new Map<string, Promise<void>>();
+  const maxDedupeEntries = 200;
+
+  return async (connectionUri: TUri) => {
     if (!dependencies.isAutoOpenEnabled()) return;
-    if (!dependencies.isWindowFocused()) return;
+
+    // Stage 1: Safe routing read
+    let connection: Awaited<ReturnType<typeof readArtifactConnectionRoute>>;
     try {
-      const artifactUri = dependencies.artifactUriFromComments(commentsUri);
-      await dependencies.openArtifactReview(artifactUri);
+      const connectionFilePath = connectionUri.fsPath;
+      const artifactDirectory = path.dirname(connectionFilePath);
+
+      connection = await readArtifactConnectionRoute(artifactDirectory, {
+        allowMissing: true,
+        boundedRetry: true,
+        ...(dependencies.rootOptions ? { rootOptions: dependencies.rootOptions } : {}),
+      });
+    } catch {
+      // Fail closed silently if routing read or safety checks fail
+      return;
+    }
+
+    if (!connection) return;
+
+    // Stage 2: Silent ignore for non-target windows
+    if (connection.windowInstanceId !== dependencies.localWindowInstanceId()) {
+      return;
+    }
+
+    // Stage 3: Deduplication and in-flight request handling
+    const requestId = connection.openRequestId;
+
+    if (completedOpenRequestIds.has(requestId)) {
+      return;
+    }
+
+    const existingFlight = inFlightOpenRequests.get(requestId);
+    if (existingFlight) {
+      try {
+        await existingFlight;
+      } catch {
+        // Suppress error: only the owner of the in-flight request calls reportError
+      }
+      return;
+    }
+
+    const artifactUri = dependencies.artifactUriFromConnection(connectionUri);
+    const openPromise = dependencies.openArtifactReview(artifactUri);
+    inFlightOpenRequests.set(requestId, openPromise);
+
+    try {
+      await openPromise;
+      completedOpenRequestIds.add(requestId);
+      if (completedOpenRequestIds.size > maxDedupeEntries) {
+        const firstKey = completedOpenRequestIds.values().next().value;
+        if (firstKey) completedOpenRequestIds.delete(firstKey);
+      }
     } catch (error) {
       dependencies.reportError(error);
+    } finally {
+      inFlightOpenRequests.delete(requestId);
     }
   };
 }
 
-export type ArtifactReadyWatcher<TUri> = {
-  onDidCreate: (listener: (commentsUri: TUri) => void | Promise<void>) => unknown;
+export type ArtifactConnectionWatcher<TUri> = {
+  onDidCreate: (listener: (connectionUri: TUri) => void | Promise<void>) => unknown;
+  onDidChange: (listener: (connectionUri: TUri) => void | Promise<void>) => unknown;
 };
 
-export type GlobalArtifactWatcherDependencies<TUri, TWatcher extends ArtifactReadyWatcher<TUri>> =
-  ArtifactReadyHandlerDependencies<TUri> & {
-    ensureGlobalArtifactsRoot: () => Promise<string>;
-    createWatcher: (collectionRoot: string, pattern: string) => TWatcher;
-  };
+export type GlobalArtifactConnectionWatcherDependencies<
+  TUri extends ArtifactFileUri,
+  TWatcher extends ArtifactConnectionWatcher<TUri>,
+> = TargetedArtifactConnectionHandlerDependencies<TUri> & {
+  ensureGlobalArtifactsRoot: () => Promise<string>;
+  createWatcher: (collectionRoot: string, pattern: string) => TWatcher;
+};
 
-export async function setupGlobalArtifactReadyWatcher<
-  TUri,
-  TWatcher extends ArtifactReadyWatcher<TUri>,
->(dependencies: GlobalArtifactWatcherDependencies<TUri, TWatcher>): Promise<TWatcher> {
+export async function setupGlobalArtifactConnectionWatcher<
+  TUri extends ArtifactFileUri,
+  TWatcher extends ArtifactConnectionWatcher<TUri>,
+>(
+  dependencies: GlobalArtifactConnectionWatcherDependencies<TUri, TWatcher>,
+): Promise<TWatcher> {
   const collectionRoot = await dependencies.ensureGlobalArtifactsRoot();
-  const watcher = dependencies.createWatcher(collectionRoot, "*/comments.json");
-  watcher.onDidCreate(createArtifactReadyHandler(dependencies));
+  const watcher = dependencies.createWatcher(collectionRoot, `*/${ARTIFACT_CONNECTION_FILE}`);
+  const handler = createTargetedArtifactConnectionHandler(dependencies);
+  watcher.onDidCreate(handler);
+  watcher.onDidChange(handler);
   return watcher;
 }

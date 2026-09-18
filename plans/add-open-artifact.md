@@ -413,10 +413,6 @@ Kiểm tra tự động tối thiểu:
 - Kiểm tra connection file không tham gia artifact/comments/submission hashes hoặc round-token schema.
 - Kiểm tra candidate/window types có một source of truth dùng được bởi MCP và extension; không duplicate schema lệch nhau.
 
-#### Manual verification
-
-Không có. Phase này chỉ thay shared contracts và unit tests.
-
 #### Điều kiện hoàn tất
 
 - TypeScript check và focused tests pass.
@@ -466,10 +462,6 @@ Test tối thiểu:
 - Kiểm tra exact user wording vẫn được ưu tiên hơn `focused`.
 - Kiểm tra nhiều windows không tự động tạo error; ambiguity được giữ trong grouped result cho skill quyết định.
 - Kiểm tra không dùng cwd, environment context, workspace order hoặc filesystem scan làm evidence.
-
-#### Manual verification
-
-Không bắt buộc. Có thể inspect structured MCP response thủ công, nhưng chưa được tuyên bố hành vi `openWith` ở phase này.
 
 #### Điều kiện hoàn tất
 
@@ -523,10 +515,6 @@ Test tối thiểu:
 - Kiểm tra uninstall/cleanup không thêm logic xóa connection file hoặc artifact directory.
 - Kiểm tra connection write không sửa `artifact.json`, `artifact.md`, `comments.json` hoặc submission.
 
-#### Manual verification
-
-Không có. Filesystem behavior được kiểm tra bằng isolated fixtures; POSIX modes chạy trong CI Linux.
-
 #### Điều kiện hoàn tất
 
 - Module có API nội bộ rõ ràng cho preflight và commit.
@@ -577,10 +565,6 @@ Test tối thiểu:
 - Kiểm tra không có artifact directory khi preflight trả `WINDOW_SELECTION_REQUIRED`.
 - Kiểm tra create không gọi `openWith` và không chờ extension acknowledgement.
 - Kiểm tra AI vẫn tự chọn unique strongest candidate; nhiều window không tự động buộc user chọn.
-
-#### Manual verification
-
-Chưa cần kiểm tra UI. Có thể tạo artifact trong isolated test home và xác nhận đủ bốn files, nhưng manual `openWith` để Phase 2 xử lý.
 
 #### Điều kiện hoàn tất
 
@@ -635,10 +619,6 @@ Test tối thiểu:
 - Kiểm tra Proceed/Just save không bị replay khi reconnect.
 - Kiểm tra connection source of truth ở file; AI-retained ID chỉ là hint được revalidate.
 
-#### Manual verification
-
-Không bắt buộc ở phase này vì extension watcher chưa cutover. Có thể inspect connection file sau reconnect để xác nhận target/revision/request ID thay đổi.
-
 #### Điều kiện hoàn tất
 
 - Focused lifecycle, resolver và skill-contract tests pass.
@@ -674,10 +654,6 @@ Ngoài full suite, đối chiếu coverage tối thiểu cho grouped resolver, t
 - Xác nhận create/inspect có thể update routing state nhưng wait/advance không thể rebind.
 - Xác nhận existing connection-less v5 artifacts vẫn inspect/reconnect được và connection writes không đổi Markdown/SHA/comments/submission/review round.
 - Không coi các commit 1A–1E là release candidates độc lập.
-
-#### Manual verification
-
-Không có. Phase 1 chỉ chứng minh MCP/filesystem contract; hành vi đúng VS Code window được kiểm tra ở Phase 2.
 
 #### Điều kiện hoàn tất Phase 1
 
@@ -731,23 +707,12 @@ Test tối thiểu:
 - Kiểm tra manual command vẫn dùng shared validation/open coordinator.
 - Không tuyên bố multi-window pass chỉ từ mocks.
 
-### Manual verification — Chú cần chạy
-
-1. Mở hai VS Code windows với các folder khác nhau; tạo artifact cho folder được nêu rõ và xác nhận đúng window mở.
-2. Mở cùng một repo ở hai windows; dùng wording `window đang focus`, sau đó xác nhận đúng window mở.
-3. Với hai identical windows và wording không đủ, xác nhận AI hỏi lựa chọn thay vì tự đoán.
-4. Chuyển focus sang ứng dụng khác trước connection event; xác nhận target window vẫn có Artifact Review tab khi quay lại.
-5. Đóng/reload target window; reconnect và xác nhận stale ID dẫn tới resolve/rebind.
-6. Tắt auto-open setting; xác nhận connection vẫn update nhưng UI không tự mở. Bật lại và reconnect để xác nhận mở.
-
-AI phải cung cấp từng thao tác ngắn, chờ Chú xác nhận kết quả, và ghi pass/fail theo case. Nếu case fail, dừng phase để chẩn đoán; không chuyển sang packaging/release.
-
-### Điều kiện hoàn tất
+### Điều kiện hoàn tất implementation
 
 - Focused automated tests, TypeScript check và extension build pass.
-- Chú xác nhận toàn bộ manual cases bắt buộc pass. Case không áp dụng cho support matrix phải được ghi rõ là `N/A`; case bị defer giữ Phase 2 ở trạng thái chưa hoàn tất.
 - Đúng window mở cho create/reconnect; non-target windows không mở.
 - Window focus không còn là điều kiện của targeted open.
+- Manual multi-window evidence được defer về installed-build gate ở cuối plan. Phase 2 chỉ được ghi `implementation complete`; chưa được coi là feature/release complete trước gate cuối.
 
 ### Rollback checkpoint
 
@@ -765,7 +730,7 @@ Có thể revert watcher về comments-created behavior trong khi giữ connecti
 - Giữ exact five-tool availability check; không thay client allowlists bằng tool mới.
 - Update MCP instructions, README, architecture, philosophy và changelog theo behavior mới.
 - Ghi thay đổi kiến trúc vào `docs/CHANGE_LOGS.md` theo project rule.
-- Rebuild managed runtime/package; user reinstall integrations và restart AI client.
+- Rebuild managed runtime/package và chuẩn bị exact build cho gate cuối; Chú chỉ reinstall integrations và restart AI client một lần trong phần install/manual cuối plan.
 
 ### Automated verification
 
@@ -792,16 +757,12 @@ Kiểm tra tự động tối thiểu:
 - Kiểm tra package version/runtime version assumptions được khóa và changelog không claim release gates đã pass trước Phase 4.
 - Kiểm tra không sửa generated `dist/` bằng tay; chỉ build từ source.
 
-### Manual verification
-
-Sau khi automated checks pass, Chú chạy **AI Artifacts: Install All Detected Integrations**, restart AI client và mở chat mới. Chưa cần lặp toàn bộ multi-window matrix ở đây; smoke test installed runtime được thực hiện trong Phase 4.
-
-### Điều kiện hoàn tất
+### Điều kiện hoàn tất implementation
 
 - Skill/docs/runtime/client tests và builds pass.
-- Source, packaged runtime và installed integration dùng cùng contract/version.
+- Source và packaged runtime dùng cùng contract/version; package sẵn sàng cho installed-build gate cuối.
 - Tool count vẫn năm và không có public open/connect tool.
-- Chú đã reinstall integrations và restart client. Nếu chưa làm, Phase 3 chỉ được ghi “code complete, install pending”, chưa được đánh dấu hoàn tất và chưa chuyển sang Phase 4.
+- Việc cài extension, reinstall integrations, restart AI client và manual smoke được thực hiện một lần ở cuối plan. Trước gate đó Phase 3 chỉ được ghi `implementation complete, install pending`.
 
 ### Rollback checkpoint
 
@@ -811,7 +772,7 @@ Rollback phải áp dụng đồng thời extension/runtime/skill/docs về chec
 
 ### Mục tiêu
 
-Chứng minh thay đổi hoàn chỉnh end-to-end trên source, packaged runtime, installed integration và VS Code host thực, đồng thời xác nhận không regression lifecycle hoặc user-data safety.
+Hoàn tất full regression và tạo exact packaged build sẵn sàng để Chú cài. Installed integration và VS Code host thực được chứng minh một lần tại manual gate cuối, sau khi toàn bộ implementation đã ổn định.
 
 ### Automated verification matrix
 
@@ -874,29 +835,17 @@ Ngoài automated gates, packaged runtime phải được inspected để chứng
 - Xác nhận artifact v5 fixtures trước thay đổi vẫn load/inspect/reconnect được.
 - Xác nhận connection write/update không đổi artifact Markdown bytes/SHA, comments, submission hoặc review round.
 - Xác nhận packaged runtime tool catalog và input/output schemas khớp source.
-- Xác nhận manual evidence đến từ installed extension/runtime, không phải development mocks.
+- Xác nhận chưa dùng development mocks để claim installed-runtime/manual pass; evidence đó chỉ được ghi sau gate cuối trên exact build đã bàn giao.
 - Phân loại mọi failure là blocker, accepted limitation hoặc unrelated baseline failure; không đánh dấu pass mơ hồ.
 
-### Manual verification — installed-runtime smoke gate
-
-Sau khi Chú đã reinstall integration và restart AI client:
-
-1. Tạo một artifact bằng unique workspace wording; xác nhận đúng window tự mở.
-2. Đóng tab Artifact Review, yêu cầu reconnect; xác nhận inspect flow mở lại cùng artifact mà không đổi round/Markdown.
-3. Rebind từ một window khác; xác nhận connection target chuyển và window cũ không tự mở.
-4. Reload target window rồi reconnect; xác nhận stale ID được resolve/rebind thay vì mở nhầm.
-5. Thực hiện một Review/Proceed/Just save path đại diện; xác nhận connection feature không lặp action hoặc phá waiter/round behavior.
-
-Nếu Phase 2 manual matrix vừa chạy trên đúng installed build cuối cùng thì có thể reuse evidence, nhưng AI phải ghi rõ build/version/hash tương ứng; nếu source/package thay đổi sau manual test thì chạy lại các case bị ảnh hưởng.
-
-### Điều kiện hoàn tất
+### Điều kiện sẵn sàng cài đặt và manual gate cuối
 
 - `npm.cmd run check`, `npm.cmd test` và `npm.cmd run build` đều pass.
-- Packaged runtime inspection pass và installed integration dùng đúng runtime/skill mới.
-- Phase 2 multi-window gate và Phase 4 installed-runtime smoke gate pass.
+- Packaged runtime inspection pass và package cài đặt chứa đúng runtime/skill mới.
 - Không còn P0/P1 chưa giải quyết đối với wrong-window open, lifecycle corruption, unsafe path hoặc artifact data loss.
 - Docs/changelog mô tả đúng behavior đã chứng minh; không claim unsupported remote topology.
 - Worktree chỉ chứa intended implementation/docs/test changes cùng pre-existing user changes đã được bảo toàn.
+- AI bàn giao exact build/version/hash hoặc package path cho Chú; chưa đánh dấu feature/release complete cho tới khi installed-build manual gate ở cuối plan pass.
 
 ### Rollback checkpoint
 
@@ -963,3 +912,58 @@ Plan hoàn tất khi tất cả điều sau được chứng minh:
 - Existing v5 artifacts không connection vẫn usable.
 - Review lifecycle, hashes, round tokens, rollback và user artifact retention invariants vẫn pass.
 - Full automated gates, packaged-runtime verification và manual multi-window gates đều pass.
+
+# Phần III — Install và manual verification cuối cùng
+
+Toàn bộ manual test được defer tới đây để Chú chỉ cần cài và kiểm tra **một build cuối cùng** sau khi implementation, docs, packaging, AI review và automated gates đã hoàn tất.
+
+## 1. Entry gate trước khi bàn giao bản cài
+
+Chỉ bắt đầu phần này khi:
+
+- Phase 1–3 đã đạt trạng thái `implementation complete`; Phase 4 automated/release-preparation gate đã pass.
+- `npm.cmd run check`, `npm.cmd test` và `npm.cmd run build` pass trên source snapshot cuối cùng.
+- Packaged runtime đã được inspect và khớp source contract, tool catalog, schema và skill của cùng snapshot.
+- Không còn P0/P1 mở liên quan đến wrong-window routing, lifecycle corruption, unsafe path hoặc artifact data loss.
+- AI ghi lại exact package path, package/extension version và source commit hoặc build identifier dùng cho manual test.
+- Sau khi tạo package bàn giao, không có source/runtime/skill change nào được đưa vào mà chưa rebuild và chạy lại automated gates.
+
+## 2. Install handoff — Chú thực hiện một lần
+
+1. Chú cài extension/package từ exact build đã được bàn giao.
+2. Chú reload/restart VS Code để extension host dùng code mới.
+3. Chú chạy **AI Artifacts: Install All Detected Integrations** để đồng bộ managed runtime và installed skill.
+4. Chú restart AI client và mở chat mới để loại bỏ process/tool schema cũ còn cache.
+5. AI và Chú xác nhận version/build identifier đang chạy đúng với build đã qua automated gates trước khi bắt đầu case 1.
+
+Nếu không xác nhận được installed build hoặc integration vẫn dùng runtime cũ, dừng tại đây; không ghi kết quả manual cho source snapshot mới.
+
+## 3. Manual Verification Matrix — Chú cần chạy
+
+| # | Kịch bản | Thao tác | Kết quả bắt buộc | Trạng thái |
+| -: | --- | --- | --- | :---: |
+| **1** | Hai windows khác folder | Mở Window A với folder A và Window B với folder B. Yêu cầu tạo artifact cho folder A bằng wording rõ ràng. | Chỉ Window A tự mở `Artifact Review`; Window B không mở và không hiện lỗi của A. | Chờ Chú xác nhận |
+| **2** | Hai windows cùng repo, có focus hint | Mở cùng repo ở hai windows, focus Window 1 rồi yêu cầu tạo artifact ở `window đang focus`. | Chỉ Window 1 mở review; Window 2 im lặng. | Chờ Chú xác nhận |
+| **3** | Hai windows cùng repo, không đủ evidence | Giữ hai windows cùng repo nhưng không nêu window và không cung cấp tín hiệu phân biệt. | AI hỏi Chú chọn window; không tự đoán và không tạo artifact trước khi lựa chọn được xác nhận. | Chờ Chú xác nhận |
+| **4** | Target window không focus | Bắt đầu create cho target window rồi chuyển focus sang ứng dụng khác trước connection event. | Target window vẫn nhận request và tab review đã mở khi Chú quay lại; focus không phải điều kiện routing. | Chờ Chú xác nhận |
+| **5** | Window reload và stale binding | Reload/đóng target window, mở lại workspace rồi reconnect exact artifact handle. | Stale instance ID không mở nhầm window; flow resolve/rebind tới instance đang sống và mở đúng artifact. | Chờ Chú xác nhận |
+| **6** | Auto-open disabled/enabled | Tắt `agentPlus.autoOpenArtifactReview`, tạo/reconnect artifact; sau đó bật lại và reconnect lần nữa. | Khi tắt, connection vẫn update nhưng UI không tự mở. Khi bật, request mới mở đúng target window. | Chờ Chú xác nhận |
+| **7** | Reconnect giữ nguyên lifecycle | Đóng tab review rồi yêu cầu reconnect exact artifact handle. | Inspect/reconnect mở lại cùng artifact; không đổi Markdown, review round hoặc lặp Review/Proceed/Save cũ. | Chờ Chú xác nhận |
+| **8** | Rebind sang window khác | Từ một registered window khác, reconnect exact artifact và chọn/rebind target mới. | Target mới mở; window cũ không tự mở. Connection target đổi mà artifact ownership/lifecycle không đổi. | Chờ Chú xác nhận |
+| **9** | Lifecycle smoke đại diện | Trên installed build, hoàn thành một path đại diện trong `Review`, `Proceed` hoặc `Just save` theo trạng thái artifact. | Action chỉ thực hiện một lần; waiter, round token và review state không bị connection feature làm lặp hoặc hỏng. | Chờ Chú xác nhận |
+
+## 4. Optional diagnostics khi cần điều tra
+
+Các kiểm tra này không phải completion gate riêng nếu toàn bộ cases bắt buộc đã pass, nhưng được dùng để định vị lỗi:
+
+- Inspect structured `resolve_artifact_workspace` response để xác nhận folders được group theo từng window và duplicate workspace path không bị merge xuyên windows.
+- Sau create thành công, kiểm tra artifact directory có đủ core files và `artifact-connection.json`; connection payload không duplicate `artifactId`/`workspaceRoot`.
+- Trước và sau reconnect, kiểm tra `connectionRevision` tăng đúng một và `openRequestId` đổi; Markdown bytes, review round, comments và submission không đổi ngoài action Chú chủ động thực hiện.
+- Nếu nghi ngờ cài nhầm runtime, đối chiếu installed managed runtime/skill version với package/source identifier đã ghi ở entry gate.
+
+## 5. Cách chạy và điều kiện kết thúc
+
+- AI đưa từng case một bằng thao tác ngắn, chờ Chú xác nhận rồi ghi `PASS`, `FAIL` hoặc `N/A` có lý do; không yêu cầu Chú chạy cả matrix trong một lần không có checkpoint.
+- Nếu một case fail, dừng matrix và chẩn đoán trên đúng installed build. Không chuyển sang case sau và không đánh dấu feature complete hoặc release.
+- Nếu source, extension package, managed runtime hoặc installed skill thay đổi sau khi đã test, rebuild/reinstall và chạy lại mọi case bị ảnh hưởng; evidence của build cũ không được tái sử dụng ngầm.
+- Chỉ sau khi tất cả cases bắt buộc pass hoặc được Chú phê duyệt `N/A`, AI mới cập nhật kết quả trong plan và đánh dấu toàn feature complete/releasable.

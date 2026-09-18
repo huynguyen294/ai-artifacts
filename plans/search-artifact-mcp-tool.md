@@ -1,0 +1,2 @@
+- hiện tại vẫn chưa có cơ chế search artifact nào cho AI nếu user yêu cầu tìm 1 artifact nào đó.
+- tạo thêm 1 mcp tool search. AI có thể search theo name mà user truyền vào, mcp tiếp tục xử lý và tạo candidates tương tự resolve workspace. Giải thích các trường trong kết quả để AI hiểu và tự xác định artifact nếu rõ ràng với yêu cầu của người dùng, nếu thấy mơ hồ tiếp tục cho người dùng chọn (giải thích các candidates cho user)

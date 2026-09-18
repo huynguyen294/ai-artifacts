@@ -1,0 +1,3 @@
+- cập nhật contract, artifacts chỉ là tài liệu tạm, không phải là dữ liệu lâu dài, người dùng muốn lưu thì đã gọi just save hoặc copy và lưu vào repo rồi
+- cần clean up để chống đầy và fs performance issue
+- dự kiến nên là 14 hay 30 ngày? số lượng artifacts nhiều đến mức gây ra các vấn đề là bao nhiêu?

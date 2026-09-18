@@ -1,4 +1,5 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import { promises as fs } from "node:fs";
 import {
   access,
   mkdir,
@@ -15,13 +16,13 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   ArtifactReviewOpenCoordinator,
-  createArtifactReadyHandler,
+  createTargetedArtifactConnectionHandler,
   openArtifactReview,
-  setupGlobalArtifactReadyWatcher,
+  setupGlobalArtifactConnectionWatcher,
   validateArtifactReviewTarget,
   type ArtifactFileUri,
 } from "../src/extension/artifact-review-open";
-import { globalArtifactsRoot } from "../src/shared/artifact-files";
+import { ARTIFACT_CONNECTION_FILE, globalArtifactsRoot } from "../src/shared/artifact-files";
 import { ensureSafeGlobalArtifactsRoot } from "../src/shared/artifact-validation";
 
 const temporaryDirectories: string[] = [];
@@ -29,15 +30,33 @@ const temporaryDirectories: string[] = [];
 type TestUri = ArtifactFileUri & { source?: string };
 
 class TestWatcher {
-  private listener: ((uri: TestUri) => void | Promise<void>) | undefined;
+  private readonly createListeners: ((uri: TestUri) => void | Promise<void>)[] = [];
+  private readonly changeListeners: ((uri: TestUri) => void | Promise<void>)[] = [];
 
   onDidCreate(listener: (uri: TestUri) => void | Promise<void>): void {
-    this.listener = listener;
+    this.createListeners.push(listener);
+  }
+
+  onDidChange(listener: (uri: TestUri) => void | Promise<void>): void {
+    this.changeListeners.push(listener);
+  }
+
+  async fireCreate(uri: TestUri): Promise<void> {
+    for (const listener of [...this.createListeners]) {
+      await listener(uri);
+    }
+  }
+
+  async fireChange(uri: TestUri): Promise<void> {
+    for (const listener of [...this.changeListeners]) {
+      await listener(uri);
+    }
   }
 
   async fire(uri: TestUri): Promise<void> {
-    if (!this.listener) throw new Error("The watcher listener is not registered.");
-    await this.listener(uri);
+    for (const listener of [...this.createListeners]) {
+      await listener(uri);
+    }
   }
 }
 
@@ -54,17 +73,25 @@ async function makeUserHome(): Promise<string> {
 async function writeArtifact(
   userHome: string,
   artifactId = "artifact-001",
+  options: {
+    windowInstanceId?: string;
+    openRequestId?: string;
+    connectionRevision?: number;
+    source?: "create" | "inspect";
+  } = {},
 ): Promise<{
   artifactDirectory: string;
   artifactPath: string;
   manifestPath: string;
   commentsPath: string;
+  connectionPath: string;
 }> {
   const markdown = "# Safe artifact\n";
   const artifactDirectory = path.join(globalArtifactsRoot({ userHome }), artifactId);
   const artifactPath = path.join(artifactDirectory, "artifact.md");
   const manifestPath = path.join(artifactDirectory, "artifact.json");
   const commentsPath = path.join(artifactDirectory, "comments.json");
+  const connectionPath = path.join(artifactDirectory, ARTIFACT_CONNECTION_FILE);
   await mkdir(artifactDirectory, { recursive: true });
   await writeFile(artifactPath, markdown, "utf8");
   const timestamp = new Date().toISOString();
@@ -86,7 +113,15 @@ async function writeArtifact(
     artifactSha256: sha256(markdown),
     comments: [],
   }, null, 2)}\n`, "utf8");
-  return { artifactDirectory, artifactPath, manifestPath, commentsPath };
+  await writeFile(connectionPath, `${JSON.stringify({
+    schemaVersion: 1,
+    windowInstanceId: options.windowInstanceId ?? "11111111-1111-4111-8111-111111111111",
+    connectionRevision: options.connectionRevision ?? 1,
+    openRequestId: options.openRequestId ?? "22222222-2222-4222-8222-222222222222",
+    updatedAt: timestamp,
+    source: options.source ?? "create",
+  }, null, 2)}\n`, "utf8");
+  return { artifactDirectory, artifactPath, manifestPath, commentsPath, connectionPath };
 }
 
 async function fixture(artifactId = "artifact-001"): Promise<{
@@ -313,91 +348,296 @@ describe("artifact review open coordinator", () => {
   });
 });
 
-describe("artifact-ready event handler", () => {
+describe("targeted artifact-connection event handler", () => {
   it("does not derive or open an artifact when auto-open is disabled", async () => {
-    const artifactUriFromComments = vi.fn((uri: TestUri) => uri);
+    const userHome = await makeUserHome();
+    const artifact = await writeArtifact(userHome, "disabled-auto-open");
     const open = vi.fn(async (_uri: TestUri) => undefined);
     const reportError = vi.fn();
-    const handler = createArtifactReadyHandler<TestUri>({
+    const handler = createTargetedArtifactConnectionHandler<TestUri>({
+      localWindowInstanceId: () => "11111111-1111-4111-8111-111111111111",
       isAutoOpenEnabled: () => false,
-      isWindowFocused: () => true,
-      artifactUriFromComments,
+      artifactUriFromConnection: (uri) => ({ fsPath: path.join(path.dirname(uri.fsPath), "artifact.md") }),
       openArtifactReview: open,
       reportError,
+      rootOptions: { userHome },
     });
 
-    await handler({ fsPath: "comments.json" });
+    await handler({ fsPath: artifact.connectionPath });
 
-    expect(artifactUriFromComments).not.toHaveBeenCalled();
     expect(open).not.toHaveBeenCalled();
     expect(reportError).not.toHaveBeenCalled();
   });
 
-  it("maps one comments event to one artifact open and reports failures", async () => {
-    const error = new Error("injected handler failure");
+  it("silently ignores events targeted at a different window instance", async () => {
+    const userHome = await makeUserHome();
+    const targetWindow = "11111111-1111-4111-8111-111111111111";
+    const otherWindow = "99999999-9999-4999-8999-999999999999";
+    const artifact = await writeArtifact(userHome, "other-window-artifact", {
+      windowInstanceId: targetWindow,
+    });
+    const open = vi.fn(async (_uri: TestUri) => undefined);
     const reportError = vi.fn();
-    const handler = createArtifactReadyHandler<TestUri>({
+    const handler = createTargetedArtifactConnectionHandler<TestUri>({
+      localWindowInstanceId: () => otherWindow,
       isAutoOpenEnabled: () => true,
-      isWindowFocused: () => true,
-      artifactUriFromComments: (uri) => ({ fsPath: path.join(path.dirname(uri.fsPath), "artifact.md") }),
-      openArtifactReview: async () => { throw error; },
+      artifactUriFromConnection: (uri) => ({ fsPath: path.join(path.dirname(uri.fsPath), "artifact.md") }),
+      openArtifactReview: open,
       reportError,
+      rootOptions: { userHome },
     });
 
-    await handler({ fsPath: path.join("artifact-001", "comments.json") });
+    await handler({ fsPath: artifact.connectionPath });
+
+    expect(open).not.toHaveBeenCalled();
+    expect(reportError).not.toHaveBeenCalled();
+  });
+
+  it("opens artifact review when target window matches local instance regardless of focus", async () => {
+    const userHome = await makeUserHome();
+    const windowA = "11111111-1111-4111-8111-111111111111";
+    const artifact = await writeArtifact(userHome, "matching-window-artifact", {
+      windowInstanceId: windowA,
+    });
+    const open = vi.fn(async (_uri: TestUri) => undefined);
+    const reportError = vi.fn();
+    const handler = createTargetedArtifactConnectionHandler<TestUri>({
+      localWindowInstanceId: () => windowA,
+      isAutoOpenEnabled: () => true,
+      artifactUriFromConnection: (uri) => ({ fsPath: path.join(path.dirname(uri.fsPath), "artifact.md") }),
+      openArtifactReview: open,
+      reportError,
+      rootOptions: { userHome },
+    });
+
+    await handler({ fsPath: artifact.connectionPath });
+
+    expect(open).toHaveBeenCalledTimes(1);
+    expect(open).toHaveBeenCalledWith({ fsPath: artifact.artifactPath });
+    expect(reportError).not.toHaveBeenCalled();
+  });
+
+  it("deduplicates multiple events with the same openRequestId", async () => {
+    const userHome = await makeUserHome();
+    const windowA = "11111111-1111-4111-8111-111111111111";
+    const openRequestId = "33333333-3333-4333-8333-333333333333";
+    const artifact = await writeArtifact(userHome, "dedupe-artifact", {
+      windowInstanceId: windowA,
+      openRequestId,
+    });
+    const open = vi.fn(async (_uri: TestUri) => undefined);
+    const handler = createTargetedArtifactConnectionHandler<TestUri>({
+      localWindowInstanceId: () => windowA,
+      isAutoOpenEnabled: () => true,
+      artifactUriFromConnection: (uri) => ({ fsPath: path.join(path.dirname(uri.fsPath), "artifact.md") }),
+      openArtifactReview: open,
+      reportError: vi.fn(),
+      rootOptions: { userHome },
+    });
+
+    // Simulate both create and change event fired for the same commit
+    await handler({ fsPath: artifact.connectionPath });
+    await handler({ fsPath: artifact.connectionPath });
+
+    expect(open).toHaveBeenCalledTimes(1);
+  });
+
+  it("opens again when a new openRequestId is received for the same artifact", async () => {
+    const userHome = await makeUserHome();
+    const windowA = "11111111-1111-4111-8111-111111111111";
+    const req1 = "11111111-1111-4111-8111-111111111111";
+    const req2 = "22222222-2222-4222-8222-222222222222";
+    const artifact = await writeArtifact(userHome, "reopen-artifact", {
+      windowInstanceId: windowA,
+      openRequestId: req1,
+    });
+    const open = vi.fn(async (_uri: TestUri) => undefined);
+    const handler = createTargetedArtifactConnectionHandler<TestUri>({
+      localWindowInstanceId: () => windowA,
+      isAutoOpenEnabled: () => true,
+      artifactUriFromConnection: (uri) => ({ fsPath: path.join(path.dirname(uri.fsPath), "artifact.md") }),
+      openArtifactReview: open,
+      reportError: vi.fn(),
+      rootOptions: { userHome },
+    });
+
+    await handler({ fsPath: artifact.connectionPath });
+    expect(open).toHaveBeenCalledTimes(1);
+
+    // Update connection with new openRequestId (simulate reconnect/rebind)
+    await writeFile(artifact.connectionPath, JSON.stringify({
+      schemaVersion: 1,
+      windowInstanceId: windowA,
+      connectionRevision: 2,
+      openRequestId: req2,
+      updatedAt: new Date().toISOString(),
+      source: "inspect",
+    }, null, 2), "utf8");
+
+    await handler({ fsPath: artifact.connectionPath });
+    expect(open).toHaveBeenCalledTimes(2);
+  });
+
+  it("reports error when open operation fails or connection is malformed", async () => {
+    const userHome = await makeUserHome();
+    const windowA = "11111111-1111-4111-8111-111111111111";
+    const artifact = await writeArtifact(userHome, "error-artifact", {
+      windowInstanceId: windowA,
+    });
+    const error = new Error("injected open failure");
+    const reportError = vi.fn();
+    const handler = createTargetedArtifactConnectionHandler<TestUri>({
+      localWindowInstanceId: () => windowA,
+      isAutoOpenEnabled: () => true,
+      artifactUriFromConnection: (uri) => ({ fsPath: path.join(path.dirname(uri.fsPath), "artifact.md") }),
+      openArtifactReview: async () => { throw error; },
+      reportError,
+      rootOptions: { userHome },
+    });
+
+    await handler({ fsPath: artifact.connectionPath });
 
     expect(reportError).toHaveBeenCalledTimes(1);
     expect(reportError).toHaveBeenCalledWith(error);
   });
 
-  it("does not derive or open an artifact when the VS Code window is unfocused", async () => {
-    const artifactUriFromComments = vi.fn((uri: TestUri) => uri);
-    const open = vi.fn(async (_uri: TestUri) => undefined);
-    const handler = createArtifactReadyHandler<TestUri>({
-      isAutoOpenEnabled: () => true,
-      isWindowFocused: () => false,
-      artifactUriFromComments,
-      openArtifactReview: open,
-      reportError: vi.fn(),
+  it("P1.1: coalesces concurrent events with the same openRequestId and executes openArtifactReview once", async () => {
+    const userHome = await makeUserHome();
+    const windowA = "11111111-1111-4111-8111-111111111111";
+    const openRequestId = randomUUID();
+    const artifact = await writeArtifact(userHome, "concurrent-events-artifact", {
+      windowInstanceId: windowA,
+      openRequestId,
     });
 
-    await handler({ fsPath: "comments.json" });
+    let releaseOpen: (() => void) | undefined;
+    const openGate = new Promise<void>((resolve) => { releaseOpen = resolve; });
+    const open = vi.fn(async (_uri: TestUri) => openGate);
+    const handler = createTargetedArtifactConnectionHandler<TestUri>({
+      localWindowInstanceId: () => windowA,
+      isAutoOpenEnabled: () => true,
+      artifactUriFromConnection: (uri) => ({ fsPath: path.join(path.dirname(uri.fsPath), "artifact.md") }),
+      openArtifactReview: open,
+      reportError: vi.fn(),
+      rootOptions: { userHome },
+    });
 
-    expect(artifactUriFromComments).not.toHaveBeenCalled();
-    expect(open).not.toHaveBeenCalled();
+    const p1 = handler({ fsPath: artifact.connectionPath });
+    const p2 = handler({ fsPath: artifact.connectionPath });
+
+    await vi.waitFor(() => expect(open).toHaveBeenCalledTimes(1));
+    releaseOpen?.();
+    await Promise.all([p1, p2]);
+
+    expect(open).toHaveBeenCalledTimes(1);
+  });
+
+  it("P1.1: retries opening the same openRequestId after an initial failure without getting permanently deduplicated", async () => {
+    const userHome = await makeUserHome();
+    const windowA = "11111111-1111-4111-8111-111111111111";
+    const openRequestId = randomUUID();
+    const artifact = await writeArtifact(userHome, "retry-after-fail-artifact", {
+      windowInstanceId: windowA,
+      openRequestId,
+    });
+
+    let attempt = 0;
+    const open = vi.fn(async (_uri: TestUri) => {
+      attempt++;
+      if (attempt === 1) {
+        throw new Error("transient open failure");
+      }
+    });
+    const reportError = vi.fn();
+    const handler = createTargetedArtifactConnectionHandler<TestUri>({
+      localWindowInstanceId: () => windowA,
+      isAutoOpenEnabled: () => true,
+      artifactUriFromConnection: (uri) => ({ fsPath: path.join(path.dirname(uri.fsPath), "artifact.md") }),
+      openArtifactReview: open,
+      reportError,
+      rootOptions: { userHome },
+    });
+
+    // First attempt fails
+    await handler({ fsPath: artifact.connectionPath });
+    expect(open).toHaveBeenCalledTimes(1);
+    expect(reportError).toHaveBeenCalledTimes(1);
+
+    // Second event with the SAME openRequestId retries and succeeds!
+    await handler({ fsPath: artifact.connectionPath });
+    expect(open).toHaveBeenCalledTimes(2);
+    expect(reportError).toHaveBeenCalledTimes(1);
+  });
+
+  it("P1.1: concurrent joiner does not report duplicate error when owning open fails", async () => {
+    const userHome = await makeUserHome();
+    const windowA = "11111111-1111-4111-8111-111111111111";
+    const openRequestId = randomUUID();
+    const artifact = await writeArtifact(userHome, "joiner-error-artifact", {
+      windowInstanceId: windowA,
+      openRequestId,
+    });
+
+    let rejectOpen: ((err: Error) => void) | undefined;
+    const openGate = new Promise<void>((_, reject) => { rejectOpen = reject; });
+    const open = vi.fn(async (_uri: TestUri) => openGate);
+    const reportError = vi.fn();
+    const handler = createTargetedArtifactConnectionHandler<TestUri>({
+      localWindowInstanceId: () => windowA,
+      isAutoOpenEnabled: () => true,
+      artifactUriFromConnection: (uri) => ({ fsPath: path.join(path.dirname(uri.fsPath), "artifact.md") }),
+      openArtifactReview: open,
+      reportError,
+      rootOptions: { userHome },
+    });
+
+    const p1 = handler({ fsPath: artifact.connectionPath });
+    const p2 = handler({ fsPath: artifact.connectionPath });
+
+    await vi.waitFor(() => expect(open).toHaveBeenCalledTimes(1));
+    rejectOpen?.(new Error("injected open failure"));
+    await Promise.all([p1, p2]);
+
+    expect(open).toHaveBeenCalledTimes(1);
+    expect(reportError).toHaveBeenCalledTimes(1);
   });
 });
 
-describe("global artifact-ready watcher setup", () => {
-  it("wires the extension to the global RelativePattern, focused state, safe-open, and subscriptions", async () => {
+describe("global artifact-connection watcher setup", () => {
+  it("wires the extension to the global RelativePattern, local instance ID, safe-open, and subscriptions", async () => {
     const extensionSource = await readFile(
       path.resolve(import.meta.dirname, "../src/extension/extension.ts"),
       "utf8",
     );
 
     expect(extensionSource).toContain("new vscode.RelativePattern(vscode.Uri.file(collectionRoot), pattern)");
-    expect(extensionSource).toContain("isWindowFocused: () => vscode.window.state.focused");
+    expect(extensionSource).toContain("localWindowInstanceId: () => workspaceRegistryPublisher.currentInstanceId");
+    expect(extensionSource).toContain("setupGlobalArtifactConnectionWatcher");
     expect(extensionSource.match(/artifactReviewOpenCoordinator\.open\(/g)).toHaveLength(2);
     expect(extensionSource).toContain("ArtifactReviewProvider.viewType");
     expect(extensionSource).toContain("supportsMultipleEditorsPerDocument: false");
-    expect(extensionSource).toContain("vscode.window.tabGroups.activeTabGroup.activeTab?.input");
-    expect(extensionSource).toContain("activeTabInput instanceof vscode.TabInputCustom");
-    expect(extensionSource).toContain("activeTabInput.viewType === ArtifactReviewProvider.viewType");
-    expect(extensionSource).toContain("defaultUri: vscode.Uri.file(await ensureSafeGlobalArtifactsRoot())");
-    expect(extensionSource).toContain("context.subscriptions.push(artifactReadyWatcher)");
-    expect(extensionSource).not.toContain("**/{.ai-artifacts,.codex-artifacts}/artifacts/**/comments.json");
-    expect(extensionSource).not.toContain("reviewRound === 1");
-    expect(extensionSource).not.toContain("tabGroups.all");
-    expect(extensionSource).not.toMatch(/for\s*\([^)]*tabGroups/);
+    expect(extensionSource).toContain("context.subscriptions.push(artifactConnectionWatcher)");
+    expect(extensionSource).not.toContain("isWindowFocused");
+    expect(extensionSource).not.toContain("setupGlobalArtifactReadyWatcher");
+    expect(extensionSource).not.toContain("*/comments.json");
+
+    const openSource = await readFile(
+      path.resolve(import.meta.dirname, "../src/extension/artifact-review-open.ts"),
+      "utf8",
+    );
+    expect(openSource).not.toContain("isWindowFocused");
+    expect(openSource).not.toContain("setupGlobalArtifactReadyWatcher");
+    expect(openSource).not.toContain("createArtifactReadyHandler");
+    expect(openSource).not.toContain("comments.json");
   });
 
-  it("creates a fresh safe root before registering the RelativePattern watcher", async () => {
+  it("creates a fresh safe root before registering the RelativePattern watcher for artifact-connection.json", async () => {
     const userHome = await makeUserHome();
     const expectedRoot = globalArtifactsRoot({ userHome });
     const events: string[] = [];
     const watcher = new TestWatcher();
 
-    const result = await setupGlobalArtifactReadyWatcher<TestUri, TestWatcher>({
+    const result = await setupGlobalArtifactConnectionWatcher<TestUri, TestWatcher>({
       ensureGlobalArtifactsRoot: async () => {
         events.push("ensure:start");
         const root = await ensureSafeGlobalArtifactsRoot({ userHome });
@@ -407,14 +647,15 @@ describe("global artifact-ready watcher setup", () => {
       createWatcher: (collectionRoot, pattern) => {
         events.push("watcher:create");
         expect(collectionRoot).toBe(expectedRoot);
-        expect(pattern).toBe("*/comments.json");
+        expect(pattern).toBe(`*/${ARTIFACT_CONNECTION_FILE}`);
         return watcher;
       },
+      localWindowInstanceId: () => "11111111-1111-4111-8111-111111111111",
       isAutoOpenEnabled: () => true,
-      isWindowFocused: () => true,
-      artifactUriFromComments: (uri) => uri,
+      artifactUriFromConnection: (uri) => uri,
       openArtifactReview: async () => undefined,
       reportError: vi.fn(),
+      rootOptions: { userHome },
     });
 
     expect(result).toBe(watcher);
@@ -422,103 +663,460 @@ describe("global artifact-ready watcher setup", () => {
     await expect(access(expectedRoot)).resolves.toBeUndefined();
   });
 
-  it("does not create a watcher or open an artifact when root validation fails", async () => {
-    const createWatcher = vi.fn((_root: string, _pattern: string) => new TestWatcher());
-    const open = vi.fn(async (_uri: TestUri) => undefined);
-
-    await expect(setupGlobalArtifactReadyWatcher<TestUri, TestWatcher>({
-      ensureGlobalArtifactsRoot: async () => { throw new Error("unsafe root"); },
-      createWatcher,
-      isAutoOpenEnabled: () => true,
-      isWindowFocused: () => true,
-      artifactUriFromComments: (uri) => uri,
-      openArtifactReview: open,
-      reportError: vi.fn(),
-    })).rejects.toThrow("unsafe root");
-
-    expect(createWatcher).not.toHaveBeenCalled();
-    expect(open).not.toHaveBeenCalled();
-  });
-
-  it("opens the first artifact created after registration exactly once through safe-open", async () => {
+  it("multi-window isolation: only the targeted window calls openWith while non-target window remains silent", async () => {
     const userHome = await makeUserHome();
+    const windowA = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const windowB = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
     const watcher = new TestWatcher();
-    const openWith = vi.fn(async (_uri: TestUri) => undefined);
-    await setupGlobalArtifactReadyWatcher<TestUri, TestWatcher>({
+
+    const openWithA = vi.fn(async (_uri: TestUri) => undefined);
+    const openWithB = vi.fn(async (_uri: TestUri) => undefined);
+    const reportErrorA = vi.fn();
+    const reportErrorB = vi.fn();
+
+    // Window A watcher
+    await setupGlobalArtifactConnectionWatcher<TestUri, TestWatcher>({
       ensureGlobalArtifactsRoot: () => ensureSafeGlobalArtifactsRoot({ userHome }),
       createWatcher: () => watcher,
+      localWindowInstanceId: () => windowA,
       isAutoOpenEnabled: () => true,
-      isWindowFocused: () => true,
-      artifactUriFromComments: (uri) => ({ fsPath: path.join(path.dirname(uri.fsPath), "artifact.md") }),
+      artifactUriFromConnection: (uri) => ({ fsPath: path.join(path.dirname(uri.fsPath), "artifact.md") }),
       openArtifactReview: async (uri) => {
-        await openArtifactReview(uri, {
-          uriFromFilePath: (fsPath) => ({ fsPath }),
-          openWith,
-        }, { userHome });
+        await openArtifactReview(uri, { uriFromFilePath: (p) => ({ fsPath: p }), openWith: openWithA }, { userHome });
       },
-      reportError: vi.fn(),
+      reportError: reportErrorA,
+      rootOptions: { userHome },
     });
 
-    const artifact = await writeArtifact(userHome, "first-artifact-001");
-    await watcher.fire({ fsPath: artifact.commentsPath });
+    // Window B watcher
+    await setupGlobalArtifactConnectionWatcher<TestUri, TestWatcher>({
+      ensureGlobalArtifactsRoot: () => ensureSafeGlobalArtifactsRoot({ userHome }),
+      createWatcher: () => watcher,
+      localWindowInstanceId: () => windowB,
+      isAutoOpenEnabled: () => true,
+      artifactUriFromConnection: (uri) => ({ fsPath: path.join(path.dirname(uri.fsPath), "artifact.md") }),
+      openArtifactReview: async (uri) => {
+        await openArtifactReview(uri, { uriFromFilePath: (p) => ({ fsPath: p }), openWith: openWithB }, { userHome });
+      },
+      reportError: reportErrorB,
+      rootOptions: { userHome },
+    });
 
-    expect(openWith).toHaveBeenCalledTimes(1);
-    expect(openWith).toHaveBeenCalledWith({ fsPath: artifact.artifactPath });
+    // Artifact targeted to Window A
+    const artifactForA = await writeArtifact(userHome, "artifact-target-a", {
+      windowInstanceId: windowA,
+      openRequestId: randomUUID(),
+    });
+
+    await watcher.fireCreate({ fsPath: artifactForA.connectionPath });
+
+    // Assert: Window A opens, Window B remains completely silent
+    expect(openWithA).toHaveBeenCalledTimes(1);
+    expect(openWithA).toHaveBeenCalledWith({ fsPath: artifactForA.artifactPath });
+    expect(openWithB).not.toHaveBeenCalled();
+    expect(reportErrorA).not.toHaveBeenCalled();
+    expect(reportErrorB).not.toHaveBeenCalled();
+
+    // Artifact targeted to Window B
+    const artifactForB = await writeArtifact(userHome, "artifact-target-b", {
+      windowInstanceId: windowB,
+      openRequestId: randomUUID(),
+    });
+
+    await watcher.fireCreate({ fsPath: artifactForB.connectionPath });
+
+    // Assert: Window B opens, Window A does not open again
+    expect(openWithA).toHaveBeenCalledTimes(1);
+    expect(openWithB).toHaveBeenCalledTimes(1);
+    expect(openWithB).toHaveBeenCalledWith({ fsPath: artifactForB.artifactPath });
+    expect(reportErrorA).not.toHaveBeenCalled();
+    expect(reportErrorB).not.toHaveBeenCalled();
   });
 
-  it("rejects an invalid event target before openWith and reports the validation error", async () => {
+  it("deduplicates create and change events fired in sequence for the same connection write", async () => {
     const userHome = await makeUserHome();
+    const windowA = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const watcher = new TestWatcher();
+    const openWith = vi.fn(async (_uri: TestUri) => undefined);
+
+    await setupGlobalArtifactConnectionWatcher<TestUri, TestWatcher>({
+      ensureGlobalArtifactsRoot: () => ensureSafeGlobalArtifactsRoot({ userHome }),
+      createWatcher: () => watcher,
+      localWindowInstanceId: () => windowA,
+      isAutoOpenEnabled: () => true,
+      artifactUriFromConnection: (uri) => ({ fsPath: path.join(path.dirname(uri.fsPath), "artifact.md") }),
+      openArtifactReview: async (uri) => {
+        await openArtifactReview(uri, { uriFromFilePath: (p) => ({ fsPath: p }), openWith }, { userHome });
+      },
+      reportError: vi.fn(),
+      rootOptions: { userHome },
+    });
+
+    const artifact = await writeArtifact(userHome, "sequence-dedupe", {
+      windowInstanceId: windowA,
+      openRequestId: randomUUID(),
+    });
+
+    // Firing both create and change event
+    await watcher.fireCreate({ fsPath: artifact.connectionPath });
+    await watcher.fireChange({ fsPath: artifact.connectionPath });
+
+    expect(openWith).toHaveBeenCalledTimes(1);
+  });
+
+  it("reconnect change event with new openRequestId triggers openWith", async () => {
+    const userHome = await makeUserHome();
+    const windowA = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const watcher = new TestWatcher();
+    const openWith = vi.fn(async (_uri: TestUri) => undefined);
+
+    await setupGlobalArtifactConnectionWatcher<TestUri, TestWatcher>({
+      ensureGlobalArtifactsRoot: () => ensureSafeGlobalArtifactsRoot({ userHome }),
+      createWatcher: () => watcher,
+      localWindowInstanceId: () => windowA,
+      isAutoOpenEnabled: () => true,
+      artifactUriFromConnection: (uri) => ({ fsPath: path.join(path.dirname(uri.fsPath), "artifact.md") }),
+      openArtifactReview: async (uri) => {
+        await openArtifactReview(uri, { uriFromFilePath: (p) => ({ fsPath: p }), openWith }, { userHome });
+      },
+      reportError: vi.fn(),
+      rootOptions: { userHome },
+    });
+
+    const artifact = await writeArtifact(userHome, "reconnect-change", {
+      windowInstanceId: windowA,
+      openRequestId: randomUUID(),
+    });
+
+    await watcher.fireCreate({ fsPath: artifact.connectionPath });
+    expect(openWith).toHaveBeenCalledTimes(1);
+
+    // Update connection file with new revision and openRequestId
+    await writeFile(artifact.connectionPath, JSON.stringify({
+      schemaVersion: 1,
+      windowInstanceId: windowA,
+      connectionRevision: 2,
+      openRequestId: randomUUID(),
+      updatedAt: new Date().toISOString(),
+      source: "inspect",
+    }, null, 2), "utf8");
+
+    await watcher.fireChange({ fsPath: artifact.connectionPath });
+    expect(openWith).toHaveBeenCalledTimes(2);
+  });
+
+  it("P2.1: malformed connection fails closed silently without openWith or reportError spam", async () => {
+    const userHome = await makeUserHome();
+    const windowA = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
     const watcher = new TestWatcher();
     const openWith = vi.fn(async (_uri: TestUri) => undefined);
     const reportError = vi.fn();
-    await setupGlobalArtifactReadyWatcher<TestUri, TestWatcher>({
+
+    await setupGlobalArtifactConnectionWatcher<TestUri, TestWatcher>({
       ensureGlobalArtifactsRoot: () => ensureSafeGlobalArtifactsRoot({ userHome }),
       createWatcher: () => watcher,
+      localWindowInstanceId: () => windowA,
       isAutoOpenEnabled: () => true,
-      isWindowFocused: () => true,
-      artifactUriFromComments: (uri) => ({ fsPath: path.join(path.dirname(uri.fsPath), "artifact.md") }),
+      artifactUriFromConnection: (uri) => ({ fsPath: path.join(path.dirname(uri.fsPath), "artifact.md") }),
       openArtifactReview: async (uri) => {
-        await openArtifactReview(uri, {
-          uriFromFilePath: (fsPath) => ({ fsPath }),
-          openWith,
-        }, { userHome });
+        await openArtifactReview(uri, { uriFromFilePath: (p) => ({ fsPath: p }), openWith }, { userHome });
       },
       reportError,
+      rootOptions: { userHome },
     });
-    const artifact = await writeArtifact(userHome, "invalid-artifact-001");
-    await writeFile(artifact.manifestPath, "{", "utf8");
 
-    await watcher.fire({ fsPath: artifact.commentsPath });
+    const artifact = await writeArtifact(userHome, "invalid-conn-artifact", {
+      windowInstanceId: windowA,
+    });
+    // Overwrite with malformed JSON
+    await writeFile(artifact.connectionPath, "{ not-json", "utf8");
+
+    await watcher.fireCreate({ fsPath: artifact.connectionPath });
 
     expect(openWith).not.toHaveBeenCalled();
-    expect(reportError).toHaveBeenCalledTimes(1);
+    expect(reportError).not.toHaveBeenCalled();
   });
 
-  it("keeps sequential round-transition create events eligible to reveal the editor", async () => {
+  it("P2.1: multi-window error isolation: valid route to window A with invalid manifest only causes window A to report error", async () => {
     const userHome = await makeUserHome();
+    const windowA = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const windowB = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
     const watcher = new TestWatcher();
-    const open = vi.fn(async (_uri: TestUri) => undefined);
-    await setupGlobalArtifactReadyWatcher<TestUri, TestWatcher>({
+
+    const openWithA = vi.fn(async (_uri: TestUri) => undefined);
+    const openWithB = vi.fn(async (_uri: TestUri) => undefined);
+    const reportErrorA = vi.fn();
+    const reportErrorB = vi.fn();
+
+    await setupGlobalArtifactConnectionWatcher<TestUri, TestWatcher>({
       ensureGlobalArtifactsRoot: () => ensureSafeGlobalArtifactsRoot({ userHome }),
       createWatcher: () => watcher,
+      localWindowInstanceId: () => windowA,
       isAutoOpenEnabled: () => true,
-      isWindowFocused: () => true,
-      artifactUriFromComments: (uri) => ({ fsPath: path.join(path.dirname(uri.fsPath), "artifact.md") }),
-      openArtifactReview: open,
-      reportError: vi.fn(),
+      artifactUriFromConnection: (uri) => ({ fsPath: path.join(path.dirname(uri.fsPath), "artifact.md") }),
+      openArtifactReview: async (uri) => {
+        await openArtifactReview(uri, { uriFromFilePath: (p) => ({ fsPath: p }), openWith: openWithA }, { userHome });
+      },
+      reportError: reportErrorA,
+      rootOptions: { userHome },
     });
-    const artifact = await writeArtifact(userHome, "round-transition-001");
 
-    await watcher.fire({ fsPath: artifact.commentsPath });
-    await watcher.fire({ fsPath: artifact.commentsPath });
+    await setupGlobalArtifactConnectionWatcher<TestUri, TestWatcher>({
+      ensureGlobalArtifactsRoot: () => ensureSafeGlobalArtifactsRoot({ userHome }),
+      createWatcher: () => watcher,
+      localWindowInstanceId: () => windowB,
+      isAutoOpenEnabled: () => true,
+      artifactUriFromConnection: (uri) => ({ fsPath: path.join(path.dirname(uri.fsPath), "artifact.md") }),
+      openArtifactReview: async (uri) => {
+        await openArtifactReview(uri, { uriFromFilePath: (p) => ({ fsPath: p }), openWith: openWithB }, { userHome });
+      },
+      reportError: reportErrorB,
+      rootOptions: { userHome },
+    });
 
-    expect(open).toHaveBeenCalledTimes(2);
+    const artifact = await writeArtifact(userHome, "corrupt-manifest-artifact", {
+      windowInstanceId: windowA,
+    });
+    // Corrupt the manifest
+    await writeFile(artifact.manifestPath, "{ corrupted manifest", "utf8");
+
+    await watcher.fireCreate({ fsPath: artifact.connectionPath });
+
+    expect(openWithA).not.toHaveBeenCalled();
+    expect(openWithB).not.toHaveBeenCalled();
+    expect(reportErrorA).toHaveBeenCalledTimes(1);
+    expect(reportErrorB).not.toHaveBeenCalled();
+  });
+
+  it("P2.1: multi-window error isolation: valid route to window A with linked/unsafe artifact only causes window A to report error", async () => {
+    const userHome = await makeUserHome();
+    const windowA = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const windowB = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+    const watcher = new TestWatcher();
+
+    const openWithA = vi.fn(async (_uri: TestUri) => undefined);
+    const openWithB = vi.fn(async (_uri: TestUri) => undefined);
+    const reportErrorA = vi.fn();
+    const reportErrorB = vi.fn();
+
+    await setupGlobalArtifactConnectionWatcher<TestUri, TestWatcher>({
+      ensureGlobalArtifactsRoot: () => ensureSafeGlobalArtifactsRoot({ userHome }),
+      createWatcher: () => watcher,
+      localWindowInstanceId: () => windowA,
+      isAutoOpenEnabled: () => true,
+      artifactUriFromConnection: (uri) => ({ fsPath: path.join(path.dirname(uri.fsPath), "artifact.md") }),
+      openArtifactReview: async (uri) => {
+        await openArtifactReview(uri, { uriFromFilePath: (p) => ({ fsPath: p }), openWith: openWithA }, { userHome });
+      },
+      reportError: reportErrorA,
+      rootOptions: { userHome },
+    });
+
+    await setupGlobalArtifactConnectionWatcher<TestUri, TestWatcher>({
+      ensureGlobalArtifactsRoot: () => ensureSafeGlobalArtifactsRoot({ userHome }),
+      createWatcher: () => watcher,
+      localWindowInstanceId: () => windowB,
+      isAutoOpenEnabled: () => true,
+      artifactUriFromConnection: (uri) => ({ fsPath: path.join(path.dirname(uri.fsPath), "artifact.md") }),
+      openArtifactReview: async (uri) => {
+        await openArtifactReview(uri, { uriFromFilePath: (p) => ({ fsPath: p }), openWith: openWithB }, { userHome });
+      },
+      reportError: reportErrorB,
+      rootOptions: { userHome },
+    });
+
+    const artifact = await writeArtifact(userHome, "linked-target-artifact", {
+      windowInstanceId: windowA,
+    });
+    const outsideTarget = path.join(userHome, "outside-target.md");
+    await writeFile(outsideTarget, "# outside", "utf8");
+    await rm(artifact.artifactPath);
+    await createDirectoryLink(outsideTarget, artifact.artifactPath);
+
+    await watcher.fireCreate({ fsPath: artifact.connectionPath });
+
+    expect(openWithA).not.toHaveBeenCalled();
+    expect(openWithB).not.toHaveBeenCalled();
+    expect(reportErrorA).toHaveBeenCalledTimes(1);
+    expect(reportErrorB).not.toHaveBeenCalled();
+  });
+
+  it("P2.2: wrong-root event fails closed without calling openWith or reportError", async () => {
+    const userHome = await makeUserHome();
+    const windowA = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const watcher = new TestWatcher();
+    const openWith = vi.fn(async (_uri: TestUri) => undefined);
+    const reportError = vi.fn();
+
+    await setupGlobalArtifactConnectionWatcher<TestUri, TestWatcher>({
+      ensureGlobalArtifactsRoot: () => ensureSafeGlobalArtifactsRoot({ userHome }),
+      createWatcher: () => watcher,
+      localWindowInstanceId: () => windowA,
+      isAutoOpenEnabled: () => true,
+      artifactUriFromConnection: (uri) => ({ fsPath: path.join(path.dirname(uri.fsPath), "artifact.md") }),
+      openArtifactReview: async (uri) => {
+        await openArtifactReview(uri, { uriFromFilePath: (p) => ({ fsPath: p }), openWith }, { userHome });
+      },
+      reportError,
+      rootOptions: { userHome },
+    });
+
+    const outsidePath = path.join(userHome, "outside", "artifact-001", ARTIFACT_CONNECTION_FILE);
+    await mkdir(path.dirname(outsidePath), { recursive: true });
+    await writeFile(outsidePath, JSON.stringify({
+      schemaVersion: 1,
+      windowInstanceId: windowA,
+      connectionRevision: 1,
+      openRequestId: randomUUID(),
+      updatedAt: new Date().toISOString(),
+      source: "create",
+    }), "utf8");
+
+    await watcher.fireCreate({ fsPath: outsidePath });
+
+    expect(openWith).not.toHaveBeenCalled();
+    expect(reportError).not.toHaveBeenCalled();
+  });
+
+  it("P2.2: linked connection directory fails closed without calling openWith or reportError", async () => {
+    const userHome = await makeUserHome();
+    const windowA = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const watcher = new TestWatcher();
+    const openWith = vi.fn(async (_uri: TestUri) => undefined);
+    const reportError = vi.fn();
+
+    await setupGlobalArtifactConnectionWatcher<TestUri, TestWatcher>({
+      ensureGlobalArtifactsRoot: () => ensureSafeGlobalArtifactsRoot({ userHome }),
+      createWatcher: () => watcher,
+      localWindowInstanceId: () => windowA,
+      isAutoOpenEnabled: () => true,
+      artifactUriFromConnection: (uri) => ({ fsPath: path.join(path.dirname(uri.fsPath), "artifact.md") }),
+      openArtifactReview: async (uri) => {
+        await openArtifactReview(uri, { uriFromFilePath: (p) => ({ fsPath: p }), openWith }, { userHome });
+      },
+      reportError,
+      rootOptions: { userHome },
+    });
+
+    const collectionRoot = globalArtifactsRoot({ userHome });
+    const realDir = path.join(userHome, "real-symlink-artifact");
+    await mkdir(realDir, { recursive: true });
+    const connPath = path.join(realDir, ARTIFACT_CONNECTION_FILE);
+    await writeFile(connPath, JSON.stringify({
+      schemaVersion: 1,
+      windowInstanceId: windowA,
+      connectionRevision: 1,
+      openRequestId: randomUUID(),
+      updatedAt: new Date().toISOString(),
+      source: "create",
+    }), "utf8");
+
+    const linkDir = path.join(collectionRoot, "symlinked-artifact");
+    await createDirectoryLink(realDir, linkDir);
+
+    await watcher.fireCreate({ fsPath: path.join(linkDir, ARTIFACT_CONNECTION_FILE) });
+
+    expect(openWith).not.toHaveBeenCalled();
+    expect(reportError).not.toHaveBeenCalled();
+  });
+
+  it("P2.2: recovers from transient missing/partial connection read via bounded retry and opens", async () => {
+    const userHome = await makeUserHome();
+    const windowA = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const watcher = new TestWatcher();
+    const openWith = vi.fn(async (_uri: TestUri) => undefined);
+    const reportError = vi.fn();
+
+    await setupGlobalArtifactConnectionWatcher<TestUri, TestWatcher>({
+      ensureGlobalArtifactsRoot: () => ensureSafeGlobalArtifactsRoot({ userHome }),
+      createWatcher: () => watcher,
+      localWindowInstanceId: () => windowA,
+      isAutoOpenEnabled: () => true,
+      artifactUriFromConnection: (uri) => ({ fsPath: path.join(path.dirname(uri.fsPath), "artifact.md") }),
+      openArtifactReview: async (uri) => {
+        await openArtifactReview(uri, { uriFromFilePath: (p) => ({ fsPath: p }), openWith }, { userHome });
+      },
+      reportError,
+      rootOptions: { userHome },
+    });
+
+    const artifact = await writeArtifact(userHome, "transient-read-artifact", {
+      windowInstanceId: windowA,
+    });
+    const original = await readFile(artifact.connectionPath, "utf8");
+
+    const readFileSpy = vi.spyOn(fs, "readFile")
+      .mockResolvedValueOnce("")
+      .mockResolvedValueOnce(original);
+
+    await watcher.fireCreate({ fsPath: artifact.connectionPath });
+
+    expect(openWith).toHaveBeenCalledTimes(1);
+    expect(reportError).not.toHaveBeenCalled();
+    expect(readFileSpy).toHaveBeenCalled();
+  });
+
+  it("P1.2: recovers from actual ENOENT on connection read via bounded retry and opens", async () => {
+    const userHome = await makeUserHome();
+    const windowA = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const watcher = new TestWatcher();
+    const openWith = vi.fn(async (_uri: TestUri) => undefined);
+    const reportError = vi.fn();
+
+    await setupGlobalArtifactConnectionWatcher<TestUri, TestWatcher>({
+      ensureGlobalArtifactsRoot: () => ensureSafeGlobalArtifactsRoot({ userHome }),
+      createWatcher: () => watcher,
+      localWindowInstanceId: () => windowA,
+      isAutoOpenEnabled: () => true,
+      artifactUriFromConnection: (uri) => ({ fsPath: path.join(path.dirname(uri.fsPath), "artifact.md") }),
+      openArtifactReview: async (uri) => {
+        await openArtifactReview(uri, { uriFromFilePath: (p) => ({ fsPath: p }), openWith }, { userHome });
+      },
+      reportError,
+      rootOptions: { userHome },
+    });
+
+    const artifact = await writeArtifact(userHome, "transient-enoent-artifact", {
+      windowInstanceId: windowA,
+    });
+    const original = await readFile(artifact.connectionPath, "utf8");
+
+    const enoent = Object.assign(new Error("ENOENT: no such file or directory"), { code: "ENOENT" });
+    const readFileSpy = vi.spyOn(fs, "readFile")
+      .mockRejectedValueOnce(enoent)
+      .mockResolvedValueOnce(original);
+
+    await watcher.fireCreate({ fsPath: artifact.connectionPath });
+
+    expect(openWith).toHaveBeenCalledTimes(1);
+    expect(reportError).not.toHaveBeenCalled();
+    expect(readFileSpy).toHaveBeenCalled();
+  });
+
+  it("P2.2: setupGlobalArtifactConnectionWatcher rejects before watcher registration if ensureGlobalArtifactsRoot fails", async () => {
+    const createWatcher = vi.fn();
+    await expect(setupGlobalArtifactConnectionWatcher<TestUri, any>({
+      ensureGlobalArtifactsRoot: async () => { throw new Error("root error"); },
+      createWatcher,
+      localWindowInstanceId: () => "win",
+      isAutoOpenEnabled: () => true,
+      artifactUriFromConnection: (u) => u,
+      openArtifactReview: async () => undefined,
+      reportError: vi.fn(),
+    })).rejects.toThrow("root error");
+
+    expect(createWatcher).not.toHaveBeenCalled();
   });
 
   it("coalesces concurrent duplicate watcher events through the shared open coordinator", async () => {
     const userHome = await makeUserHome();
+    const windowA = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
     const watcher = new TestWatcher();
-    const artifact = await writeArtifact(userHome, "duplicate-event-001");
+    const artifact = await writeArtifact(userHome, "concurrent-coord-artifact", {
+      windowInstanceId: windowA,
+      openRequestId: randomUUID(),
+    });
+
     let releaseOpen: (() => void) | undefined;
     const openGate = new Promise<void>((resolve) => { releaseOpen = resolve; });
     const openWith = vi.fn(async (_uri: TestUri) => openGate);
@@ -526,18 +1124,20 @@ describe("global artifact-ready watcher setup", () => {
       uriFromFilePath: (fsPath) => ({ fsPath }),
       openWith,
     }, { userHome });
-    await setupGlobalArtifactReadyWatcher<TestUri, TestWatcher>({
+
+    await setupGlobalArtifactConnectionWatcher<TestUri, TestWatcher>({
       ensureGlobalArtifactsRoot: () => ensureSafeGlobalArtifactsRoot({ userHome }),
       createWatcher: () => watcher,
+      localWindowInstanceId: () => windowA,
       isAutoOpenEnabled: () => true,
-      isWindowFocused: () => true,
-      artifactUriFromComments: (uri) => ({ fsPath: path.join(path.dirname(uri.fsPath), "artifact.md") }),
+      artifactUriFromConnection: (uri) => ({ fsPath: path.join(path.dirname(uri.fsPath), "artifact.md") }),
       openArtifactReview: async (uri) => { await coordinator.open(uri); },
       reportError: vi.fn(),
+      rootOptions: { userHome },
     });
 
-    const first = watcher.fire({ fsPath: artifact.commentsPath });
-    const second = watcher.fire({ fsPath: artifact.commentsPath });
+    const first = watcher.fireCreate({ fsPath: artifact.connectionPath });
+    const second = watcher.fireChange({ fsPath: artifact.connectionPath });
     await vi.waitFor(() => expect(openWith).toHaveBeenCalledTimes(1));
     releaseOpen?.();
     await Promise.all([first, second]);

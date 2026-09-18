@@ -16,6 +16,10 @@ export class WorkspaceRegistryPublisher implements vscode.Disposable {
   private disposed = false;
   private publishing: Promise<void> = Promise.resolve();
 
+  public get currentInstanceId(): string {
+    return this.instanceId;
+  }
+
   constructor() {
     this.subscriptions.push(
       vscode.workspace.onDidChangeWorkspaceFolders(() => this.refresh()),

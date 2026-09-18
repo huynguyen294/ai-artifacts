@@ -31,6 +31,7 @@ import {
 import {
   commitArtifactConnectionRequest,
   readArtifactConnection,
+  readArtifactConnectionRoute,
   resolveArtifactConnectionTarget,
   validateArtifactConnectionParent,
   withArtifactConnectionLock,
@@ -39,6 +40,7 @@ import {
   ensureSafeGlobalArtifactDirectory,
   ensureSafeGlobalArtifactsRoot,
   ensureSafeManagedArtifactFile,
+  sameFilesystemPath,
 } from "../src/shared/artifact-validation";
 import type {
   WorkspaceRegistrySnapshot,
@@ -1070,7 +1072,219 @@ describe("internal artifact-connection module", () => {
         source: "inspect",
       });
       expect(created.connectionRevision).toBe(1);
-      expect(created.windowInstanceId).toBe(windowA);
+    });
+
+    describe("readArtifactConnectionRoute safe routing read", () => {
+      it("reads valid connection file even when artifact manifest is absent or invalid", async () => {
+        const { artifactDir } = await createValidArtifactDir();
+        const connection = await commitArtifactConnectionRequest(artifactDir, {
+          windowInstanceId: windowA,
+          source: "create",
+        });
+
+        // Corrupt artifact.json manifest completely
+        await fs.writeFile(path.join(artifactDir, ARTIFACT_MANIFEST_FILE), "{ corrupted json", "utf8");
+
+        // readArtifactConnection fails because of manifest validation
+        await expect(readArtifactConnection(artifactDir)).rejects.toThrow(ArtifactConnectionInvalidError);
+
+        // readArtifactConnectionRoute succeeds without manifest validation
+        const route = await readArtifactConnectionRoute(artifactDir);
+        expect(route).toEqual(connection);
+      });
+
+      it("returns null when connection file is missing and allowMissing is true", async () => {
+        const { artifactDir } = await createValidArtifactDir();
+        const route = await readArtifactConnectionRoute(artifactDir, { allowMissing: true });
+        expect(route).toBeNull();
+      });
+
+      it("rejects an artifact directory outside the canonical collection root", async () => {
+        const outsideDir = path.join(userHome, "outside-collection", "artifact-001");
+        await fs.mkdir(outsideDir, { recursive: true });
+        await expect(readArtifactConnectionRoute(outsideDir)).rejects.toThrow("collection root");
+      });
+
+      it("rejects a symlinked directory or symlinked connection file", async () => {
+        const collectionRoot = await ensureSafeGlobalArtifactsRoot({ userHome });
+        const realDir = path.join(userHome, "real-artifact-001");
+        await fs.mkdir(realDir, { recursive: true });
+        const linkDir = path.join(collectionRoot, "symlink-artifact-001");
+        await createDirectoryLink(realDir, linkDir);
+
+        await expect(readArtifactConnectionRoute(linkDir)).rejects.toThrow("symbolic links");
+
+        const { artifactDir } = await createValidArtifactDir();
+        const outsideTarget = path.join(userHome, "outside-conn.json");
+        await fs.writeFile(outsideTarget, "{}", "utf8");
+        const connPath = path.join(artifactDir, ARTIFACT_CONNECTION_FILE);
+        await fs.unlink(connPath).catch(() => {});
+        await createDirectoryLink(outsideTarget, connPath);
+
+        await expect(readArtifactConnectionRoute(artifactDir)).rejects.toThrow();
+      });
+
+      it("recovers transient empty read through bounded retry", async () => {
+        const { artifactDir } = await createValidArtifactDir();
+        const connection = await commitArtifactConnectionRequest(artifactDir, {
+          windowInstanceId: windowA,
+          source: "create",
+        });
+
+        const connPath = path.join(artifactDir, ARTIFACT_CONNECTION_FILE);
+        const originalContent = await fs.readFile(connPath, "utf8");
+
+        const readFileSpy = vi.spyOn(fs, "readFile")
+          .mockResolvedValueOnce("")
+          .mockResolvedValueOnce(originalContent);
+
+        const route = await readArtifactConnectionRoute(artifactDir, { boundedRetry: true });
+        expect(route).toEqual(connection);
+        expect(readFileSpy).toHaveBeenCalledTimes(2);
+      });
+
+      it("P1.2: recovers from transient ENOENT on readFile through bounded retry", async () => {
+        const { artifactDir } = await createValidArtifactDir();
+        const connection = await commitArtifactConnectionRequest(artifactDir, {
+          windowInstanceId: windowA,
+          source: "create",
+        });
+
+        const connPath = path.join(artifactDir, ARTIFACT_CONNECTION_FILE);
+        const originalContent = await fs.readFile(connPath, "utf8");
+
+        const enoent = Object.assign(new Error("ENOENT: no such file or directory"), { code: "ENOENT" });
+        const readFileSpy = vi.spyOn(fs, "readFile")
+          .mockRejectedValueOnce(enoent)
+          .mockResolvedValueOnce(originalContent);
+
+        const route = await readArtifactConnectionRoute(artifactDir, { boundedRetry: true });
+        expect(route).toEqual(connection);
+        expect(readFileSpy).toHaveBeenCalledTimes(2);
+      });
+
+      it("P1.2: returns null after exhausting bounded retry when ENOENT persists and allowMissing is true", async () => {
+        const { artifactDir } = await createValidArtifactDir();
+        const enoent = Object.assign(new Error("ENOENT: no such file or directory"), { code: "ENOENT" });
+        const readFileSpy = vi.spyOn(fs, "readFile").mockRejectedValue(enoent);
+
+        const route = await readArtifactConnectionRoute(artifactDir, { allowMissing: true, boundedRetry: true });
+        expect(route).toBeNull();
+        expect(readFileSpy).toHaveBeenCalledTimes(5);
+      });
+
+      it("P1.2: throws ENOENT after exhausting bounded retry when allowMissing is false", async () => {
+        const { artifactDir } = await createValidArtifactDir();
+        const enoent = Object.assign(new Error("ENOENT: no such file or directory"), { code: "ENOENT" });
+        const readFileSpy = vi.spyOn(fs, "readFile").mockRejectedValue(enoent);
+
+        await expect(readArtifactConnectionRoute(artifactDir, { allowMissing: false, boundedRetry: true }))
+          .rejects.toThrow("ENOENT");
+        expect(readFileSpy).toHaveBeenCalledTimes(5);
+      });
+
+      it("P1.2: boundedRetry: false performs only a single attempt without retry", async () => {
+        const { artifactDir } = await createValidArtifactDir();
+        const enoent = Object.assign(new Error("ENOENT: no such file or directory"), { code: "ENOENT" });
+        const readFileSpy = vi.spyOn(fs, "readFile").mockRejectedValue(enoent);
+
+        const route = await readArtifactConnectionRoute(artifactDir, { allowMissing: true, boundedRetry: false });
+        expect(route).toBeNull();
+        expect(readFileSpy).toHaveBeenCalledTimes(1);
+      });
+
+      it("P1.2: recovers from transient ENOENT on artifact directory lstat through bounded retry", async () => {
+        const { artifactDir } = await createValidArtifactDir();
+        const connection = await commitArtifactConnectionRequest(artifactDir, {
+          windowInstanceId: windowA,
+          source: "create",
+        });
+
+        let lstatAttempt = 0;
+        const originalLstat = fs.lstat.bind(fs);
+        const enoent = Object.assign(new Error("ENOENT: no such file or directory"), { code: "ENOENT" });
+
+        vi.spyOn(fs, "lstat").mockImplementation(async (targetPath, options) => {
+          if (sameFilesystemPath(String(targetPath), artifactDir)) {
+            lstatAttempt++;
+            if (lstatAttempt === 1) {
+              throw enoent;
+            }
+          }
+          return originalLstat(targetPath, options);
+        });
+
+        const route = await readArtifactConnectionRoute(artifactDir, { boundedRetry: true });
+        expect(route).toEqual(connection);
+        expect(lstatAttempt).toBe(2);
+      });
+
+      it("P2.3: rejects when artifact directory is replaced with a symlink between retry attempts", async () => {
+        const collectionRoot = await ensureSafeGlobalArtifactsRoot({ userHome });
+        const artifactId = "retry-symlink-artifact";
+        const realDir = path.join(collectionRoot, artifactId);
+        await fs.mkdir(realDir, { recursive: true });
+
+        const outsideDir = path.join(userHome, "outside-replacement");
+        await fs.mkdir(outsideDir, { recursive: true });
+        const sentinelPath = path.join(outsideDir, "sentinel.txt");
+        await fs.writeFile(sentinelPath, "sentinel-untouched", "utf8");
+
+        const connPath = path.join(realDir, ARTIFACT_CONNECTION_FILE);
+        await fs.writeFile(connPath, "", "utf8");
+
+        let attemptCount = 0;
+        const originalReadFile = fs.readFile.bind(fs);
+        vi.spyOn(fs, "readFile").mockImplementation(async (filePath, options) => {
+          if (String(filePath).endsWith(ARTIFACT_CONNECTION_FILE)) {
+            attemptCount++;
+            if (attemptCount === 1) {
+              await fs.rm(realDir, { recursive: true, force: true });
+              await createDirectoryLink(outsideDir, realDir);
+              return "";
+            }
+          }
+          return originalReadFile(filePath, options);
+        });
+
+        await expect(readArtifactConnectionRoute(realDir, { boundedRetry: true }))
+          .rejects.toThrow("symbolic links");
+
+        expect(await fs.readFile(sentinelPath, "utf8")).toBe("sentinel-untouched");
+      });
+
+      it("P2.3: rejects when connection file is replaced with a symlink between retry attempts", async () => {
+        const { artifactDir } = await createValidArtifactDir();
+        const connPath = path.join(artifactDir, ARTIFACT_CONNECTION_FILE);
+        await fs.writeFile(connPath, "", "utf8");
+
+        const outsideTarget = path.join(userHome, "outside-conn.json");
+        await fs.writeFile(outsideTarget, JSON.stringify({
+          schemaVersion: 1,
+          windowInstanceId: windowA,
+          connectionRevision: 1,
+          openRequestId: randomUUID(),
+          updatedAt: new Date().toISOString(),
+          source: "create",
+        }), "utf8");
+
+        let attemptCount = 0;
+        const originalReadFile = fs.readFile.bind(fs);
+        vi.spyOn(fs, "readFile").mockImplementation(async (filePath, options) => {
+          if (String(filePath).endsWith(ARTIFACT_CONNECTION_FILE)) {
+            attemptCount++;
+            if (attemptCount === 1) {
+              await fs.unlink(connPath);
+              await createDirectoryLink(outsideTarget, connPath);
+              return "";
+            }
+          }
+          return originalReadFile(filePath, options);
+        });
+
+        await expect(readArtifactConnectionRoute(artifactDir, { boundedRetry: true }))
+          .rejects.toThrow();
+      });
     });
   });
 });
