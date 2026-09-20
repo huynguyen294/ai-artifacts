@@ -38,6 +38,7 @@
     "onStartupFinished",
     "onCustomEditor:agentPlus.artifactReview",
     "onCommand:agentPlus.openArtifactReview",
+    "onCommand:agentPlus.searchArtifact",
     "onCommand:agentPlus.installAllIntegrations",
     "onCommand:agentPlus.installCopilotIntegration",
     "onCommand:agentPlus.installCodexIntegration",
@@ -60,6 +61,10 @@
       {
         "command": "agentPlus.openArtifactReview",
         "title": "AI Artifacts: Open Artifact Review"
+      },
+      {
+        "command": "agentPlus.searchArtifact",
+        "title": "AI Artifacts: Search Artifact"
       },
       {
         "command": "agentPlus.installAllIntegrations",

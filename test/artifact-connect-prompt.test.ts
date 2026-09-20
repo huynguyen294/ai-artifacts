@@ -2,9 +2,9 @@ import { describe, expect, it } from "vitest";
 import { buildArtifactConnectPrompt } from "../src/shared/artifact-connect-prompt";
 
 describe("buildArtifactConnectPrompt", () => {
-  it("identifies the exact artifact and requests a reconnect in the current window", () => {
+  it("identifies the exact artifact and requests inspection", () => {
     expect(buildArtifactConnectPrompt("D:\\Users\\A User\\.ai-artifacts\\artifacts\\artifact-001")).toBe(
-      "Inspect and reconnect to this exact AI Artifact in the current VS Code window:\n"
+      "Inspect this exact AI Artifact:\n"
       + 'artifactDirectory: "D:\\\\Users\\\\A User\\\\.ai-artifacts\\\\artifacts\\\\artifact-001"',
     );
   });

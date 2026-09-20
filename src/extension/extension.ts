@@ -1,6 +1,11 @@
 import * as vscode from "vscode";
 import { ArtifactReviewProvider } from "./artifact-review-provider";
 import { ArtifactReviewOpenCoordinator, setupGlobalArtifactConnectionWatcher } from "./artifact-review-open";
+import { discoverSearchableArtifacts } from "./artifact-search";
+import {
+  runArtifactSearchCommand,
+  type ArtifactQuickPickItem,
+} from "./artifact-search-command";
 import { ensureSafeGlobalArtifactsRoot } from "../shared/artifact-validation";
 import {
   checkAllIntegrations,
@@ -56,6 +61,18 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
             })
           )?.[0]);
       if (selected) await artifactReviewOpenCoordinator.open(selected);
+    }),
+    vscode.commands.registerCommand("agentPlus.searchArtifact", async () => {
+      await runArtifactSearchCommand({
+        createQuickPick: () => vscode.window.createQuickPick<ArtifactQuickPickItem>(),
+        discoverArtifacts: () => discoverSearchableArtifacts(),
+        openArtifact: async (artifactPath) => {
+          await artifactReviewOpenCoordinator.open(vscode.Uri.file(artifactPath));
+        },
+        showErrorMessage: (message) => {
+          void vscode.window.showErrorMessage(message);
+        },
+      });
     }),
 
     // 1. All Detected

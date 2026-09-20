@@ -1,353 +1,519 @@
-# IDEAS:
+# IDEAS
 
-- Hiện tại AI chưa có product-level mechanism để tìm lại một artifact khi không còn exact `artifactDirectory`.
-- Thêm public MCP tool `search_artifacts`; tool chỉ chạy khi user chủ động yêu cầu tìm artifact.
-- Query chính là title hoặc một title fragment đủ dùng do AI trích xuất từ yêu cầu; nếu không có search term hữu ích thì AI hỏi lại user.
-- MCP tìm trong canonical global artifact collection, validate candidates và trả metadata cùng bounded Markdown để AI semantic-disambiguate.
-- AI tự chọn khi có một unique high-confidence candidate; nếu vẫn mơ hồ thì trình bày candidates và hỏi user.
-- Search chỉ trả exact artifact handle và artifact metadata/content cần thiết; không trả hoặc thiết lập window affinity.
-- Nếu user chỉ muốn tìm/đọc, AI dùng plain `inspect_artifact_review`. Nếu user muốn mở trong VS Code, lần reconnect đầu sau search mặc định omit `connection`, nên MCP chọn sole/focused window.
-- Reconnect thành công trả committed `windowInstanceId`; lúc đó AI mới cache ID theo `artifactDirectory` cho các generic reconnect tiếp theo.
-- Nếu user chỉ rõ một window, AI dùng `resolve_artifact_window` và `explicit-window` selection token; không suy luận target từ persisted connection của search candidate.
+- Thêm VS Code command `AI Artifacts: Search Artifact` (`agentPlus.searchArtifact`).
+- Search là tính năng UI của extension, không phải MCP tool và không thay đổi public catalog năm lifecycle tools.
+- Command quét các schema-v6 artifact hợp lệ trong canonical global collection `~/.ai-artifacts/artifacts/` và hiển thị bằng native VS Code Quick Pick.
+- Matching chỉ chạy trên `artifact.json.title`.
+- Cả query và title được lowercase, bỏ dấu Unicode, chuyển `đ` thành `d`, chuẩn hóa khoảng trắng; kết quả khớp khi normalized title `includes` normalized query.
+- Không tokenize, fuzzy search, semantic search, đọc Markdown, tìm theo artifact ID, kind, ngày tháng, workspace hoặc path.
+- Metadata từ `artifact.json` chỉ dùng để hiển thị và phân biệt các kết quả trong Quick Pick.
+- Quick Pick hiển thị tối đa 1.000 items. Nếu có nhiều hơn, hiển thị tổng số match và yêu cầu user nhập cụ thể hơn.
+- Khi user chọn một item, extension revalidate exact artifact rồi mở `artifact.md` bằng Artifact Review trong chính VS Code window đang chạy command.
+- Search/open không gọi MCP, không reconnect, không đọc hoặc ghi `artifact-connection.json`, không thay đổi waiter, review round hay lifecycle state.
+- Khi cần đưa artifact đã mở vào AI conversation, user dùng nút Connect trong Artifact Review để copy exact `artifactDirectory`, sau đó AI inspect artifact đó.
 
-# ANALYZED:
+# ANALYZED
 
-## 1. Bối cảnh hiện tại
+## 1. Bối cảnh và quyết định cuối
 
-- Artifact schema hiện tại và duy nhất được hỗ trợ là schema v6, lưu tại `~/.ai-artifacts/artifacts/<artifact-id>/`.
-- Artifacts thuộc review sessions, không thuộc workspace/repository. `artifact.json` không còn `location.workspaceRoot`.
-- Lifecycle hiện tại yêu cầu AI giữ exact `artifactDirectory` do `create_artifact` trả về. Nếu mất handle hoặc bắt đầu chat mới, AI chưa có public tool chính thức để tìm lại artifact.
-- `artifactDirectory` là absolute path tới direct-child lifecycle directory trong canonical global collection, không phải workspace root và không phải path trực tiếp tới `artifact.md`.
-- Một artifact directory gồm:
-  - `artifact.json`: schema-v6 source of truth cho identity, title, kind, timestamps, review round và review session;
-  - `artifact.md`: nội dung Markdown hiện tại;
-  - `comments.json`: comments của current round và artifact-hash binding;
-  - `review-submission.json`: optional, xuất hiện sau Review, Proceed hoặc Just save;
-  - `artifact-connection.json`: optional UI-routing state gồm `windowInstanceId`, `connectionRevision`, `openRequestId`, `source` và `updatedAt`.
-- Search chưa được implement trong source hiện tại. Public catalog vẫn có năm tools và hard-code tool list ở MCP runtime, skill, installer/config và release tests.
-- Window-affinity reconnect trong `plans/change-resolve-workspace-contract/improve.md` là dependency đi trước search. Search analysis này giả định contract đó đã được implement/cut over.
-
-## 2. Quyết định sản phẩm đã chốt
-
-- Thêm một public MCP search tool; không dùng shell/filesystem access của AI làm product contract.
-- Search chỉ được kích hoạt khi user chủ động yêu cầu tìm artifact. Đây là ngoại lệ có chủ ý cho invariant “không scan global storage để đoán handle”.
-- MCP chịu trách nhiệm enumerate canonical collection, validate dữ liệu và trả candidates. AI chịu trách nhiệm hiểu yêu cầu, semantic-disambiguate và chọn candidate.
-- MCP được phép trả bounded `artifact.md` content để AI phân biệt candidates có title giống hoặc gần nhau.
-- AI được tự chọn candidate khi có một lựa chọn duy nhất đủ rõ ràng từ title, metadata và nội dung; không chọn chỉ vì candidate mới nhất.
-- Nếu các lựa chọn mạnh nhất vẫn mơ hồ, AI giải thích ngắn gọn và hỏi user chọn.
-- Candidate được chọn phải cung cấp exact `artifactDirectory`. Mọi downstream inspect/reconnect vẫn revalidate artifact context.
-- Search không tự mở editor, không reconnect, không takeover waiter, không tạo round token và không mutate lifecycle files.
-- Search không đọc/trả window routing state để tạo affinity. Chỉ create hoặc reconnect thành công mới được refresh AI window-ID cache.
-- Search result không phải authorization để mutate artifact hoặc execute một action cũ.
-
-## 3. Phân chia trách nhiệm
-
-### AI
-
-- Nhận biết explicit search intent từ user.
-- Trích xuất title/title fragment hoặc hỏi lại nếu không có search term hữu ích.
-- Gọi `search_artifacts` thay vì tự scan `~/.ai-artifacts/artifacts/`.
-- So sánh title, metadata và bounded Markdown với toàn bộ yêu cầu của user.
-- Tự chọn unique high-confidence candidate; không dùng recency làm tie-breaker duy nhất.
-- Nếu ambiguous, trình bày candidates bằng title và metadata dễ hiểu rồi hỏi user.
-- Sau selection, giữ exact `artifactDirectory` và dùng lifecycle tool theo user intent.
-- Không lấy `windowInstanceId`, `connectionRevision` hoặc `openRequestId` từ search result để tạo affinity.
-- Chỉ cache/refresh per-artifact `windowInstanceId` từ successful create/reconnect result.
-
-### MCP
-
-- Chỉ enumerate direct-child artifact directories trong canonical global collection.
-- Validate canonical containment, artifact-directory/ID binding, exact schema v6 và linked-path safety trước khi trả candidate.
-- Search/rank theo title và trả deterministic results.
-- Chỉ đọc Markdown của title-matched shortlist, áp dụng per-candidate và total response budget.
-- Không đọc/trả comments, review submission hoặc `artifact-connection.json` trong search result.
-- Trả exact `artifactDirectory` để inspect/reconnect tiếp tục làm final validation boundary.
-- Không ghi lifecycle files hoặc workspace registry trong search.
-
-## 4. Search, inspect và open flow
-
-### 4.1. Search và chọn candidate
+Thiết kế MCP `search_artifacts` trước đây không còn phù hợp. Product flow đã được rút gọn thành hai trách nhiệm độc lập:
 
 ```text
-User yêu cầu tìm artifact
-  -> AI trích xuất title/title fragment hoặc hỏi lại
-  -> search_artifacts({ query })
-  -> MCP enumerate + validate schema-v6 candidates
-  -> MCP trả metadata + bounded Markdown
-  -> AI semantic-disambiguate
-       unique high-confidence -> chọn
-       ambiguous -> hỏi user
-  -> AI giữ candidate.artifactDirectory
+User tìm và mở artifact
+  -> VS Code command + Quick Pick
+  -> Artifact Review
+
+User muốn AI nhận artifact đang mở
+  -> Connect button
+  -> copy exact artifactDirectory
+  -> AI inspect
 ```
 
-`artifactDirectory` từ search là exact handle nhưng không bỏ qua revalidation. Nếu artifact bị xóa, bị thay thế hoặc thay đổi unsafe giữa search và downstream call thì inspect/reconnect phải fail closed.
+Việc tách hai flow giúp search không tham gia lifecycle protocol hoặc window-routing protocol. Search chỉ là một local UI operation trong extension host hiện tại.
 
-### 4.2. User chỉ muốn tìm hoặc đọc
+## 2. Nguồn dữ liệu
+
+Mỗi candidate chỉ cần đọc và validate `artifact.json` schema v6:
 
 ```ts
-inspect_artifact_review({
-  artifactDirectory,
-})
-```
-
-- Plain inspect đọc current validated state.
-- Không emit open request.
-- Không validate live window.
-- Không refresh AI window affinity cache.
-
-### 4.3. User muốn tìm và mở trong VS Code
-
-Khi artifact vừa được tìm lại và AI không có pre-existing cache hợp lệ cho exact handle:
-
-```ts
-inspect_artifact_review({
-  artifactDirectory,
-  intent: "reconnect",
-})
-```
-
-AI omit `connection`. Routing mục tiêu:
-
-```text
-0 fresh windows
-  -> WINDOW_NOT_FOUND
-
-1 fresh window
-  -> chọn sole window
-
-multiple fresh windows
-  -> đúng 1 focused window: chọn focused window
-  -> 0 hoặc nhiều focused windows: WINDOW_SELECTION_REQUIRED
-```
-
-Reconnect thành công:
-
-- commit connection request mới;
-- trả committed `windowInstanceId`, `connectionRevision`, `openRequestId`, `source` và `updatedAt`;
-- AI lưu returned `windowInstanceId` theo exact `artifactDirectory`;
-- những generic reconnect tiếp theo có thể gửi `targetMode: "artifact-window"` theo window-affinity contract.
-
-“Fresh window ID” ở đây là ID của một window có fresh registry snapshot và vừa được MCP chọn/commit; MCP không mint một window UUID mới trong reconnect.
-
-Nếu cached ID sau đó stale hoặc mismatch, reconnect tự fallback sang sole/focused target, trả committed ID mới và AI thay cache. AI không gửi hoặc so sánh `connectionRevision` để quyết định affinity.
-
-### 4.4. User chỉ rõ window
-
-| User intent | AI behavior |
-|---|---|
-| “Tìm artifact X” | Search; không tự mở |
-| “Tìm và đọc artifact X” | Search -> plain inspect |
-| “Tìm và mở artifact X” | Search -> reconnect omit affinity -> sole/focused |
-| “Tìm và mở trong window hiện tại” | Search -> reconnect omit affinity -> sole/focused |
-| “Tìm và mở trong window X” | Search -> `resolve_artifact_window` -> reconnect bằng `explicit-window` token |
-
-Explicit-window target không fallback. Token stale/invalid hoặc target đã đóng phải fail để AI/user chọn lại.
-
-Search result tự nó không tạo hoặc overwrite một existing per-artifact mapping. Nếu AI thật sự đã giữ mapping từ một successful create/reconnect cho cùng exact handle, mapping đó vẫn tuân theo generic reconnect contract; tuy nhiên normal search-recovery/new-chat flow không có mapping và vì vậy mặc định đi sole/focused.
-
-## 5. Search input và matching direction
-
-Input tối thiểu ở mức ý tưởng:
-
-```ts
-search_artifacts({
-  query: string;
-})
-```
-
-Matching direction:
-
-1. `exact-title`: title giống query sau khi trim.
-2. `normalized-title`: không phân biệt hoa/thường và normalize Unicode/separator/khoảng trắng theo rule được chốt trong implementation analysis.
-3. `partial-title`: normalized title chứa normalized query hoặc chiều ngược lại nếu rule không tạo match quá rộng.
-
-Không dùng `updatedAt`, `createdAt` hoặc directory order làm lý do duy nhất để tự chọn artifact. Fuzzy matching sâu hơn, minimum query length, stable ordering và pagination sẽ được chốt trong implementation analysis.
-
-## 6. Candidate và result data
-
-Candidate cần đủ dữ liệu để semantic-disambiguate và tiếp tục lifecycle, nhưng không chứa workspace/window routing state:
-
-```ts
-type ArtifactSearchCandidate = {
-  artifactDirectory: string;
+type ArtifactManifest = {
+  schemaVersion: 6;
+  kind: string;
   artifactId: string;
   title: string;
+  createdAt: string;
+  updatedAt: string;
+  reviewRound: number;
+  reviewSessionId: string;
+};
+```
+
+Search dùng các field như sau:
+
+| Field | Search matching | Quick Pick display | Internal validation |
+|---|---:|---:|---:|
+| `title` | Có | Có | Có |
+| `kind` | Không | Có | Có |
+| `artifactId` | Không | Có | Có |
+| `createdAt` | Không | Có | Có |
+| `updatedAt` | Không | Có | Có |
+| `reviewRound` | Không | Có | Có |
+| `schemaVersion` | Không | Không | Có |
+| `reviewSessionId` | Không | Không | Có |
+
+`artifactDirectory` và `artifactPath` được suy ra từ validated direct-child directory; chúng không phải searchable metadata.
+
+Search không đọc:
+
+- `artifact.md`;
+- `comments.json`;
+- `review-submission.json`;
+- `artifact-connection.json`.
+
+## 3. Matching contract
+
+Normalization áp dụng giống nhau cho query và title:
+
+1. `normalize("NFD")`;
+2. bỏ Unicode combining marks;
+3. chuyển `đ`/`Đ` thành `d`;
+4. lowercase;
+5. collapse nhiều whitespace thành một space;
+6. trim hai đầu.
+
+Predicate duy nhất:
+
+```ts
+normalizeTitle(candidate.title).includes(normalizeTitle(query))
+```
+
+Ví dụ:
+
+| Query | Title | Match |
+|---|---|---:|
+| `lap ke hoach` | `Lập kế hoạch` | Có |
+| `ke hoach` | `Lập kế hoạch triển khai` | Có |
+| `hoach lap` | `Lập kế hoạch` | Không |
+| `artifact-001` | title không chứa `artifact-001` | Không |
+| `implementation-plan` | title không chứa chuỗi này | Không |
+
+Query rỗng match toàn bộ valid candidates, nhưng Quick Pick vẫn chỉ nhận tối đa 1.000 items.
+
+Không có tokenizer, word reordering, prefix index, fuzzy score, reverse-includes hoặc semantic fallback. Metadata ngoài title không được dùng để tạo match.
+
+## 4. Ordering và result limit
+
+Matching và ordering phải deterministic nhưng không dùng recency để ưu tiên một artifact:
+
+1. normalized title tăng dần;
+2. raw title tăng dần;
+3. `artifactId` tăng dần làm tie-breaker.
+
+Sau khi sort:
+
+- đưa tối đa `MAX_QUICK_PICK_ITEMS = 1000` items vào Quick Pick;
+- giữ `totalMatches` trước khi slice;
+- title của Quick Pick hiển thị `Showing 1,000 of N` khi bị giới hạn;
+- placeholder yêu cầu user nhập thêm để narrow results.
+
+Giới hạn 1.000 chỉ giới hạn UI items, không làm thay đổi matching contract.
+
+## 5. Quick Pick UX
+
+Command dùng `vscode.window.createQuickPick()` thay vì `showQuickPick()` để hỗ trợ:
+
+- trạng thái `busy` trong lúc enumerate/validate;
+- cập nhật items theo `onDidChangeValue`;
+- cập nhật tổng số match;
+- clean cancellation/disposal;
+- giữ controller mở nếu chưa có kết quả.
+
+Mỗi item dự kiến:
+
+```text
+label:       <title>
+description: <kind> · Round <reviewRound>
+detail:      Updated <updatedAt> · Created <createdAt> · <artifactId>
+```
+
+Mỗi custom-filtered item phải đặt `alwaysShow: true`. Nếu không, VS Code có thể tiếp tục áp native fuzzy filtering trên title gốc và ẩn sai một kết quả accent-insensitive, ví dụ query `lap` với title `Lập kế hoạch`.
+
+Duplicate titles vẫn là các items riêng và được phân biệt bằng metadata. Command không tự chọn artifact chỉ vì title trùng hoàn toàn.
+
+## 6. Discovery và validation boundary
+
+Discovery flow:
+
+```text
+ensure canonical global artifacts root
+  -> enumerate direct-child entries
+  -> chỉ xét real directories
+  -> build expected artifact.md path
+  -> validateArtifactReviewTarget(...)
+  -> collect validated manifest + canonical paths
+```
+
+Phải reuse `validateArtifactReviewTarget` và shared schema/path validation hiện tại. Không tạo một search-only validation path yếu hơn.
+
+Candidate bị skip nếu:
+
+- không phải direct-child directory;
+- thiếu `artifact.md` hoặc `artifact.json`;
+- manifest malformed hoặc không phải schema v6;
+- `artifactId` không khớp directory basename;
+- directory/file là symlink hoặc junction;
+- path escape canonical global collection;
+- file bị xóa hoặc thay thế trong lúc scan.
+
+Chỉ expose aggregate `skippedCount`, không hiển thị sensitive paths của invalid entries. Nếu không đọc được collection root thì command fail và hiển thị một error message; không giả vờ trả empty result.
+
+Khi user accept item, `ArtifactReviewOpenCoordinator.open(...)` revalidate candidate lần nữa. Nếu artifact đã bị xóa hoặc thay đổi sau scan, open fail closed và không mở editor sai.
+
+## 7. Window và lifecycle behavior
+
+Command được thực thi trong extension host của window hiện tại. Sau selection, coordinator gọi `vscode.openWith` trong window đó với `agentPlus.artifactReview`.
+
+Search/open không:
+
+- đọc live-window registry;
+- resolve window candidates;
+- emit open request qua `artifact-connection.json`;
+- tăng `connectionRevision`;
+- thay đổi `windowInstanceId`;
+- takeover hoặc tạo waiter;
+- inspect, advance hay mutate review round.
+
+Do đó search hoạt động độc lập với MCP availability và AI client state. Artifact Review sau khi mở có nút Connect riêng để đưa exact handle vào AI conversation.
+
+## 8. Performance direction
+
+UI cap là 1.000 items, nhưng discovery vẫn cần nhìn toàn collection để không bỏ lỡ title match.
+
+Implementation nên:
+
+- dùng một lần `readdir(..., { withFileTypes: true })`;
+- validate manifests với bounded concurrency, không `Promise.all` không giới hạn;
+- không đọc Markdown/comments/submission/connection;
+- normalize title một lần khi tạo in-memory record;
+- filter in-memory ngay khi query thay đổi;
+- ngừng schedule thêm filesystem work khi Quick Pick đã bị đóng;
+- không thêm persistent index hoặc cache ở release đầu tiên.
+
+`DISCOVERY_CONCURRENCY` nên là hằng số nội bộ có testable default, đề xuất `16`. Đây là giới hạn I/O, không phải public contract.
+
+Manual performance gate tối thiểu là collection 1.000 valid artifacts phải load và filter mượt trong installed VS Code host. Tập 10.000/50.000 artifacts dùng làm stress observation; nếu scan manifest trở thành bottleneck mới cân nhắc cache/index ở feature riêng.
+
+## 9. Ảnh hưởng theo component
+
+### Extension search service
+
+- Thêm discovery, normalization, filtering, deterministic ordering và 1.000-item cap.
+- Không import `vscode` trong phần pure/search-core để unit test trực tiếp.
+
+### Extension command/UI
+
+- Thêm Quick Pick controller.
+- Đăng ký command và nối selection vào existing `ArtifactReviewOpenCoordinator`.
+
+### Package contribution
+
+- Thêm activation event và command contribution cho `agentPlus.searchArtifact`.
+
+### Shared validation/open path
+
+- Reuse nguyên trạng `validateArtifactReviewTarget` và `ArtifactReviewOpenCoordinator`.
+- Không thay schema hoặc lifecycle contracts.
+
+### MCP/skill/installer
+
+- Không thay đổi.
+- Public MCP catalog vẫn đúng năm tools.
+- Không cần reinstall MCP integrations hoặc restart AI client cho search command.
+
+### Tests
+
+- Thêm search-core/discovery tests, command contract tests và manual installed-host matrix.
+
+### Docs
+
+- Feature này cần cập nhật command-facing docs và changelog nếu Chú phê duyệt docs scope.
+- Không cập nhật skill contract vì AI không trực tiếp gọi search command.
+
+## 10. Độ khó và độ ổn định dự kiến
+
+- Độ khó: thấp, khoảng 3/10.
+- Matching algorithm: thấp.
+- Filesystem validation/enumeration: thấp-trung bình vì phải giữ fail-closed safety.
+- Quick Pick controller: thấp-trung bình do cần custom accent-insensitive filtering và cancellation sạch.
+- Rủi ro lifecycle/window routing: thấp vì feature không tham gia hai protocol này.
+- Độ ổn định dự kiến: cao sau khi pass automated safety tests và installed-host Quick Pick validation.
+
+# IMPLEMENTATION PLAN
+
+## Release unit 1 — Search core và safe discovery
+
+### Mục tiêu
+
+Tạo module thuần, testable để enumerate valid schema-v6 artifacts và filter duy nhất theo normalized title.
+
+### File dự kiến
+
+- Thêm `src/extension/artifact-search.ts`.
+- Thêm `test/artifact-search.test.ts`.
+- Có thể bổ sung một fixture helper dùng chung nếu test setup bị lặp, nhưng không refactor unrelated open tests trong release unit này.
+
+### Thiết kế API nội bộ
+
+```ts
+type SearchableArtifact = {
+  artifactDirectory: string;
+  artifactPath: string;
+  artifactId: string;
+  title: string;
+  normalizedTitle: string;
   kind: string;
   createdAt: string;
   updatedAt: string;
   reviewRound: number;
-  match: "exact-title" | "normalized-title" | "partial-title";
-  markdownPreview?: string;
-  markdownSha256: string;
-  markdownBytes: number;
-  markdownTruncated: boolean;
+};
+
+type ArtifactDiscoveryResult = {
+  artifacts: SearchableArtifact[];
+  skippedCount: number;
+};
+
+type ArtifactFilterResult = {
+  items: SearchableArtifact[];
+  totalMatches: number;
+  limited: boolean;
 };
 ```
 
-Không đưa vào candidate:
+Functions dự kiến:
 
-- `workspaceRoot` hoặc bất kỳ repository ownership field nào;
-- `windowInstanceId`;
-- `connectionRevision`;
-- `openRequestId`;
-- comments hoặc review submission.
+- `normalizeArtifactTitleSearch(value: string): string`;
+- `discoverSearchableArtifacts(options?): Promise<ArtifactDiscoveryResult>`;
+- `filterSearchableArtifacts(artifacts, query, limit?): ArtifactFilterResult`.
 
-Result direction:
+### Các bước thực hiện
 
-```ts
-type ArtifactSearchResult = {
-  status: "matched" | "candidates" | "not-found";
-  query: string;
-  candidates: ArtifactSearchCandidate[];
-  hasMore?: boolean;
-  nextCursor?: string;
-};
+1. Resolve/create canonical collection root bằng existing global-root helper.
+2. Enumerate một level bằng `readdir` với `Dirent`.
+3. Loại non-directory và link entries trước khi đọc file.
+4. Với mỗi directory, build expected `artifact.md` bằng existing path helper.
+5. Validate bằng `validateArtifactReviewTarget` với bounded concurrency.
+6. Chuyển validated manifest thành `SearchableArtifact`; không giữ `reviewSessionId` trong UI model.
+7. Precompute `normalizedTitle` đúng contract.
+8. Sort deterministic theo title/title/artifactId.
+9. Filter bằng một predicate `includes` trên title duy nhất.
+10. Slice sau khi đếm đầy đủ match.
+
+### Automated tests
+
+- Lowercase và accent-insensitive matching.
+- `đ`/`Đ` normalization.
+- Whitespace collapse và trim.
+- Ordered phrase matches; reversed tokens không match.
+- Query không match `artifactId`, `kind`, dates hoặc directory khi title không chứa query.
+- Empty query match all.
+- Deterministic duplicate-title ordering.
+- `totalMatches`, `limited` và cap đúng 1.000.
+- Chỉ enumerate direct children.
+- Skip malformed, missing, legacy schema, ID-mismatch và linked candidates.
+- Root read failure được throw, không biến thành empty result.
+- Discovery không đọc hoặc mutate `artifact-connection.json`.
+
+### Completion gate
+
+- Search-core tests pass.
+- Existing safe-open tests vẫn pass.
+- Không có thay đổi public contract hoặc persistent files.
+
+## Release unit 2 — Quick Pick controller
+
+### Mục tiêu
+
+Hiển thị native searchable UI, custom-filter đúng contract và trả selected canonical artifact path.
+
+### File dự kiến
+
+- Thêm `src/extension/artifact-search-command.ts`.
+- Thêm `test/artifact-search-command.test.ts` cho các pure view-model/controller seams có thể dependency-inject.
+
+### Các bước thực hiện
+
+1. Tạo Quick Pick bằng `vscode.window.createQuickPick()`.
+2. Set command title và placeholder trước khi `show()`.
+3. Set `busy = true` trong lúc discovery.
+4. Giữ current input value; sau discovery filter bằng value mới nhất.
+5. Map records thành Quick Pick items chứa label/description/detail và reference nội bộ tới artifact.
+6. Set `alwaysShow: true` để VS Code không áp thêm accent-sensitive filtering.
+7. Trong `onDidChangeValue`, filter lại in-memory records ngay lập tức; không đọc disk lại.
+8. Cập nhật title/count cho zero, bounded và unbounded results.
+9. Trong `onDidAccept`, chỉ xử lý selected item hiện tại; set busy/disable interaction, hide rồi gọi injected open callback.
+10. Trong `onDidHide`, dispose listeners và đánh dấu cancellation để discovery chưa hoàn thành không update disposed UI.
+11. Nếu discovery/open lỗi, dispose Quick Pick và dùng `showErrorMessage` với message an toàn.
+
+### UX states
+
+| State | Behavior |
+|---|---|
+| Loading | Quick Pick mở ngay, `busy = true` |
+| Empty collection | Không items, thông báo không có artifact |
+| No match | Không items, yêu cầu đổi title query |
+| 1–1.000 matches | Hiển thị toàn bộ matches |
+| >1.000 matches | Hiển thị 1.000 và `Showing 1,000 of N` |
+| Invalid candidates | Bỏ qua; chỉ hiển thị aggregate skipped count nếu cần |
+| Cancel | Không open và không hiện error |
+| Selected artifact disappeared | Open revalidation fail; hiện error, không mở editor |
+
+### Automated tests
+
+- Item mapping chỉ dùng manifest metadata đã chốt.
+- Mọi custom-filtered item có `alwaysShow: true`.
+- Count/title state đúng ở 0, dưới cap và trên cap.
+- Duplicate titles vẫn chọn được từng exact record.
+- Query change không gọi discovery lại.
+- Cancel trước/sau discovery không gọi open callback.
+- Accept gọi open đúng một lần với selected `artifactPath`.
+
+### Completion gate
+
+- Controller logic có deterministic tests.
+- Không có filesystem access trong webview.
+- Không có MCP/window-registry dependency.
+
+## Release unit 3 — Command registration và open integration
+
+### Mục tiêu
+
+Expose command chính thức và reuse validated Artifact Review open flow trong current extension window.
+
+### File dự kiến
+
+- Sửa `src/extension/extension.ts`.
+- Sửa `package.json`.
+- Sửa `test/release-contract.test.ts` hoặc thêm package-command contract test phù hợp.
+
+### Các bước thực hiện
+
+1. Thêm activation event `onCommand:agentPlus.searchArtifact`.
+2. Thêm command contribution:
+
+   ```json
+   {
+     "command": "agentPlus.searchArtifact",
+     "title": "AI Artifacts: Search Artifact"
+   }
+   ```
+
+3. Register command trong `activate()` và đưa disposable vào `context.subscriptions`.
+4. Inject callback mở item qua instance `artifactReviewOpenCoordinator` hiện có.
+5. Callback dùng canonical `artifactPath` và `vscode.Uri.file(...)`.
+6. Coordinator revalidate rồi gọi `vscode.openWith` bằng `ArtifactReviewProvider.viewType`.
+7. Không gọi connection watcher handler và không ghi connection state.
+
+### Automated tests
+
+- Package chứa đúng command ID/title và activation event.
+- Extension source/register seam nối command vào search controller.
+- Selected result đi qua coordinator thay vì gọi `openWith` từ search core.
+- Search/open không thay đổi bytes hoặc mtime của `artifact-connection.json` trong fixture integration test.
+- Race delete/replace giữa discovery và selection fail closed.
+
+### Completion gate
+
+- Command xuất hiện trong Command Palette.
+- Chọn item mở Artifact Review, không mở plain Markdown editor.
+- Existing manual Open Artifact Review command và watcher flows không đổi.
+
+## Release unit 4 — Full validation và installed-host gate
+
+### Automated validation
+
+Chạy từ repository root:
+
+```powershell
+npm.cmd run check
+npm.cmd test
+npm.cmd run build
 ```
 
-`matched` chỉ nên phản ánh một deterministic title-match outcome, không thay AI semantic judgement khi nhiều plausible candidates còn tồn tại.
+Không đóng release unit nếu lifecycle, safe-open hoặc release-contract regressions xuất hiện.
 
-Artifact selection token riêng chưa cần thiết: search trả validated exact handle, còn downstream inspect/reconnect revalidates handle và current state. Pagination cursor, nếu có, chỉ điều khiển search result page; nó không authorize lifecycle mutation.
+### Manual installed-host matrix
 
-## 7. Markdown và response-size boundary
+1. Collection rỗng.
+2. Một artifact.
+3. Nhiều artifact với title khác nhau.
+4. Vietnamese title/query có và không dấu.
+5. Query có uppercase và nhiều whitespace.
+6. Query đảo thứ tự từ phải không match.
+7. Duplicate titles hiển thị metadata phân biệt được.
+8. Hơn 1.000 matches hiển thị cap/count và refine được.
+9. Một corrupt/legacy/linked candidate không làm mất valid results.
+10. Artifact bị xóa sau khi list nhưng trước khi accept phải fail closed.
+11. Selection mở bằng Artifact Review trong window gọi command.
+12. Trong multi-window, command ở window A không mở artifact ở window B.
+13. Search và open không thay đổi `artifact-connection.json`.
+14. Nút Connect trên artifact vừa search/open vẫn copy đúng exact handle và AI inspect được.
 
-- Cho phép bounded Markdown để AI phân biệt candidates là yêu cầu đã chốt.
-- Không trả toàn bộ Markdown của mọi candidate không giới hạn. Artifact có thể lớn tới 2 MB và runtime có thể biểu diễn data qua cả text `content` lẫn `structuredContent`.
-- Direction:
-  - giới hạn số candidates mỗi response;
-  - chỉ đọc Markdown cho title-matched shortlist;
-  - áp dụng per-candidate và total UTF-8 byte budget;
-  - báo `markdownBytes` và `markdownTruncated`;
-  - truncate theo UTF-8/code-point-safe boundary;
-  - dùng metadata + preview cho selection, sau đó plain inspect exact candidate để lấy full current state;
-  - refine query hoặc pagination khi kết quả quá rộng.
-- Các con số như tối đa 5 candidates, preview 16–32 KB/candidate và khoảng 128 KB tổng Markdown vẫn là recommendation sơ bộ, chưa phải contract đã chốt.
-- Implementation analysis phải quyết định chỉ dùng `markdownPreview` hay một field khác để tránh vừa `markdown` vừa `markdownPreview` gây ambiguous semantics.
+### Performance evidence
 
-## 8. Safety, privacy và failure policy
+- Ghi lại thời gian discovery và cảm nhận typing/filter với 1.000 valid manifests trong Extension Development Host hoặc installed VSIX.
+- Quan sát thêm 10.000/50.000 fixtures nếu có; không tuyên bố scale support nếu chưa đo.
+- Nếu 1.000 artifacts có visible stall sau khi busy kết thúc, profile manifest I/O trước khi thêm cache/index.
 
-- Không dựa vào việc AI client có shell access hoặc quyền đọc user home.
-- AI không trực tiếp parse lifecycle files; MCP dùng chung validation boundary cho mọi client.
-- Search chỉ đọc manifest và bounded Markdown cần cho explicit user request.
-- Search không đọc comments/submissions/connection state vì không cần cho candidate selection và có thể chứa state nhạy cảm hoặc stale.
-- Unsupported schemas v3/v4/v5 không được trả như live candidates và không được migrate trong search.
-- Symlink/junction, escaped path và artifact-directory/ID mismatch phải bị loại theo existing safety invariants.
-- Malformed, locked, partially written hoặc unreadable artifact policy cần chốt giữa:
-  - skip candidate và trả bounded diagnostics/count;
-  - fail toàn bộ request khi collection integrity không thể tin cậy.
-- Search result không authorize update/advance/reconnect; downstream lifecycle tool luôn revalidates exact handle.
-- Không log full Markdown, comments, submissions hoặc sensitive paths ngoài diagnostics tối thiểu cần thiết.
+### Completion gate
 
-## 9. Window routing integration
+- Automated validation pass.
+- Manual cases 1–14 pass hoặc mọi failure được ghi lại thành blocker rõ ràng.
+- Không claim installed-host/multi-window stability chỉ từ unit tests.
 
-Search không phụ thuộc live window registry và không gọi resolver. Window chỉ được xét khi user yêu cầu open/reconnect sau candidate selection.
+## Release unit 5 — Documentation và release note, cần Chú phê duyệt
 
-Default post-search open dùng focused window trong đa số multi-window cases vì search recovery thường không có cached affinity:
+Chỉ thực hiện sau khi Chú đồng ý docs scope.
+
+File dự kiến:
+
+- `README.md`: thêm command và flow Search -> Artifact Review -> Connect.
+- `docs/ARCHITECTURE.md`: thêm extension-local search/open flow; xác nhận không liên quan MCP routing.
+- `docs/COMPONENTS.md`: thêm search service/controller ownership.
+- `docs/INSTRUCTION.md`: thêm current product behavior nếu cần cho source-of-truth.
+- `docs/CHANGE_LOGS.md` và `CHANGELOG.md`: ghi feature và validation evidence đúng trạng thái.
+
+Không sửa `skills/create-review-artifact/` vì search không phải agent/MCP capability.
+
+## Dependency order
 
 ```text
-search selected handle
-  -> reconnect without connection
-  -> sole window, otherwise unique focused window
-  -> reconnect result returns committed ID
-  -> AI caches ID for later reconnects
+Search core + tests
+  -> Quick Pick controller + tests
+  -> command/package registration
+  -> full automated validation
+  -> installed-host/manual validation
+  -> docs/release note after approval
 ```
 
-Các boundaries phải giữ:
+Không phụ thuộc cleanup/retention. Cleanup sau này có thể reuse safe direct-child enumeration nhưng không nên được ghép vào release này.
 
-- search result không được coi persisted `artifact-connection.json` là live target evidence;
-- plain inspect result không refresh affinity;
-- reconnect result mới là source cho fresh per-artifact window ID;
-- explicit named-window intent dùng resolver token và có priority cao hơn default routing;
-- no/multiple focused windows vẫn yêu cầu candidate selection thay vì MCP đoán.
+## Rollback
 
-## 10. Ảnh hưởng theo component
+Rollback chỉ cần:
 
-### MCP runtime
+1. bỏ command registration/contribution;
+2. bỏ Quick Pick controller;
+3. bỏ search core và tests liên quan.
 
-- Thêm public tool `search_artifacts`.
-- Thêm canonical collection enumeration, title matching/ranking, bounded Markdown loading và candidate serialization.
-- Tool chỉ read; không dùng waiter registry, window registry hoặc connection commit path.
+Không cần data migration hoặc artifact repair vì feature hoàn toàn read-only đối với collection và không thay đổi schema/lifecycle/connection state.
 
-### Shared safety/contracts
+## Definition of done
 
-- Cân nhắc reusable read-only collection enumeration và search input/result schemas.
-- Reuse schema-v6/path/link validation hiện tại; không tạo validation path yếu hơn chỉ dành cho search.
-
-### Skill và artifact contract
-
-- Thêm explicit search intent, title extraction, candidate selection và ambiguity policy.
-- Thêm intent split: search-only, search-and-read, search-and-open, explicit-window open.
-- Sau search-open, cache returned reconnect `windowInstanceId`; search/plain inspect không refresh cache.
-- Giữ exact handle và không chọn theo recency.
-
-### Installer và client configuration
-
-- Public MCP catalog tăng từ 5 lên 6 tools.
-- `src/extension/mcp-config.ts` phải thêm Codex approval block và `requiredTools` entry cho `search_artifacts`.
-- Đồng bộ client drivers, installed runtime/skill verification và tool-availability checks.
-- Runtime, skill và installer/config phải cut over cùng release; AI client cần restart/new chat để tránh cached catalog/schema.
-
-### Tests
-
-- Tool catalog và six-tool availability.
-- Exact/normalized/partial matching, stable ordering, duplicate titles và ambiguous selection.
-- Schema-v6-only, corrupt/legacy/linked/unreadable artifacts và race search-to-inspect.
-- Pagination/limits, UTF-8 truncation và response budget.
-- Search-only không mutate lifecycle/window connection.
-- Search-to-plain-inspect không mở editor hoặc refresh affinity.
-- Search-to-reconnect không affinity chọn sole/focused và trả committed ID.
-- AI/skill cache ID từ reconnect result; later reconnect gửi artifact-window hint.
-- Explicit named-window flow dùng selection token.
-
-### Docs và versioning
-
-- Cập nhật README, philosophy, architecture, skill contract, `docs/CHANGE_LOGS.md` và `CHANGELOG.md`.
-- Thay mọi “exactly five tools” current-state claim thành six sau search cutover.
-- Chốt MCP/server/package version theo release status tại thời điểm implementation.
-
-## 11. Compatibility, dependency và rollout direction
-
-Thứ tự feature đề xuất:
-
-```text
-window-affinity reconnect
-  -> search_artifacts
-  -> cleanup/retention
-```
-
-Lý do:
-
-- search-to-open cần window reconnect contract đã ổn định;
-- search candidate không nên mang workaround window/workspace fields tạm thời;
-- cleanup sau search giúp search semantics và deletion-race handling được thiết kế trên canonical enumeration path rõ ràng.
-
-Compatibility:
-
-- old skill + new six-tool MCP có thể không dùng search nhưng existing lifecycle vẫn hoạt động nếu input schemas của năm lifecycle tools hiện có không bị đổi bởi search release;
-- new skill + old five-tool MCP không thể thực hiện search và phải yêu cầu reinstall/restart;
-- installer verification phải phát hiện catalog/runtime/skill mismatch;
-- không hỗ trợ mixed-version behavior bằng cách cho skill tự scan filesystem.
-
-## 12. Đánh giá độ khó sơ bộ
-
-- Thuật toán title search tự thân không khó.
-- Độ khó tổng thể ở mức trung bình-khá, khoảng 6/10, vì thay đổi public tool catalog và mở một explicit enumeration path qua global artifact collection.
-- Window integration sau khi có affinity contract mới là đơn giản: search không giữ window state; post-search open mặc định sole/focused rồi cache reconnect result.
-- Phần cần thiết kế kỹ nhất vẫn là response-size boundary, canonical enumeration safety, partial-failure policy, stable pagination và atomic runtime/skill/installer cutover.
-
-## 13. Các điểm dành cho implementation analysis sau
-
-- Tên public tool cuối cùng và MCP/server/package version mới.
-- Input schema đầy đủ, query validation và minimum usable query length.
-- Unicode normalization, matching/ranking và stable ordering chính xác.
-- Maximum candidates, pagination/cursor contract và behavior khi collection thay đổi giữa pages.
-- Preview field, per-candidate/total byte budgets và duplicate `content`/`structuredContent` handling.
-- Policy cho malformed, locked, partially written, legacy-schema và linked artifacts.
-- Search candidate/result schemas nên đặt ở MCP-local hay `src/shared`.
-- Bounded diagnostics có được expose hay chỉ trả skipped count.
-- Search có cần pagination cursor ký/bound state hay stateless cursor là đủ.
-- Skill trigger, six-tool availability contract và atomic cutover strategy.
-- Test matrix, release units, performance threshold, installed-host validation và rollback boundary.
-
-# IMPLEMENTATION PLAN:
-
-Chưa phân tích hoặc lập implementation plan ở bước này. Phần này sẽ được thực hiện riêng sau khi Chú yêu cầu.
+- Matching duy nhất là accent-insensitive normalized `title.includes(query)`.
+- Metadata chỉ dùng để hiển thị và phân biệt Quick Pick items.
+- Quick Pick không render quá 1.000 items và báo đúng tổng matches.
+- Selected artifact được revalidate và mở bằng Artifact Review trong current window.
+- Search không đọc Markdown/comments/submission/connection và không mutate bất kỳ lifecycle file nào.
+- MCP catalog, skill và installer không thay đổi.
+- Automated validation pass.
+- Installed-host cases bắt buộc pass trước khi claim feature ổn định/releasable.

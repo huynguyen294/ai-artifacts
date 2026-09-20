@@ -25,6 +25,7 @@ Release history has been standardized and tracked starting from version **0.2.6*
 - `agentPlus.autoOpenArtifactReview` disables automatic UI opening without preventing MCP connection commits. Explicit reconnect can rebind the exact artifact to another live window while wait/advance preserve the existing connection.
 - Clarified that `artifactLink` is an RFC 8089 regular file link, not a deep link and not a guarantee that the custom editor opens.
 - Removed the `.codex-artifacts` custom-editor selector.
+- Added VS Code command `AI Artifacts: Search Artifact` (`agentPlus.searchArtifact`) with native Quick Pick UI, accent-insensitive title filtering, bounded concurrency safe discovery, and deterministic ordering capped at 1,000 items. Revalidates and opens selected artifacts in the active window via `ArtifactReviewOpenCoordinator`. Documented the Connect button flow to copy exact artifact handles into AI chat.
 
 ### Integration synchronization and upgrade policy
 

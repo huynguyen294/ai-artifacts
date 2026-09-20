@@ -152,6 +152,8 @@ The AI agent calls the MCP `create_artifact` tool, which generates an isolated s
 
 By default, creation automatically routes to the currently focused VS Code window (or the sole live window), committing a connection request so only that window opens the custom **Artifact Review** editor. The target may be unfocused; other windows ignore the event. When focus is ambiguous across multiple windows, `create_artifact` requests explicit window selection (`WINDOW_SELECTION_REQUIRED`). Reconnecting the exact artifact can rebind it to another live window without changing Markdown, comments, submission, or review round. If `agentPlus.autoOpenArtifactReview` is disabled, connection state is still committed but no editor opens automatically. Use **AI Artifacts: Open Artifact Review** to open the custom editor manually.
 
+You can also search existing artifacts across `~/.ai-artifacts/artifacts/` using **AI Artifacts: Search Artifact** (`Ctrl+Shift+P` / `Cmd+Shift+P`). The Quick Pick UI filters matches in-memory by title (accent-insensitive, case-insensitive, deterministic sort, capped at 1,000 items) and opens the selected artifact in Artifact Review in the current window. Once opened, click the **Connect** button in the review header to copy the exact artifact handle and prompt for your AI agent to inspect or reconnect.
+
 MCP results also include `artifactLink`, an ordinary encoded `file://` Markdown link. It opens the artifact file through the chat client and is not a deep link; it does not guarantee that the custom editor opens.
 
 ### 7. Review, annotate, and drive execution

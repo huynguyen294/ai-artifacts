@@ -243,6 +243,7 @@ The protocol is the communication medium between the independently running MCP p
 - Deduplicate successful open-request IDs, coordinate concurrent opens by canonical artifact path, and call `vscode.openWith` for VS Code reuse/reveal behavior. Failed opens remain retryable.
 - Register commands to:
   - Open an artifact review.
+  - Search artifacts by title in the global collection (`agentPlus.searchArtifact`).
   - Install, verify, and uninstall all supported integrations or one specific client.
   - Copy the current MCP configuration or production skill.
 - Own and dispose top-level VS Code subscriptions.
@@ -496,6 +497,15 @@ This layer is the protocol source of truth. A contract change must be propagated
 - MCP restart loses waiter/token memory, not artifact state. Inspection can issue a fresh token.
 - Explicit reconnect after Proceed/Just save inspects and advances without Markdown; it does not repeat the previous approved or saved action.
 
+### Search and connect flow
+
+1. The user runs **AI Artifacts: Search Artifact** (`agentPlus.searchArtifact`) from the Command Palette.
+2. The extension-local search service queries the canonical global collection `~/.ai-artifacts/artifacts/` with bounded concurrency (`16`), filtering valid direct-child schema-v6 manifests in-memory by normalized title (accent-insensitive, case-insensitive).
+3. The VS Code Quick Pick displays matching artifacts with `alwaysShow: true`, deterministic ordering, and count indicators, capped at 1,000 items.
+4. On selection, the artifact is revalidated and opened in the current extension window via `ArtifactReviewOpenCoordinator.open`. Search does not call MCP, invoke window routing, or mutate `artifact-connection.json`.
+5. In the opened Artifact Review header, the user clicks the **Connect** button to copy the exact artifact directory and prompt to the clipboard.
+6. The user pastes the prompt into their AI chat to inspect or reconnect the artifact into the active agent session.
+
 ## 13. Responsibility matrix
 
 | Operation                      |             Skill |                 MCP |            Registry |               Extension entry |  Provider |              Store |      Webview |
@@ -550,6 +560,7 @@ Tests document the expected responsibility boundaries:
 | Managed MCP and legacy-hook configuration                                              | `test/mcp-config.test.ts`, `test/hook-config.test.ts`, `test/global-integration-status.test.ts` |
 | Installed skill contract                                                               | `test/skill-contract.test.ts`                                                                   |
 | Connection watcher, targeted unfocused auto-open, dedupe, exact-handle command, and open coordination | `test/artifact-review-open.test.ts`, `test/artifact-link-contract.test.ts`          |
+| Extension-local artifact search core, discovery, limit cap, and Quick Pick controller | `test/artifact-search.test.ts`, `test/artifact-search-command.test.ts`                         |
 | Five-client install/reinstall/verify/uninstall and artifact retention                   | `test/workspace-integration.test.ts`, `test/mcp-client-drivers.test.ts`                         |
 
 For responsibility or protocol changes, update the shared contract first, trace every producer and consumer, and run:

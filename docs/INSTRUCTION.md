@@ -64,6 +64,8 @@ If product intent, documentation, tests, and implementation disagree, call out t
 - `src/integration/artifact-review-mcp-v4.ts`: historical filename for the current MCP 9.0.0/schema-v6 tools, window resolution, connection commits, artifact creation, waiter ownership/takeover, round grants, inspection, and transactional round commits.
 - `src/extension/artifact-store.ts`: trusted artifact loading, comment writes, and submission writes.
 - `src/extension/workspace-registry-publisher.ts`: live VS Code workspace heartbeat.
+- `src/extension/artifact-search.ts`: extension-local schema-v6 title normalization, bounded concurrency discovery, and title-only filtering.
+- `src/extension/artifact-search-command.ts`: VS Code Quick Pick UI controller, in-memory filter updates, and safe cancellation/open coordination.
 - `src/extension/workspace-integration.ts`: centralized MCP installation, base runtime provisioning, and legacy cleanup.
 - `src/extension/mcp-clients/`: dedicated configuration drivers for Codex, Cursor, Claude Code, Windsurf, and GitHub Copilot (VS Code).
 - `src/webview/`: review UI and typed messages to the extension host; no direct filesystem or process access.

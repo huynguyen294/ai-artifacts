@@ -611,7 +611,7 @@ describe("global artifact-connection watcher setup", () => {
     expect(extensionSource).toContain("new vscode.RelativePattern(vscode.Uri.file(collectionRoot), pattern)");
     expect(extensionSource).toContain("localWindowInstanceId: () => workspaceRegistryPublisher.currentInstanceId");
     expect(extensionSource).toContain("setupGlobalArtifactConnectionWatcher");
-    expect(extensionSource.match(/artifactReviewOpenCoordinator\.open\(/g)).toHaveLength(2);
+    expect(extensionSource.match(/artifactReviewOpenCoordinator\.open\(/g)).toHaveLength(3);
     expect(extensionSource).toContain("ArtifactReviewProvider.viewType");
     expect(extensionSource).toContain("supportsMultipleEditorsPerDocument: false");
     expect(extensionSource).toContain("context.subscriptions.push(artifactConnectionWatcher)");

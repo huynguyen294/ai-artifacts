@@ -14,6 +14,35 @@ Minor typos, formatting fixes, or cosmetic wording adjustments that do not chang
 
 Each entry includes the date, category, summary of changes, rationale, and affected components or files.
 
+## 2026-09-20 — Extension-local artifact search and Quick Pick command
+
+### Changes
+
+- Added VS Code command `AI Artifacts: Search Artifact` (`agentPlus.searchArtifact`):
+  - Implemented pure search core in `src/extension/artifact-search.ts`:
+    - `normalizeArtifactTitleSearch`: Unicode NFD decomposition, strip combining marks, normalize `đ`/`Đ` to `d`, collapse whitespace, lowercase, and trim.
+    - `discoverSearchableArtifacts`: enumerates direct-child schema-v6 artifacts under `~/.ai-artifacts/artifacts/` with bounded concurrency (`16`), skips symlinks/invalid entries, and deterministically sorts (`normalizedTitle` -> `title` -> `artifactId`).
+    - `filterSearchableArtifacts`: in-memory substring filtering on title, capping output at `MAX_QUICK_PICK_ITEMS = 1000` while reporting `totalMatches`.
+  - Implemented testable Quick Pick controller in `src/extension/artifact-search-command.ts`:
+    - Injected dependencies (`createQuickPick`, `discoverArtifacts`, `openArtifact`, `showErrorMessage`).
+    - Formats Quick Pick items (`label`: title, `description`: kind + round, `detail`: timestamps + artifactId) with `alwaysShow: true` to prevent native VS Code fuzzy filter interference.
+    - Responsive in-memory filter on `onDidChangeValue` without disk re-scans.
+    - Clean lifecycle management, cancellation on hide, disabled UI on accept, and error containment.
+  - Wired command in `src/extension/extension.ts` and `package.json` to open selected artifacts via `ArtifactReviewOpenCoordinator.open`.
+  - Search is strictly extension-local: does not query MCP, invoke window routing, read or write `artifact-connection.json`, or alter review rounds.
+  - Documented Connect button workflow in Artifact Review header for copying exact artifact handles into AI chat sessions.
+
+### Rationale
+
+- Provides an intuitive, native UI mechanism to locate and open existing artifacts directly from VS Code without manual file dialogs or exposing search as an MCP tool.
+
+### Affected components and files
+
+- `src/extension/artifact-search.ts`, `src/extension/artifact-search-command.ts`
+- `src/extension/extension.ts`, `package.json`
+- `test/artifact-search.test.ts`, `test/artifact-search-command.test.ts`
+- `README.md`, `docs/ARCHITECTURE.md`, `docs/COMPONENTS.md`, `docs/INSTRUCTION.md`, `docs/CHANGE_LOGS.md`, `CHANGELOG.md`
+
 ## 2026-09-20 — Advisory artifact-window affinity for reconnect
 
 ### Changes
