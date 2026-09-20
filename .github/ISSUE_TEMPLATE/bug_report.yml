@@ -1,0 +1,132 @@
+name: Bug report
+description: Report a reproducible problem with AI Artifacts.
+title: "[Bug]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug. Please provide enough detail for us to reproduce and diagnose the problem.
+
+        Before submitting, remove API keys, access tokens, private artifact content, usernames, and other sensitive information from paths, logs, screenshots, and configuration files.
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: Problem summary
+      description: Briefly describe what went wrong and how it affects your workflow.
+      placeholder: AI Artifacts opens the artifact in the wrong VS Code window after reconnecting.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: affected-area
+    attributes:
+      label: Affected area
+      description: Select the area that most closely matches the problem.
+      options:
+        - Artifact creation, opening, or reconnecting
+        - Artifact review editor
+        - Artifact search
+        - MCP or AI client integration
+        - Integration installation or configuration
+        - Multi-window routing
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: Provide the smallest reliable sequence that reproduces the problem.
+      placeholder: |
+        1. Open two VS Code windows.
+        2. Create an artifact from the AI client.
+        3. Reconnect to the artifact.
+        4. Observe that ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected-behavior
+    attributes:
+      label: Expected behavior
+      description: What did you expect to happen?
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual-behavior
+    attributes:
+      label: Actual behavior
+      description: What happened instead? Include any visible error message.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: frequency
+    attributes:
+      label: Reproduction frequency
+      options:
+        - Every time
+        - Often
+        - Sometimes
+        - Once
+        - Unknown
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Include every version and runtime detail available to you.
+      placeholder: |
+        - AI Artifacts extension version: 1.0.0
+        - Editor and version: VS Code 1.xx.x / Cursor x.x.x
+        - Operating system and version: Windows 11 / macOS 15 / Ubuntu 24.04
+        - AI client: Codex / Cursor / Claude Code / Windsurf / GitHub Copilot
+        - Local, WSL, SSH, dev container, or Codespaces: Local
+        - Number of open editor windows: 1
+    validations:
+      required: true
+
+  - type: textarea
+    id: artifact-context
+    attributes:
+      label: Artifact context
+      description: If applicable, provide the artifact ID or a redacted artifact directory and describe whether this was a create, open, search, inspect, review, or reconnect flow.
+      placeholder: |
+        - Artifact ID or redacted directory:
+        - Operation:
+        - Was the artifact newly created or previously existing?
+        - Did restarting the editor or AI client change the result?
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs and error output
+      description: Paste relevant extension host, MCP, AI client, or developer-console output. Redact secrets and private content.
+      placeholder: Paste the smallest relevant log excerpt here.
+
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: Screenshots or recordings
+      description: Drag and drop any screenshots or recordings that help demonstrate the problem. Redact sensitive information first.
+
+  - type: textarea
+    id: additional-context
+    attributes:
+      label: Additional context
+      description: Add recent configuration changes, workarounds, regression details, or anything else that may help.
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Pre-submission checklist
+      options:
+        - label: I searched existing issues for the same problem.
+          required: true
+        - label: I removed secrets and sensitive information from this report.
+          required: true

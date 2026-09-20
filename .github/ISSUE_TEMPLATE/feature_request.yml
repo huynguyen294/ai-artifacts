@@ -1,0 +1,74 @@
+name: Feature request
+description: Suggest an improvement or new capability for AI Artifacts.
+title: "[Feature]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for suggesting an improvement. Please describe the user problem first so the proposal can be evaluated in context.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or use case
+      description: What problem are you trying to solve, and who is affected by it?
+      placeholder: When working with multiple editor windows, I need to ...
+    validations:
+      required: true
+
+  - type: dropdown
+    id: affected-area
+    attributes:
+      label: Affected area
+      description: Select the area most closely related to the request.
+      options:
+        - Artifact lifecycle
+        - Artifact review editor
+        - Artifact search and management
+        - MCP or AI client integration
+        - Integration installation or configuration
+        - Multi-window routing
+        - Documentation
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposed-solution
+    attributes:
+      label: Proposed solution
+      description: Describe the behavior or outcome you would like to see.
+    validations:
+      required: true
+
+  - type: textarea
+    id: example-workflow
+    attributes:
+      label: Example workflow
+      description: If helpful, show how a user would interact with this feature from start to finish.
+      placeholder: |
+        1. The user ...
+        2. AI Artifacts ...
+        3. The result is ...
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Describe any workarounds or alternative solutions you have tried.
+
+  - type: textarea
+    id: additional-context
+    attributes:
+      label: Additional context
+      description: Add screenshots, mockups, related issues, technical constraints, or any other useful context.
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Pre-submission checklist
+      options:
+        - label: I searched existing issues for a similar request.
+          required: true
+        - label: This request describes a user problem or concrete use case.
+          required: true
