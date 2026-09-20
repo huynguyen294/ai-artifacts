@@ -59,6 +59,14 @@ button:disabled {
   gap: 8px;
   flex-wrap: wrap;
 }
+.topbar-icon-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+.topbar-icon-actions .copy-button {
+  width: 28px;
+}
 .comment-count {
   color: var(--vscode-descriptionForeground);
   font-size: 12px;
@@ -128,7 +136,8 @@ button:disabled {
   align-items: center;
   justify-content: flex-end;
   min-height: 40px;
-  padding: 4px clamp(12px, 3vw, 32px);
+  padding: 12px;
+  padding-bottom: 0px;
   /* border-bottom: 1px solid var(--vscode-panel-border); */
   background: var(--vscode-editor-background);
 }
@@ -163,7 +172,7 @@ button:disabled {
   max-width: 820px;
   width: 100%;
   margin: 0 auto;
-  padding: 44px 52px 100px;
+  padding: 20px 20px 100px;
   line-height: 1.65;
 }
 .plan-block {

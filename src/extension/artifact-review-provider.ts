@@ -1,4 +1,5 @@
 import * as vscode from "vscode";
+import { buildArtifactConnectPrompt } from "../shared/artifact-connect-prompt";
 import { webviewToExtensionMessageSchema, type ExtensionToWebviewMessage } from "../shared/contracts";
 import { ArtifactStore } from "./artifact-store";
 
@@ -45,6 +46,10 @@ export class ArtifactReviewProvider implements vscode.CustomTextEditorProvider {
           case "removeComment":
             await store.removeComment(message.commentId);
             await refresh();
+            return;
+          case "copyArtifactConnectPrompt":
+            await vscode.env.clipboard.writeText(buildArtifactConnectPrompt(store.artifactDirectory));
+            await post({ type: "artifactConnectPromptCopied" });
             return;
           case "openExternal": {
             const uri = vscode.Uri.parse(message.url, true);

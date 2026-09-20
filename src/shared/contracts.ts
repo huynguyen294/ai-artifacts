@@ -202,6 +202,7 @@ export const webviewToExtensionMessageSchema = z.discriminatedUnion("type", [
   commentDraftSchema.extend({ type: z.literal("addComment") }),
   z.object({ type: z.literal("removeComment"), commentId: z.string().uuid() }),
   z.object({ type: z.literal("submitReview"), decision: reviewDecisionSchema }),
+  z.object({ type: z.literal("copyArtifactConnectPrompt") }),
   z.object({ type: z.literal("openExternal"), url: z.string().url() }),
   z.object({ type: z.literal("ready") }),
 ]);
@@ -214,4 +215,5 @@ export type SendStatus = "idle" | "submitting" | "submitted" | "error";
 export type ExtensionToWebviewMessage =
   | { type: "state"; state: ReviewState }
   | { type: "sendState"; status: SendStatus; message?: string; retryable?: boolean }
+  | { type: "artifactConnectPromptCopied" }
   | { type: "error"; message: string };
