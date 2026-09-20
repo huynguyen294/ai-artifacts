@@ -94,7 +94,19 @@ export const explicitWindowConnectionInputSchema = z.object({
 
 export type ExplicitWindowConnectionInput = z.infer<typeof explicitWindowConnectionInputSchema>;
 
+export const artifactWindowConnectionInputSchema = z.object({
+  targetMode: z.literal("artifact-window"),
+  windowInstanceId: z.string().uuid(),
+}).strict();
 
+export type ArtifactWindowConnectionInput = z.infer<typeof artifactWindowConnectionInputSchema>;
+
+export const reconnectConnectionInputSchema = z.discriminatedUnion("targetMode", [
+  artifactWindowConnectionInputSchema,
+  explicitWindowConnectionInputSchema,
+]);
+
+export type ReconnectConnectionInput = z.infer<typeof reconnectConnectionInputSchema>;
 
 export const artifactManifestSchema = z.object({
   schemaVersion: z.literal(ARTIFACT_SCHEMA_VERSION),

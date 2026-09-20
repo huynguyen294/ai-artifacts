@@ -14,6 +14,33 @@ Minor typos, formatting fixes, or cosmetic wording adjustments that do not chang
 
 Each entry includes the date, category, summary of changes, rationale, and affected components or files.
 
+## 2026-09-20 — Advisory artifact-window affinity for reconnect
+
+### Changes
+
+- Added advisory artifact-window affinity for `inspect_artifact_review(intent: "reconnect")`:
+  - Defined strict `artifactWindowConnectionInputSchema` (`targetMode: "artifact-window"`, `windowInstanceId: UUID`) and union `reconnectConnectionInputSchema` in `src/shared/contracts.ts`.
+  - Excluded `connectionRevision` from agent input to ensure reconnect validity depends purely on ID equality and live registry presence rather than optimistic lock semantics.
+  - Implemented pure selector `selectReconnectWindowTarget` in `src/shared/window-routing.ts` with deterministic resolution hierarchy: `sole live window -> valid artifact affinity -> unique focused window -> ambiguous selection required`.
+  - Reconnect preflight reads current connection before takeover to fail-closed early on malformed files (`ARTIFACT_CONNECTION_INVALID`).
+  - Mismatch or stale affinity is treated as an expected refresh path rather than an error, silently falling back to focused resolution and returning the newly committed window instance ID.
+  - Reject `artifact-window` input on `create_artifact` and non-reconnect `inspect_artifact_review`.
+  - Updated tool declaration schema for `inspect_artifact_review` to accept `oneOf` connection modes (`artifact-window` and `explicit-window`).
+  - Updated `create-review-artifact` skill and artifact contract references to track `artifactDirectory -> { reviewRound, windowInstanceId }` in chat working state.
+  - Documented intent-driven connection behavior: generic reconnect sends cached affinity hint; "current window" intent omits hint; "window X" intent uses explicit selection tokens.
+
+### Rationale
+
+- In multi-window workflows, users expect reconnecting an existing artifact to reopen in its original window even if another window has gained focus in the meantime, while still allowing explicit overrides and clean fallbacks when windows close.
+
+### Affected components and files
+
+- `src/shared/contracts.ts`, `src/shared/window-routing.ts`
+- `src/integration/artifact-review-mcp-v4.ts`
+- `skills/create-review-artifact/SKILL.md`, `skills/create-review-artifact/references/artifact-contract.md`
+- `test/window-routing.test.ts`, `test/review-wait-mcp.test.ts`, `test/skill-contract.test.ts`
+- `docs/CHANGE_LOGS.md`, `CHANGELOG.md`, `README.md`, `docs/INSTRUCTION.md`, `docs/PHILOSOPHY.md`, `docs/ARCHITECTURE.md`
+
 ## 2026-09-19 — Token consume timing fix and dead code cleanup
 
 ### Changes

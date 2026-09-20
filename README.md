@@ -93,7 +93,7 @@ If the verify command reports `missing` (or you prefer manual setup), check dire
 #### 3. Common runtime errors & recovery
 
 - **MCP tools are unavailable:** Run **AI Artifacts: Install All Detected Integrations** (or the command for that client), restart your AI extension/editor, and start a fresh chat (a chat that was already open cannot load tools installed afterward). Also verify that `node` is available in `PATH`.
-- **`WINDOW_NOT_FOUND` / `WINDOW_SELECTION_REQUIRED`:** Ensure VS Code is running. When multiple windows exist and focus is ambiguous, select the matching window candidate and retry with the single-use selection token (`targetMode: "explicit-window"`).
+- **`WINDOW_NOT_FOUND` / `WINDOW_SELECTION_REQUIRED`:** Ensure VS Code is running. When multiple windows exist and focus/affinity is ambiguous, select the matching window candidate and retry with the single-use selection token (`targetMode: "explicit-window"`).
 - **Window selection expired or closed:** Retry creation or inspection without the expired token to refresh live window candidates. After creation, keep the exact artifact handle and retry `inspect_artifact_review` with reconnect intent.
 - **A round token expired or the MCP restarted:** The existing content remains intact. Ask the AI agent to inspect the exact artifact path again to obtain a fresh token and reconnect.
 - **A configuration conflict is reported:** Remove or rename the unmanaged `[mcp_servers.ai_artifacts]` entry in your configuration file, then run the installer again.

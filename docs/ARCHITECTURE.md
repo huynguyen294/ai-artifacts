@@ -67,7 +67,7 @@ Advancing always increments the round and resets handled comments. A question-on
 
 Each running extension window writes an atomic snapshot under `~/.ai-artifacts/managed/workspaces/` (or `CODEX_ARTIFACTS_REGISTRY_DIRECTORY`) and refreshes it every 15 seconds. Schema-v2 snapshots expire after 45 seconds and contain canonical workspace folders (or empty array for folderless windows), focus state, and the active file/root when available. The registry publisher prunes snapshots, retaining at most 10 snapshots and removing files older than 7 days.
 
-Window routing defaults to the focused live window. When multiple live windows exist and none or multiple are focused, `create_artifact` or `inspect_artifact_review` returns `WINDOW_SELECTION_REQUIRED` with candidates and opaque selection tokens. Agents present candidates using concise labels instead of raw UUIDs and retry using `connection: { targetMode: "explicit-window", selectionToken }`.
+Window routing for creation defaults to the focused live window (or sole live window). Generic reconnect routing prioritizes: sole live window, validated advisory artifact-window affinity (where the agent's cached ID matches the stored connection and is fresh in the registry), and unique focused window. When multiple live windows exist and focus/affinity is ambiguous, `create_artifact` or `inspect_artifact_review` returns `WINDOW_SELECTION_REQUIRED` with candidates and opaque selection tokens. Agents present candidates using concise labels instead of raw UUIDs and retry using `connection: { targetMode: "explicit-window", selectionToken }`.
 
 ## Filesystem safety
 

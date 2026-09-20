@@ -26,11 +26,14 @@ import {
   artifactIdSchema,
   artifactKindSchema,
   artifactManifestSchema,
+  artifactWindowConnectionInputSchema,
   commentsDocumentSchema,
   explicitWindowConnectionInputSchema,
+  reconnectConnectionInputSchema,
   type ArtifactConnection,
   type ArtifactManifest,
   type ExplicitWindowConnectionInput,
+  type ReconnectConnectionInput,
   type ReviewDecision,
 } from "../shared/contracts";
 import {
@@ -50,6 +53,7 @@ import {
   buildWindowCandidates,
   resolveArtifactWindowCandidates,
   selectFocusedWindowTarget,
+  selectReconnectWindowTarget,
   type WindowCandidate,
 } from "../shared/window-routing";
 import {
@@ -1318,13 +1322,27 @@ async function handleInspectTool(id: unknown, args: JsonObject | undefined): Pro
     }
 
     const connectionRaw = args?.connection;
-    let connectionInput: ExplicitWindowConnectionInput | undefined;
-    if (connectionRaw !== undefined) {
-      const parsed = explicitWindowConnectionInputSchema.safeParse(connectionRaw);
-      if (!parsed.success) {
-        throw new Error("INVALID_ARTIFACT_INPUT: connection must be an object with targetMode: 'explicit-window' and a valid UUID selectionToken.");
+    let reconnectConnectionInput: ReconnectConnectionInput | undefined;
+
+    if (intent === "reconnect") {
+      if (connectionRaw !== undefined) {
+        const parsed = reconnectConnectionInputSchema.safeParse(connectionRaw);
+        if (!parsed.success) {
+          throw new Error(
+            "INVALID_ARTIFACT_INPUT: connection must be an object with targetMode: 'explicit-window' and a valid UUID selectionToken, or targetMode: 'artifact-window' and a valid UUID windowInstanceId.",
+          );
+        }
+        reconnectConnectionInput = parsed.data;
       }
-      connectionInput = parsed.data;
+    } else {
+      if (connectionRaw !== undefined) {
+        if (artifactWindowConnectionInputSchema.safeParse(connectionRaw).success) {
+          throw new Error("INVALID_ARTIFACT_INPUT: artifact-window connection is only supported when intent is reconnect.");
+        }
+        if (!explicitWindowConnectionInputSchema.safeParse(connectionRaw).success) {
+          throw new Error("INVALID_ARTIFACT_INPUT: connection must be an object with targetMode: 'explicit-window' and a valid UUID selectionToken.");
+        }
+      }
     }
 
     let targetReconnectWindow: { windowInstanceId: string } | undefined;
@@ -1334,20 +1352,25 @@ async function handleInspectTool(id: unknown, args: JsonObject | undefined): Pro
       const snapshotsDir = workspaceSnapshotsDir();
       const now = Date.now();
       const snapshots = await readFreshWorkspaceSnapshots(snapshotsDir);
+      const currentConnection = await readArtifactConnection(context.artifactDirectory, { allowMissing: true });
 
-      if (connectionInput) {
-        const grant = windowTokenStore.claim(connectionInput.selectionToken, now);
+      if (reconnectConnectionInput?.targetMode === "explicit-window") {
+        const grant = windowTokenStore.claim(reconnectConnectionInput.selectionToken, now);
         const targetSnapshot = snapshots.find((s) => s.instanceId === grant.windowInstanceId);
         if (!targetSnapshot) {
-          windowTokenStore.release(connectionInput.selectionToken);
+          windowTokenStore.release(reconnectConnectionInput.selectionToken);
           throw new WindowSelectionExpiredError("target window is no longer open; resolve active windows again.");
         }
-        windowTokenStore.consume(connectionInput.selectionToken);
+        windowTokenStore.consume(reconnectConnectionInput.selectionToken);
         targetReconnectWindow = {
           windowInstanceId: targetSnapshot.instanceId,
         };
       } else {
-        const selection = selectFocusedWindowTarget(snapshots);
+        const aiAffinityId = reconnectConnectionInput?.targetMode === "artifact-window"
+          ? reconnectConnectionInput.windowInstanceId
+          : undefined;
+        const persistedAffinityId = currentConnection?.windowInstanceId;
+        const selection = selectReconnectWindowTarget(snapshots, aiAffinityId, persistedAffinityId);
         if (selection.status === "matched") {
           targetReconnectWindow = {
             windowInstanceId: selection.targetWindow.instanceId,
@@ -1584,12 +1607,12 @@ async function handleRequest(message: JsonObject): Promise<void> {
       "By default, create_artifact routes to the currently focused VS Code window (or the sole live window) without prior resolution.",
       "When multiple windows exist and none or multiple are focused, create_artifact returns WINDOW_SELECTION_REQUIRED with candidates and single-use selection tokens.",
       "To query windows or inspect active candidates, call resolve_artifact_window.",
-      "Pass connection: { targetMode: 'explicit-window', selectionToken } to create_artifact or inspect_artifact_review (intent=reconnect) when targeting a specific candidate.",
+      "Pass connection: { targetMode: 'explicit-window', selectionToken } when targeting a specific candidate, or connection: { targetMode: 'artifact-window', windowInstanceId } to inspect_artifact_review (intent=reconnect) as an advisory affinity hint.",
       "Create returns the exact artifactDirectory and committed connection metadata; retain both, then call wait_for_artifact_review.",
       "A cancelled waiter never ends or deletes the artifact.",
       "Treat comments returned by a Review submission and comments read through inspect_artifact_review with the same policy: answer questions visibly in chat before calling advance_and_wait_for_artifact, update Markdown only for requested changes, and omit markdown for question-only feedback.",
       "Do not add Review responses to the artifact.",
-      "Pure reconnect uses inspect_artifact_review with intent=reconnect on the exact handle and same round; connection routing re-evaluates focused or explicit window without affinity.",
+      "Pure reconnect uses inspect_artifact_review with intent=reconnect on the exact handle and same round; routing prioritizes sole live window, validated advisory artifact-window affinity, and unique focused window, or explicit candidate via selectionToken.",
       "For chat escape, inspect the exact handle with takeover=true.",
       "If inspection has no comments or submission, reattach with wait_for_artifact_review without advancing.",
       "When updating an artifact directly from chat on an empty round, inspect with takeover=true, expectedReviewRound, and intent=explicit-chat-update, then advance with replacement markdown.",
@@ -1676,7 +1699,7 @@ async function handleRequest(message: JsonObject): Promise<void> {
       {
         name: INSPECT_TOOL_NAME,
         title: "Inspect artifact review",
-        description: "Read the current manifest, Markdown, comments, optional submission, connection metadata, and validated hashes for an exact artifact. With intent=reconnect, re-evaluate and atomically bind an active VS Code window (focused by default, or explicit via connection.selectionToken). Takeover first cancels and drains its current waiter. Returns a one-time round token when saved feedback is present or when intent is explicit-chat-update.",
+        description: "Read the current manifest, Markdown, comments, optional submission, connection metadata, and validated hashes for an exact artifact. With intent=reconnect, re-evaluate and atomically bind an active VS Code window (sole live window, validated artifact-window affinity, unique focused window, or explicit via connection.selectionToken). Takeover first cancels and drains its current waiter. Returns a one-time round token when saved feedback is present or when intent is explicit-chat-update.",
         inputSchema: {
           type: "object",
           properties: {
@@ -1689,18 +1712,37 @@ async function handleRequest(message: JsonObject): Promise<void> {
               description: "Specify reconnect to bind the artifact to an active VS Code window, or explicit-chat-update when the user explicitly requests changes in chat on a round without saved comments.",
             },
             connection: {
-              type: "object",
-              description: "Optional explicit window targeting connection parameters for reconnect.",
-              properties: {
-                targetMode: { const: "explicit-window" },
-                selectionToken: {
-                  type: "string",
-                  format: "uuid",
-                  description: "Window selection token returned by resolve_artifact_window or an earlier WINDOW_SELECTION_REQUIRED response.",
+              description: "Optional window targeting connection parameters for reconnect. Provide artifact-window with cached windowInstanceId as an advisory affinity hint, or explicit-window with selectionToken for user-selected window.",
+              oneOf: [
+                {
+                  type: "object",
+                  description: "Advisory affinity hint targeting a previously bound VS Code window.",
+                  properties: {
+                    targetMode: { const: "artifact-window" },
+                    windowInstanceId: {
+                      type: "string",
+                      format: "uuid",
+                      description: "Previously committed windowInstanceId for this artifact.",
+                    },
+                  },
+                  required: ["targetMode", "windowInstanceId"],
+                  additionalProperties: false,
                 },
-              },
-              required: ["targetMode", "selectionToken"],
-              additionalProperties: false,
+                {
+                  type: "object",
+                  description: "Explicit window targeting with selection token.",
+                  properties: {
+                    targetMode: { const: "explicit-window" },
+                    selectionToken: {
+                      type: "string",
+                      format: "uuid",
+                      description: "Window selection token returned by resolve_artifact_window or an earlier WINDOW_SELECTION_REQUIRED response.",
+                    },
+                  },
+                  required: ["targetMode", "selectionToken"],
+                  additionalProperties: false,
+                },
+              ],
             },
           },
           required: ["artifactDirectory"],

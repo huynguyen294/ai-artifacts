@@ -73,7 +73,7 @@ describe("create-review-artifact skill contract", () => {
     ]) expect(skill).toContain(tool);
     expect(skill).not.toContain("`resolve_artifact_workspace`");
     expect(contract).toContain("Never select “the latest artifact”");
-    expect(skill).toContain("maintain an `artifactDirectory -> reviewRound` mapping");
+    expect(skill).toContain("maintain an `artifactDirectory -> { reviewRound, windowInstanceId }` mapping");
     expect(skill).toContain("answer every question directly in user-visible chat");
     expect(skill).toContain("without `markdown`");
     expect(skill).toContain("before starting `advance_and_wait_for_artifact`");
@@ -124,11 +124,14 @@ describe("create-review-artifact skill contract", () => {
     ]);
 
     expect(skill).toContain('retry the same inspect call with `connection: { targetMode: "explicit-window", selectionToken }`');
+    expect(skill).toContain('`connection: { targetMode: "artifact-window", windowInstanceId }`');
     expect(skill).toContain("`schemaVersion`, `windowInstanceId`, `connectionRevision`, `openRequestId`, `source`, and `updatedAt`");
-    expect(skill).toContain("Reconnect re-evaluates the currently focused live window");
+    expect(skill).toContain("Reconnect evaluates active windows prioritizing sole live window, validated advisory artifact-window affinity");
+    expect(skill).toContain("Do not send or compare `connectionRevision`");
     expect(contract).toContain('`connection: { targetMode: "explicit-window", selectionToken }`');
+    expect(contract).toContain('`{ targetMode: "artifact-window", windowInstanceId }`');
     expect(contract).toContain("returns the committed connection metadata");
-    expect(contract).toContain("Focus is not required when targeting via `selectionToken`");
+    expect(contract).toContain("Focus is not required when targeting via `selectionToken` or matching advisory affinity");
   });
 
   it("always creates implementation plans and treats Proceed as immediate execution authorization", async () => {

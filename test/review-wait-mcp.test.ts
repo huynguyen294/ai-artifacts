@@ -320,7 +320,14 @@ describe("artifact review MCP server v8", () => {
     expect(createWindowTokenDescription).toContain("WINDOW_SELECTION_REQUIRED response");
     expect(createWindowTokenDescription).not.toContain("resolve_artifact_workspace");
     const inspectTool = tools.tools.find((tool: any) => tool.name === "inspect_artifact_review");
-    const reconnectTokenDescription = inspectTool.inputSchema.properties.connection.properties.selectionToken.description;
+    const connectionOneOf = inspectTool.inputSchema.properties.connection.oneOf;
+    expect(connectionOneOf).toBeDefined();
+    const explicitVariant = connectionOneOf.find((variant: any) => variant.properties?.targetMode?.const === "explicit-window");
+    const affinityVariant = connectionOneOf.find((variant: any) => variant.properties?.targetMode?.const === "artifact-window");
+    expect(explicitVariant).toBeDefined();
+    expect(affinityVariant).toBeDefined();
+    expect(affinityVariant.properties.windowInstanceId.format).toBe("uuid");
+    const reconnectTokenDescription = explicitVariant.properties.selectionToken.description;
     expect(reconnectTokenDescription).toContain("WINDOW_SELECTION_REQUIRED response");
     expect(reconnectTokenDescription).not.toContain("resolve_artifact_workspace");
 
@@ -2216,5 +2223,224 @@ describe("artifact review MCP server v8", () => {
     const waitResult = await waiting.promise;
     expect(waitResult.isError).toBeFalsy();
     expect(waitResult.structuredContent.decision).toBe("approve");
+  });
+
+  it("reconnect with valid affinity targets non-focused window over another focused window, and increments revision", async () => {
+    const fixture = await workspaceFixture();
+    // Window 1 from fixture: make it non-focused
+    const firstSnapshotPath = path.join(fixture.registry, (await readdir(fixture.registry))[0]!);
+    const firstSnapshot = JSON.parse(await readFile(firstSnapshotPath, "utf8"));
+    firstSnapshot.focused = false;
+    await atomicWrite(firstSnapshotPath, `${JSON.stringify(firstSnapshot, null, 2)}\n`);
+    const winAId = firstSnapshot.instanceId;
+
+    // Window 2: focused
+    const now = Date.now();
+    const winBId = randomUUID();
+    await writeFile(path.join(fixture.registry, `${winBId}.json`), `${JSON.stringify({
+      schemaVersion: 2,
+      instanceId: winBId,
+      processId: process.pid,
+      workspaceFile: null,
+      focused: true,
+      folders: [{ path: fixture.workspace, realPath: await realpath(fixture.workspace) }],
+      activeFile: null,
+      updatedAt: new Date(now).toISOString(),
+      expiresAt: new Date(now + 60_000).toISOString(),
+    }, null, 2)}\n`, "utf8");
+
+    const client = startClient(fixture.registry);
+    await initialize(client);
+
+    // Create artifact directly targeting Window A explicitly first
+    const resolved = await callTool(client, "resolve_artifact_window", {});
+    const tokenA = resolved.structuredContent.candidates.find((c: any) => c.windowInstanceId === winAId)!.selectionToken;
+
+    const created = await createArtifact(client, fixture.workspace, {
+      title: "Affinity test",
+      connection: {
+        targetMode: "explicit-window",
+        selectionToken: tokenA,
+      },
+    });
+    expect(created.connection.windowInstanceId).toBe(winAId);
+    expect(created.connection.connectionRevision).toBe(1);
+
+    // Reconnect with artifact-window affinity for winAId
+    // Window A is non-focused, Window B is focused. Window A MUST win!
+    const reconnectResult = await callTool(client, "inspect_artifact_review", {
+      artifactDirectory: created.artifactDirectory,
+      intent: "reconnect",
+      connection: {
+        targetMode: "artifact-window",
+        windowInstanceId: winAId,
+      },
+    });
+
+    expect(reconnectResult.isError).toBeFalsy();
+    expect(reconnectResult.structuredContent.connection).toMatchObject({
+      windowInstanceId: winAId,
+      connectionRevision: 2,
+      source: "inspect",
+    });
+
+    // Reconnect again with same affinity: revision increments, openRequestId changes
+    const reconnect2 = await callTool(client, "inspect_artifact_review", {
+      artifactDirectory: created.artifactDirectory,
+      intent: "reconnect",
+      connection: {
+        targetMode: "artifact-window",
+        windowInstanceId: winAId,
+      },
+    });
+
+    expect(reconnect2.isError).toBeFalsy();
+    expect(reconnect2.structuredContent.connection).toMatchObject({
+      windowInstanceId: winAId,
+      connectionRevision: 3,
+      source: "inspect",
+    });
+    expect(reconnect2.structuredContent.connection.openRequestId).not.toBe(
+      reconnectResult.structuredContent.connection.openRequestId,
+    );
+
+    // Reconnect with mismatched/stale hint: silently falls back to focused Window B
+    const staleHintResult = await callTool(client, "inspect_artifact_review", {
+      artifactDirectory: created.artifactDirectory,
+      intent: "reconnect",
+      connection: {
+        targetMode: "artifact-window",
+        windowInstanceId: randomUUID(),
+      },
+    });
+
+    expect(staleHintResult.isError).toBeFalsy();
+    expect(staleHintResult.structuredContent.connection).toMatchObject({
+      windowInstanceId: winBId,
+      connectionRevision: 4,
+      source: "inspect",
+    });
+  });
+
+  it("sole window reconnect always routes to sole window even with stale/mismatched affinity hint", async () => {
+    const fixture = await workspaceFixture();
+    const client = startClient(fixture.registry);
+    await initialize(client);
+
+    const created = await createArtifact(client, fixture.workspace, { title: "Sole win test" });
+    const soleWinId = created.connection.windowInstanceId;
+
+    const deadId = randomUUID();
+    const reconnectResult = await callTool(client, "inspect_artifact_review", {
+      artifactDirectory: created.artifactDirectory,
+      intent: "reconnect",
+      connection: {
+        targetMode: "artifact-window",
+        windowInstanceId: deadId,
+      },
+    });
+
+    expect(reconnectResult.isError).toBeFalsy();
+    expect(reconnectResult.structuredContent.connection).toMatchObject({
+      windowInstanceId: soleWinId,
+      connectionRevision: 2,
+    });
+  });
+
+  it("rejects artifact-window input on create_artifact and non-reconnect inspect_artifact_review", async () => {
+    const fixture = await workspaceFixture();
+    const client = startClient(fixture.registry);
+    await initialize(client);
+
+    // create_artifact with artifact-window must fail
+    const createFail = await callTool(client, "create_artifact", {
+      title: "Fail create",
+      kind: "plan",
+      markdown: "# Test\n",
+      connection: {
+        targetMode: "artifact-window",
+        windowInstanceId: randomUUID(),
+      },
+    });
+    expect(createFail.isError).toBe(true);
+    expect(createFail.content[0].text).toContain("INVALID_ARTIFACT_INPUT");
+
+    // Create a valid artifact to test inspect
+    const created = await createArtifact(client, fixture.workspace, { title: "Valid" });
+
+    // non-reconnect inspect with artifact-window must fail
+    const inspectFail = await callTool(client, "inspect_artifact_review", {
+      artifactDirectory: created.artifactDirectory,
+      connection: {
+        targetMode: "artifact-window",
+        windowInstanceId: randomUUID(),
+      },
+    });
+    expect(inspectFail.isError).toBe(true);
+    expect(inspectFail.content[0].text).toContain("INVALID_ARTIFACT_INPUT");
+  });
+
+  it("reconnect returns WINDOW_SELECTION_REQUIRED when affinity is invalid and focus is ambiguous", async () => {
+    const fixture = await workspaceFixture();
+    // Window 1: non-focused
+    const firstSnapshotPath = path.join(fixture.registry, (await readdir(fixture.registry))[0]!);
+    const firstSnapshot = JSON.parse(await readFile(firstSnapshotPath, "utf8"));
+    firstSnapshot.focused = false;
+    await atomicWrite(firstSnapshotPath, `${JSON.stringify(firstSnapshot, null, 2)}\n`);
+
+    // Window 2: non-focused
+    const now = Date.now();
+    const secondInstanceId = randomUUID();
+    await writeFile(path.join(fixture.registry, `${secondInstanceId}.json`), `${JSON.stringify({
+      schemaVersion: 2,
+      instanceId: secondInstanceId,
+      processId: process.pid,
+      workspaceFile: null,
+      focused: false,
+      folders: [{ path: fixture.workspace, realPath: await realpath(fixture.workspace) }],
+      activeFile: null,
+      updatedAt: new Date(now).toISOString(),
+      expiresAt: new Date(now + 60_000).toISOString(),
+    }, null, 2)}\n`, "utf8");
+
+    const client = startClient(fixture.registry);
+    await initialize(client);
+
+    // Use explicit token to create artifact on first window
+    const resolved = await callTool(client, "resolve_artifact_window", {});
+    const token = resolved.structuredContent.candidates[0].selectionToken;
+    const created = await createArtifact(client, fixture.workspace, {
+      title: "Ambiguity test",
+      connection: {
+        targetMode: "explicit-window",
+        selectionToken: token,
+      },
+    });
+
+    const connPath = path.join(created.artifactDirectory, "artifact-connection.json");
+    const initialConnBytes = await readFile(connPath, "utf8");
+
+    // Reconnect with mismatched affinity: both windows non-focused -> WINDOW_SELECTION_REQUIRED
+    const ambiguousReconnect = await callTool(client, "inspect_artifact_review", {
+      artifactDirectory: created.artifactDirectory,
+      intent: "reconnect",
+      connection: {
+        targetMode: "artifact-window",
+        windowInstanceId: randomUUID(),
+      },
+    });
+
+    expect(ambiguousReconnect.isError).toBe(true);
+    expect(ambiguousReconnect.structuredContent).toMatchObject({
+      code: "WINDOW_SELECTION_REQUIRED",
+      status: "selection-required",
+      retryable: true,
+      expectedNextTool: "inspect_artifact_review",
+      useSameArtifactHandle: true,
+      candidates: expect.any(Array),
+    });
+
+    // Connection file must NOT be modified
+    expect(await readFile(connPath, "utf8")).toBe(initialConnBytes);
   });
 });

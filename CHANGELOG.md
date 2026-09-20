@@ -16,6 +16,7 @@ Release history has been standardized and tracked starting from version **0.2.6*
 ### Window-routed auto-open and regular links
 
 - Focused-first routing: `create_artifact` and `inspect_artifact_review` automatically route to the currently focused VS Code window (or sole live window) without prior workspace resolution rituals.
+- Advisory artifact-window affinity: generic reconnect prioritizes sole live window, validated advisory artifact-window affinity (matching stored connection and live in registry), and unique focused window. Stale or mismatched affinity silently falls back to focused resolution and updates the agent's cache.
 - Ambiguous multi-window handling: returns `WINDOW_SELECTION_REQUIRED` with candidate summaries and single-use opaque `selectionToken` (`targetMode: "explicit-window"`).
 - Bounded registry pruning: workspace registry publisher automatically prunes stale snapshots, retaining at most 10 snapshots and removing files older than 7 days. Supports folderless windows (`folders: []`).
 - Added optional schema-v1 `artifact-connection.json` routing state. `artifact.json` remains identity truth; create and reconnect commit connection revisions and unique open-request IDs without changing lifecycle state.

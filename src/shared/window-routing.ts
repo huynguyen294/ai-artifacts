@@ -162,6 +162,50 @@ export function selectFocusedWindowTarget(
   return { status: "selection-required", candidates: snapshots, reason: "multiple-focused" };
 }
 
+export type ReconnectWindowSelectionResult =
+  | {
+      status: "matched";
+      targetWindow: WorkspaceRegistrySnapshot;
+      matchReason: "sole-live" | "artifact-affinity" | "focused";
+    }
+  | {
+      status: "selection-required";
+      candidates: readonly WorkspaceRegistrySnapshot[];
+      reason: "multiple-focused" | "multiple-live-none-focused";
+    }
+  | { status: "not-found"; reason: "no-live-windows" };
+
+export function selectReconnectWindowTarget(
+  snapshots: readonly WorkspaceRegistrySnapshot[],
+  aiWindowInstanceId?: string,
+  persistedWindowInstanceId?: string,
+): ReconnectWindowSelectionResult {
+  if (snapshots.length === 0) {
+    return { status: "not-found", reason: "no-live-windows" };
+  }
+
+  if (snapshots.length === 1) {
+    return { status: "matched", targetWindow: snapshots[0]!, matchReason: "sole-live" };
+  }
+
+  if (
+    aiWindowInstanceId !== undefined &&
+    persistedWindowInstanceId !== undefined &&
+    aiWindowInstanceId === persistedWindowInstanceId
+  ) {
+    const affinitySnapshot = snapshots.find((s) => s.instanceId === aiWindowInstanceId);
+    if (affinitySnapshot) {
+      return {
+        status: "matched",
+        targetWindow: affinitySnapshot,
+        matchReason: "artifact-affinity",
+      };
+    }
+  }
+
+  return selectFocusedWindowTarget(snapshots);
+}
+
 function normalizeSearchTerm(value: string): string {
   return value
     .normalize("NFKC")

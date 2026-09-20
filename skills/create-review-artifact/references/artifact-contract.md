@@ -12,7 +12,7 @@ Read this contract before calling `create_artifact`, `wait_for_artifact_review`,
 
 For an `approve` result whose artifact kind is `plan` or `implementation-plan`, the result includes `nextAction.type: "execute-approved-plan"` and an explicit instruction to execute the approved plan immediately in the same turn. Treat this as execution authorization, not an acknowledgement request.
 
-`inspect_artifact_review` accepts the exact `artifactDirectory`, optional `expectedReviewRound`, optional `takeover`, optional `intent` (such as `"reconnect"` or `"explicit-chat-update"`), and optional `connection: { targetMode: "explicit-window", selectionToken }`. It immediately returns the validated manifest, Markdown, comments, optional submission, round, hashes, `artifactUrl`, and `artifactLink`. It returns a `roundToken` when saved comments or a submission make the round consumable, or when `intent` is `"explicit-chat-update"` on an empty round. When `intent` is `"reconnect"`, it re-evaluates the currently focused window (or explicit window candidate) without affinity to the prior connection, writes connection state atomically, and returns the committed connection metadata. Focus is not required when targeting via `selectionToken`.
+`inspect_artifact_review` accepts the exact `artifactDirectory`, optional `expectedReviewRound`, optional `takeover`, optional `intent` (such as `"reconnect"` or `"explicit-chat-update"`), and optional `connection` (`{ targetMode: "artifact-window", windowInstanceId }` for advisory affinity or `{ targetMode: "explicit-window", selectionToken }` for explicit candidate targeting). It immediately returns the validated manifest, Markdown, comments, optional submission, round, hashes, `artifactUrl`, and `artifactLink`. It returns a `roundToken` when saved comments or a submission make the round consumable, or when `intent` is `"explicit-chat-update"` on an empty round. When `intent` is `"reconnect"`, it evaluates active windows prioritizing sole live window, validated advisory artifact-window affinity (when matching stored connection and live in registry), and unique focused window, or explicit candidate via `selectionToken`. Writes connection state atomically, and returns the committed connection metadata. Focus is not required when targeting via `selectionToken` or matching advisory affinity.
 
 `advance_and_wait_for_artifact` accepts the exact `artifactDirectory`, `expectedReviewRound`, and `roundToken`, plus optional complete replacement `markdown`. It transactionally advances the same artifact and waits for the next round while preserving existing connection state. Omitting Markdown preserves the exact `artifact.md` bytes and SHA while resetting handled comments and removing the old submission.
 
@@ -43,7 +43,7 @@ All lifecycle files are server- or extension-owned. Agents must not create, upda
 
 ## Handle ownership
 
-After create, use only the exact `artifactDirectory` returned by creation or retained from an interrupted waiter. Keep an `artifactDirectory -> reviewRound` mapping when a chat owns multiple artifacts. Never select “the latest artifact” or infer a handle from cwd. If the handle is missing or ambiguous, ask the user.
+After create, use only the exact `artifactDirectory` returned by creation or retained from an interrupted waiter. Keep an `artifactDirectory -> { reviewRound, windowInstanceId }` mapping when a chat owns multiple artifacts, tracking the committed `windowInstanceId` from create and reconnect success. Never select “the latest artifact” or infer a handle from cwd. If the handle is missing or ambiguous, ask the user.
 
 Treat the returned `artifactDirectory` as the exact global handle after creation. Never scan global storage to discover an artifact.
 
@@ -51,7 +51,7 @@ Treat the returned `artifactDirectory` as the exact global handle after creation
 
 | User intent | Tool flow |
 |---|---|
-| Pure reconnect to a target window | Call `inspect_artifact_review` with the exact handle, current round, and `intent: "reconnect"` to rebind an active window and emit an open request. Default routes to focused window; after `WINDOW_SELECTION_REQUIRED`, retry the same inspect flow with `connection: { targetMode: "explicit-window", selectionToken }`. |
+| Pure reconnect to a target window | Call `inspect_artifact_review` with the exact handle, current round, and `intent: "reconnect"` to rebind an active window and emit an open request. Generic reconnect passes cached `connection: { targetMode: "artifact-window", windowInstanceId }`; current-window intent omits affinity; named-window intent uses explicit selection token; after `WINDOW_SELECTION_REQUIRED`, retry the same inspect flow with `connection: { targetMode: "explicit-window", selectionToken }`. |
 | Resume waiting without reconnecting | Wait on the exact handle and same round. |
 | Read saved comments/submission | Inspect the exact handle with `takeover: true`. |
 | Update an empty round directly from chat | Inspect with exact handle, round, takeover, and `intent: "explicit-chat-update"`. |

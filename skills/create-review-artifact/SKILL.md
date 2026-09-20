@@ -22,7 +22,7 @@ Coordinate one reviewable Markdown artifact for one explicit user request.
 ## Create and review
 
 1. Write one complete Markdown document. Call `create_artifact` with `title`, `kind: "implementation-plan"`, and `markdown`. Omit `connection` by default. Keep `kind` only for protocol compatibility; do not classify the document. The server stores the schema-v6 lifecycle under the global `~/.ai-artifacts/artifacts/<artifact-id>/` collection. Do not create or edit lifecycle files with filesystem tools.
-2. Retain the exact returned global `artifactDirectory`, `reviewRound`, and connection metadata (`schemaVersion`, `windowInstanceId`, `connectionRevision`, `openRequestId`, `source`, and `updatedAt`). When multiple artifacts exist in one chat, maintain an `artifactDirectory -> reviewRound` mapping. If a handle is ambiguous, ask the user and never select by recency. Include the returned `artifactLink` in the chat message as a regular file link. It is not a deep link and does not guarantee that a custom editor opens.
+2. Retain the exact returned global `artifactDirectory`, `reviewRound`, and connection metadata (`schemaVersion`, `windowInstanceId`, `connectionRevision`, `openRequestId`, `source`, and `updatedAt`). When multiple artifacts exist in one chat, maintain an `artifactDirectory -> { reviewRound, windowInstanceId }` mapping. Initialize `windowInstanceId` from the committed connection metadata of `create_artifact`. If a handle is ambiguous, ask the user and never select by recency. Include the returned `artifactLink` in the chat message as a regular file link. It is not a deep link and does not guarantee that a custom editor opens.
 3. Call `wait_for_artifact_review` immediately on that exact handle and round.
 4. Handle a submitted decision:
    - `revise`: process every returned comment with **Unified feedback handling** below, using the returned round token. Treat Review-button feedback exactly like chat-inspected feedback.
@@ -49,13 +49,13 @@ Before calling a lifecycle tool, require both a uniquely matching exact handle a
 
 | Intent | Required flow |
 |---|---|
-| Pure reconnect to a target window | Call `inspect_artifact_review` with the exact handle, current round, and `intent: "reconnect"` to rebind an active window and emit an open request. By default omit `connection` (focused window is targeted). If the result is `WINDOW_SELECTION_REQUIRED`, choose a returned candidate and retry the same inspect call with `connection: { targetMode: "explicit-window", selectionToken }`. |
+| Pure reconnect to a target window | Call `inspect_artifact_review` with the exact handle, current round, and `intent: "reconnect"` to rebind an active window and emit an open request. For generic reconnect ("mở/reopen artifact"), pass `connection: { targetMode: "artifact-window", windowInstanceId }` using your cached ID if available; if the user asks to open in the current/focused window, omit `connection` to force sole/focused resolution; if the user specifies window X, resolve active windows and send `connection: { targetMode: "explicit-window", selectionToken }`. Update your cached `windowInstanceId` from the returned connection on success. If the result is `WINDOW_SELECTION_REQUIRED`, choose a returned candidate and retry the same inspect call with `connection: { targetMode: "explicit-window", selectionToken }`. |
 | Resume waiting without reconnecting | Call `wait_for_artifact_review` with the exact handle and current round. |
 | Read saved review comments or submission | Call `inspect_artifact_review` with the exact handle and `takeover: true`. |
 | Explicitly update an empty round from chat | Call inspect with the exact handle, `takeover: true`, `expectedReviewRound`, and `intent: "explicit-chat-update"`. |
 
 - Takeover cancels and drains the old waiter; it does not end the artifact, advance the round, or edit lifecycle files.
-- Reconnect re-evaluates the currently focused live window (or explicit window candidate) without affinity to the previous window, and returns the committed connection metadata.
+- Reconnect evaluates active windows prioritizing sole live window, validated advisory artifact-window affinity (when matching stored connection and live in registry), and unique focused window, or explicit candidate via selectionToken. Mismatch or stale affinity silently falls back to focused resolution and returns the new committed windowInstanceId to update your cache. Do not send or compare `connectionRevision`.
 - If inspection has neither saved comments nor a submission, tell the user no feedback is saved and call `wait_for_artifact_review` for the same round. Do not advance.
 - If feedback exists, process it with **Unified feedback handling**.
 - A chat-update token requires complete replacement Markdown with a different SHA. Never ask the user to create dummy comments or click Review after an explicit chat update request.

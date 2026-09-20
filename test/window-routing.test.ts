@@ -2,6 +2,8 @@ import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import {
   WindowSelectionExpiredError,
+  artifactWindowConnectionInputSchema,
+  reconnectConnectionInputSchema,
 } from "../src/shared/contracts";
 import {
   WindowSelectionTokenStore,
@@ -9,6 +11,7 @@ import {
   formatWindowCandidateLabel,
   resolveArtifactWindowCandidates,
   selectFocusedWindowTarget,
+  selectReconnectWindowTarget,
   windowCandidateId,
 } from "../src/shared/window-routing";
 import type { WorkspaceRegistrySnapshot } from "../src/shared/workspace-registry";
@@ -241,6 +244,205 @@ describe("window-routing contract", () => {
         expect(result.matchMode).toBe("all-available");
         expect(result.candidates).toHaveLength(2);
       }
+    });
+  });
+
+  describe("selectReconnectWindowTarget", () => {
+    it("returns not-found when no live windows exist", () => {
+      const result = selectReconnectWindowTarget([]);
+      expect(result.status).toBe("not-found");
+    });
+
+    it("always selects the sole live window, even if affinity hint is mismatched or missing", () => {
+      const win = snapshot({ focused: false });
+      const randomId = randomUUID();
+
+      // No affinity
+      const res1 = selectReconnectWindowTarget([win]);
+      expect(res1.status).toBe("matched");
+      if (res1.status === "matched") {
+        expect(res1.targetWindow.instanceId).toBe(win.instanceId);
+        expect(res1.matchReason).toBe("sole-live");
+      }
+
+      // Mismatched affinity
+      const res2 = selectReconnectWindowTarget([win], randomId, randomId);
+      expect(res2.status).toBe("matched");
+      if (res2.status === "matched") {
+        expect(res2.targetWindow.instanceId).toBe(win.instanceId);
+        expect(res2.matchReason).toBe("sole-live");
+      }
+
+      // Valid affinity to this sole window
+      const res3 = selectReconnectWindowTarget([win], win.instanceId, win.instanceId);
+      expect(res3.status).toBe("matched");
+      if (res3.status === "matched") {
+        expect(res3.targetWindow.instanceId).toBe(win.instanceId);
+        expect(res3.matchReason).toBe("sole-live");
+      }
+    });
+
+    it("selects artifact-affinity target over a focused window when valid and live", () => {
+      const winA = snapshot({ focused: false });
+      const winB = snapshot({ focused: true });
+
+      const result = selectReconnectWindowTarget([winA, winB], winA.instanceId, winA.instanceId);
+      expect(result.status).toBe("matched");
+      if (result.status === "matched") {
+        expect(result.targetWindow.instanceId).toBe(winA.instanceId);
+        expect(result.matchReason).toBe("artifact-affinity");
+      }
+    });
+
+    it("selects artifact-affinity target when no windows are focused", () => {
+      const winA = snapshot({ focused: false });
+      const winB = snapshot({ focused: false });
+
+      const result = selectReconnectWindowTarget([winA, winB], winA.instanceId, winA.instanceId);
+      expect(result.status).toBe("matched");
+      if (result.status === "matched") {
+        expect(result.targetWindow.instanceId).toBe(winA.instanceId);
+        expect(result.matchReason).toBe("artifact-affinity");
+      }
+    });
+
+    it("falls back to focused window when AI affinity is omitted", () => {
+      const winA = snapshot({ focused: false });
+      const winB = snapshot({ focused: true });
+
+      const result = selectReconnectWindowTarget([winA, winB], undefined, winA.instanceId);
+      expect(result.status).toBe("matched");
+      if (result.status === "matched") {
+        expect(result.targetWindow.instanceId).toBe(winB.instanceId);
+        expect(result.matchReason).toBe("focused");
+      }
+    });
+
+    it("falls back to focused window when persisted connection is missing", () => {
+      const winA = snapshot({ focused: false });
+      const winB = snapshot({ focused: true });
+
+      const result = selectReconnectWindowTarget([winA, winB], winA.instanceId, undefined);
+      expect(result.status).toBe("matched");
+      if (result.status === "matched") {
+        expect(result.targetWindow.instanceId).toBe(winB.instanceId);
+        expect(result.matchReason).toBe("focused");
+      }
+    });
+
+    it("falls back to focused window when AI ID does not match persisted connection ID", () => {
+      const winA = snapshot({ focused: false });
+      const winB = snapshot({ focused: true });
+      const differentId = randomUUID();
+
+      const result = selectReconnectWindowTarget([winA, winB], differentId, winA.instanceId);
+      expect(result.status).toBe("matched");
+      if (result.status === "matched") {
+        expect(result.targetWindow.instanceId).toBe(winB.instanceId);
+        expect(result.matchReason).toBe("focused");
+      }
+    });
+
+    it("falls back to focused window when matching ID is no longer in live snapshots (stale)", () => {
+      const deadId = randomUUID();
+      const winA = snapshot({ focused: false });
+      const winB = snapshot({ focused: true });
+
+      const result = selectReconnectWindowTarget([winA, winB], deadId, deadId);
+      expect(result.status).toBe("matched");
+      if (result.status === "matched") {
+        expect(result.targetWindow.instanceId).toBe(winB.instanceId);
+        expect(result.matchReason).toBe("focused");
+      }
+    });
+
+    it("returns selection-required when affinity is invalid and no window is focused", () => {
+      const winA = snapshot({ focused: false });
+      const winB = snapshot({ focused: false });
+
+      const result = selectReconnectWindowTarget([winA, winB], undefined, undefined);
+      expect(result.status).toBe("selection-required");
+      if (result.status === "selection-required") {
+        expect(result.reason).toBe("multiple-live-none-focused");
+        expect(result.candidates).toHaveLength(2);
+      }
+    });
+
+    it("returns selection-required when affinity is invalid and multiple windows are focused", () => {
+      const winA = snapshot({ focused: true });
+      const winB = snapshot({ focused: true });
+
+      const result = selectReconnectWindowTarget([winA, winB], undefined, undefined);
+      expect(result.status).toBe("selection-required");
+      if (result.status === "selection-required") {
+        expect(result.reason).toBe("multiple-focused");
+        expect(result.candidates).toHaveLength(2);
+      }
+    });
+  });
+
+  describe("connection input schemas", () => {
+    it("validates artifactWindowConnectionInputSchema strictly", () => {
+      const validId = randomUUID();
+      const valid = artifactWindowConnectionInputSchema.safeParse({
+        targetMode: "artifact-window",
+        windowInstanceId: validId,
+      });
+      expect(valid.success).toBe(true);
+
+      // Rejects invalid UUID
+      const invalidUuid = artifactWindowConnectionInputSchema.safeParse({
+        targetMode: "artifact-window",
+        windowInstanceId: "not-a-uuid",
+      });
+      expect(invalidUuid.success).toBe(false);
+
+      // Rejects extra fields (strict)
+      const extraField = artifactWindowConnectionInputSchema.safeParse({
+        targetMode: "artifact-window",
+        windowInstanceId: validId,
+        connectionRevision: 2,
+      });
+      expect(extraField.success).toBe(false);
+
+      // Rejects mixed targetMode
+      const mixed = artifactWindowConnectionInputSchema.safeParse({
+        targetMode: "explicit-window",
+        windowInstanceId: validId,
+      });
+      expect(mixed.success).toBe(false);
+    });
+
+    it("validates reconnectConnectionInputSchema discriminated union", () => {
+      const id = randomUUID();
+      const token = randomUUID();
+
+      const affinity = reconnectConnectionInputSchema.safeParse({
+        targetMode: "artifact-window",
+        windowInstanceId: id,
+      });
+      expect(affinity.success).toBe(true);
+
+      const explicit = reconnectConnectionInputSchema.safeParse({
+        targetMode: "explicit-window",
+        selectionToken: token,
+      });
+      expect(explicit.success).toBe(true);
+
+      // Rejects mixed fields
+      const mixed = reconnectConnectionInputSchema.safeParse({
+        targetMode: "artifact-window",
+        windowInstanceId: id,
+        selectionToken: token,
+      });
+      expect(mixed.success).toBe(false);
+
+      // Rejects unknown mode
+      const unknownMode = reconnectConnectionInputSchema.safeParse({
+        targetMode: "unknown",
+        windowInstanceId: id,
+      });
+      expect(unknownMode.success).toBe(false);
     });
   });
 });
