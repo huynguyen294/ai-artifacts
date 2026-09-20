@@ -7,28 +7,23 @@ description: Create, update, inspect, or reconnect an explicitly requested revie
 
 Coordinate one reviewable Markdown artifact for one explicit user request.
 
-## Resolve the workspace first
+## Tools and Window Routing
 
-1. Require the current tool catalog to expose `resolve_artifact_workspace`, `create_artifact`, `wait_for_artifact_review`, `inspect_artifact_review`, and `advance_and_wait_for_artifact`. Do not probe MCP resources or run filesystem commands to check availability. If a tool is unavailable, ask the user to run **AI Artifacts: Install All Detected Integrations** (or the install command for their specific AI client), restart their AI client, and start a new chat. Check only once per chat lifecycle unless a tool becomes unavailable, the MCP restarts, or a new chat begins.
-2. Before reading target-workspace instructions, documentation, source, or drafting artifact content, resolve exactly one target workspace folder through one of these flows:
-   - **Tagged file:** use the concrete path explicitly tagged, linked, mentioned, or attached by the user. Resolve its one containing workspace folder and retain `{ kind: "tagged-file", filePath }`. If tagged files span roots or ownership is ambiguous, ask the user.
-   - **No tagged file:** call `resolve_artifact_workspace({ query })` immediately, using the user's exact repository/workspace words. This resolver is the only MCP tool that may run before reading the contract. Do not scan folders or rewrite the query first.
-     - For `status: "selection-required"`, compare every returned candidate's name, path, and `match` against the user's exact workspace words. Select a candidate without asking when exactly one is clearly the strongest match. Prefer `exact-path` over `exact-name`, `exact-name` over `similar-name`, and any matched candidate over `available`. Treat the sole `single-folder` candidate as unambiguous and select it immediately; this classification is supplied by MCP, not inferred by the agent.
-     - `matchMode: "matched"` means either the resolver found one or more string matches across the fresh window groups, or the registry contains exactly one folder overall and returns it with `match: "single-folder"`. Use the ranking above and ask the user only when the strongest result is tied or otherwise ambiguous.
-     - `matchMode: "all-available"` means the query did not match, so the candidates are every fresh folder grouped by window. Select one only when its name or path is a uniquely high-confidence semantic match to the user's words; otherwise show the candidates and ask the user.
-     - `status: "not-found"` with `matchMode: "none"` means no fresh workspace is available; ask the user to open the workspace or tag one of its files.
-     - Resolver results are grouped by VS Code window and each window group includes `windowInstanceId`, `focused`, snapshot context, and `folders`. Compare candidates across every returned group; do not flatten away their window identity.
-     - Window focus is a ranking hint, not workspace ownership evidence or a routing requirement. Multiple windows do not automatically require a question: select without asking when exactly one candidate is the strongest match. Ask only when the strongest candidates remain tied or the user's intended window is otherwise ambiguous.
-     - When multiple active VS Code windows open the same workspace folder, use concise labels such as `Window 1 — focused (path...)`; never display raw UUIDs to the user. Each candidate's opaque selection token binds the exact window and workspace tuple.
-     - After either a confident agent choice or an explicit user choice, call create with the exact candidate path and `{ kind: "resolved-workspace", selectionToken }`. If the selection expires or registry context changes, resolve and choose again, asking the user only if it is ambiguous.
-   - Cwd, `environment_context`, untagged active files, workspace order, project markers, inferred folder names, and search results are never creation evidence.
-3. Once exactly one target workspace folder is chosen, read [references/artifact-contract.md](references/artifact-contract.md) before inspecting that folder or calling `create_artifact`, `wait_for_artifact_review`, `inspect_artifact_review`, or `advance_and_wait_for_artifact`. Then read the chosen folder's required instruction files and the minimum relevant documentation/source needed to produce the requested artifact. Do not inspect other roots.
+1. Require the current tool catalog to expose `resolve_artifact_window`, `create_artifact`, `wait_for_artifact_review`, `inspect_artifact_review`, and `advance_and_wait_for_artifact`. Do not probe MCP resources or run filesystem commands to check availability. If a tool is unavailable, ask the user to run **AI Artifacts: Install All Detected Integrations** (or the install command for their specific AI client), restart their AI client, and start a new chat. Check only once per chat lifecycle unless a tool becomes unavailable, the MCP restarts, or a new chat begins.
+2. Read [references/artifact-contract.md](references/artifact-contract.md) before calling `create_artifact`, `wait_for_artifact_review`, `inspect_artifact_review`, or `advance_and_wait_for_artifact`.
+3. By default, call `create_artifact` directly without any prior window resolution:
+   - The server routes directly to the currently focused VS Code window (or the sole live window).
+   - If multiple live windows exist and focus is ambiguous, `create_artifact` returns `WINDOW_SELECTION_REQUIRED` with a list of active window candidates.
+   - Each candidate includes `candidateId`, `focused`, `label`, `folderCount`, `folders`, `activeFile`, and an opaque `selectionToken`.
+   - Compare candidate labels, open folders, and active files against user context. Select a candidate without asking when exactly one clearly matches. Ask the user only when candidates remain tied or ambiguous.
+   - When retrying after `WINDOW_SELECTION_REQUIRED`, pass `connection: { targetMode: "explicit-window", selectionToken }`.
+   - If you need to proactively discover active windows or check candidate labels before creating, call `resolve_artifact_window({ query })`.
 
 ## Create and review
 
-1. Write one complete Markdown document. Call `create_artifact` with the verified absolute `workspaceRoot`, one evidence object, title, `kind: "implementation-plan"`, and `markdown`. Keep `kind` only for protocol compatibility; do not classify the document. The server stores the schema-v5 lifecycle under the global `~/.ai-artifacts/artifacts/<artifact-id>/` collection; `workspaceRoot` is target metadata and ownership evidence, not the storage location. For a tagged-file request that returns `WINDOW_SELECTION_REQUIRED`, choose the target window and retry the same create request with the candidate's `connection.selectionToken`; the token chooses a window but does not replace tagged-file ownership evidence. Do not create or edit lifecycle files with filesystem tools.
-2. Retain the exact returned global `artifactDirectory`, `workspaceRoot`, `reviewRound`, and connection metadata (`schemaVersion`, `windowInstanceId`, `connectionRevision`, `openRequestId`, `source`, and `updatedAt`). When multiple artifacts exist in one chat, maintain a request/workspace-to-handle-and-round mapping. If a handle is ambiguous, ask the user and never select by recency. Include the returned `artifactLink` in the chat message as a regular file link. It is not a deep link and does not guarantee that a custom editor opens.
-3. Call `wait_for_artifact_review` immediately on that exact handle and round. After creation, never call `resolve_artifact_workspace` again for this artifact; later tools use the retained handle while the MCP verifies its manifest workspace internally.
+1. Write one complete Markdown document. Call `create_artifact` with `title`, `kind: "implementation-plan"`, and `markdown`. Omit `connection` by default. Keep `kind` only for protocol compatibility; do not classify the document. The server stores the schema-v6 lifecycle under the global `~/.ai-artifacts/artifacts/<artifact-id>/` collection. Do not create or edit lifecycle files with filesystem tools.
+2. Retain the exact returned global `artifactDirectory`, `reviewRound`, and connection metadata (`schemaVersion`, `windowInstanceId`, `connectionRevision`, `openRequestId`, `source`, and `updatedAt`). When multiple artifacts exist in one chat, maintain an `artifactDirectory -> reviewRound` mapping. If a handle is ambiguous, ask the user and never select by recency. Include the returned `artifactLink` in the chat message as a regular file link. It is not a deep link and does not guarantee that a custom editor opens.
+3. Call `wait_for_artifact_review` immediately on that exact handle and round.
 4. Handle a submitted decision:
    - `revise`: process every returned comment with **Unified feedback handling** below, using the returned round token. Treat Review-button feedback exactly like chat-inspected feedback.
    - `approve`: read any remaining comments, then obey `nextAction.type: "execute-approved-plan"`: execute the complete approved plan immediately in the current turn, including all in-scope code, file, workspace, and command actions. Do not stop after acknowledging approval, merely summarize future work, or ask for another implementation confirmation. Pause only for a genuine blocker or authority outside the approved scope. Do not create a new review round or wait again.
@@ -54,13 +49,13 @@ Before calling a lifecycle tool, require both a uniquely matching exact handle a
 
 | Intent | Required flow |
 |---|---|
-| Pure reconnect to a target window | Call `inspect_artifact_review` with the exact handle, current round, and `intent: "reconnect"` to rebind the window and emit an open request. An optional `connection.windowInstanceId` is only a hint. If the result is `WINDOW_SELECTION_REQUIRED`, choose a returned candidate and retry the same inspect call with its `connection.selectionToken`. |
+| Pure reconnect to a target window | Call `inspect_artifact_review` with the exact handle, current round, and `intent: "reconnect"` to rebind an active window and emit an open request. By default omit `connection` (focused window is targeted). If the result is `WINDOW_SELECTION_REQUIRED`, choose a returned candidate and retry the same inspect call with `connection: { targetMode: "explicit-window", selectionToken }`. |
 | Resume waiting without reconnecting | Call `wait_for_artifact_review` with the exact handle and current round. |
 | Read saved review comments or submission | Call `inspect_artifact_review` with the exact handle and `takeover: true`. |
 | Explicitly update an empty round from chat | Call inspect with the exact handle, `takeover: true`, `expectedReviewRound`, and `intent: "explicit-chat-update"`. |
 
 - Takeover cancels and drains the old waiter; it does not end the artifact, advance the round, or edit lifecycle files.
-- Reconnect never requires the target window to be focused. The MCP verifies that the selected live window contains the artifact's manifest workspace and returns the committed connection metadata.
+- Reconnect re-evaluates the currently focused live window (or explicit window candidate) without affinity to the previous window, and returns the committed connection metadata.
 - If inspection has neither saved comments nor a submission, tell the user no feedback is saved and call `wait_for_artifact_review` for the same round. Do not advance.
 - If feedback exists, process it with **Unified feedback handling**.
 - A chat-update token requires complete replacement Markdown with a different SHA. Never ask the user to create dummy comments or click Review after an explicit chat update request.
@@ -68,20 +63,19 @@ Before calling a lifecycle tool, require both a uniquely matching exact handle a
 
 ## Structured recovery
 
-Follow machine-readable recovery metadata returned by lifecycle errors. Keep the same exact artifact handle and never call `resolve_artifact_workspace` during recovery after an artifact has been created.
+Follow machine-readable recovery metadata returned by lifecycle errors. Keep the same exact artifact handle.
 
 | Error code | Required recovery |
 |---|---|
-| `WINDOW_SELECTION_REQUIRED` | Ambiguous window context. If `expectedNextTool: "create_artifact"`, present candidates using window labels, ask user if ambiguous, and retry `create_artifact` with the chosen `connection.selectionToken`. If `expectedNextTool: "inspect_artifact_review"`, retry `inspect_artifact_review` on the same handle with `intent: "reconnect"` and the chosen `connection.selectionToken`. |
+| `WINDOW_SELECTION_REQUIRED` | Ambiguous window context. If `expectedNextTool: "create_artifact"`, present candidates using window labels, ask user if ambiguous, and retry `create_artifact` with `connection: { targetMode: "explicit-window", selectionToken }`. If `expectedNextTool: "inspect_artifact_review"`, retry `inspect_artifact_review` on the same handle with `intent: "reconnect"` and `connection: { targetMode: "explicit-window", selectionToken }`. |
 | `ROUND_TOKEN_INVALID_OR_EXPIRED`, `ROUND_TOKEN_ALREADY_CONSUMED`, `ROUND_MISMATCH`, `ROUND_STATE_CHANGED` | Inspect the same exact handle for current state and a fresh token. Do not replay old Markdown or actions. |
 | `ROUND_TOKEN_IN_USE` | Do not issue another advance. Wait for the in-flight request, then inspect only if its result is unclear. |
 | `ARTIFACT_ALREADY_WAITING` | Another live waiter already owns the exact artifact. Do not start a second wait. For resume-wait intent, keep awaiting the in-flight call; for pure reconnect, call `inspect_artifact_review` with `intent: "reconnect"` without takeover; use takeover only for saved feedback or an explicit direct update. |
 | `ADVANCE_CANCELLED_BEFORE_COMMIT`, `ADVANCE_ROLLED_BACK` with `reuseRoundToken: true` | Retry the same advance only when the server explicitly confirms the token remains valid. |
 | `ADVANCE_COMMITTED` | Do not replay. Continue with the reported round using the hinted wait flow. |
-| `WORKSPACE_NOT_REGISTERED` | Ask the user to reopen or restore the artifact's workspace; do not resolve another workspace. |
-| `WINDOW_SELECTION_EXPIRED` | For pre-create resolver grant, call `resolve_artifact_workspace` again. For tagged create, retry `create_artifact` without connection token to refresh candidates. For reconnect, retry `inspect_artifact_review` on exact handle with `intent: "reconnect"` without connection token to refresh candidates; never call `resolve_artifact_workspace`. |
-| `WINDOW_CONNECTION_MISMATCH` | Selection token does not match target workspace. For reconnect, retry `inspect_artifact_review` on exact handle without connection token; do not call `resolve_artifact_workspace`. |
-| `WINDOW_CONNECTION_STALE` | The targeted window is no longer active. Retry `inspect_artifact_review` on exact handle with `intent: "reconnect"` to rebind an active window. |
+| `WINDOW_NOT_FOUND` | No active VS Code window was found. Ask the user to open VS Code, then retry. |
+| `WINDOW_SELECTION_EXPIRED` | Window selection token expired or window was closed. Retry `create_artifact` or `inspect_artifact_review` without connection to refresh candidate windows. |
+| `WINDOW_CONNECTION_MISMATCH`, `WINDOW_CONNECTION_STALE` | Selected window is stale or closed. Retry without connection token to refresh candidates. |
 | `ARTIFACT_CONNECTION_INVALID` | Stored routing data is invalid or malformed and cannot be repaired by the skill. Stop automated recovery, retain the exact handle, report the corrupt `artifact-connection.json`, and ask the user to repair or remove that optional routing file before reconnecting. Do not retry inspect/reconnect or edit lifecycle files yourself. |
 | `ARTIFACT_CONNECTION_WRITE_FAILED` | Failed to update the connection state atomically. Retry `inspect_artifact_review` on the exact handle with `intent: "reconnect"`. |
 

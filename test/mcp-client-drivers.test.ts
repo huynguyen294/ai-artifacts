@@ -360,7 +360,7 @@ describe("Client Drivers", () => {
         "tool_timeout_sec = 3600",
         'default_tools_approval_mode = "approve"',
         "",
-        "[mcp_servers.ai_artifacts.tools.resolve_artifact_workspace]",
+        "[mcp_servers.ai_artifacts.tools.resolve_artifact_window]",
         'approval_mode = "approve"',
         "",
         "[mcp_servers.ai_artifacts.tools.create_artifact]",

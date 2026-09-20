@@ -32,7 +32,6 @@ function manifest(schemaVersion: number = ARTIFACT_SCHEMA_VERSION): Record<strin
     createdAt: timestamp,
     updatedAt: timestamp,
     reviewRound: 1,
-    location: { workspaceRoot: "D:\\workspace\\target-project" },
     reviewSessionId,
   };
 }
@@ -60,27 +59,28 @@ function submission(schemaVersion: number = ARTIFACT_SCHEMA_VERSION): Record<str
   };
 }
 
-describe("artifact schema v5 contract", () => {
-  it("locks the writable artifact schema to version 5", () => {
-    expect(ARTIFACT_SCHEMA_VERSION).toBe(5);
+describe("artifact schema v6 contract", () => {
+  it("locks the writable artifact schema to version 6", () => {
+    expect(ARTIFACT_SCHEMA_VERSION).toBe(6);
     expect(artifactManifestSchema.parse(manifest())).toMatchObject({
-      schemaVersion: 5,
+      schemaVersion: 6,
       artifactId: "artifact-001",
-      location: { workspaceRoot: "D:\\workspace\\target-project" },
       reviewSessionId,
     });
   });
 
-  it.each([3, 4])("rejects schema-v%s manifests", (schemaVersion) => {
+  it.each([3, 4, 5])("rejects schema-v%s manifests", (schemaVersion) => {
     expect(() => parseArtifactManifest(manifest(schemaVersion)))
-      .toThrow("Unsupported artifact schema version. AI Artifacts supports version 5.");
+      .toThrow("Unsupported artifact schema version. AI Artifacts supports version 6.");
   });
 
-  it("keeps workspaceRoot as manifest metadata without a storage-path field", () => {
-    const parsed = parseArtifactManifest(manifest());
-    expect(parsed.location).toEqual({ workspaceRoot: "D:\\workspace\\target-project" });
-    expect(parsed.location).not.toHaveProperty("artifactDirectory");
-    expect(parsed).not.toHaveProperty("origin");
+  it("rejects location in declared-v6 manifest because schema is strict", () => {
+    expect(() =>
+      parseArtifactManifest({
+        ...manifest(),
+        location: { workspaceRoot: "D:\\workspace\\target-project" },
+      }),
+    ).toThrow();
   });
 
   it("exposes no legacy runtime schemas or union parsers", () => {
@@ -93,7 +93,7 @@ describe("artifact schema v5 contract", () => {
     expect(contracts).not.toHaveProperty("anyReviewSubmissionSchema");
   });
 
-  it("parses comments only when their v5 artifact binding matches", () => {
+  it("parses comments only when their v6 artifact binding matches", () => {
     expect(parseBoundCommentsDocument(comments(), {
       schemaVersion: ARTIFACT_SCHEMA_VERSION,
       artifactId: "artifact-001",
@@ -107,10 +107,10 @@ describe("artifact schema v5 contract", () => {
       reviewRound: 1,
       artifactSha256,
     })).toThrow("comments.json does not belong to this artifact");
-    expect(() => commentsDocumentSchema.parse(comments(4))).toThrow();
+    expect(() => commentsDocumentSchema.parse(comments(5))).toThrow();
   });
 
-  it("binds submissions to the v5 review session, round, artifact, and hashes", () => {
+  it("binds submissions to the v6 review session, round, artifact, and hashes", () => {
     const binding = {
       schemaVersion: ARTIFACT_SCHEMA_VERSION,
       artifactId: "artifact-001",
@@ -124,10 +124,10 @@ describe("artifact schema v5 contract", () => {
       ...submission(),
       reviewSessionId: "22222222-2222-4222-8222-222222222222",
     }, binding)).toThrow("does not belong to this artifact lifecycle");
-    expect(() => reviewSubmissionSchema.parse(submission(4))).toThrow();
+    expect(() => reviewSubmissionSchema.parse(submission(5))).toThrow();
   });
 
-  it("defines ReviewState with v5-only artifact, comments, and submission data", () => {
+  it("defines ReviewState with v6-only artifact, comments, and submission data", () => {
     const state: ReviewState = {
       artifact: artifactManifestSchema.parse(manifest()),
       comments: commentsDocumentSchema.parse(comments()),
@@ -136,8 +136,8 @@ describe("artifact schema v5 contract", () => {
       lifecycle: { readOnly: false },
       submission: reviewSubmissionSchema.parse(submission()),
     };
-    expect(state.artifact.schemaVersion).toBe(5);
-    expect(state.comments.schemaVersion).toBe(5);
+    expect(state.artifact.schemaVersion).toBe(6);
+    expect(state.comments.schemaVersion).toBe(6);
     expect(state.submission?.reviewSessionId).toBe(reviewSessionId);
   });
 });
@@ -213,7 +213,7 @@ describe("artifact connection schema v1 contract", () => {
     expect(paths.manifestPath).toBe("D:\\artifacts\\artifact-001\\artifact.json");
   });
 
-  it("ensures existing schema-v5 fixtures without artifact-connection.json remain valid and loadable", () => {
+  it("ensures existing schema-v6 fixtures without artifact-connection.json remain valid and loadable", () => {
     const parsedManifest = parseArtifactManifest(manifest());
     const parsedComments = parseBoundCommentsDocument(comments(), {
       schemaVersion: ARTIFACT_SCHEMA_VERSION,
@@ -221,7 +221,7 @@ describe("artifact connection schema v1 contract", () => {
       reviewRound: 1,
       artifactSha256,
     });
-    expect(parsedManifest.schemaVersion).toBe(5);
-    expect(parsedComments.schemaVersion).toBe(5);
+    expect(parsedManifest.schemaVersion).toBe(6);
+    expect(parsedComments.schemaVersion).toBe(6);
   });
 });

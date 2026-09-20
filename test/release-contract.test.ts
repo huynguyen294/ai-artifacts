@@ -21,7 +21,7 @@ describe("v1.0.0 release contract", () => {
     expect(packageLock.packages[""].version).toBe(packageJson.version);
   });
 
-  it("contributes only the global schema-v5 artifact selector", async () => {
+  it("contributes only the global schema-v6 artifact selector", async () => {
     const packageJson = JSON.parse(await read("package.json"));
     const selectors = packageJson.contributes.customEditors
       .find((editor: any) => editor.viewType === "agentPlus.artifactReview")
@@ -32,7 +32,7 @@ describe("v1.0.0 release contract", () => {
     ]);
   });
 
-  it("keeps release-facing docs on the global v5 and reinstall contract", async () => {
+  it("keeps release-facing docs on the global v6 and reinstall contract", async () => {
     const [readme, philosophy, architecture, components, instructions, contract, changelog, documentationChanges] =
       await Promise.all([
         read("README.md"),
@@ -46,28 +46,28 @@ describe("v1.0.0 release contract", () => {
       ]);
 
     for (const document of [readme, philosophy, architecture, components, instructions, contract]) {
-      expect(document).toMatch(/schema[- ]v5/i);
+      expect(document).toMatch(/schema[- ]v6/i);
       expect(document).toContain("~/.ai-artifacts/artifacts/");
     }
     expect(readme).toContain("reinstall every integration");
     expect(readme).toContain("same user filesystem");
     expect(readme).toContain("not a deep link");
-    expect(readme).toContain("MCP server 8.0.0");
+    expect(readme).toContain("MCP server 9.0.0");
     expect(readme).toContain("artifact-connection.json");
     expect(readme).toContain("The target may be unfocused; other windows ignore the event");
     expect(philosophy).toContain("Focus is a ranking hint, not identity, authorization, or a requirement");
-    expect(architecture).toContain("MCP server 8.0.0");
+    expect(architecture).toContain("MCP server 9.0.0");
     expect(architecture).toContain("artifact-connection.json` creation and change");
     expect(architecture).toContain("Both wait and advance preserve existing connection state");
-    expect(components).toContain("Multiple windows are not an error by themselves");
+    expect(components).toContain("WINDOW_SELECTION_REQUIRED");
     expect(instructions).toContain("Focus is only a ranking hint");
-    expect(instructions).toContain("location.workspaceRoot");
+    expect(instructions).toContain("Artifacts are owned by review sessions");
     expect(contract).toContain("schema-v1 UI-routing state only");
     expect(contract).toContain("AI Artifacts: Install All Detected Integrations");
     expect(changelog).toContain("## [1.0.0] - Unreleased");
-    expect(changelog).toContain("MCP server 8.0.0");
+    expect(changelog).toContain("MCP server 9.0.0");
     expect(changelog).not.toContain("## [1.1.0]");
-    expect(documentationChanges).toContain("Window-routed artifact connections and MCP 8.0.0 cutover");
+    expect(documentationChanges).toContain("Schema v6 lifecycle cutover, focused-window routing, and MCP 9.0.0");
   });
 
   it("keeps the public setting and version matrix on the 1.0.0 targeted-window contract", async () => {

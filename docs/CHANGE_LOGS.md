@@ -14,6 +14,54 @@ Minor typos, formatting fixes, or cosmetic wording adjustments that do not chang
 
 Each entry includes the date, category, summary of changes, rationale, and affected components or files.
 
+## 2026-09-19 — Token consume timing fix and dead code cleanup
+
+### Changes
+
+- Fixed race condition in explicit-window token flow: `windowTokenStore.consume` was called before validating that the target window snapshot still exists. If the window closed between token mint and artifact creation, the token was irreversibly consumed and the agent could not retry. Token is now consumed only after snapshot validation succeeds; on failure, the token is released for retry.
+- Corrected error classification: when an explicit selection token is valid but its target window is no longer in the registry, the error is now `WINDOW_SELECTION_EXPIRED` (not `WINDOW_NOT_FOUND`). `WINDOW_NOT_FOUND` is reserved for the case where no windows exist at all.
+- Applied the same fix to both `resolveCreateTarget` (create path) and `handleInspectTool` reconnect path.
+- Removed `WORKSPACE_SELECTION_TTL_MS` alias from `contracts.ts` (zero consumers, transitional artifact from workspace→window rename).
+- Removed `artifactConnectionHintSchema` and `ArtifactConnectionHint` type from `contracts.ts` (zero consumers, not used by MCP 9 handlers).
+- Updated test assertion in `review-wait-mcp.test.ts` to expect `WINDOW_SELECTION_EXPIRED` instead of `WINDOW_NOT_FOUND` for the stale-token scenario.
+
+### Rationale
+
+- Token consumption must be atomic with the operation it gates. Consuming before validation creates a one-way failure: the agent loses the token but gains nothing, forcing a full re-resolve cycle.
+- Error codes drive agent recovery behavior. `WINDOW_NOT_FOUND` signals "resolve windows again from scratch" while `WINDOW_SELECTION_EXPIRED` signals "your selection was valid but the window disappeared" — the latter allows more targeted recovery.
+
+### Affected components and files
+
+- `src/integration/artifact-review-mcp-v4.ts` (lines 474–484, 1337–1348)
+- `src/shared/contracts.ts` (removed `WORKSPACE_SELECTION_TTL_MS`, `artifactConnectionHintSchema`, `ArtifactConnectionHint`)
+- `test/review-wait-mcp.test.ts` (line 1419)
+
+## 2026-09-19 — Schema v6 lifecycle cutover, focused-window routing, and MCP 9.0.0
+
+### Changes
+
+- Cut over artifact manifest to schema v6, completely eliminating `location.workspaceRoot` and decoupling artifact review sessions from workspace folder ownership. Artifacts belong to review sessions in global storage.
+- Replaced tool `resolve_artifact_workspace` with `resolve_artifact_window`. MCP server surface remains five tools: `resolve_artifact_window`, `create_artifact`, `wait_for_artifact_review`, `inspect_artifact_review`, and `advance_and_wait_for_artifact`.
+- Implemented focused-first window routing: `create_artifact` and `inspect_artifact_review` automatically route to the currently focused VS Code window (or sole live window) without preflight workspace queries. When multiple live windows exist and focus is ambiguous, requests return `WINDOW_SELECTION_REQUIRED` with candidate summaries and single-use opaque `selectionToken` (`targetMode: "explicit-window"`).
+- Separated window routing from connection persistence: `src/shared/window-routing.ts` manages routing resolution while `src/shared/artifact-connection.ts` manages connection persistence and file locking.
+- Added bounded snapshot pruning to `src/shared/workspace-registry.ts` and `src/extension/workspace-registry-publisher.ts`, retaining at most 10 snapshots and removing files older than 7 days. Added support for folderless windows (`folders: []`).
+- Bumped MCP server version to `9.0.0`. Older schemas (v3, v4, v5) are unsupported and rejected.
+- Updated skills, references, documentation, and test suite across all components.
+
+### Rationale
+
+- Artifacts represent human review sessions for proposals, plans, and architectural drafts, which are global to the user rather than owned by a single folder. Requiring workspace resolution and repository ownership proof created unnecessary friction and failures when working across windows or empty workspaces.
+- Window routing based on user focus directly reflects user intent in multi-window workflows. Explicit selection tokens provide a clean, deterministic fallback when focus is ambiguous.
+
+### Affected components and files
+
+- `src/shared/contracts.ts`, `src/shared/artifact-validation.ts`, `src/shared/window-routing.ts`, `src/shared/artifact-connection.ts`, `src/shared/workspace-registry.ts`
+- `src/integration/artifact-review-mcp-v4.ts`
+- `src/extension/workspace-registry-publisher.ts`, `src/extension/mcp-config.ts`
+- `skills/create-review-artifact/SKILL.md`, `skills/create-review-artifact/references/artifact-contract.md`
+- `package.json`, `README.md`, `docs/PHILOSOPHY.md`, `docs/ARCHITECTURE.md`, `docs/COMPONENTS.md`, `docs/INSTRUCTION.md`, `CHANGELOG.md`, `docs/CHANGE_LOGS.md`
+- Full test suite
+
 ## 2026-09-18 — Window-routed artifact connections and MCP 8.0.0 cutover
 
 ### Changes

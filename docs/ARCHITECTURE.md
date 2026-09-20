@@ -2,9 +2,9 @@
 
 ```text
 Codex skill
-   | resolve (when no tagged file) / create / wait / inspect / advance-and-wait
+   | resolve (optional window discovery) / create / wait / inspect / advance-and-wait
    v
-AI Artifacts MCP -- validates workspace registry and coordinates review rounds
+AI Artifacts MCP -- discovers live windows and coordinates review rounds
    |
    +-- ~/.ai-artifacts/artifacts/<id>/
    |     artifact.json + artifact.md + comments.json
@@ -19,8 +19,8 @@ React webview -- renders Markdown, anchors comments, and submits a decision
 
 ## Ownership boundaries
 
-- The skill chooses when an artifact is appropriate, routes one of the two workspace-evidence flows, retains an exact request/workspace-to-handle mapping, writes complete Markdown, answers review questions in chat, and reacts to decisions.
-- The MCP server resolves current workspace candidates grouped by live VS Code window, exclusively creates schema-v5 artifacts in global storage, commits schema-v1 window-routing requests, and advances review rounds. It generates IDs and review sessions, validates paths and selection grants, owns transient waiter registration, issues one-time round tokens, and commits round transitions transactionally.
+- The skill chooses when an artifact is appropriate, calls create directly or resolves windows when ambiguous, retains an exact handle mapping, writes complete Markdown, answers review questions in chat, and reacts to decisions.
+- The MCP server discovers live VS Code windows, exclusively creates schema-v6 artifacts in global storage, commits schema-v1 window-routing requests, and advances review rounds. It generates IDs and review sessions, validates paths and candidate selection tokens, owns transient waiter registration, issues one-time round tokens, and commits round transitions transactionally.
 - Each extension host window publishes fresh canonical workspace roots plus its stable instance ID, focus hint, and active-file context. It validates connection targets and artifact bindings, opens only requests addressed to its own instance ID, and writes user comments/submissions.
 - The webview renders sanitized CommonMark/GFM and sends typed messages to the extension host. It has no direct filesystem or process access.
 - `src/shared` is the single contract boundary used by the MCP, extension host, and webview.
@@ -31,16 +31,16 @@ React webview -- renders Markdown, anchors comments, and submits a decision
 artifact lifetime > waiter lifetime > chat-turn lifetime
 ```
 
-An artifact is persistent per-user data associated with a target workspace. A waiter is an in-memory connection from one MCP request to one exact artifact round. A chat turn may end or interrupt that request without changing the artifact.
+An artifact is persistent per-user data representing a review session. A waiter is an in-memory connection from one MCP request to one exact artifact round. A chat turn may end or interrupt that request without changing the artifact.
 
-Cancellation and takeover alone close watchers/timers and release waiter ownership only. They do not edit `artifact.json`, `artifact.md`, `comments.json`, `review-submission.json`, or `artifact-connection.json`; only an explicit reconnect intent may commit new routing state during inspection. MCP restart loses active waiters and tokens, but a validated inspection can issue a fresh token from the persistent schema-v5 state.
+Cancellation and takeover alone close watchers/timers and release waiter ownership only. They do not edit `artifact.json`, `artifact.md`, `comments.json`, `review-submission.json`, or `artifact-connection.json`; only an explicit reconnect intent may commit new routing state during inspection. MCP restart loses active waiters and tokens, but a validated inspection can issue a fresh token from the persistent schema-v6 state.
 
 ## Lifecycle tools
 
-1. `resolve_artifact_workspace` runs before any target-workspace action for creation without a tagged file and is the only MCP tool allowed before the agent reads the artifact contract. It normalizes common separators and searches every fresh workspace snapshot by the user's exact keyword/path. Results preserve window groups (`windowInstanceId`, focus hint, snapshot context, and folders). If the registry contains one folder overall, MCP returns it as `matched`/`single-folder` even when the text differs. A query with no match returns all fresh folders grouped by window with `matchMode: "all-available"`; an empty fresh registry returns `not-found`. Focus affects ordering only. Every candidate has an opaque selection token bound to its exact window/workspace tuple. The resolver never creates anything; the skill chooses one unique strongest candidate across groups or asks only when the strongest targets remain tied. Once one folder is chosen, the agent reads the contract before inspecting that folder or calling any lifecycle tool.
-2. `create_artifact` validates either tagged-file evidence or a `resolved-workspace` grant, selects one live window containing the validated workspace, creates review round 1, commits connection revision 1, and immediately returns the exact handle plus connection metadata. A tagged-file request with multiple eligible windows fails before mutation with `WINDOW_SELECTION_REQUIRED`; retry uses `connection.selectionToken` while the tagged file remains ownership evidence. The official skill always sends `kind: "implementation-plan"`.
+1. `resolve_artifact_window` accepts an optional `query` string matched against candidate label, active file, and folder paths. It reads fresh VS Code window snapshots and returns candidates grouped by window; each candidate includes `candidateId`, `windowInstanceId`, `focused`, `label`, `folderCount`, `folders`, `activeFile`, and an opaque `selectionToken`. It returns `status: "matched"`, `status: "selection-required"`, or `status: "not-found"`. It is read-only and never creates lifecycle files.
+2. `create_artifact` creates review round 1, commits connection revision 1, and immediately returns the exact handle plus connection metadata. By default, it routes to the currently focused window (or sole live window); when focus is ambiguous across multiple windows, it returns `WINDOW_SELECTION_REQUIRED` requiring retry with `connection: { targetMode: "explicit-window", selectionToken }`. The official skill always sends `kind: "implementation-plan"`.
 3. `wait_for_artifact_review` attaches the single waiter for an expected round or immediately returns an existing submission.
-4. `inspect_artifact_review` reads the current manifest, Markdown, comments, optional submission, connection state, and hashes. With `intent: "reconnect"`, it revalidates a live target against the manifest workspace and atomically increments the connection revision with a new open-request ID; a window ID is only a hint, while ambiguous candidates require `connection.selectionToken`. With `takeover: true`, inspection first aborts and drains the prior waiter. It can grant a token from saved comments even before submission, or a chat-update token on an empty round when `intent: "explicit-chat-update"` is supplied.
+4. `inspect_artifact_review` reads the current manifest, Markdown, comments, optional submission, connection state, and hashes. With `intent: "reconnect"`, it re-evaluates the currently focused window (or explicit window candidate) and atomically increments the connection revision with a new open-request ID; ambiguous candidates require `connection.selectionToken`. With `takeover: true`, inspection first aborts and drains the prior waiter. It can grant a token from saved comments even before submission, or a chat-update token on an empty round when `intent: "explicit-chat-update"` is supplied.
 5. `advance_and_wait_for_artifact` consumes an exact-state round token, optionally replaces Markdown, advances the round, resets comments/submission, and attaches a waiter for the new round. Omitting Markdown preserves its exact bytes and SHA. Both wait and advance preserve existing connection state and cannot rebind the artifact.
 
 The default flow is create -> wait -> submitted decision. Review (`revise`) grants a round token and uses the same feedback policy as chat inspection: answer questions visibly in chat, replace Markdown only for requested changes, then advance and wait. Question-only Review preserves the current Markdown bytes/SHA. Proceed (`approve`) and Just save (`save`) end only the current round and do not automatically advance. For `plan` and `implementation-plan`, the Proceed result additionally carries `nextAction.type: "execute-approved-plan"`; this is runtime authorization to execute all approved in-scope actions immediately in the same turn. Every lifecycle result includes an RFC 8089 `artifactUrl` and regular Markdown `artifactLink`; neither is a custom-editor deep link.
@@ -51,23 +51,23 @@ Only one waiter may own an artifact. Round tokens are in-memory, single-use, exp
 
 ## Persistent protocol
 
-Schema v5 is the sole live lifecycle protocol:
+Schema v6 is the sole live lifecycle protocol:
 
-- `artifact.json` identifies the schema-v5 artifact, `location.workspaceRoot`, session, and current round.
+- `artifact.json` identifies the schema-v6 artifact, title, session, and current round without repository ownership fields.
 - `artifact.md` contains the complete current document.
 - `comments.json` contains saved comments bound to the current round and artifact hash.
 - `review-submission.json` appears after Review, Proceed, or Just save.
 - `artifact-connection.json` is optional schema-v1 UI-routing state containing only `windowInstanceId`, `connectionRevision`, `openRequestId`, `source`, and `updatedAt`.
 
-Advancing always increments the round and resets handled comments. A question-only advance uses the existing Markdown unchanged. Schemas v3/v4 are rejected and are not live-migrated.
+Advancing always increments the round and resets handled comments. A question-only advance uses the existing Markdown unchanged. Schemas v3/v4/v5 are rejected and are not live-migrated.
 
-`artifact.json` remains the source of truth for artifact ID and `location.workspaceRoot`; connection state never duplicates or overrides them. Connection revisions start at 1 and increment once per successful create/reconnect commit under an artifact-scoped lock. Revisions provide ordering and diagnostics, while unique open-request IDs deduplicate filesystem events. Connection writes are atomic and do not change Markdown bytes/SHA, comments, submission, review round, or round tokens.
+`artifact.json` remains the source of truth for artifact ID; connection state never duplicates or overrides it. Connection revisions start at 1 and increment once per successful create/reconnect commit under an artifact-scoped lock. Revisions provide ordering and diagnostics, while unique open-request IDs deduplicate filesystem events. Connection writes are atomic and do not change Markdown bytes/SHA, comments, submission, review round, or round tokens.
 
 ## Workspace registry
 
-Each running extension window writes an atomic snapshot under `~/.ai-artifacts/managed/workspaces/` (or `CODEX_ARTIFACTS_REGISTRY_DIRECTORY`) and refreshes it every 15 seconds. Schema-v2 snapshots expire after 45 seconds and contain canonical workspace folders, focus state, and the active file/root when available.
+Each running extension window writes an atomic snapshot under `~/.ai-artifacts/managed/workspaces/` (or `CODEX_ARTIFACTS_REGISTRY_DIRECTORY`) and refreshes it every 15 seconds. Schema-v2 snapshots expire after 45 seconds and contain canonical workspace folders (or empty array for folderless windows), focus state, and the active file/root when available. The registry publisher prunes snapshots, retaining at most 10 snapshots and removing files older than 7 days.
 
-Creation accepts exactly two typed evidence variants. `tagged-file` proves ownership through an existing user-tagged file contained by the registered root. Without a tagged file, `resolve_artifact_workspace` runs before project-file reads or artifact drafting. It matches separator-normalized user words against fresh folders while preserving each window group. A registry with one folder overall is intrinsically unambiguous and returns `single-folder`; otherwise no-match candidates remain grouped as `available`. `resolved-workspace` proves the chosen candidate came from that resolver call through a ten-minute, window/workspace-bound, single-use token. Focus is only a ranking hint. The skill may choose a uniquely strongest candidate from the returned name, path, match classification, and user wording; it asks the user only when no unique high-confidence target exists. Tagged-file creation keeps the tagged file as ownership evidence and uses a separate connection token only when identical workspace roots need window disambiguation. Only then may the skill read the chosen folder. Later lifecycle calls use only the exact artifact handle; they never call the resolver or infer “latest artifact” from cwd or a workspace scan.
+Window routing defaults to the focused live window. When multiple live windows exist and none or multiple are focused, `create_artifact` or `inspect_artifact_review` returns `WINDOW_SELECTION_REQUIRED` with candidates and opaque selection tokens. Agents present candidates using concise labels instead of raw UUIDs and retry using `connection: { targetMode: "explicit-window", selectionToken }`.
 
 ## Filesystem safety
 
@@ -93,4 +93,4 @@ The supported v1.0.0 topology requires a local desktop VS Code-compatible extens
 
 ## Compatibility
 
-Extension version 1.0.0 ships MCP server 8.0.0, artifact schema v5, and optional connection schema v1 as a hard compatibility cutoff. The MCP tool catalog remains exactly five tools, but grouped resolver responses and reconnect routing are not compatible with the older MCP 7/skill contract. Schema-v3/v4 and workspace-local lifecycles remain untouched on disk but are not parsed, opened, advanced, or migrated. Updating the extension does not mutate an already installed runtime or skill; users must reinstall integrations, restart the AI client, and start a fresh chat. Rolling back the extension likewise requires reinstalling the matching older runtime/skill. Optional connection files are retained as user artifact data and may be ignored by older code; they are never deleted during rollback or uninstall.
+Extension version 1.0.0 ships MCP server 9.0.0, artifact schema v6, and optional connection schema v1 as a hard compatibility cutoff. The MCP tool catalog remains exactly five tools with `resolve_artifact_window` replacing `resolve_artifact_workspace`. Schema-v3/v4/v5 and workspace-local lifecycles remain untouched on disk but are not parsed, opened, advanced, or migrated. Updating the extension does not mutate an already installed runtime or skill; users must reinstall integrations, restart the AI client, and start a fresh chat. Rolling back the extension likewise requires reinstalling the matching older runtime/skill. Optional connection files are retained as user artifact data and may be ignored by older code; they are never deleted during rollback or uninstall.

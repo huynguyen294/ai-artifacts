@@ -74,18 +74,18 @@ The governing lifetime relationship is `artifact lifetime > waiter lifetime > ch
 **Responsibilities**
 
 - Decide whether an explicit user request should create/update an artifact, inspect saved feedback, or reconnect an exact artifact.
-- Resolve the target workspace folder before reading project files or drafting artifact content, through either a user-tagged file or a resolver candidate chosen by the skill or user.
 - Produce one complete Markdown document.
-- When no file was tagged, call `resolve_artifact_workspace` before reading the contract or taking any project action; do not scan folders first. Immediately select a sole `single-folder` candidate supplied by MCP. Otherwise choose a uniquely high-confidence candidate from the returned names, paths, and match classifications, and require user selection only when the result remains ambiguous. After choosing, read the contract before inspecting the folder or calling any lifecycle tool.
-- Preserve resolver candidates by window. Treat focus only as a ranking hint, select a unique strongest candidate across groups, and ask the user only when the strongest window/workspace targets remain tied.
-- Call `create_artifact` with `kind: "implementation-plan"`, retain an exact request/workspace-to-handle mapping and returned connection metadata, then call `wait_for_artifact_review` for the default flow. Tagged-file ambiguity retries the same create with `connection.selectionToken`; the tagged file remains ownership evidence.
+- By default, call `create_artifact` directly; the MCP server automatically targets the currently focused live VS Code window (or sole live window).
+- When multiple windows exist and focus is ambiguous, handle `WINDOW_SELECTION_REQUIRED` and retry with `connection: { targetMode: "explicit-window", selectionToken }`.
+- Call `resolve_artifact_window` when proactive window discovery or candidate inspection is needed before creation.
+- Call `create_artifact` with `kind: "implementation-plan"`, retain an exact handle mapping and returned connection metadata, then call `wait_for_artifact_review` for the default flow.
 - Interpret the returned decision.
 - Apply one feedback policy to submitted `revise` and chat-inspected comments: answer questions visibly, update Markdown only for requested changes, and advance unchanged Markdown for question-only rounds.
 - For chat escape, inspect the exact interrupted handle with takeover before applying that shared policy.
 - For an explicit chat update on an empty round, inspect the exact handle with `intent: "explicit-chat-update"`, replace the Markdown, and advance without requiring a UI comment or Review submission.
 - Reattach the same round when inspection has no feedback; ask for a path instead of guessing when the exact handle is ambiguous.
 - Use the intent decision table before reconnect/inspection/chat update and never takeover when the intent or exact handle is ambiguous.
-- Reconnect only through `inspect_artifact_review` on the exact handle. A window ID is a hint; an ambiguous reconnect retries inspect with the selected `connection.selectionToken`. Never call the resolver after creation.
+- Reconnect only through `inspect_artifact_review` on the exact handle. Ambiguous window reconnect retries inspect with the selected `connection.selectionToken`.
 - Follow structured lifecycle recovery metadata, keep the same handle, and never replay an update whose commit state is uncertain.
 - For `approve` on `plan` or `implementation-plan`, obey the MCP `execute-approved-plan` directive and execute the complete approved plan immediately; for other kinds, continue only with the action implied by the original request.
 - For `save`, ask for a destination and copy the Markdown without performing the proposed work.
@@ -108,23 +108,23 @@ The skill must never create or edit `artifact.json`, `comments.json`, `review-su
 
 **Responsibilities**
 
-- Expose one workspace resolver plus four lifecycle tools:
-  - `resolve_artifact_workspace`
+- Expose one window resolver plus four lifecycle tools:
+  - `resolve_artifact_window`
   - `create_artifact`
   - `wait_for_artifact_review`
   - `inspect_artifact_review`
   - `advance_and_wait_for_artifact`
-- Validate tool arguments, artifact kind, title, Markdown size, workspace root, and typed workspace evidence.
-- Group fresh resolver candidates by VS Code window and issue short-lived, exact window/workspace-bound, single-use selection grants.
+- Validate tool arguments, artifact kind, title, and Markdown size.
+- Group fresh window candidates and issue short-lived, single-use window selection tokens.
 - Generate the artifact ID and `reviewSessionId`.
-- Create a schema-v5 artifact beneath the global per-user collection at review round 1.
-- Select a live target window, atomically commit connection state, and return the persistent artifact handle plus connection metadata before attaching any waiter.
+- Create a schema-v6 artifact beneath the global per-user collection at review round 1.
+- Select the focused live target window (or explicit selection token), atomically commit connection state, and return the persistent artifact handle plus connection metadata before attaching any waiter.
 - Attach one transient tool call to `review-submission.json`, or return an existing submission immediately.
 - Detect a submission through filesystem watching with periodic polling as a fallback.
 - Validate that the submission belongs to the same schema, artifact, session, round, Markdown hash, and comments hash.
 - Reserve at most one live waiter per canonical artifact directory and let cancellation/takeover detach it without touching lifecycle files.
 - Inspect validated Markdown, comments, and optional submission even when no Review submission exists.
-- For explicit reconnect, validate a window hint or selection token against the manifest workspace and atomically commit a new revision/open-request ID without changing lifecycle state.
+- For explicit reconnect, re-evaluate target window routing and atomically commit a new revision/open-request ID without changing lifecycle state.
 - Grant in-memory, single-use, one-hour round tokens after submitted `revise` or a consumable chat inspection.
 - Bind tokens to artifact/session/round plus artifact, comments, and submission hashes/presence.
 - Transactionally preserve or replace Markdown, increment `reviewRound`, reset comments, remove the previous submission, and wait for the next decision.
@@ -322,7 +322,7 @@ The provider is the orchestration bridge between an untrusted webview and truste
 - Selection capture or rendering.
 - Continued Codex behavior after a decision.
 
-Only schema-v5 artifacts at exact validated global handles are loaded. Schemas v3/v4 and workspace-local artifacts are rejected before review state is exposed.
+Only schema-v6 artifacts at exact validated global handles are loaded. Schemas v3/v4/v5 and workspace-local artifacts are rejected before review state is exposed.
 
 ## 8. Review Webview
 
@@ -408,7 +408,7 @@ The parser, selection capture, renderer, and store must agree on the same visibl
 
 **Responsibilities**
 
-- Define the schema-v5 manifest/comments/submission contracts and the independent schema-v1 artifact-connection contract.
+- Define the schema-v6 manifest/comments/submission contracts and the independent schema-v1 artifact-connection contract.
 - Define comments, review decisions, submissions, Markdown blocks, review state, and webview messages.
 - Validate all untrusted JSON and webview input.
 - Bind comments and submissions to the correct artifact lifecycle.
@@ -458,10 +458,10 @@ This layer is the protocol source of truth. A contract change must be propagated
 
 ### Default submission flow
 
-1. With a tagged file, the skill derives its containing workspace folder. Without one, it calls `resolve_artifact_workspace` before reading project content. Candidates stay grouped by window; a sole registered folder returns `matched`/`single-folder`, otherwise the skill picks one unique strongest match and asks only on a true tie. Focus is a ranking hint, not a routing requirement.
-2. Only after selection, the skill reads required instructions and relevant source in that workspace, then calls `create_artifact` with complete Markdown, `kind: "implementation-plan"`, and one of the two evidence variants. Tagged-file ambiguity retries create with the selected window token. The skill retains the returned `artifactDirectory`, round, and connection metadata.
-3. The MCP revalidates workspace ownership and the selected live window, creates the initial schema-v5 files plus schema-v1 connection state under `~/.ai-artifacts/artifacts/<artifactId>/`, and returns the exact global handle plus a regular file link.
-4. The skill calls `wait_for_artifact_review` with the exact handle. The MCP reserves waiter ownership; workspace evidence is not required again.
+1. The skill writes one complete Markdown document and calls `create_artifact` with `kind: "implementation-plan"`, title, and markdown. By default, it omits connection parameters and the server routes directly to the currently focused VS Code window (or sole live window).
+2. If multiple windows exist and none or multiple are focused, `create_artifact` returns `WINDOW_SELECTION_REQUIRED` with candidates and opaque tokens. The skill selects the best candidate or prompts the user, then retries with `connection: { targetMode: "explicit-window", selectionToken }`.
+3. The MCP creates the initial schema-v6 files plus schema-v1 connection state under `~/.ai-artifacts/artifacts/<artifactId>/`, and returns the exact global handle plus a regular file link.
+4. The skill calls `wait_for_artifact_review` with the exact handle. The MCP reserves waiter ownership.
 5. Every extension window observes the connection event, but only the matching `windowInstanceId` validates and opens the custom editor when enabled. The target may be unfocused; non-target windows remain silent. Provider, store, webview, and Markdown pipeline render and persist review comments as before.
 6. The user submits Review (`revise`), Proceed (`approve`), or Just save (`save`); the store creates `review-submission.json` exactly once.
 7. The waiting MCP validates and returns the submission. Submitted Review includes a round token.

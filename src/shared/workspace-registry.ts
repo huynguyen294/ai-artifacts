@@ -248,6 +248,69 @@ export async function readFreshWorkspaceSnapshots(
   return snapshots.filter((snapshot): snapshot is WorkspaceRegistrySnapshot => Boolean(snapshot));
 }
 
+export const WORKSPACE_REGISTRY_PRUNE_SAFETY_MARGIN_MS = WORKSPACE_REGISTRY_TTL_MS;
+
+export async function pruneExpiredWorkspaceSnapshots(
+  directory = workspaceRegistryDirectory(),
+  now = Date.now(),
+  safetyMarginMs = WORKSPACE_REGISTRY_PRUNE_SAFETY_MARGIN_MS,
+): Promise<number> {
+  let entries: string[];
+  try {
+    entries = await fs.readdir(directory);
+  } catch (error) {
+    const code = error instanceof Error && "code" in error ? error.code : undefined;
+    if (code === "ENOENT") return 0;
+    throw error;
+  }
+
+  let prunedCount = 0;
+  for (const entry of entries) {
+    if (!entry.endsWith(".json")) continue;
+    const instanceId = entry.slice(0, -5);
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(instanceId)) {
+      continue;
+    }
+
+    const filePath = path.join(directory, entry);
+    try {
+      const stat = await fs.lstat(filePath);
+      if (stat.isSymbolicLink() || !stat.isFile()) {
+        continue;
+      }
+
+      const contents = await fs.readFile(filePath, "utf8");
+      let parsedJson: unknown;
+      try {
+        parsedJson = JSON.parse(contents);
+      } catch {
+        continue;
+      }
+
+      const parsedResult = workspaceRegistrySnapshotSchema.safeParse(parsedJson);
+      if (!parsedResult.success) {
+        continue;
+      }
+
+      const snapshot = parsedResult.data;
+      if (snapshot.instanceId !== instanceId) {
+        continue;
+      }
+
+      const expiresAtMs = Date.parse(snapshot.expiresAt);
+      const cutoff = now - safetyMarginMs;
+      if (expiresAtMs <= cutoff && stat.mtimeMs <= cutoff) {
+        await fs.rm(filePath, { force: true });
+        prunedCount++;
+      }
+    } catch {
+      continue;
+    }
+  }
+
+  return prunedCount;
+}
+
 export async function resolveRegisteredWorkspaceRoot(
   requestedRoot: string,
   directory = workspaceRegistryDirectory(),

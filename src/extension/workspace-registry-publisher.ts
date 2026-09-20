@@ -5,6 +5,7 @@ import {
   WORKSPACE_REGISTRY_TTL_MS,
   canonicalWorkspaceFolder,
   createWorkspaceInstanceId,
+  pruneExpiredWorkspaceSnapshots,
   publishWorkspaceSnapshot,
   removeWorkspaceSnapshot,
 } from "../shared/workspace-registry";
@@ -15,6 +16,7 @@ export class WorkspaceRegistryPublisher implements vscode.Disposable {
   private readonly heartbeat: NodeJS.Timeout;
   private disposed = false;
   private publishing: Promise<void> = Promise.resolve();
+  private lastPruneAt = 0;
 
   public get currentInstanceId(): string {
     return this.instanceId;
@@ -28,6 +30,7 @@ export class WorkspaceRegistryPublisher implements vscode.Disposable {
     );
     this.heartbeat = setInterval(() => this.refresh(), WORKSPACE_REGISTRY_HEARTBEAT_MS);
     this.heartbeat.unref?.();
+    void pruneExpiredWorkspaceSnapshots().catch(() => {});
     this.refresh();
   }
 
@@ -62,6 +65,10 @@ export class WorkspaceRegistryPublisher implements vscode.Disposable {
           updatedAt: new Date(now).toISOString(),
           expiresAt: new Date(now + WORKSPACE_REGISTRY_TTL_MS).toISOString(),
         });
+        if (now - this.lastPruneAt >= 60_000) {
+          this.lastPruneAt = now;
+          void pruneExpiredWorkspaceSnapshots().catch(() => {});
+        }
       })
       .catch((error) => console.error("Publishing the AI Artifacts workspace registry failed:", error));
   }

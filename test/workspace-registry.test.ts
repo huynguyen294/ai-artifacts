@@ -1,10 +1,11 @@
 import { randomUUID } from "node:crypto";
-import { mkdtemp, mkdir, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, realpath, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   canonicalWorkspaceFolder,
+  pruneExpiredWorkspaceSnapshots,
   publishWorkspaceSnapshot,
   readFreshWorkspaceSnapshots,
   removeWorkspaceSnapshot,
@@ -389,6 +390,101 @@ describe("workspace registry", () => {
 
       expect(() => workspaceWindowSelectionGrantSchema.parse({ ...grant, windowInstanceId: "invalid" })).toThrow();
       expect(() => workspaceWindowSelectionGrantSchema.parse({ ...grant, expiresAt: -1 })).toThrow();
+    });
+  });
+
+  it("supports empty windows with no workspace folders", async () => {
+    const fixture = await rootFixture();
+    const instanceId = await publish(fixture.registry, [], { focused: true });
+    const snapshots = await readFreshWorkspaceSnapshots(fixture.registry);
+    expect(snapshots).toHaveLength(1);
+    expect(snapshots[0]!.instanceId).toBe(instanceId);
+    expect(snapshots[0]!.folders).toEqual([]);
+    expect(snapshots[0]!.focused).toBe(true);
+  });
+
+  describe("bounded snapshot pruning", () => {
+    it("prunes expired regular snapshot files whose mtime and expiresAt exceed safety margin", async () => {
+      const fixture = await rootFixture();
+      const now = Date.now();
+      const safetyMargin = 45_000;
+      const oldTime = now - safetyMargin - 10_000;
+
+      // 1. Valid expired file that should be pruned
+      const expiredInstanceId = randomUUID();
+      const expiredPath = path.join(fixture.registry, `${expiredInstanceId}.json`);
+      await writeFile(expiredPath, JSON.stringify({
+        schemaVersion: 2,
+        instanceId: expiredInstanceId,
+        processId: process.pid,
+        workspaceFile: null,
+        focused: false,
+        folders: [],
+        activeFile: null,
+        updatedAt: new Date(oldTime - 60_000).toISOString(),
+        expiresAt: new Date(oldTime).toISOString(),
+      }), "utf8");
+      await utimes(expiredPath, oldTime / 1000, oldTime / 1000);
+
+      // 2. Fresh file that must NOT be pruned
+      const freshInstanceId = randomUUID();
+      const freshPath = path.join(fixture.registry, `${freshInstanceId}.json`);
+      await writeFile(freshPath, JSON.stringify({
+        schemaVersion: 2,
+        instanceId: freshInstanceId,
+        processId: process.pid,
+        workspaceFile: null,
+        focused: true,
+        folders: [],
+        activeFile: null,
+        updatedAt: new Date(now).toISOString(),
+        expiresAt: new Date(now + 60_000).toISOString(),
+      }), "utf8");
+
+      // 3. Expired within safety margin (must NOT be pruned)
+      const recentExpiredId = randomUUID();
+      const recentExpiredPath = path.join(fixture.registry, `${recentExpiredId}.json`);
+      const recentTime = now - 5_000;
+      await writeFile(recentExpiredPath, JSON.stringify({
+        schemaVersion: 2,
+        instanceId: recentExpiredId,
+        processId: process.pid,
+        workspaceFile: null,
+        focused: false,
+        folders: [],
+        activeFile: null,
+        updatedAt: new Date(recentTime - 60_000).toISOString(),
+        expiresAt: new Date(recentTime).toISOString(),
+      }), "utf8");
+      await utimes(recentExpiredPath, recentTime / 1000, recentTime / 1000);
+
+      // 4. Malformed json file (must NOT be pruned)
+      const malformedPath = path.join(fixture.registry, `${randomUUID()}.json`);
+      await writeFile(malformedPath, "not valid json", "utf8");
+      await utimes(malformedPath, oldTime / 1000, oldTime / 1000);
+
+      // 5. Mismatched instanceId from filename (must NOT be pruned)
+      const mismatchedFileId = randomUUID();
+      const mismatchedPath = path.join(fixture.registry, `${mismatchedFileId}.json`);
+      await writeFile(mismatchedPath, JSON.stringify({
+        schemaVersion: 2,
+        instanceId: randomUUID(),
+        processId: process.pid,
+        workspaceFile: null,
+        focused: false,
+        folders: [],
+        activeFile: null,
+        updatedAt: new Date(oldTime - 60_000).toISOString(),
+        expiresAt: new Date(oldTime).toISOString(),
+      }), "utf8");
+      await utimes(mismatchedPath, oldTime / 1000, oldTime / 1000);
+
+      const pruned = await pruneExpiredWorkspaceSnapshots(fixture.registry, now, safetyMargin);
+      expect(pruned).toBe(1);
+
+      const remaining = await readFreshWorkspaceSnapshots(fixture.registry, now);
+      expect(remaining).toHaveLength(1);
+      expect(remaining[0]!.instanceId).toBe(freshInstanceId);
     });
   });
 });

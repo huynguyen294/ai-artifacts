@@ -5,9 +5,9 @@
 Codex Artifacts is a VS Code extension for reviewing Codex-generated Markdown through a local, MCP-owned review lifecycle.
 
 - Package version source of truth: `package.json`
-- Current and only supported artifact schema: `v5`
+- Current and only supported artifact schema: `v6`
 - Artifact storage: global per-user `~/.ai-artifacts/artifacts/`
-- Compatibility: schemas `v3`/`v4` and workspace-local lifecycles are unsupported and are not live-migrated
+- Compatibility: schemas `v3`/`v4`/`v5` and workspace-local lifecycles are unsupported and are not live-migrated
 - Primary environment: VS Code extension host, local MCP server, and React webview
 - Filesystem support: extension host and MCP process must see the same user home and filesystem
 
@@ -32,18 +32,18 @@ If product intent, documentation, tests, and implementation disagree, call out t
 - Review replaces the same `artifact.md`, advances `reviewRound`, resets review state, and does not retain revision history.
 - Review submissions and chat-inspected comments use one feedback policy: answer questions visibly in chat, update Markdown only for requested changes, and preserve Markdown/SHA for question-only rounds.
 - Proceed on `plan` or `implementation-plan` returns `execute-approved-plan` and authorizes immediate execution in the same turn; acknowledgement without execution is incorrect.
-- The MCP server creates schema-v5 artifacts only beneath the canonical global collection, owns the transient waiter registry and round tokens, and commits review-round transitions.
+- The MCP server creates schema-v6 artifacts only beneath the canonical global collection, owns the transient waiter registry and round tokens, and commits review-round transitions.
 - The extension host validates bindings and writes user comments and create-once submissions.
 - The skill must not create, edit, repair, or bypass lifecycle files directly.
 - Round tokens are in-memory, one-time, exact-state-bound, and expiring. Cancellation or restart preserves artifact state; recover only by inspecting an exact retained artifact handle.
 - Artifact lifetime exceeds waiter lifetime, which exceeds chat-turn lifetime. Cancellation and takeover must not mutate lifecycle files.
-- Schema v5 is the only readable and writable lifecycle. Schema-v3/v4 and workspace-local artifacts are rejected and are not live-migrated.
-- `location.workspaceRoot` is target metadata and ownership context, not the lifecycle storage location.
-- After creation, wait/inspect/advance/reconnect use the exact global artifact handle; workspace evidence is not requested again.
-- Workspace-folder ownership requires a user-tagged file or an MCP-issued resolver token for a candidate chosen from the user's workspace words. The resolver returns candidates grouped by fresh VS Code window and never erases their window identity. Focus is only a ranking hint; it is not ownership evidence or a routing requirement. Multiple windows require user selection only when no unique strongest candidate exists. Cwd, `environment_context`, workspace order, project markers, and filesystem search results cannot establish ownership by themselves.
-- `artifact.json` is the source of truth for artifact identity and `location.workspaceRoot`. Optional schema-v1 `artifact-connection.json` contains only UI-routing state. Its selection token binds an exact window/workspace tuple; tagged-file evidence remains the ownership proof.
+- Schema v6 is the only readable and writable lifecycle. Schema-v3/v4/v5 and workspace-local artifacts are rejected and are not live-migrated.
+- Artifacts are owned by review sessions, not repository paths; `artifact.json` contains no `location.workspaceRoot` field.
+- After creation, wait/inspect/advance/reconnect use the exact global artifact handle.
+- Window routing defaults to the currently focused live window (or sole live window). When multiple live windows exist and focus is ambiguous, `create_artifact` or `inspect_artifact_review` returns `WINDOW_SELECTION_REQUIRED` with candidate tokens. Focus is only a ranking hint; it is not routing identity.
+- `artifact.json` is the source of truth for artifact identity. Optional schema-v1 `artifact-connection.json` contains only UI-routing state (`windowInstanceId`, `connectionRevision`, `openRequestId`, `source`, `updatedAt`).
 - Create and explicit reconnect may commit connection state. Wait and advance preserve that state and must not rebind or emit another open request. Reconnect recovery always keeps the exact artifact handle and never calls the workspace resolver after creation.
-- Fail before filesystem mutation when workspace ownership is missing, ambiguous, stale, unregistered, or unsafe.
+- Fail before filesystem mutation when window selection is required, ambiguous, stale, or unsafe.
 - Preserve unrelated user skills, hooks, MCP configuration, and project files during install, upgrade, cleanup, or migration.
 - Preserve user review data in `~/.ai-artifacts/artifacts/` during integration or extension uninstall. Only exact extension-owned runtime assets under `~/.ai-artifacts/managed/` are removable managed state; artifact deletion is a separate explicit user action.
 - Treat artifact Markdown, comments, and decisions as potentially sensitive local data. Preserve owner-only POSIX modes and never claim POSIX-mode guarantees on Windows.
@@ -61,7 +61,7 @@ If product intent, documentation, tests, and implementation disagree, call out t
 
 ## Ownership map
 
-- `src/integration/artifact-review-mcp-v4.ts`: historical filename for the current MCP 8.0.0/schema-v5 tools, grouped window/workspace resolution, connection commits, artifact creation, waiter ownership/takeover, round grants, inspection, and transactional round commits.
+- `src/integration/artifact-review-mcp-v4.ts`: historical filename for the current MCP 9.0.0/schema-v6 tools, window resolution, connection commits, artifact creation, waiter ownership/takeover, round grants, inspection, and transactional round commits.
 - `src/extension/artifact-store.ts`: trusted artifact loading, comment writes, and submission writes.
 - `src/extension/workspace-registry-publisher.ts`: live VS Code workspace heartbeat.
 - `src/extension/workspace-integration.ts`: centralized MCP installation, base runtime provisioning, and legacy cleanup.

@@ -10,7 +10,6 @@ import {
   ArtifactConnectionWriteError,
   WindowConnectionMismatchError,
   WindowConnectionStaleError,
-  WORKSPACE_SELECTION_TTL_MS,
   artifactManifestSchema,
   commentsDocumentSchema,
   reviewSubmissionSchema,
@@ -32,7 +31,6 @@ import {
   commitArtifactConnectionRequest,
   readArtifactConnection,
   readArtifactConnectionRoute,
-  resolveArtifactConnectionTarget,
   validateArtifactConnectionParent,
   withArtifactConnectionLock,
 } from "../src/shared/artifact-connection";
@@ -42,10 +40,6 @@ import {
   ensureSafeManagedArtifactFile,
   sameFilesystemPath,
 } from "../src/shared/artifact-validation";
-import type {
-  WorkspaceRegistrySnapshot,
-  WorkspaceWindowSelectionGrant,
-} from "../src/shared/workspace-registry";
 
 const temporaryDirectories: string[] = [];
 let userHome: string;
@@ -104,9 +98,6 @@ describe("internal artifact-connection module", () => {
       reviewRound: 1,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
-      location: {
-        workspaceRoot: path.join(userHome, "project-a"),
-      },
       reviewSessionId: randomUUID(),
     };
     const commentsDoc = {
@@ -589,402 +580,6 @@ describe("internal artifact-connection module", () => {
     ).rejects.toThrow("ARTIFACT_CONNECTION_INVALID: artifact-connection.json is empty.");
   });
 
-  describe("resolveArtifactConnectionTarget", () => {
-    let workspaceA: string;
-    let workspaceB: string;
-    const now = Date.now();
-
-    beforeEach(() => {
-      workspaceA = path.join(userHome, "project-a");
-      workspaceB = path.join(userHome, "project-b");
-    });
-
-    function mockSnapshots(): WorkspaceRegistrySnapshot[] {
-      return [
-        {
-          schemaVersion: 2,
-          instanceId: windowA,
-          processId: 1001,
-          workspaceFile: null,
-          focused: true,
-          folders: [{ path: workspaceA, realPath: workspaceA }],
-          activeFile: null,
-          updatedAt: new Date(now).toISOString(),
-          expiresAt: new Date(now + 45_000).toISOString(),
-        },
-        {
-          schemaVersion: 2,
-          instanceId: windowB,
-          processId: 1002,
-          workspaceFile: null,
-          focused: false,
-          folders: [{ path: workspaceB, realPath: workspaceB }],
-          activeFile: null,
-          updatedAt: new Date(now).toISOString(),
-          expiresAt: new Date(now + 45_000).toISOString(),
-        },
-      ];
-    }
-
-    it("resolves target with source 'token' when valid selection grant is provided", async () => {
-      const grant: WorkspaceWindowSelectionGrant = {
-        query: "project-a",
-        candidateId: "cand-1",
-        workspaceRoot: workspaceA,
-        windowInstanceId: windowA,
-        snapshotIdentity: `${windowA}:1`,
-        expiresAt: now + 60_000,
-      };
-
-      const result = await resolveArtifactConnectionTarget({
-        workspaceRoot: workspaceA,
-        selectionGrant: grant,
-        registrySnapshots: mockSnapshots(),
-      });
-
-      expect(result).toEqual({
-        status: "matched",
-        targetWindow: {
-          windowInstanceId: windowA,
-          workspaceRoot: workspaceA,
-        },
-        source: "token",
-      });
-    });
-
-    it("accepts a selection grant only before its exact expiry boundary", async () => {
-      const grant: WorkspaceWindowSelectionGrant = {
-        query: "project-a",
-        candidateId: "cand-1",
-        workspaceRoot: workspaceA,
-        windowInstanceId: windowA,
-        snapshotIdentity: `${windowA}:1`,
-        expiresAt: now + 1,
-      };
-
-      await expect(resolveArtifactConnectionTarget({
-        workspaceRoot: workspaceA,
-        selectionGrant: grant,
-        registrySnapshots: mockSnapshots(),
-        now,
-      })).resolves.toMatchObject({ status: "matched", source: "token" });
-
-      await expect(resolveArtifactConnectionTarget({
-        workspaceRoot: workspaceA,
-        selectionGrant: { ...grant, expiresAt: now },
-        registrySnapshots: mockSnapshots(),
-        now,
-      })).resolves.toMatchObject({
-        status: "not-found",
-        message: "The selection grant has expired.",
-      });
-
-      await expect(resolveArtifactConnectionTarget({
-        workspaceRoot: workspaceA,
-        selectionGrant: { ...grant, expiresAt: now - 1 },
-        registrySnapshots: mockSnapshots(),
-        now,
-      })).resolves.toMatchObject({
-        status: "not-found",
-        message: "The selection grant has expired.",
-      });
-    });
-
-    it("rejects selection grant when workspaceRoot mismatches", async () => {
-      const grant: WorkspaceWindowSelectionGrant = {
-        query: "project-b",
-        candidateId: "cand-2",
-        workspaceRoot: workspaceB,
-        windowInstanceId: windowB,
-        snapshotIdentity: `${windowB}:1`,
-        expiresAt: now + 60_000,
-      };
-
-      await expect(
-        resolveArtifactConnectionTarget({
-          workspaceRoot: workspaceA,
-          selectionGrant: grant,
-          registrySnapshots: mockSnapshots(),
-        })
-      ).rejects.toThrow(WindowConnectionMismatchError);
-    });
-
-    it("resolves target with source 'existing-connection' when window remains fresh", async () => {
-      const { artifactDir } = await createValidArtifactDir();
-      await commitArtifactConnectionRequest(artifactDir, {
-        windowInstanceId: windowA,
-        source: "create",
-      });
-
-      const result = await resolveArtifactConnectionTarget({
-        workspaceRoot: workspaceA,
-        artifactDirectory: artifactDir,
-        registrySnapshots: mockSnapshots(),
-      });
-
-      expect(result).toEqual({
-        status: "matched",
-        targetWindow: {
-          windowInstanceId: windowA,
-          workspaceRoot: workspaceA,
-        },
-        source: "existing-connection",
-      });
-    });
-
-    it("falls back to fresh window matching when existing connection window is closed/stale", async () => {
-      const { artifactDir } = await createValidArtifactDir();
-      const staleWindowId = "99999999-9999-4999-8999-999999999999";
-      await commitArtifactConnectionRequest(artifactDir, {
-        windowInstanceId: staleWindowId,
-        source: "create",
-      });
-
-      // windowA is open with workspaceA, staleWindowId is gone
-      const result = await resolveArtifactConnectionTarget({
-        workspaceRoot: workspaceA,
-        artifactDirectory: artifactDir,
-        registrySnapshots: mockSnapshots(),
-      });
-
-      expect(result).toEqual({
-        status: "matched",
-        targetWindow: {
-          windowInstanceId: windowA,
-          workspaceRoot: workspaceA,
-        },
-        source: "single-window",
-      });
-    });
-
-    it("resolves target with source 'hint' when valid hint is provided", async () => {
-      const result = await resolveArtifactConnectionTarget({
-        workspaceRoot: workspaceB,
-        connectionHint: { windowInstanceId: windowB },
-        registrySnapshots: mockSnapshots(),
-      });
-
-      expect(result).toEqual({
-        status: "matched",
-        targetWindow: {
-          windowInstanceId: windowB,
-          workspaceRoot: workspaceB,
-        },
-        source: "hint",
-      });
-    });
-
-    it("resolves target automatically with source 'single-window' when workspaceRoot matches uniquely", async () => {
-      const result = await resolveArtifactConnectionTarget({
-        workspaceRoot: workspaceA,
-        registrySnapshots: mockSnapshots(),
-      });
-
-      expect(result).toEqual({
-        status: "matched",
-        targetWindow: {
-          windowInstanceId: windowA,
-          workspaceRoot: workspaceA,
-        },
-        source: "single-window",
-      });
-    });
-
-    it("returns 'selection-required' with grouped windows when multiple windows open the same workspace", async () => {
-      const multiWindowSnapshots: WorkspaceRegistrySnapshot[] = [
-        {
-          schemaVersion: 2,
-          instanceId: windowA,
-          processId: 1001,
-          workspaceFile: null,
-          focused: true,
-          folders: [{ path: workspaceA, realPath: workspaceA }],
-          activeFile: null,
-          updatedAt: new Date(now).toISOString(),
-          expiresAt: new Date(now + 45_000).toISOString(),
-        },
-        {
-          schemaVersion: 2,
-          instanceId: windowB,
-          processId: 1002,
-          workspaceFile: null,
-          focused: false,
-          folders: [{ path: workspaceA, realPath: workspaceA }],
-          activeFile: null,
-          updatedAt: new Date(now).toISOString(),
-          expiresAt: new Date(now + 45_000).toISOString(),
-        },
-      ];
-
-      const result = await resolveArtifactConnectionTarget({
-        workspaceRoot: workspaceA,
-        registrySnapshots: multiWindowSnapshots,
-      });
-
-      expect(result.status).toBe("selection-required");
-      if (result.status === "selection-required") {
-        expect(result.windows).toHaveLength(2);
-        expect(result.candidates).toHaveLength(2);
-        expect(result.windows.map((w) => w.windowInstanceId)).toEqual([windowA, windowB]);
-        expect(result.candidates[0]?.selectionToken).toBeDefined();
-        expect(result.candidates[1]?.selectionToken).toBeDefined();
-      }
-    });
-
-    it("rebinds from live A to live B when explicit hint B is provided even if A is still fresh", async () => {
-      const { artifactDir } = await createValidArtifactDir();
-      await commitArtifactConnectionRequest(artifactDir, {
-        windowInstanceId: windowA,
-        source: "create",
-      });
-
-      // Both windowA and windowB have workspaceA open
-      const snapshots: WorkspaceRegistrySnapshot[] = [
-        {
-          schemaVersion: 2,
-          instanceId: windowA,
-          processId: 1001,
-          workspaceFile: null,
-          focused: true,
-          folders: [{ path: workspaceA, realPath: workspaceA }],
-          activeFile: null,
-          updatedAt: new Date(now).toISOString(),
-          expiresAt: new Date(now + 45_000).toISOString(),
-        },
-        {
-          schemaVersion: 2,
-          instanceId: windowB,
-          processId: 1002,
-          workspaceFile: null,
-          focused: false,
-          folders: [{ path: workspaceA, realPath: workspaceA }],
-          activeFile: null,
-          updatedAt: new Date(now).toISOString(),
-          expiresAt: new Date(now + 45_000).toISOString(),
-        },
-      ];
-
-      const result = await resolveArtifactConnectionTarget({
-        workspaceRoot: workspaceA,
-        artifactDirectory: artifactDir,
-        connectionHint: { windowInstanceId: windowB },
-        registrySnapshots: snapshots,
-      });
-
-      expect(result).toEqual({
-        status: "matched",
-        targetWindow: {
-          windowInstanceId: windowB,
-          workspaceRoot: workspaceA,
-        },
-        source: "hint",
-      });
-    });
-
-    it("fails with WindowConnectionStaleError when hint B is stale without falling back to existing A", async () => {
-      const { artifactDir } = await createValidArtifactDir();
-      await commitArtifactConnectionRequest(artifactDir, {
-        windowInstanceId: windowA,
-        source: "create",
-      });
-
-      // Only windowA is open
-      const snapshots: WorkspaceRegistrySnapshot[] = [
-        {
-          schemaVersion: 2,
-          instanceId: windowA,
-          processId: 1001,
-          workspaceFile: null,
-          focused: true,
-          folders: [{ path: workspaceA, realPath: workspaceA }],
-          activeFile: null,
-          updatedAt: new Date(now).toISOString(),
-          expiresAt: new Date(now + 45_000).toISOString(),
-        },
-      ];
-
-      await expect(
-        resolveArtifactConnectionTarget({
-          workspaceRoot: workspaceA,
-          artifactDirectory: artifactDir,
-          connectionHint: { windowInstanceId: windowB },
-          registrySnapshots: snapshots,
-        }),
-      ).rejects.toThrow(WindowConnectionStaleError);
-    });
-
-    it("fails with WindowConnectionMismatchError when hint B does not have manifest workspace open", async () => {
-      const { artifactDir } = await createValidArtifactDir();
-      await commitArtifactConnectionRequest(artifactDir, {
-        windowInstanceId: windowA,
-        source: "create",
-      });
-
-      await expect(
-        resolveArtifactConnectionTarget({
-          workspaceRoot: workspaceA,
-          artifactDirectory: artifactDir,
-          connectionHint: { windowInstanceId: windowB },
-          registrySnapshots: mockSnapshots(), // in mockSnapshots, windowB only has workspaceB
-        }),
-      ).rejects.toThrow(WindowConnectionMismatchError);
-    });
-
-    it("uses shared WORKSPACE_SELECTION_TTL_MS for candidate expiresAt in selection-required result", async () => {
-      const multiWindowSnapshots: WorkspaceRegistrySnapshot[] = [
-        {
-          schemaVersion: 2,
-          instanceId: windowA,
-          processId: 1001,
-          workspaceFile: null,
-          focused: true,
-          folders: [{ path: workspaceA, realPath: workspaceA }],
-          activeFile: null,
-          updatedAt: new Date(now).toISOString(),
-          expiresAt: new Date(now + 45_000).toISOString(),
-        },
-        {
-          schemaVersion: 2,
-          instanceId: windowB,
-          processId: 1002,
-          workspaceFile: null,
-          focused: false,
-          folders: [{ path: workspaceA, realPath: workspaceA }],
-          activeFile: null,
-          updatedAt: new Date(now).toISOString(),
-          expiresAt: new Date(now + 45_000).toISOString(),
-        },
-      ];
-
-      const result = await resolveArtifactConnectionTarget({
-        workspaceRoot: workspaceA,
-        registrySnapshots: multiWindowSnapshots,
-        now,
-      });
-
-      expect(result.status).toBe("selection-required");
-      if (result.status === "selection-required") {
-        const expectedExpiresAt = new Date(now + WORKSPACE_SELECTION_TTL_MS).toISOString();
-        expect(result.candidates[0]?.expiresAt).toBe(expectedExpiresAt);
-        expect(result.candidates[1]?.expiresAt).toBe(expectedExpiresAt);
-      }
-    });
-
-    it("returns 'not-found' when no active window has the workspace open", async () => {
-      const unknownWorkspace = path.join(userHome, "unknown-project");
-      const result = await resolveArtifactConnectionTarget({
-        workspaceRoot: unknownWorkspace,
-        registrySnapshots: mockSnapshots(),
-      });
-
-      expect(result).toEqual({
-        status: "not-found",
-        workspaceRoot: unknownWorkspace,
-        message: "No active VS Code window was found for this workspace.",
-      });
-    });
-  });
-
   describe("boundary protection and parent validation", () => {
     it("rejects commitArtifactConnectionRequest on path outside global collection root", async () => {
       const outsideDir = path.join(userHome, "outside-folder");
@@ -1026,7 +621,6 @@ describe("internal artifact-connection module", () => {
         reviewRound: 1,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
-        location: { workspaceRoot: userHome },
         reviewSessionId: randomUUID(),
       }), "utf8");
       await expect(validateArtifactConnectionParent(badDir)).rejects.toThrow(ArtifactConnectionInvalidError);
@@ -1040,7 +634,6 @@ describe("internal artifact-connection module", () => {
         reviewRound: 1,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
-        location: { workspaceRoot: userHome },
         reviewSessionId: randomUUID(),
       }), "utf8");
       await expect(validateArtifactConnectionParent(badDir)).rejects.toThrow(ArtifactConnectionInvalidError);
@@ -1055,12 +648,11 @@ describe("internal artifact-connection module", () => {
       await expect(validateArtifactConnectionParent(artifactDir)).resolves.toMatchObject({
         artifactId,
         artifactDirectory: artifactDir,
-        workspaceRoot: path.join(userHome, "project-a"),
       });
       expect(readFileSpy).toHaveBeenCalledTimes(3);
     });
 
-    it("allows loading and reconnecting connection-less v5 artifact", async () => {
+    it("allows loading and reconnecting connection-less artifact", async () => {
       const { artifactDir } = await createValidArtifactDir();
       // No artifact-connection.json exists yet
       const read = await readArtifactConnection(artifactDir, { allowMissing: true });

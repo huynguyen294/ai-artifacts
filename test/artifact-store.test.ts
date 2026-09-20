@@ -19,6 +19,7 @@ import {
   OWNER_ONLY_FILE_MODE,
   globalArtifactsRoot,
 } from "../src/shared/artifact-files";
+import { ARTIFACT_SCHEMA_VERSION } from "../src/shared/contracts";
 
 const temporaryDirectories: string[] = [];
 const markdown = "# Artifact\n\nBuild the review view.\n";
@@ -44,14 +45,13 @@ async function fixture(artifactId = "artifact-001"): Promise<StoreFixture> {
   await writeFile(path.join(directory, "artifact.md"), markdown, "utf8");
   const timestamp = new Date().toISOString();
   await writeFile(path.join(directory, "artifact.json"), `${JSON.stringify({
-    schemaVersion: 5,
+    schemaVersion: ARTIFACT_SCHEMA_VERSION,
     kind: "implementation-plan",
     artifactId,
     title: "Artifact",
     createdAt: timestamp,
     updatedAt: timestamp,
     reviewRound: 1,
-    location: { workspaceRoot },
     reviewSessionId,
   }, null, 2)}\n`, "utf8");
   return {
@@ -67,7 +67,7 @@ async function writeComments(
   overrides: Record<string, unknown> = {},
 ): Promise<string> {
   const raw = `${JSON.stringify({
-    schemaVersion: 5,
+    schemaVersion: ARTIFACT_SCHEMA_VERSION,
     artifactId: "artifact-001",
     reviewRound: 1,
     artifactSha256: sha256(markdown),
@@ -92,21 +92,22 @@ afterEach(async () => {
 });
 
 describe("ArtifactStore", () => {
-  it.each([3, 4])("rejects schema-v%s artifacts", async (schemaVersion) => {
+  it.each([3, 4, 5])("rejects schema-v%s artifacts", async (schemaVersion) => {
     const { directory, store } = await fixture();
     const manifestPath = path.join(directory, "artifact.json");
     const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
     await writeFile(manifestPath, JSON.stringify({ ...manifest, schemaVersion }), "utf8");
 
-    await expect(store.load()).rejects.toThrow("AI Artifacts supports version 5");
+    await expect(store.load()).rejects.toThrow("AI Artifacts supports version 6");
   });
 
-  it("loads from the global handle while retaining workspaceRoot only as metadata", async () => {
+  it("loads from the global handle as a schema-v6 artifact without location", async () => {
     const { directory, userHome, workspaceRoot, store } = await fixture();
 
     const state = await store.load();
 
-    expect(state.artifact.location.workspaceRoot).toBe(workspaceRoot);
+    expect((state.artifact as any).location).toBeUndefined();
+    expect(state.artifact.schemaVersion).toBe(6);
     expect(directory).toBe(path.join(globalArtifactsRoot({ userHome }), "artifact-001"));
     expect(directory.startsWith(workspaceRoot)).toBe(false);
     expect(state.lifecycle).toEqual({ readOnly: false });
@@ -189,7 +190,7 @@ describe("ArtifactStore", () => {
 
     expect(state.comments.comments).toHaveLength(1);
     expect(state.comments).toMatchObject({
-      schemaVersion: 5,
+      schemaVersion: ARTIFACT_SCHEMA_VERSION,
       artifactId: "artifact-001",
       reviewRound: 1,
       artifactSha256: sha256(markdown),
@@ -222,7 +223,7 @@ describe("ArtifactStore", () => {
     const { directory, store } = await fixture();
     const commentsRaw = await writeComments(directory);
     await writeFile(path.join(directory, "review-submission.json"), `${JSON.stringify({
-      schemaVersion: 5,
+      schemaVersion: ARTIFACT_SCHEMA_VERSION,
       artifactId: "artifact-001",
       reviewRound: 1,
       reviewSessionId,

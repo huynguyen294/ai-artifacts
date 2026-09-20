@@ -19,44 +19,30 @@ describe("create-review-artifact skill contract", () => {
     expect(metadata).toContain("Create and reconnect review artifacts");
   });
 
-  it("resolves workspace before project research and selects a unique high-confidence candidate", async () => {
+  it("documents focused-window routing and resolve_artifact_window discovery", async () => {
     const [skill, contract] = await Promise.all([
       readFile(path.join(skillDirectory, "SKILL.md"), "utf8"),
       readFile(path.join(skillDirectory, "references", "artifact-contract.md"), "utf8"),
     ]);
-    expect(skill).toContain("## Resolve the workspace first");
-    expect(skill).toContain("Before reading target-workspace instructions, documentation, source, or drafting artifact content");
-    expect(skill).toContain("This resolver is the only MCP tool that may run before reading the contract");
-    expect(skill).toContain("Do not scan folders or rewrite the query first");
-    expect(skill).toContain('`{ kind: "tagged-file", filePath }`');
-    expect(skill).toContain("`resolve_artifact_workspace({ query })`");
-    expect(skill).toContain('`{ kind: "resolved-workspace", selectionToken }`');
-    expect(skill).toContain('`matchMode: "matched"`');
-    expect(skill).toContain('`match: "single-folder"`');
-    expect(skill).toContain("this classification is supplied by MCP, not inferred by the agent");
-    expect(skill).toContain("Select a candidate without asking when exactly one is clearly the strongest match");
-    expect(skill).toContain('`matchMode: "all-available"`');
-    expect(skill).toContain("ask the user only when the strongest result is tied or otherwise ambiguous");
-    expect(skill).toContain("uniquely high-confidence semantic match");
-    expect(skill).toContain("When multiple active VS Code windows open the same workspace folder");
-    expect(skill).toContain("Resolver results are grouped by VS Code window");
-    expect(skill).toContain("Window focus is a ranking hint, not workspace ownership evidence or a routing requirement");
-    expect(skill).toContain("Multiple windows do not automatically require a question");
-    expect(skill).toContain("Each candidate's opaque selection token binds the exact window and workspace tuple");
-    expect(skill).toContain("Once exactly one target workspace folder is chosen, read [references/artifact-contract.md](references/artifact-contract.md)");
-    expect(skill).toContain("before inspecting that folder or calling `create_artifact`");
-    expect(contract).toContain("may call `resolve_artifact_workspace` before loading this reference");
-    expect(skill).not.toContain("Read [references/artifact-contract.md](references/artifact-contract.md) before calling the MCP tools");
-    expect(skill).not.toContain("Do not read [references/artifact-contract.md](references/artifact-contract.md) during an ordinary create flow");
-    expect(skill).toContain("Do not probe MCP resources or run filesystem commands to check availability");
-    expect(contract).toContain("Resolver tokens are in-memory, one-time on successful creation");
-    expect(contract).toContain("expire after ten minutes");
-    expect(contract).toContain('`agent plus`, `agent-plus`, and `agent_plus` match');
-    expect(contract).toContain('`match: "single-folder"`');
-    expect(contract).toContain("returns stable candidates grouped into `windows`");
-    expect(contract).toContain("Focus is only a ranking hint, not ownership evidence or a routing requirement");
-    expect(contract).toContain("multiple windows alone do not require a question");
-    expect(contract).toContain("binds an exact `windowInstanceId + workspaceRoot` tuple");
+    expect(skill).toContain("## Tools and Window Routing");
+    expect(skill).toContain("`resolve_artifact_window`");
+    expect(skill).toContain("By default, call `create_artifact` directly without any prior window resolution");
+    expect(skill).toContain("The server routes directly to the currently focused VS Code window");
+    expect(skill).toContain("`WINDOW_SELECTION_REQUIRED`");
+    expect(skill).toContain('`connection: { targetMode: "explicit-window", selectionToken }`');
+    expect(skill).toContain("Select a candidate without asking when exactly one clearly matches");
+    expect(skill).toContain("Ask the user only when candidates remain tied or ambiguous");
+    expect(skill).toContain("call `resolve_artifact_window({ query })`");
+    expect(skill).toContain("Read [references/artifact-contract.md](references/artifact-contract.md) before calling `create_artifact`");
+    expect(skill).not.toContain("resolve_artifact_workspace");
+    expect(skill).not.toContain("tagged-file");
+    expect(skill).not.toContain("workspaceRoot");
+    expect(contract).toContain("`resolve_artifact_window` accepts an optional `query` string");
+    expect(contract).toContain("returns candidates grouped by window");
+    expect(contract).toContain('status: "matched"');
+    expect(contract).toContain('status: "selection-required"');
+    expect(contract).toContain('status: "not-found"');
+    expect(contract).toContain("do not probe MCP resources or the filesystem");
   });
 
   it("uses one chat-visible feedback policy for Review and chat inspection", async () => {
@@ -79,14 +65,15 @@ describe("create-review-artifact skill contract", () => {
       readFile(path.join(skillDirectory, "references", "artifact-contract.md"), "utf8"),
     ]);
     for (const tool of [
-      "`resolve_artifact_workspace`",
+      "`resolve_artifact_window`",
       "`create_artifact`",
       "`wait_for_artifact_review`",
       "`inspect_artifact_review`",
       "`advance_and_wait_for_artifact`",
     ]) expect(skill).toContain(tool);
+    expect(skill).not.toContain("`resolve_artifact_workspace`");
     expect(contract).toContain("Never select “the latest artifact”");
-    expect(skill).toContain("maintain a request/workspace-to-handle-and-round mapping");
+    expect(skill).toContain("maintain an `artifactDirectory -> reviewRound` mapping");
     expect(skill).toContain("answer every question directly in user-visible chat");
     expect(skill).toContain("without `markdown`");
     expect(skill).toContain("before starting `advance_and_wait_for_artifact`");
@@ -104,48 +91,44 @@ describe("create-review-artifact skill contract", () => {
     expect(skill).toContain("Never takeover speculatively");
   });
 
-  it("defines schema-v5 global storage while retaining workspace ownership metadata", async () => {
+  it("defines schema-v6 global storage without workspace ownership metadata", async () => {
     const [skill, contract] = await Promise.all([
       readFile(path.join(skillDirectory, "SKILL.md"), "utf8"),
       readFile(path.join(skillDirectory, "references", "artifact-contract.md"), "utf8"),
     ]);
-    expect(skill).toContain("schema-v5 lifecycle");
+    expect(skill).toContain("schema-v6 lifecycle");
     expect(skill).toContain("global `~/.ai-artifacts/artifacts/<artifact-id>/` collection");
-    expect(skill).toContain("`workspaceRoot` is target metadata and ownership evidence, not the storage location");
     expect(skill).toContain("exact returned global `artifactDirectory`");
-    expect(contract).toContain("schema-v5 lifecycle in global AI Artifacts storage");
-    expect(contract).toContain("`workspaceRoot` is retained as target metadata and ownership evidence");
+    expect(skill).not.toContain("workspaceRoot");
+    expect(skill).not.toContain("ownership evidence");
+    expect(contract).toContain("schema-v6 lifecycle in global AI Artifacts storage");
     expect(contract).toContain("~/.ai-artifacts/artifacts/<server-generated-id>/");
-    expect(contract).toContain("Schema v5 is the only supported lifecycle contract");
-    expect(contract).toContain("Schemas 3 and 4 are unsupported and are not live-migrated");
+    expect(contract).toContain("Schema v6 is the only supported lifecycle contract");
+    expect(contract).toContain("Older schemas are unsupported and are not live-migrated");
     expect(contract).toContain("exact global handle after creation");
     expect(contract).toContain("Never scan global storage");
     expect(contract).toContain("Optional `artifact-connection.json` is schema-v1 UI-routing state only");
-    expect(contract).toContain("`artifact.json` remains the source of truth for artifact identity");
+    expect(contract).toContain("`artifact.json` is schema-v6 and does not store workspace location");
     expect(contract).toContain("Create and reconnect may commit this file; wait and advance preserve it unchanged");
-    expect(skill).not.toContain("schema-v4");
-    expect(skill).not.toContain("schema v4");
-    expect(contract).not.toContain("schema-v4");
-    expect(contract).not.toContain("schema v4");
+    expect(skill).not.toContain("schema-v5");
+    expect(skill).not.toContain("schema v5");
+    expect(contract).not.toContain("schema-v5");
+    expect(contract).not.toContain("schema v5");
     expect(contract).not.toContain("persistent workspace data");
   });
 
-  it("documents tagged-create window selection and exact-handle reconnect routing", async () => {
+  it("documents window selection and exact-handle reconnect routing", async () => {
     const [skill, contract] = await Promise.all([
       readFile(path.join(skillDirectory, "SKILL.md"), "utf8"),
       readFile(path.join(skillDirectory, "references", "artifact-contract.md"), "utf8"),
     ]);
 
-    expect(skill).toContain("retry the same create request with the candidate's `connection.selectionToken`");
-    expect(skill).toContain("the token chooses a window but does not replace tagged-file ownership evidence");
+    expect(skill).toContain('retry the same inspect call with `connection: { targetMode: "explicit-window", selectionToken }`');
     expect(skill).toContain("`schemaVersion`, `windowInstanceId`, `connectionRevision`, `openRequestId`, `source`, and `updatedAt`");
-    expect(skill).toContain("An optional `connection.windowInstanceId` is only a hint");
-    expect(skill).toContain("retry the same inspect call with its `connection.selectionToken`");
-    expect(skill).toContain("Reconnect never requires the target window to be focused");
-    expect(contract).toContain("the tagged file remains the ownership evidence");
-    expect(contract).toContain("`connection.windowInstanceId` is an optimization hint");
+    expect(skill).toContain("Reconnect re-evaluates the currently focused live window");
+    expect(contract).toContain('`connection: { targetMode: "explicit-window", selectionToken }`');
     expect(contract).toContain("returns the committed connection metadata");
-    expect(contract).toContain("Focus is not required");
+    expect(contract).toContain("Focus is not required when targeting via `selectionToken`");
   });
 
   it("always creates implementation plans and treats Proceed as immediate execution authorization", async () => {
@@ -174,7 +157,7 @@ describe("create-review-artifact skill contract", () => {
       "ARTIFACT_ALREADY_WAITING",
       "ADVANCE_ROLLED_BACK",
       "ADVANCE_COMMITTED",
-      "WORKSPACE_NOT_REGISTERED",
+      "WINDOW_NOT_FOUND",
       "WINDOW_SELECTION_REQUIRED",
       "WINDOW_SELECTION_EXPIRED",
       "WINDOW_CONNECTION_STALE",
@@ -182,7 +165,8 @@ describe("create-review-artifact skill contract", () => {
       "ARTIFACT_CONNECTION_INVALID",
       "ARTIFACT_CONNECTION_WRITE_FAILED",
     ]) expect(skill).toContain(code);
-    expect(skill).toContain("never call `resolve_artifact_workspace` during recovery after an artifact has been created");
+    expect(skill).not.toContain("WORKSPACE_NOT_REGISTERED");
+    expect(skill).not.toContain("resolve_artifact_workspace");
     expect(skill).toContain("inspect the exact handle before retrying");
     expect(skill).toContain("Stop automated recovery");
     expect(skill).toContain("Do not retry inspect/reconnect or edit lifecycle files yourself");
@@ -190,7 +174,7 @@ describe("create-review-artifact skill contract", () => {
     expect(skill).toContain('for pure reconnect, call `inspect_artifact_review` with `intent: "reconnect"` without takeover');
     expect(skill).not.toContain("reconnect by waiting");
     expect(contract).toContain("useSameArtifactHandle: true");
-    expect(contract).toContain("never call `resolve_artifact_workspace` after create");
+    expect(contract).not.toContain("resolve_artifact_workspace");
     expect(contract).toContain("Unless the error is explicitly non-retryable");
     expect(contract).toContain("Do not retry inspect/reconnect or edit lifecycle files directly");
     expect(contract).toContain("Keep awaiting the in-flight call for resume-wait intent");

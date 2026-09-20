@@ -17,7 +17,7 @@ describe("Codex Artifacts MCP config", () => {
     expect(second).toContain('args = ["D:\\\\Codex Artifacts\\\\review-wait-mcp.mjs"]');
     expect(second).toContain(`tool_timeout_sec = ${CODEX_ARTIFACTS_MCP_TIMEOUT_SECONDS}`);
     expect(second).toContain('default_tools_approval_mode = "approve"');
-    expect(second).toContain("[mcp_servers.ai_artifacts.tools.resolve_artifact_workspace]");
+    expect(second).toContain("[mcp_servers.ai_artifacts.tools.resolve_artifact_window]");
     expect(second).toContain("[mcp_servers.ai_artifacts.tools.create_artifact]");
     expect(second).toContain("[mcp_servers.ai_artifacts.tools.wait_for_artifact_review]");
     expect(second).toContain("[mcp_servers.ai_artifacts.tools.inspect_artifact_review]");
@@ -75,7 +75,7 @@ describe("Codex Artifacts MCP config", () => {
       "tool_timeout_sec = 3600",
       'default_tools_approval_mode = "approve"',
       "",
-      "[mcp_servers.ai_artifacts.tools.resolve_artifact_workspace]",
+      "[mcp_servers.ai_artifacts.tools.resolve_artifact_window]",
       'approval_mode = "approve"',
       "",
       "[mcp_servers.ai_artifacts.tools.create_artifact]",

@@ -6,12 +6,8 @@ import {
   ARTIFACT_SCHEMA_VERSION,
   ArtifactConnectionInvalidError,
   ArtifactConnectionWriteError,
-  WindowConnectionMismatchError,
-  WindowConnectionStaleError,
-  WORKSPACE_SELECTION_TTL_MS,
   artifactConnectionSchema,
   type ArtifactConnection,
-  type ArtifactConnectionHint,
 } from "./contracts";
 import {
   ARTIFACT_CONNECTION_FILE,
@@ -28,14 +24,6 @@ import {
   parseArtifactManifest,
   sameFilesystemPath,
 } from "./artifact-validation";
-import {
-  readFreshWorkspaceSnapshots,
-  workspaceCandidateId,
-  type ResolvedFolderCandidate,
-  type ResolvedWindowGroup,
-  type WorkspaceRegistrySnapshot,
-  type WorkspaceWindowSelectionGrant,
-} from "./workspace-registry";
 
 function errorCode(error: unknown): string | undefined {
   return error instanceof Error && "code" in error && typeof error.code === "string"
@@ -255,7 +243,6 @@ function defaultGlobalRootOptions(options?: GlobalArtifactsRootOptions): GlobalA
 export type ValidatedArtifactConnectionParent = {
   artifactId: string;
   artifactDirectory: string;
-  workspaceRoot: string;
 };
 
 export async function validateArtifactConnectionParent(
@@ -346,7 +333,6 @@ export async function validateArtifactConnectionParent(
   return {
     artifactId: manifest.artifactId,
     artifactDirectory: safeDirectory,
-    workspaceRoot: manifest.location.workspaceRoot,
   };
 }
 
@@ -638,208 +624,3 @@ export async function commitArtifactConnectionRequest(
   });
 }
 
-export type ResolveArtifactConnectionTargetOptions = {
-  workspaceRoot: string;
-  artifactDirectory?: string;
-  selectionGrant?: WorkspaceWindowSelectionGrant;
-  connectionHint?: ArtifactConnectionHint;
-  registrySnapshots?: WorkspaceRegistrySnapshot[];
-  directory?: string;
-  now?: number;
-};
-
-export type ResolveArtifactConnectionTargetMatched = {
-  status: "matched";
-  targetWindow: {
-    windowInstanceId: string;
-    workspaceRoot: string;
-  };
-  source: "token" | "existing-connection" | "hint" | "single-window";
-};
-
-export type ResolveArtifactConnectionTargetSelectionRequired = {
-  status: "selection-required";
-  workspaceRoot: string;
-  windows: ResolvedWindowGroup[];
-  candidates: ResolvedFolderCandidate[];
-  message: string;
-};
-
-export type ResolveArtifactConnectionTargetNotFound = {
-  status: "not-found";
-  workspaceRoot: string;
-  message: string;
-};
-
-export type ResolveArtifactConnectionTargetResult =
-  | ResolveArtifactConnectionTargetMatched
-  | ResolveArtifactConnectionTargetSelectionRequired
-  | ResolveArtifactConnectionTargetNotFound;
-
-export async function resolveArtifactConnectionTarget(
-  options: ResolveArtifactConnectionTargetOptions,
-): Promise<ResolveArtifactConnectionTargetResult> {
-  const {
-    workspaceRoot: requestedWorkspaceRoot,
-    artifactDirectory,
-    selectionGrant,
-    connectionHint,
-    directory,
-    now = Date.now(),
-  } = options;
-
-  let targetWorkspaceRoot = requestedWorkspaceRoot;
-  let authoritativeExisting: ArtifactConnection | null = null;
-
-  if (artifactDirectory) {
-    const parent = await validateArtifactConnectionParent(artifactDirectory);
-    targetWorkspaceRoot = parent.workspaceRoot;
-    if (
-      requestedWorkspaceRoot
-      && !sameFilesystemPath(requestedWorkspaceRoot, targetWorkspaceRoot)
-    ) {
-      throw new WindowConnectionMismatchError(
-        `The specified workspaceRoot does not match the manifest workspaceRoot.`,
-      );
-    }
-    authoritativeExisting = await readArtifactConnection(artifactDirectory, {
-      allowMissing: true,
-      boundedRetry: false,
-    });
-  }
-
-  const snapshots = options.registrySnapshots
-    ?? await readFreshWorkspaceSnapshots(directory, now);
-
-  // 1. Selection grant (highest explicit authority if provided)
-  if (selectionGrant) {
-    if (selectionGrant.expiresAt <= now) {
-      return {
-        status: "not-found",
-        workspaceRoot: targetWorkspaceRoot,
-        message: "The selection grant has expired.",
-      };
-    }
-    if (!sameFilesystemPath(selectionGrant.workspaceRoot, targetWorkspaceRoot)) {
-      throw new WindowConnectionMismatchError("the selection token does not belong to workspaceRoot.");
-    }
-    const snapshot = snapshots.find((s) => s.instanceId === selectionGrant.windowInstanceId);
-    if (
-      snapshot
-      && snapshot.folders.some((f) => sameFilesystemPath(f.realPath, targetWorkspaceRoot))
-    ) {
-      return {
-        status: "matched",
-        targetWindow: {
-          windowInstanceId: selectionGrant.windowInstanceId,
-          workspaceRoot: targetWorkspaceRoot,
-        },
-        source: "token",
-      };
-    }
-    return {
-      status: "not-found",
-      workspaceRoot: targetWorkspaceRoot,
-      message: "The window or workspace folder selected by the grant is no longer available.",
-    };
-  }
-
-  // 2. Explicit windowInstanceId hint (P1.1: takes precedence over existing connection)
-  if (connectionHint?.windowInstanceId) {
-    const hintWindowId = connectionHint.windowInstanceId;
-    const snapshot = snapshots.find((s) => s.instanceId === hintWindowId);
-    if (!snapshot) {
-      throw new WindowConnectionStaleError(
-        `The window specified by the hint is stale or no longer open.`,
-      );
-    }
-    const hasWorkspace = snapshot.folders.some((f) => sameFilesystemPath(f.realPath, targetWorkspaceRoot));
-    if (!hasWorkspace) {
-      throw new WindowConnectionMismatchError(
-        `The window specified by the hint does not have the workspace open.`,
-      );
-    }
-    return {
-      status: "matched",
-      targetWindow: {
-        windowInstanceId: hintWindowId,
-        workspaceRoot: targetWorkspaceRoot,
-      },
-      source: "hint",
-    };
-  }
-
-  // 3. Existing connection file in artifact directory (if available and no explicit hint was given)
-  if (authoritativeExisting) {
-    const snapshot = snapshots.find((s) => s.instanceId === authoritativeExisting.windowInstanceId);
-    if (
-      snapshot
-      && snapshot.folders.some((f) => sameFilesystemPath(f.realPath, targetWorkspaceRoot))
-    ) {
-      return {
-        status: "matched",
-        targetWindow: {
-          windowInstanceId: authoritativeExisting.windowInstanceId,
-          workspaceRoot: targetWorkspaceRoot,
-        },
-        source: "existing-connection",
-      };
-    }
-  }
-
-  // 4. Match against fresh registered windows
-  const matchingWindows = snapshots.filter((s) =>
-    s.folders.some((f) => sameFilesystemPath(f.realPath, targetWorkspaceRoot))
-  );
-
-  const singleTarget = matchingWindows[0];
-  if (matchingWindows.length === 1 && singleTarget) {
-    return {
-      status: "matched",
-      targetWindow: {
-        windowInstanceId: singleTarget.instanceId,
-        workspaceRoot: targetWorkspaceRoot,
-      },
-      source: "single-window",
-    };
-  }
-
-  if (matchingWindows.length > 1) {
-    const expiresAt = new Date(now + WORKSPACE_SELECTION_TTL_MS).toISOString();
-    const windows: ResolvedWindowGroup[] = matchingWindows.map((s) => {
-      const matchedFolder = s.folders.find((f) => sameFilesystemPath(f.realPath, targetWorkspaceRoot))!;
-      const candidateId = workspaceCandidateId(s.instanceId, matchedFolder.realPath);
-      const name = path.basename(matchedFolder.path) || path.basename(matchedFolder.realPath);
-      const candidate: ResolvedFolderCandidate = {
-        candidateId,
-        name,
-        path: matchedFolder.realPath,
-        match: "exact-path",
-        selectionToken: randomUUID(),
-        expiresAt,
-      };
-      return {
-        windowInstanceId: s.instanceId,
-        focused: s.focused,
-        snapshotUpdatedAt: s.updatedAt,
-        workspaceFile: s.workspaceFile,
-        activeFile: s.activeFile,
-        folders: [candidate],
-      };
-    });
-
-    return {
-      status: "selection-required",
-      workspaceRoot: targetWorkspaceRoot,
-      windows,
-      candidates: windows.flatMap((w) => w.folders),
-      message: "Multiple VS Code windows have this workspace open. Select the target window.",
-    };
-  }
-
-  return {
-    status: "not-found",
-    workspaceRoot: targetWorkspaceRoot,
-    message: "No active VS Code window was found for this workspace.",
-  };
-}

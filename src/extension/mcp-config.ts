@@ -130,7 +130,7 @@ export function upsertCodexArtifactsMcp(config: string, serverScriptPath: string
     `tool_timeout_sec = ${CODEX_ARTIFACTS_MCP_TIMEOUT_SECONDS}`,
     'default_tools_approval_mode = "approve"',
     "",
-    `[mcp_servers.${AI_ARTIFACTS_MCP_NAME}.tools.resolve_artifact_workspace]`,
+    `[mcp_servers.${AI_ARTIFACTS_MCP_NAME}.tools.resolve_artifact_window]`,
     'approval_mode = "approve"',
     "",
     `[mcp_servers.${AI_ARTIFACTS_MCP_NAME}.tools.create_artifact]`,
@@ -183,7 +183,7 @@ export function hasManagedCodexArtifactsMcp(config: string, serverScriptPath: st
 
   // 5. Must configure the 5 core tools
   const requiredTools = [
-    "resolve_artifact_workspace",
+    "resolve_artifact_window",
     "create_artifact",
     "wait_for_artifact_review",
     "inspect_artifact_review",

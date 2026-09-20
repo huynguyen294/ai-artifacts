@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const ARTIFACT_SCHEMA_VERSION = 5 as const;
+export const ARTIFACT_SCHEMA_VERSION = 6 as const;
 export const ARTIFACT_CONNECTION_SCHEMA_VERSION = 1 as const;
 export const artifactIdSchema = z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/);
 export const artifactKindSchema = z.string().regex(/^[a-z][a-z0-9-]{0,63}$/);
@@ -19,7 +19,7 @@ export const artifactConnectionSchema = z.object({
 
 export type ArtifactConnection = z.infer<typeof artifactConnectionSchema>;
 
-export const WORKSPACE_SELECTION_TTL_MS = 10 * 60 * 1000;
+export const WINDOW_SELECTION_TTL_MS = 10 * 60 * 1000;
 
 export class ArtifactConnectionInvalidError extends Error {
   readonly code = "ARTIFACT_CONNECTION_INVALID" as const;
@@ -37,6 +37,37 @@ export class ArtifactConnectionWriteError extends Error {
   }
 }
 
+export class WindowSelectionRequiredError extends Error {
+  readonly code = "WINDOW_SELECTION_REQUIRED" as const;
+  readonly candidates?: unknown;
+  constructor(message: string, candidates?: unknown) {
+    super(`WINDOW_SELECTION_REQUIRED: ${message}`);
+    this.name = "WindowSelectionRequiredError";
+    this.candidates = candidates;
+  }
+}
+
+export class WindowSelectionExpiredError extends Error {
+  readonly code = "WINDOW_SELECTION_EXPIRED" as const;
+  readonly candidates?: unknown;
+  constructor(message: string, candidates?: unknown) {
+    super(`WINDOW_SELECTION_EXPIRED: ${message}`);
+    this.name = "WindowSelectionExpiredError";
+    this.candidates = candidates;
+  }
+}
+
+export class WindowNotFoundError extends Error {
+  readonly code = "WINDOW_NOT_FOUND" as const;
+  constructor(message: string) {
+    super(`WINDOW_NOT_FOUND: ${message}`);
+    this.name = "WindowNotFoundError";
+  }
+}
+
+/**
+ * @deprecated Legacy error kept for backward-compatibility during multi-package cutover.
+ */
 export class WindowConnectionStaleError extends Error {
   readonly code = "WINDOW_CONNECTION_STALE" as const;
   constructor(message: string) {
@@ -45,6 +76,9 @@ export class WindowConnectionStaleError extends Error {
   }
 }
 
+/**
+ * @deprecated Legacy error kept for backward-compatibility during multi-package cutover.
+ */
 export class WindowConnectionMismatchError extends Error {
   readonly code = "WINDOW_CONNECTION_MISMATCH" as const;
   constructor(message: string) {
@@ -53,12 +87,14 @@ export class WindowConnectionMismatchError extends Error {
   }
 }
 
-export const artifactConnectionHintSchema = z.object({
-  windowInstanceId: z.string().uuid().optional(),
-  selectionToken: z.string().uuid().optional(),
+export const explicitWindowConnectionInputSchema = z.object({
+  targetMode: z.literal("explicit-window"),
+  selectionToken: z.string().uuid(),
 }).strict();
 
-export type ArtifactConnectionHint = z.infer<typeof artifactConnectionHintSchema>;
+export type ExplicitWindowConnectionInput = z.infer<typeof explicitWindowConnectionInputSchema>;
+
+
 
 export const artifactManifestSchema = z.object({
   schemaVersion: z.literal(ARTIFACT_SCHEMA_VERSION),
@@ -68,9 +104,6 @@ export const artifactManifestSchema = z.object({
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
   reviewRound: z.number().int().positive(),
-  location: z.object({
-    workspaceRoot: z.string().min(1),
-  }).strict(),
   reviewSessionId: z.string().uuid(),
 }).strict();
 

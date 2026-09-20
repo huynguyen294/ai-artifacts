@@ -96,18 +96,17 @@ async function writeArtifact(
   await writeFile(artifactPath, markdown, "utf8");
   const timestamp = new Date().toISOString();
   await writeFile(manifestPath, `${JSON.stringify({
-    schemaVersion: 5,
+    schemaVersion: 6,
     kind: "implementation-plan",
     artifactId,
     title: "Safe artifact",
     createdAt: timestamp,
     updatedAt: timestamp,
     reviewRound: 1,
-    location: { workspaceRoot: path.join(userHome, "workspace") },
     reviewSessionId: "11111111-1111-4111-8111-111111111111",
   }, null, 2)}\n`, "utf8");
   await writeFile(commentsPath, `${JSON.stringify({
-    schemaVersion: 5,
+    schemaVersion: 6,
     artifactId,
     reviewRound: 1,
     artifactSha256: sha256(markdown),
@@ -162,7 +161,6 @@ describe("artifact review safe-open boundary", () => {
 
     expect(target.artifactId).toBe("artifact-001");
     expect(target.artifactDirectory).toBe(artifactDirectory);
-    expect(target.manifest.location.workspaceRoot).toBe(path.join(userHome, "workspace"));
     expect(openWith).toHaveBeenCalledTimes(1);
     expect(openWith).toHaveBeenCalledWith({ fsPath: artifactPath, source: "validated" });
   });

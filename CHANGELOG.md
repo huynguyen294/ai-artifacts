@@ -6,17 +6,19 @@ Release history has been standardized and tracked starting from version **0.2.6*
 
 ## [1.0.0] - Unreleased
 
-### Global schema-v5 lifecycle
+### Global schema-v6 lifecycle
 
-- Moved live artifact storage to the per-user `~/.ai-artifacts/artifacts/<id>/` collection while retaining `location.workspaceRoot` as validated target metadata.
-- Upgraded the only supported lifecycle contract to schema v5 and MCP server 8.0.0. Schemas v3/v4 and workspace-local lifecycles are rejected and are not live-migrated.
-- Preserved the five-tool contract: `resolve_artifact_workspace`, `create_artifact`, `wait_for_artifact_review`, `inspect_artifact_review`, and `advance_and_wait_for_artifact`.
+- Cutt-over artifact manifest to schema-v6, removing `location.workspaceRoot` and decoupling artifact review sessions from workspace ownership.
+- Upgraded the only supported lifecycle contract to schema v6 and MCP server 9.0.0. Schemas v3/v4/v5 and workspace-local lifecycles are rejected and are not live-migrated.
+- Tool replacement: replaced `resolve_artifact_workspace` with `resolve_artifact_window`. Catalog contains five tools: `resolve_artifact_window`, `create_artifact`, `wait_for_artifact_review`, `inspect_artifact_review`, and `advance_and_wait_for_artifact`.
 - Added canonical direct-child validation, linked-path rejection, owner-only POSIX directory/file modes, and rollback-safe create/advance behavior for global storage.
 
 ### Window-routed auto-open and regular links
 
-- Resolver results preserve live VS Code window groups and issue selection tokens bound to an exact window/workspace tuple. Focus is a ranking hint rather than routing identity, and user selection is required only when the strongest targets remain tied.
-- Added optional schema-v1 `artifact-connection.json` routing state. `artifact.json` remains identity/workspace truth; create and reconnect commit connection revisions and unique open-request IDs without changing lifecycle state.
+- Focused-first routing: `create_artifact` and `inspect_artifact_review` automatically route to the currently focused VS Code window (or sole live window) without prior workspace resolution rituals.
+- Ambiguous multi-window handling: returns `WINDOW_SELECTION_REQUIRED` with candidate summaries and single-use opaque `selectionToken` (`targetMode: "explicit-window"`).
+- Bounded registry pruning: workspace registry publisher automatically prunes stale snapshots, retaining at most 10 snapshots and removing files older than 7 days. Supports folderless windows (`folders: []`).
+- Added optional schema-v1 `artifact-connection.json` routing state. `artifact.json` remains identity truth; create and reconnect commit connection revisions and unique open-request IDs without changing lifecycle state.
 - Replaced the comments-created/focus-gated watcher with validated `artifact-connection.json` create/change handling. Only the matching window instance opens the editor, including when unfocused; non-target windows ignore the request.
 - Added bounded transient-read retry with path revalidation, successful-request dedupe, and one shared exact-handle open coordinator for watcher and command paths. Failed opens remain retryable, while same-artifact requests use single-flight behavior and `vscode.openWith` reuse/reveal.
 - `agentPlus.autoOpenArtifactReview` disables automatic UI opening without preventing MCP connection commits. Explicit reconnect can rebind the exact artifact to another live window while wait/advance preserve the existing connection.
@@ -30,12 +32,12 @@ Release history has been standardized and tracked starting from version **0.2.6*
 - Reinstall replaces stale MCP/skill assets from packaged source, removes obsolete skill files and legacy runtime aliases, and reports configured clients as `outdated` until shared assets are current.
 - Verified install/reinstall/uninstall behavior for Codex, Cursor, Claude, Windsurf, and GitHub Copilot while preserving unrelated configuration.
 - Uninstall removes `~/.ai-artifacts/managed/`, legacy `~/.vscode/ai-artifacts/`, and managed skills while deliberately retaining all user review data in `~/.ai-artifacts/artifacts/`.
-- Version 1.0.0 is a hard compatibility cutoff and ships MCP 8.0.0 with the matching skill. After upgrading, reinstall all integrations, restart the AI client, and start a new chat. Rollback requires reinstalling the matching older runtime and skill; optional connection files remain preserved user artifact data.
+- Version 1.0.0 is a hard compatibility cutoff and ships MCP 9.0.0 with the matching skill. After upgrading, reinstall all integrations, restart the AI client, and start a new chat. Rollback requires reinstalling the matching older runtime and skill; optional connection files remain preserved user artifact data.
 
 ### Documentation and validation
 
-- Updated README, philosophy, architecture, component ownership, contributor instructions, production skill contract, and release metadata for the global v5 model and shared-filesystem support boundary.
-- Added regression coverage for global path safety, POSIX permissions, schema rejection, grouped multi-window resolution, connection persistence, target-window create/change watching, request dedupe, regular-link encoding, five-client synchronization, and uninstall data retention.
+- Updated README, philosophy, architecture, component ownership, contributor instructions, production skill contract, and release metadata for the global v6 model, focused-window routing, and shared-filesystem support boundary.
+- Added regression coverage for global path safety, POSIX permissions, schema rejection, window resolution, connection persistence, target-window create/change watching, request dedupe, regular-link encoding, five-client synchronization, and uninstall data retention.
 
 ## [0.9.3] - 2026-09-11
 
