@@ -808,7 +808,7 @@ describe("internal artifact-connection module", () => {
 
         const route = await readArtifactConnectionRoute(artifactDir, { boundedRetry: true });
         expect(route).toEqual(connection);
-        expect(lstatAttempt).toBe(2);
+        expect(lstatAttempt).toBe(process.platform === "win32" ? 2 : 3);
       });
 
       it("P2.3: rejects when artifact directory is replaced with a symlink between retry attempts", async () => {

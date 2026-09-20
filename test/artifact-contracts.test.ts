@@ -1,3 +1,4 @@
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import * as contracts from "../src/shared/contracts";
 import {
@@ -10,6 +11,10 @@ import {
   type ArtifactConnection,
   type ReviewState,
 } from "../src/shared/contracts";
+import {
+  ARTIFACT_CONNECTION_FILE,
+  ARTIFACT_MANIFEST_FILE,
+} from "../src/shared/artifact-files";
 import {
   artifactPaths,
   parseArtifactConnection,
@@ -208,9 +213,10 @@ describe("artifact connection schema v1 contract", () => {
   });
 
   it("keeps artifact paths helper containing connectionPath", () => {
-    const paths = artifactPaths("D:\\artifacts\\artifact-001");
-    expect(paths.connectionPath).toBe("D:\\artifacts\\artifact-001\\artifact-connection.json");
-    expect(paths.manifestPath).toBe("D:\\artifacts\\artifact-001\\artifact.json");
+    const baseDir = path.join("artifacts", "artifact-001");
+    const paths = artifactPaths(baseDir);
+    expect(paths.connectionPath).toBe(path.join(baseDir, ARTIFACT_CONNECTION_FILE));
+    expect(paths.manifestPath).toBe(path.join(baseDir, ARTIFACT_MANIFEST_FILE));
   });
 
   it("ensures existing schema-v6 fixtures without artifact-connection.json remain valid and loadable", () => {

@@ -14,6 +14,27 @@ Minor typos, formatting fixes, or cosmetic wording adjustments that do not chang
 
 Each entry includes the date, category, summary of changes, rationale, and affected components or files.
 
+## 2026-09-20 — Cross-platform path normalization and POSIX CI test hardening
+
+### Changes
+
+- Normalized cross-platform path separators in window candidate formatting:
+  - Added `candidateBasename` helper in `src/shared/window-routing.ts` to convert `\` to `/` before extracting the basename with `path.posix.basename`.
+  - Updated `formatWindowCandidateLabel` and `buildWindowCandidates` to use `candidateBasename` for workspace files and folder names, ensuring consistent label and folder extraction across Windows, Linux, and macOS even when snapshots contain Windows-style paths.
+- Hardened test suites for POSIX/Linux CI runner compatibility:
+  - Updated `test/artifact-contracts.test.ts` to use `path.join` and shared artifact constants instead of hardcoded Windows backslash paths for `artifactPaths` validation.
+  - Updated `test/artifact-connection.test.ts` to branch the expected `fs.lstat` retry count (`process.platform === "win32" ? 2 : 3`), accounting for POSIX owner-only permission enforcement (`enforceOwnerOnlyDirectory`) executed on Linux/macOS.
+
+### Rationale
+
+- Ensures all release tests pass deterministically on GitHub Actions (`ubuntu-latest` runner) and prevents candidate label formatting errors when handling cross-platform or remote workspace paths on POSIX environments.
+
+### Affected components and files
+
+- `src/shared/window-routing.ts`
+- `test/artifact-contracts.test.ts`, `test/artifact-connection.test.ts`
+- `docs/CHANGE_LOGS.md`
+
 ## 2026-09-20 — Extension-local artifact search and Quick Pick command
 
 ### Changes

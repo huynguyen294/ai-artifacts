@@ -32,14 +32,19 @@ export function windowCandidateId(windowInstanceId: string): string {
   return createHash("sha256").update(windowInstanceId).digest("hex").slice(0, 16);
 }
 
+function candidateBasename(filePath: string, ext?: string): string {
+  const normalized = filePath.replace(/\\/g, "/");
+  return path.posix.basename(normalized, ext);
+}
+
 export function formatWindowCandidateLabel(snapshot: WorkspaceRegistrySnapshot): string {
   const parts: string[] = [];
   if (snapshot.workspaceFile) {
-    const base = path.basename(snapshot.workspaceFile);
+    const base = candidateBasename(snapshot.workspaceFile);
     parts.push(base.endsWith(".code-workspace") ? base.slice(0, -15) : base);
   } else if (snapshot.folders.length > 0) {
     const folderNames = snapshot.folders.map(
-      (f) => path.basename(f.path) || path.basename(f.realPath) || f.path,
+      (f) => candidateBasename(f.path) || candidateBasename(f.realPath) || f.path,
     );
     parts.push(folderNames.join(", "));
   } else {
@@ -121,7 +126,7 @@ export function buildWindowCandidates(
       snapshotUpdatedAt: s.updatedAt,
       ...(s.workspaceFile ? { workspaceFile: s.workspaceFile } : {}),
       folders: s.folders.map((f) => ({
-        name: path.basename(f.path) || path.basename(f.realPath) || f.path,
+        name: candidateBasename(f.path) || candidateBasename(f.realPath) || f.path,
         path: f.realPath,
       })),
       label: formatWindowCandidateLabel(s),
