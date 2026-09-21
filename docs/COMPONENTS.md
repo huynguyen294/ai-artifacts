@@ -62,7 +62,7 @@ The core responsibility split is:
 | Shared contracts         | Cross-process protocol definition             | Schemas, types, filenames, and binding rules                                 |
 | Integration manager      | Installation and verification                 | Extension-managed MCP runtime, skill, and supported-client configuration     |
 
-The governing lifetime relationship is `artifact lifetime > waiter lifetime > chat-turn lifetime`. Artifact files persist across cancellation, takeover, chat completion, and MCP restart. The MCP waiter registry is temporary process state, while the skill retains the exact artifact handle needed to inspect or reconnect that persistent state.
+The governing lifetime relationship is `artifact lifetime > waiter lifetime > chat-turn lifetime`. Artifact lifetime is bounded by configured retention (`agentPlus.artifactRetentionDays`); expired artifacts are permanently deleted when the extension activates. Artifact files persist across cancellation, takeover, chat completion, and MCP restart until the retention window expires. The MCP waiter registry is temporary process state, while the skill retains the exact artifact handle needed to inspect or reconnect that persistent state.
 
 ## 1. Codex skill
 
@@ -211,7 +211,7 @@ Each artifact is a direct child of the global per-user collection:
 
 | File                     | Responsible writer                                         | Responsibility                                                                                     |
 | ------------------------ | ---------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
-| `artifact.json`          | MCP                                                        | Identify the artifact and bind kind, title, workspace root, session, timestamps, and current round |
+| `artifact.json`          | MCP                                                        | Identify the artifact and bind kind, title, session, timestamps, and current round |
 | `artifact.md`            | MCP                                                        | Store the complete Markdown for the current round                                                  |
 | `comments.json`          | Artifact Store during review; MCP when opening a new round | Store block-bound comments and bind them to the current artifact hash and round                    |
 | `review-submission.json` | Artifact Store                                             | Record the immutable `revise`, `approve`, or `save` decision for one round                         |
@@ -221,9 +221,9 @@ Each artifact is a direct child of the global per-user collection:
 
 The protocol is the communication medium between the independently running MCP process and VS Code extension. It is not a revision-history store.
 
-`artifact.json` stores `location.workspaceRoot` as target metadata and ownership context. The workspace does not contain the lifecycle files. Schemas v3/v4 and workspace-local artifact directories are rejected and are not live-migrated.
+`artifact.json` stores the schema-v6 manifest without repository ownership fields. Schemas v3/v4 and workspace-local artifact directories are rejected and are not live-migrated.
 
-`artifact.json` remains identity/workspace truth. Optional `artifact-connection.json` is routing state only: revisions order successful create/reconnect commits, and open-request IDs deduplicate watcher events. Wait and advance preserve it unchanged.
+`artifact.json` remains the source of truth for artifact identity. Optional `artifact-connection.json` is routing state only: revisions order successful create/reconnect commits, and open-request IDs deduplicate watcher events. Wait and advance preserve it unchanged.
 
 ## 5. VS Code extension entry
 
@@ -246,6 +246,7 @@ The protocol is the communication medium between the independently running MCP p
   - Search artifacts by title in the global collection (`agentPlus.searchArtifact`).
   - Install, verify, and uninstall all supported integrations or one specific client.
   - Copy the current MCP configuration or production skill.
+- Schedule best-effort asynchronous retention cleanup at activation: read `agentPlus.artifactRetentionDays`, enumerate validated schema-v6 candidates, and permanently delete expired artifacts via atomic rename to managed cleanup staging. Cleanup does not block activation or commands.
 - Own and dispose top-level VS Code subscriptions.
 
 **Does not own**
@@ -561,7 +562,7 @@ Tests document the expected responsibility boundaries:
 | Installed skill contract                                                               | `test/skill-contract.test.ts`                                                                   |
 | Connection watcher, targeted unfocused auto-open, dedupe, exact-handle command, and open coordination | `test/artifact-review-open.test.ts`, `test/artifact-link-contract.test.ts`          |
 | Extension-local artifact search core, discovery, limit cap, and Quick Pick controller | `test/artifact-search.test.ts`, `test/artifact-search-command.test.ts`                         |
-| Five-client install/reinstall/verify/uninstall and artifact retention                   | `test/workspace-integration.test.ts`, `test/mcp-client-drivers.test.ts`                         |
+| Five-client install/reinstall/verify/uninstall and artifact retention                   | `test/workspace-integration.test.ts`, `test/mcp-client-drivers.test.ts`, `test/artifact-retention.test.ts` |
 
 For responsibility or protocol changes, update the shared contract first, trace every producer and consumer, and run:
 

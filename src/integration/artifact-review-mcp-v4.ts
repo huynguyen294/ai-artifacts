@@ -148,24 +148,25 @@ type ArtifactRecoveryCode =
   | "WINDOW_CONNECTION_STALE"
   | "WINDOW_CONNECTION_MISMATCH"
   | "ARTIFACT_CONNECTION_INVALID"
-  | "ARTIFACT_CONNECTION_WRITE_FAILED";
+  | "ARTIFACT_CONNECTION_WRITE_FAILED"
+  | "ARTIFACT_NOT_FOUND";
 
 type ArtifactRecoveryMetadata = {
   code: ArtifactRecoveryCode;
   retryable: boolean;
   expectedNextTool?: typeof INSPECT_TOOL_NAME | typeof WAIT_TOOL_NAME | typeof ADVANCE_AND_WAIT_TOOL_NAME | typeof RESOLVE_WINDOW_TOOL_NAME | typeof CREATE_TOOL_NAME;
   reuseRoundToken: boolean;
-  useSameArtifactHandle: true;
+  useSameArtifactHandle: boolean;
   currentReviewRound?: number;
 };
 
 class ArtifactRecoveryError extends Error {
   readonly recovery: ArtifactRecoveryMetadata;
 
-  constructor(message: string, recovery: Omit<ArtifactRecoveryMetadata, "useSameArtifactHandle">) {
+  constructor(message: string, recovery: ArtifactRecoveryMetadata) {
     super(message);
     this.name = "ArtifactRecoveryError";
-    this.recovery = { ...recovery, useSameArtifactHandle: true };
+    this.recovery = recovery;
   }
 }
 
@@ -198,9 +199,15 @@ class McpWindowSelectionRequiredError extends Error {
 function recoveryError(
   code: ArtifactRecoveryCode,
   message: string,
-  options: Omit<ArtifactRecoveryMetadata, "code" | "useSameArtifactHandle">,
+  options: Omit<ArtifactRecoveryMetadata, "code" | "useSameArtifactHandle"> & {
+    useSameArtifactHandle?: boolean;
+  },
 ): ArtifactRecoveryError {
-  return new ArtifactRecoveryError(`${code}: ${message}`, { code, ...options });
+  return new ArtifactRecoveryError(`${code}: ${message}`, {
+    code,
+    useSameArtifactHandle: options.useSameArtifactHandle ?? true,
+    ...options,
+  });
 }
 
 type RecoveryContext = {
@@ -211,6 +218,16 @@ function asLifecycleRecoveryError(error: unknown, context: RecoveryContext = {})
   if (error instanceof McpWindowSelectionRequiredError || error instanceof WindowSelectionRequiredError) return error;
   if (error instanceof ArtifactRecoveryError) return error;
   const message = error instanceof Error ? error.message : String(error);
+  if (errorCode(error) === "ENOENT" || message.startsWith("ARTIFACT_NOT_FOUND:")) {
+    const text = message.startsWith("ARTIFACT_NOT_FOUND:")
+      ? message.slice("ARTIFACT_NOT_FOUND:".length).trim()
+      : (error instanceof Error ? error.message : String(error));
+    return recoveryError("ARTIFACT_NOT_FOUND", text, {
+      retryable: false,
+      reuseRoundToken: false,
+      useSameArtifactHandle: false,
+    });
+  }
   if (error instanceof WindowNotFoundError || message.startsWith("WINDOW_NOT_FOUND:")) {
     const text = message.startsWith("WINDOW_NOT_FOUND:")
       ? message.slice("WINDOW_NOT_FOUND:".length).trim()
@@ -622,30 +639,57 @@ async function loadArtifactContext(rawDirectory: unknown): Promise<ArtifactConte
   }
   const rootOptions = globalRootOptions();
   const candidateArtifactId = path.basename(path.resolve(rawDirectory));
-  const artifactDirectory = await ensureSafeGlobalArtifactDirectory(
-    candidateArtifactId,
-    rawDirectory,
-    rootOptions,
-  );
-  const files = artifactPaths(artifactDirectory);
-  const { manifest, markdown } = await retryTransientLifecycleJson(async () => {
-    const [manifestRaw, currentMarkdown, commentsRaw] = await Promise.all([
-      readManagedJson(artifactDirectory, files.manifestPath),
-      readManagedFile(artifactDirectory, files.artifactPath),
-      readManagedFile(artifactDirectory, files.commentsPath),
-    ]);
-    const currentManifest = parseArtifactManifest(manifestRaw);
-    if (currentManifest.artifactId !== candidateArtifactId) {
-      throw new Error("The global artifact directory basename does not match its artifact id.");
+  let artifactDirectory: string;
+  try {
+    artifactDirectory = await ensureSafeGlobalArtifactDirectory(
+      candidateArtifactId,
+      rawDirectory,
+      rootOptions,
+    );
+  } catch (error) {
+    if (errorCode(error) === "ENOENT") {
+      throw recoveryError("ARTIFACT_NOT_FOUND", "the artifact directory does not exist.", {
+        retryable: false,
+        reuseRoundToken: false,
+        useSameArtifactHandle: false,
+      });
     }
-    parseBoundCommentsDocument(JSON.parse(commentsRaw), {
-      schemaVersion: ARTIFACT_SCHEMA_VERSION,
-      artifactId: currentManifest.artifactId,
-      reviewRound: currentManifest.reviewRound,
-      artifactSha256: sha256(currentMarkdown),
+    throw error;
+  }
+  const files = artifactPaths(artifactDirectory);
+  let manifest: ArtifactManifest;
+  let markdown: string;
+  try {
+    const loaded = await retryTransientLifecycleJson(async () => {
+      const [manifestRaw, currentMarkdown, commentsRaw] = await Promise.all([
+        readManagedJson(artifactDirectory, files.manifestPath),
+        readManagedFile(artifactDirectory, files.artifactPath),
+        readManagedFile(artifactDirectory, files.commentsPath),
+      ]);
+      const currentManifest = parseArtifactManifest(manifestRaw);
+      if (currentManifest.artifactId !== candidateArtifactId) {
+        throw new Error("The global artifact directory basename does not match its artifact id.");
+      }
+      parseBoundCommentsDocument(JSON.parse(commentsRaw), {
+        schemaVersion: ARTIFACT_SCHEMA_VERSION,
+        artifactId: currentManifest.artifactId,
+        reviewRound: currentManifest.reviewRound,
+        artifactSha256: sha256(currentMarkdown),
+      });
+      return { manifest: currentManifest, markdown: currentMarkdown };
     });
-    return { manifest: currentManifest, markdown: currentMarkdown };
-  });
+    manifest = loaded.manifest;
+    markdown = loaded.markdown;
+  } catch (error) {
+    if (errorCode(error) === "ENOENT") {
+      throw recoveryError("ARTIFACT_NOT_FOUND", "the artifact lifecycle files do not exist.", {
+        retryable: false,
+        reuseRoundToken: false,
+        useSameArtifactHandle: false,
+      });
+    }
+    throw error;
+  }
   const artifactSha256 = sha256(markdown);
   return {
     artifactDirectory,
@@ -838,13 +882,32 @@ async function waitForSubmission(
         if (error) reject(error);
         else if (value) resolve(value);
       };
+      const notFoundError = (): ArtifactRecoveryError =>
+        recoveryError("ARTIFACT_NOT_FOUND", "the artifact directory or manifest no longer exists.", {
+          retryable: false,
+          reuseRoundToken: false,
+          useSameArtifactHandle: false,
+        });
+
       const check = async (): Promise<void> => {
         if (settled || checking) return;
         checking = true;
         try {
+          try {
+            await fs.access(context.manifestPath);
+          } catch (accessError) {
+            if (errorCode(accessError) === "ENOENT") {
+              finish(notFoundError());
+              return;
+            }
+          }
           const submission = await readValidatedSubmission(context);
           if (submission) finish(undefined, submission);
         } catch (error) {
+          if (errorCode(error) === "ENOENT") {
+            finish(notFoundError());
+            return;
+          }
           finish(error);
         } finally {
           checking = false;
@@ -854,7 +917,13 @@ async function waitForSubmission(
       const watcher = watchFs(context.artifactDirectory, { persistent: true }, (_event, filename) => {
         if (filename == null || String(filename) === REVIEW_SUBMISSION_FILE) void check();
       });
-      watcher.on("error", (error) => finish(error));
+      watcher.on("error", (error) => {
+        if (errorCode(error) === "ENOENT") {
+          finish(notFoundError());
+          return;
+        }
+        finish(error);
+      });
       const interval = setInterval(() => void check(), 1000);
       controller.signal.addEventListener("abort", onAbort, { once: true });
       if (controller.signal.aborted) onAbort();

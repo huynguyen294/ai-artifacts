@@ -8,13 +8,13 @@ async function read(relativePath: string): Promise<string> {
   return readFile(path.join(repositoryRoot, relativePath), "utf8");
 }
 
-describe("v1.0.0 release contract", () => {
+describe("v1.0.1 release contract", () => {
   it("keeps package and lock metadata synchronized", async () => {
     const packageJson = JSON.parse(await read("package.json"));
     const packageLock = JSON.parse(await read("package-lock.json"));
 
     expect(packageJson.name).toBe("ai-artifacts");
-    expect(packageJson.version).toBe("1.0.0");
+    expect(packageJson.version).toBe("1.0.1");
     expect(packageLock.name).toBe(packageJson.name);
     expect(packageLock.version).toBe(packageJson.version);
     expect(packageLock.packages[""].name).toBe(packageJson.name);
@@ -64,21 +64,27 @@ describe("v1.0.0 release contract", () => {
     expect(instructions).toContain("Artifacts are owned by review sessions");
     expect(contract).toContain("schema-v1 UI-routing state only");
     expect(contract).toContain("AI Artifacts: Install All Detected Integrations");
-    expect(changelog).toContain("## [1.0.0] - Unreleased");
+    expect(changelog).toContain("## [1.0.1] - 2026-09-21");
+    expect(changelog).toContain("## [1.0.0] - 2026-09-20");
     expect(changelog).toContain("MCP server 9.0.0");
     expect(changelog).not.toContain("## [1.1.0]");
-    expect(documentationChanges).toContain("Schema v6 lifecycle cutover, focused-window routing, and MCP 9.0.0");
+    expect(documentationChanges).toContain("Automatic artifact retention cleanup and bounded lifetime model");
   });
 
-  it("keeps the public setting and version matrix on the 1.0.0 targeted-window contract", async () => {
+  it("keeps the public setting and version matrix on the 1.0.1 targeted-window contract", async () => {
     const packageJson = JSON.parse(await read("package.json"));
     const autoOpen = packageJson.contributes.configuration.properties["agentPlus.autoOpenArtifactReview"];
+    const retentionDays = packageJson.contributes.configuration.properties["agentPlus.artifactRetentionDays"];
 
-    expect(packageJson.version).toBe("1.0.0");
+    expect(packageJson.version).toBe("1.0.1");
     expect(autoOpen.type).toBe("boolean");
     expect(autoOpen.default).toBe(true);
     expect(autoOpen.description).toContain("selected target window");
     expect(autoOpen.description).not.toContain("focused window");
+    expect(retentionDays.type).toBe("integer");
+    expect(retentionDays.default).toBe(30);
+    expect(retentionDays.minimum).toBe(1);
+    expect(retentionDays.scope).toBe("machine");
   });
 
   it("keeps sensitive artifact directories out of source and VSIX payloads", async () => {

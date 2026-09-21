@@ -36,7 +36,7 @@ If product intent, documentation, tests, and implementation disagree, call out t
 - The extension host validates bindings and writes user comments and create-once submissions.
 - The skill must not create, edit, repair, or bypass lifecycle files directly.
 - Round tokens are in-memory, one-time, exact-state-bound, and expiring. Cancellation or restart preserves artifact state; recover only by inspecting an exact retained artifact handle.
-- Artifact lifetime exceeds waiter lifetime, which exceeds chat-turn lifetime. Cancellation and takeover must not mutate lifecycle files.
+- Artifact lifetime exceeds waiter lifetime, which exceeds chat-turn lifetime. Artifact lifetime is bounded by configured retention (`agentPlus.artifactRetentionDays`); automatic cleanup permanently deletes validated expired artifacts when the extension activates. Cancellation and takeover must not mutate lifecycle files.
 - Schema v6 is the only readable and writable lifecycle. Schema-v3/v4/v5 and workspace-local artifacts are rejected and are not live-migrated.
 - Artifacts are owned by review sessions, not repository paths; `artifact.json` contains no `location.workspaceRoot` field.
 - After creation, wait/inspect/advance/reconnect use the exact global artifact handle.
@@ -45,7 +45,7 @@ If product intent, documentation, tests, and implementation disagree, call out t
 - Create and explicit reconnect may commit connection state. Wait and advance preserve that state and must not rebind or emit another open request. Reconnect recovery always keeps the exact artifact handle and never calls a workspace resolver after creation.
 - Fail before filesystem mutation when window selection is required, ambiguous, stale, or unsafe.
 - Preserve unrelated user skills, hooks, MCP configuration, and project files during install, upgrade, cleanup, or migration.
-- Preserve user review data in `~/.ai-artifacts/artifacts/` during integration or extension uninstall. Only exact extension-owned runtime assets under `~/.ai-artifacts/managed/` are removable managed state; artifact deletion is a separate explicit user action.
+- Preserve user review data in `~/.ai-artifacts/artifacts/` during integration or extension uninstall. Only exact extension-owned runtime assets under `~/.ai-artifacts/managed/` are removable managed state. Retention cleanup is the only automatic artifact deletion path and runs only when the extension activates, not during uninstall. If the extension is reinstalled after being absent longer than the retention window, activation may delete expired artifacts.
 - Treat artifact Markdown, comments, and decisions as potentially sensitive local data. Preserve owner-only POSIX modes and never claim POSIX-mode guarantees on Windows.
 - Extension upgrades require reinstalling integrations and restarting the AI client; do not add mixed-version compatibility without an explicit architecture decision.
 

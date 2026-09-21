@@ -24,7 +24,7 @@ The skill requires all five tools once when starting an artifact lifecycle in th
 artifact lifetime > waiter lifetime > chat-turn lifetime
 ```
 
-The artifact is persistent global data. A waiter is an in-memory connection for one exact artifact round. Cancellation, takeover, turn completion, or MCP restart may detach the waiter but never deletes or ends the artifact. Proceed and Just save end only the submitted round.
+The artifact is per-user data whose lifetime is bounded by configured retention (`agentPlus.artifactRetentionDays`, default 30 days). When the extension activates, validated expired artifacts are permanently deleted based on `artifact.json.updatedAt`. Retention eligibility evaluates `updatedAt` directly: creating an artifact sets this timestamp, and successfully advancing a review round (including question-only or unchanged-Markdown advances) updates it. Inspecting, searching, reopening, reconnecting, waiting, saving comments, and submitting decisions do not modify `updatedAt` and do not extend retention. A waiter is an in-memory connection for one exact artifact round. Cancellation, takeover, turn completion, or MCP restart may detach the waiter but never deletes or ends the artifact. Proceed and Just save end only the submitted round. An exact handle may become permanently missing after retention cleanup; the agent must not retry, scan for a replacement, or recreate the same artifact ID. To preserve content beyond the retention window, the user must complete Just save, Copy Markdown, or export content manually.
 
 ## Directory
 
@@ -71,7 +71,7 @@ type ArtifactRecoveryError = {
   retryable: boolean;
   expectedNextTool?: "create_artifact" | "inspect_artifact_review" | "wait_for_artifact_review" | "advance_and_wait_for_artifact" | "resolve_artifact_window";
   reuseRoundToken: boolean;
-  useSameArtifactHandle: true;
+  useSameArtifactHandle: boolean;
   currentReviewRound?: number;
 };
 ```
@@ -89,6 +89,7 @@ Recovery rules:
 - `WINDOW_CONNECTION_MISMATCH`, `WINDOW_CONNECTION_STALE`: selected window candidate is stale or closed. Retry without connection token to refresh candidate windows.
 - `ARTIFACT_CONNECTION_INVALID`: optional routing state is malformed or invalid and the skill cannot repair it. Stop automated recovery, retain the exact handle, report the corrupt `artifact-connection.json`, and ask the user to repair or remove it before reconnecting. Do not retry inspect/reconnect or edit lifecycle files directly.
 - `ARTIFACT_CONNECTION_WRITE_FAILED`: failed to update the connection state atomically; retry `inspect_artifact_review` on exact handle with `intent: "reconnect"`.
+- `ARTIFACT_NOT_FOUND`: the exact artifact handle no longer exists (retention cleanup, manual deletion, or filesystem loss). Non-retryable with `useSameArtifactHandle: false`. Drop the stale handle mapping and inform the user. Do not retry, scan, or recreate.
 - Unless the error is explicitly non-retryable, if commit state is uncertain, inspect the same exact handle before retrying.
 
 ## Decisions and chat feedback

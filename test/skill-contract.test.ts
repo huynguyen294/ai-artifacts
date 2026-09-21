@@ -167,6 +167,7 @@ describe("create-review-artifact skill contract", () => {
       "WINDOW_CONNECTION_MISMATCH",
       "ARTIFACT_CONNECTION_INVALID",
       "ARTIFACT_CONNECTION_WRITE_FAILED",
+      "ARTIFACT_NOT_FOUND",
     ]) expect(skill).toContain(code);
     expect(skill).not.toContain("WORKSPACE_NOT_REGISTERED");
     expect(skill).not.toContain("resolve_artifact_workspace");
@@ -176,12 +177,28 @@ describe("create-review-artifact skill contract", () => {
     expect(skill).toContain("For resume-wait intent, keep awaiting the in-flight call");
     expect(skill).toContain('for pure reconnect, call `inspect_artifact_review` with `intent: "reconnect"` without takeover');
     expect(skill).not.toContain("reconnect by waiting");
-    expect(contract).toContain("useSameArtifactHandle: true");
+    expect(skill).toContain("Drop the stale handle mapping and inform the user that the artifact is permanently unavailable");
+    expect(contract).toContain("useSameArtifactHandle: boolean;");
+    expect(contract).toContain("ARTIFACT_NOT_FOUND`: the exact artifact handle no longer exists");
+    expect(contract).toContain("Non-retryable with `useSameArtifactHandle: false`");
     expect(contract).not.toContain("resolve_artifact_workspace");
     expect(contract).toContain("Unless the error is explicitly non-retryable");
     expect(contract).toContain("Do not retry inspect/reconnect or edit lifecycle files directly");
     expect(contract).toContain("Keep awaiting the in-flight call for resume-wait intent");
     expect(contract).toContain('use inspect with `intent: "reconnect"` and no takeover for pure reconnect');
+  });
+
+  it("documents bounded artifact retention and long-term preservation", async () => {
+    const [skill, contract] = await Promise.all([
+      readFile(path.join(skillDirectory, "SKILL.md"), "utf8"),
+      readFile(path.join(skillDirectory, "references", "artifact-contract.md"), "utf8"),
+    ]);
+
+    expect(skill).toContain("Artifact lifetime is bounded by configured retention");
+    expect(contract).toContain("agentPlus.artifactRetentionDays");
+    expect(contract).toContain("bounded by configured retention");
+    expect(contract).toContain("validated expired artifacts are permanently deleted");
+    expect(contract).toContain("To preserve content beyond the retention window, the user must complete Just save, Copy Markdown, or export content manually");
   });
 
   it("documents artifactUrl and artifactLink as regular file links", async () => {

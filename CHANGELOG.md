@@ -4,7 +4,34 @@ All notable changes to the **AI Artifacts** (`agent-plus`) project will be docum
 
 Release history has been standardized and tracked starting from version **0.2.6**. Package builds prior to this version are not considered part of the official changelog.
 
-## [1.0.0] - Unreleased
+## [1.0.1] - 2026-09-21
+
+### Automatic artifact retention cleanup
+
+- Added configurable retention cleanup that permanently deletes expired artifacts when the extension activates.
+- Added machine-scoped setting `agentPlus.artifactRetentionDays` (default 30 days, minimum 1) controlling the retention window based on `artifact.json.updatedAt`.
+- Implemented core retention logic in `src/extension/artifact-retention.ts`:
+  - Enumerates validated schema-v6 direct children of `~/.ai-artifacts/artifacts/` with concurrency bounds.
+  - Skips legacy, malformed, mismatched-ID, linked, or escaped artifact entries.
+  - Revalidates each candidate immediately before deletion to prevent TOCTOU races.
+  - Atomically renames expired artifact directories to managed cleanup staging (`~/.ai-artifacts/managed/cleanup/<artifactId>-<uuid>/`) before recursive deletion. Per-artifact atomic rename resolves multi-window races without a global lock.
+  - Drains leftover staging entries from prior crashes at the next activation.
+  - Handles `EPERM`/`EBUSY`/`EACCES` errors gracefully by skipping the candidate and continuing.
+- Integrated retention cleanup into extension activation (`src/extension/extension.ts`). Cleanup runs asynchronously and does not block activation or commands.
+- Active MCP waiters monitoring an artifact that is deleted by retention cleanup terminate with `ARTIFACT_NOT_FOUND` (`retryable: false`, `useSameArtifactHandle: false`) instead of waiting indefinitely.
+- Updated agent skill and artifact contract to document `ARTIFACT_NOT_FOUND` recovery: drop the stale handle mapping, inform the user, and do not retry, scan, or recreate.
+- Added comprehensive test coverage in `test/artifact-retention.test.ts` (11 tests) and waiter termination tests in `test/review-wait-mcp.test.ts` (2 tests).
+
+### Documentation
+
+- Updated README, philosophy, architecture, components, contributor instructions, agent skill, and artifact contract for bounded artifact lifetime, retention cleanup mechanics, `ARTIFACT_NOT_FOUND` recovery, and long-term content preservation guidance.
+- Updated version references from 1.0.0 to 1.0.1 across README, architecture, philosophy, and VSIX paths.
+
+## [1.0.0] - 2026-09-20
+
+### Repository migration
+
+- Migrated repository URL to `https://github.com/huynguyen294/ai-artifacts`.
 
 ### Global schema-v6 lifecycle
 

@@ -78,13 +78,15 @@ Follow machine-readable recovery metadata returned by lifecycle errors. Keep the
 | `WINDOW_CONNECTION_MISMATCH`, `WINDOW_CONNECTION_STALE` | Selected window is stale or closed. Retry without connection token to refresh candidates. |
 | `ARTIFACT_CONNECTION_INVALID` | Stored routing data is invalid or malformed and cannot be repaired by the skill. Stop automated recovery, retain the exact handle, report the corrupt `artifact-connection.json`, and ask the user to repair or remove that optional routing file before reconnecting. Do not retry inspect/reconnect or edit lifecycle files yourself. |
 | `ARTIFACT_CONNECTION_WRITE_FAILED` | Failed to update the connection state atomically. Retry `inspect_artifact_review` on the exact handle with `intent: "reconnect"`. |
+| `ARTIFACT_NOT_FOUND` | The exact artifact handle no longer exists (retention cleanup, manual deletion, or filesystem loss). Non-retryable. Drop the stale handle mapping and inform the user that the artifact is permanently unavailable. Do not retry, scan for a replacement, or recreate the same artifact ID. |
 
 Except for explicit non-retryable errors such as `ARTIFACT_CONNECTION_INVALID`, inspect the exact handle before retrying any error that does not prove both “not committed” and `reuseRoundToken: true`.
 
 ## Lifecycle rules
 
-- Artifact lifetime is longer than waiter lifetime, which is longer than an individual chat-turn lifetime.
+- Artifact lifetime is longer than waiter lifetime, which is longer than an individual chat-turn lifetime. Artifact lifetime is bounded by configured retention; an exact handle may become permanently missing.
 - Cancellation, chat-turn completion, or MCP restart detaches a waiter but never deletes or finishes an artifact.
+- When an exact artifact handle returns `ARTIFACT_NOT_FOUND`, drop the handle mapping and inform the user. Do not retry, search, or recreate.
 - One independent user request owns one artifact directory and artifact ID. Only one live waiter may own it at a time.
 - Advancing replaces the same `artifact.md` only when Markdown is supplied, increments the round, resets handled comments, and removes the old submission. It does not create revision history.
 - Round tokens are exact-state, one-time capabilities. After MCP restart, inspect the exact artifact again to obtain a fresh token.

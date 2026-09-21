@@ -1,6 +1,6 @@
 # Product Philosophy
 
-## Artifacts are durable data; waiters are ephemeral connections
+## Artifacts are temporary review data; waiters are ephemeral connections
 
 The core lifecycle rule is:
 
@@ -8,9 +8,11 @@ The core lifecycle rule is:
 artifact lifetime > waiter lifetime > chat-turn lifetime
 ```
 
-An artifact represents a request awaiting human review and persists in the user's global AI Artifacts collection until the user explicitly removes it. Artifacts belong to review sessions rather than repository paths, decoupling review lifecycles from workspace folder ownership. A waiter is merely a temporary connection between an active MCP request and an artifact review round. Individual chat turns are shorter still.
+An artifact represents a request awaiting human review and persists in the user's global AI Artifacts collection until it is automatically deleted by retention cleanup or the user explicitly removes it. Artifact lifetime is bounded by the configured retention period (`agentPlus.artifactRetentionDays`, default 30 days). When the extension activates, validated expired artifacts are permanently deleted based on `artifact.json.updatedAt`. Retention eligibility strictly evaluates `updatedAt`: creating an artifact records the initial timestamp, and each successful round advance refreshes it (even when Markdown is unchanged). Inspecting, searching, reopening, reconnecting, waiting, saving comments, and submitting decisions do not modify `updatedAt` and do not extend retention. Artifacts belong to review sessions rather than repository paths, decoupling review lifecycles from workspace folder ownership. A waiter is merely a temporary connection between an active MCP request and an artifact review round. Individual chat turns are shorter still.
 
-Therefore, cancellations, takeovers, concluding a chat turn, or restarting the MCP server must never delete or terminate an artifact. They only clear in-memory waiters or active round tokens. The AI can inspect the exact known artifact handle, obtain a fresh token from validated persistent state, and reconnect later.
+Therefore, cancellations, takeovers, concluding a chat turn, or restarting the MCP server must never delete or terminate an artifact. They only clear in-memory waiters or active round tokens. The AI can inspect the exact known artifact handle, obtain a fresh token from validated persistent state, and reconnect later. However, an exact handle may become permanently missing after retention cleanup; in that case, the AI must not retry, scan for a replacement, or recreate the same artifact ID.
+
+To preserve content beyond the retention window, users must complete the **Just save** flow, use **Copy Markdown**, or otherwise save content outside the artifact lifecycle.
 
 ## Two ways to interact with the same artifact
 
@@ -57,9 +59,11 @@ AI Artifacts provides a dedicated review layer for AI-generated Markdown. It ena
 
 The agent skill triggers only when the user explicitly requests creating or updating an artifact, reading saved feedback, or reconnecting an existing lifecycle. The document type alone is never an auto-trigger condition.
 
-## Implementation status 1.0.0
+## Implementation status 1.0.1
 
-Version 1.0.0 uses artifact schema v6, connection schema v1, and MCP server 9.0.0. Every lifecycle is stored beneath the per-user `~/.ai-artifacts/artifacts/` collection. `artifact.json` remains the source of truth for artifact identity without repository path ownership; optional `artifact-connection.json` records only the current UI-routing request. Schemas v3/v4/v5 and workspace-local artifact directories are outside the live protocol and are not migrated. This hard cutoff avoids ambiguous mixed-version writes: extension upgrades must be followed by integration reinstall and AI-client restart.
+Version 1.0.1 uses artifact schema v6, connection schema v1, and MCP server 9.0.0. Every lifecycle is stored beneath the per-user `~/.ai-artifacts/artifacts/` collection. `artifact.json` remains the source of truth for artifact identity without repository path ownership; optional `artifact-connection.json` records only the current UI-routing request. Schemas v3/v4/v5 and workspace-local artifact directories are outside the live protocol and are not migrated. This hard cutoff avoids ambiguous mixed-version writes: extension upgrades must be followed by integration reinstall and AI-client restart.
+
+Artifact lifetime is bounded by the `agentPlus.artifactRetentionDays` machine-scoped setting (default 30 days, minimum 1). When the extension host activates, a best-effort asynchronous retention cleanup enumerates validated schema-v6 artifacts, checks `artifact.json.updatedAt` against the retention window, and permanently deletes expired candidates via atomic rename to managed cleanup staging (`~/.ai-artifacts/managed/cleanup/`). Cleanup does not block activation, does not require a global lock (per-artifact atomic rename resolves multi-window races), and skips legacy, malformed, or linked entries. Active waiters terminate with `ARTIFACT_NOT_FOUND` when their artifact is deleted. Uninstall does not run retention cleanup; reinstall followed by activation may delete artifacts that expired during the extension's absence.
 
 Window routing defaults to the currently focused live VS Code window (or sole live window), matching user mental models without requiring workspace resolution rituals. Generic reconnect routing additionally respects advisory artifact-window affinity when matching stored connection state and present in the registry. When multiple windows exist and focus/affinity is ambiguous, creation or inspection requests explicit candidate selection (`WINDOW_SELECTION_REQUIRED`), returning opaque single-use selection tokens. Focus is a ranking hint, not identity, authorization, or a requirement for opening the target. Selection tokens bind an exact window instance. After creation, all lifecycle operations use the exact global artifact handle.
 

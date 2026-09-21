@@ -6,6 +6,7 @@ export const ARTIFACT_COLLECTION_DIRECTORY = "artifacts";
 export const MANAGED_ASSETS_DIRECTORY = "managed";
 export const MANAGED_RUNTIME_DIRECTORY = "runtime";
 export const MANAGED_WORKSPACES_DIRECTORY = "workspaces";
+export const MANAGED_CLEANUP_DIRECTORY = "cleanup";
 export const MANAGED_MCP_SCRIPT_FILE = "ai-artifacts-review-mcp.mjs";
 
 export const ARTIFACT_MANIFEST_FILE = "artifact.json";
@@ -77,4 +78,11 @@ export function managedMcpScriptPath(options: GlobalArtifactsRootOptions = {}): 
  */
 export function managedWorkspaceRegistryDirectory(options: GlobalArtifactsRootOptions = {}): string {
   return path.join(managedAssetsRoot(options), MANAGED_WORKSPACES_DIRECTORY);
+}
+
+/**
+ * Returns the managed cleanup staging directory (~/.ai-artifacts/managed/cleanup).
+ */
+export function managedCleanupDirectory(options: GlobalArtifactsRootOptions = {}): string {
+  return path.join(managedAssetsRoot(options), MANAGED_CLEANUP_DIRECTORY);
 }

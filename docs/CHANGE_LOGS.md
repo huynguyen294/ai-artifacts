@@ -14,6 +14,48 @@ Minor typos, formatting fixes, or cosmetic wording adjustments that do not chang
 
 Each entry includes the date, category, summary of changes, rationale, and affected components or files.
 
+## 2026-09-21 — Automatic artifact retention cleanup and bounded lifetime model
+
+### Changes
+
+- Added automatic artifact retention cleanup to extension activation:
+  - Implemented core retention logic in `src/extension/artifact-retention.ts` with bounded concurrency, schema-v6 validation, TOCTOU-safe revalidation, atomic rename to managed cleanup staging (`~/.ai-artifacts/managed/cleanup/`), recursive deletion of staged paths, and crash-safe drain of leftover staging entries.
+  - Added machine-scoped setting `agentPlus.artifactRetentionDays` (default 30, minimum 1) controlling the retention window based on `artifact.json.updatedAt`.
+  - Integrated asynchronous cleanup into `src/extension/extension.ts` activation without blocking activation or commands.
+  - Per-artifact atomic rename resolves multi-window races without requiring a global lock. `EPERM`/`EBUSY`/`EACCES` errors skip the candidate and continue.
+- Updated artifact lifetime model from "persistent until explicit deletion" to "bounded by configured retention":
+  - Artifacts are automatically and permanently deleted when the extension activates if their `updatedAt` exceeds the retention window.
+  - An exact artifact handle may become permanently missing after retention cleanup; the AI skill and MCP contract now document `ARTIFACT_NOT_FOUND` as a non-retryable error with `useSameArtifactHandle: false`.
+  - Active MCP waiters terminate with `ARTIFACT_NOT_FOUND` when their artifact is deleted, rather than waiting indefinitely.
+  - Users must use **Just save**, **Copy Markdown**, or manual export to preserve content beyond the retention window.
+- Updated all project documentation to reflect bounded lifetime:
+  - `docs/INSTRUCTION.md`: critical invariants updated for retention-bounded lifetime and activation cleanup.
+  - `docs/PHILOSOPHY.md`: section heading, lifetime model, implementation status updated to 1.0.1, and explicit `updatedAt` retention semantics (advance refreshes; open/search/wait/comment/submit do not).
+  - `docs/ARCHITECTURE.md`: added activation cleanup, deletion boundary, missing-handle contract; updated compatibility and topology references to 1.0.1 / 1.0.x.
+  - `docs/COMPONENTS.md`: extension entry responsibilities, lifetime description, removed stale `workspace root` from file protocol table, verification ownership table.
+  - `skills/create-review-artifact/SKILL.md`: `ARTIFACT_NOT_FOUND` recovery row and bounded lifetime rules.
+  - `skills/create-review-artifact/references/artifact-contract.md`: availability/lifetime section, `updatedAt` retention semantics, corrected `useSameArtifactHandle: boolean` in `ArtifactRecoveryError`, and `ARTIFACT_NOT_FOUND` recovery rules.
+  - `README.md`: retention warning, uninstall data retention, version references updated to 1.0.1 / 1.0.x, VSIX paths, behavior section.
+  - `CHANGELOG.md`: 1.0.1 release entry.
+- Bumped extension version from 1.0.0 to 1.0.1 in `package.json` and synchronized `package-lock.json`.
+- Updated test suites:
+  - `test/release-contract.test.ts`: updated for 1.0.1 release contract, synchronized package-lock metadata, and verified `agentPlus.artifactRetentionDays` configuration contribution.
+  - `test/skill-contract.test.ts`: added `ARTIFACT_NOT_FOUND` to expected recovery error codes, verified `useSameArtifactHandle: boolean`, and added bounded retention documentation tests.
+
+### Rationale
+
+- Artifact review data is temporary by nature — proposals, plans, and drafts that serve their purpose during the review cycle. Without automatic cleanup, the global collection at `~/.ai-artifacts/artifacts/` grows unboundedly. A configurable retention period balances disk hygiene with reasonable time for users to export valuable content.
+- The deletion mechanism uses atomic rename to managed staging before recursive deletion, ensuring that partially deleted artifact directories never appear in the live collection and that multi-window races are resolved without coordination locks.
+
+### Affected components and files
+
+- `src/extension/artifact-retention.ts`, `src/extension/extension.ts`
+- `src/integration/artifact-review-mcp-v4.ts` (waiter termination on `ARTIFACT_NOT_FOUND`)
+- `skills/create-review-artifact/SKILL.md`, `skills/create-review-artifact/references/artifact-contract.md`
+- `test/artifact-retention.test.ts`, `test/review-wait-mcp.test.ts`
+- `package.json`, `README.md`, `CHANGELOG.md`
+- `docs/INSTRUCTION.md`, `docs/PHILOSOPHY.md`, `docs/ARCHITECTURE.md`, `docs/COMPONENTS.md`, `docs/CHANGE_LOGS.md`
+
 ## 2026-09-20 — Cross-platform path normalization and POSIX CI test hardening
 
 ### Changes

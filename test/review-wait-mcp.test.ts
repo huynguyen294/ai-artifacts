@@ -2443,4 +2443,61 @@ describe("artifact review MCP server v8", () => {
     // Connection file must NOT be modified
     expect(await readFile(connPath, "utf8")).toBe(initialConnBytes);
   });
+
+  it("returns ARTIFACT_NOT_FOUND when inspecting, waiting, or advancing on a missing artifact directory", async () => {
+    const fixture = await workspaceFixture();
+    const client = startClient(fixture.registry);
+    await initialize(client);
+
+    const nonExistentDirectory = path.join(fixture.globalRoot, "missing-artifact-00000000-0000-4000-8000-000000000000");
+
+    const inspected = await callTool(client, "inspect_artifact_review", {
+      artifactDirectory: nonExistentDirectory,
+    });
+    expect(inspected.isError).toBe(true);
+    expect(inspected.structuredContent).toMatchObject({
+      code: "ARTIFACT_NOT_FOUND",
+      retryable: false,
+      reuseRoundToken: false,
+      useSameArtifactHandle: false,
+    });
+
+    const waiting = await callTool(client, "wait_for_artifact_review", {
+      artifactDirectory: nonExistentDirectory,
+      expectedReviewRound: 1,
+    });
+    expect(waiting.isError).toBe(true);
+    expect(waiting.structuredContent).toMatchObject({
+      code: "ARTIFACT_NOT_FOUND",
+      retryable: false,
+      reuseRoundToken: false,
+      useSameArtifactHandle: false,
+    });
+  });
+
+  it("terminates an active waiter with ARTIFACT_NOT_FOUND when the artifact directory is removed", async () => {
+    const fixture = await workspaceFixture();
+    const client = startClient(fixture.registry);
+    await initialize(client);
+
+    const created = await createArtifact(client, fixture.workspace, { title: "Disappearing artifact" });
+    const waiting = callToolTracked(client, "wait_for_artifact_review", {
+      artifactDirectory: created.artifactDirectory,
+      expectedReviewRound: 1,
+    });
+    await waiting.sent;
+
+    // Simulate retention cleanup deleting the artifact while waiting
+    await rm(created.artifactDirectory, { recursive: true, force: true });
+
+    const result = await waiting.promise;
+    expect(result.isError).toBe(true);
+    expect(result.structuredContent).toMatchObject({
+      code: "ARTIFACT_NOT_FOUND",
+      retryable: false,
+      reuseRoundToken: false,
+      useSameArtifactHandle: false,
+    });
+  });
 });
+

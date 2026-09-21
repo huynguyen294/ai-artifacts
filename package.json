@@ -3,7 +3,7 @@
   "displayName": "AI Artifacts - Interactive Planning & Review",
   "publisher": "huynguyen294",
   "description": "Interactive review editor for AI-generated planning artifacts, markdown specs, and proposals. Connects via MCP to Cursor, Codex, Windsurf, Claude, and more.",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "type": "module",
   "license": "MIT",
   "icon": "media/icon.png",
@@ -146,6 +146,13 @@
           "type": "boolean",
           "default": true,
           "description": "Automatically open Artifact Review in the selected target window after an AI agent creates or reconnects a Markdown artifact."
+        },
+        "agentPlus.artifactRetentionDays": {
+          "type": "integer",
+          "default": 30,
+          "minimum": 1,
+          "scope": "machine",
+          "description": "Permanently delete AI Artifacts whose artifact.json updatedAt is older than this many days when the extension activates."
         }
       }
     }

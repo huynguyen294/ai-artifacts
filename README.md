@@ -24,11 +24,11 @@ With AI Artifacts, you can review proposals before code is written, guide agent 
 ### 1. Install the extension
 
 - **From Marketplace / Open VSX:** Search for `AI Artifacts` in the Extensions view (`Ctrl+Shift+X` / `Cmd+Shift+X`) and click **Install**.
-- **From VSIX release:** Download the latest [AI Artifacts VSIX](releases/ai-artifacts-1.0.0.vsix) and run:
+- **From VSIX release:** Download the latest [AI Artifacts VSIX](releases/ai-artifacts-1.0.1.vsix) and run:
   ```powershell
-  code --install-extension releases/ai-artifacts-1.0.0.vsix
+  code --install-extension releases/ai-artifacts-1.0.1.vsix
   # Or in Cursor:
-  cursor --install-extension releases/ai-artifacts-1.0.0.vsix
+  cursor --install-extension releases/ai-artifacts-1.0.1.vsix
   ```
 
 To build the VSIX yourself from source, follow [Development](#development) below.
@@ -66,7 +66,7 @@ After installing or upgrading the extension, **reinstall every integration**. Up
 4. Start a fresh chat conversation to load the newly registered MCP tools and skill.
 5. Verify readiness by running **AI Artifacts: Verify All Integrations** from the Command Palette.
 
-Version 1.0.0 ships MCP server 9.0.0. The catalog contains exactly five tools: `resolve_artifact_window`, `create_artifact`, `wait_for_artifact_review`, `inspect_artifact_review`, and `advance_and_wait_for_artifact`. A client that still reports an older version or exposes an older catalog must be reinstalled and restarted.
+Version 1.0.1 ships MCP server 9.0.0. The catalog contains exactly five tools: `resolve_artifact_window`, `create_artifact`, `wait_for_artifact_review`, `inspect_artifact_review`, and `advance_and_wait_for_artifact`. A client that still reports an older version or exposes an older catalog must be reinstalled and restarted.
 
 ### 4. Verification & troubleshooting
 
@@ -108,7 +108,10 @@ AI Artifacts provides two comprehensive ways to remove MCP configurations and ru
   - Or choose a specific client: **`AI Artifacts: Uninstall Integration for GitHub Copilot`**, **`... for Cursor`**, **`... for Codex`**, **`... for Claude`**, or **`... for Windsurf`**.
 
 > [!IMPORTANT]
-> **Artifact Data Is Retained:** Neither uninstall method deletes user review data in `~/.ai-artifacts/artifacts/`. Uninstall removes only managed client configuration, installed MCP runtime assets (`~/.ai-artifacts/managed/`), legacy `~/.vscode/ai-artifacts/`, and the managed skill. Delete the global artifact collection separately only when you intentionally want to erase review data.
+> **Artifact Data Is Retained on Uninstall:** Neither uninstall method deletes user review data in `~/.ai-artifacts/artifacts/`. Uninstall removes only managed client configuration, installed MCP runtime assets (`~/.ai-artifacts/managed/`), legacy `~/.vscode/ai-artifacts/`, and the managed skill. Delete the global artifact collection separately only when you intentionally want to erase review data.
+
+> [!WARNING]
+> **Automatic Retention Cleanup:** AI Artifacts automatically and permanently deletes artifacts whose `artifact.json` `updatedAt` is older than the configured retention period (default **30 days**) each time the extension activates. This setting is machine-scoped (`agentPlus.artifactRetentionDays`, minimum 1 day). Artifacts are not recoverable after deletion. To preserve content long-term, use **Just save** to copy Markdown to your workspace, **Copy Markdown** to the clipboard, or manually save content outside the artifact lifecycle before the retention window expires. If the extension is uninstalled and later reinstalled, the next activation may delete artifacts that expired during the extension's absence.
 
 ### Compatibility & Supported Agents
 
@@ -124,7 +127,7 @@ AI Artifacts connects to your favorite AI coding agents using the Model Context 
 ### Supported environments
 
 - **Supported:** local desktop VS Code-compatible extension hosts on Windows, macOS, and Linux, with Node.js and the MCP process running as the same OS user and accessing the same user filesystem.
-- **Unsupported in v1.0.0:** Remote SSH, WSL, dev containers, Codespaces, browser/virtual workspaces, and any split-host setup. Even when paths appear shared, these topologies are not part of the validated release matrix and must not be treated as interoperable.
+- **Unsupported in v1.0.x:** Remote SSH, WSL, dev containers, Codespaces, browser/virtual workspaces, and any split-host setup. Even when paths appear shared, these topologies are not part of the validated release matrix and must not be treated as interoperable.
 
 ### 6. Ask your AI to create a review artifact
 
@@ -174,7 +177,7 @@ When the current round has no saved comments or submission, you may request a co
 
 ## Behavior and security
 
-- **Safe Lifecycle:** Artifact data outlives transient MCP connections. Process restarts, waiter cancellations, or new chat turns never destroy unreviewed artifacts.
+- **Safe Lifecycle:** Artifact data outlives transient MCP connections within the configured retention window. Process restarts, waiter cancellations, or new chat turns never destroy unreviewed artifacts. Expired artifacts are permanently deleted when the extension activates.
 - **Session-Centric Artifact Ownership:** Artifacts belong to interactive review sessions in global storage, completely decoupled from repository directories.
 - **Focused-First Window Routing:** The MCP server connects to the currently focused VS Code window by default, with explicit selection tokens when window focus is ambiguous. Non-target windows ignore connection events.
 - **Transactional Updates:** Multi-round revisions are transactional; failed commits automatically roll back, including the Windows editor-lock fallback.
@@ -184,10 +187,10 @@ When the current round has no saved comments or submission, you may request a co
 
 ## Compatibility and upgrades
 
-- Version 1.0.0 supports only schema v6 stored under `~/.ai-artifacts/artifacts/`.
-- Version 1.0.0 ships MCP server 9.0.0 and optional connection schema v1 while providing the five-tool catalog.
-- Schema v3/v4/v5 and workspace-local `.ai-artifacts` or `.codex-artifacts` lifecycles are not opened, advanced, or migrated by v1.0.0. Existing files remain untouched on disk.
-- This is a hard compatibility cutoff. A rollback to a 0.9.x extension also requires reinstalling the matching older runtime and skill; do not use a 0.9.x runtime with v1.0.0 artifacts.
+- Version 1.0.1 supports only schema v6 stored under `~/.ai-artifacts/artifacts/`.
+- Version 1.0.1 ships MCP server 9.0.0 and optional connection schema v1 while providing the five-tool catalog.
+- Schema v3/v4/v5 and workspace-local `.ai-artifacts` or `.codex-artifacts` lifecycles are not opened, advanced, or migrated by v1.0.x. Existing files remain untouched on disk.
+- This is a hard compatibility cutoff. A rollback to a 0.9.x extension also requires reinstalling the matching older runtime and skill; do not use a 0.9.x runtime with v1.0.x artifacts.
 - After every extension upgrade, reinstall integrations and restart the AI client before starting a new chat.
 
 ## Development
@@ -205,7 +208,7 @@ Press `F5` to launch an Extension Development Host. Package and install locally:
 
 ```powershell
 npm run package
-code --install-extension releases/ai-artifacts-1.0.0.vsix
+code --install-extension releases/ai-artifacts-1.0.1.vsix
 ```
 
 ## Documentation

@@ -25,6 +25,7 @@ import {
   uninstallWindsurfIntegration,
 } from "./workspace-integration";
 import { WorkspaceRegistryPublisher } from "./workspace-registry-publisher";
+import { executeArtifactRetentionCleanup } from "./artifact-retention";
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
   const provider = new ArtifactReviewProvider(context);
@@ -320,6 +321,14 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     console.error("Starting the global artifact watcher failed:", error);
     void vscode.window.showErrorMessage(`AI Artifacts could not watch global artifact storage: ${message}`);
   }
+
+  // Best-effort asynchronous retention cleanup (does not block extension activation)
+  const retentionDays = vscode.workspace
+    .getConfiguration("agentPlus")
+    .get<unknown>("artifactRetentionDays");
+  void executeArtifactRetentionCleanup({ retentionDays }).catch((error) => {
+    console.error("AI Artifacts retention cleanup failed:", error);
+  });
 }
 
 export function deactivate(): void {}
