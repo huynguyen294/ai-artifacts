@@ -10,3 +10,4 @@ releases/*.vsix
 .ai-artifacts/
 .env
 RELEASE_NOTES.md
+.agents
