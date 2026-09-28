@@ -2,6 +2,8 @@
 
 # AI Artifacts - Interactive Planning & Review
 
+📦 [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=huynguyen294.ai-artifacts) · 🌐 [Open VSX](https://open-vsx.org/extension/huynguyen294/ai-artifacts) · 🐙 [GitHub](https://github.com/huynguyen294/ai-artifacts)
+
 **AI Artifacts** is a VS Code extension for reviewing AI-generated Markdown artifacts, implementation plans, and architecture proposals. It provides a dedicated interactive review editor directly inside your IDE—allowing you to highlight text, attach inline feedback, and send review decisions back to your AI coding agents (such as **Codex**, **Cursor**, **Windsurf**, and other MCP-enabled assistants) through the open **Model Context Protocol (MCP)**.
 
 With AI Artifacts, you can review proposals before code is written, guide agent planning iteratively, and authorize execution with a single click.
