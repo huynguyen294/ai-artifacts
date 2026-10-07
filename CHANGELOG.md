@@ -4,6 +4,13 @@ All notable changes to the **AI Artifacts** (`agent-plus`) project will be docum
 
 Release history has been standardized and tracked starting from version **0.2.6**. Package builds prior to this version are not considered part of the official changelog.
 
+## [1.0.2] - 2026-10-07
+
+### Documentation
+
+- Reworked the README for a clearer onboarding flow, compatibility guidance, usage instructions, artifact search and reconnect steps, and lifecycle behavior.
+- Added walkthrough GIFs for artifact creation, inline feedback, and reconnecting an existing artifact.
+
 ## [1.0.1] - 2026-09-21
 
 ### Automatic artifact retention cleanup
