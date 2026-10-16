@@ -3,10 +3,14 @@ import { describe, expect, it } from "vitest";
 import * as contracts from "../src/shared/contracts";
 import {
   ARTIFACT_CONNECTION_SCHEMA_VERSION,
+  ARTIFACT_ROOT_BLOCK_ID,
+  ARTIFACT_ROOT_BLOCK_TYPE,
+  ARTIFACT_ROOT_TEXT,
   ARTIFACT_SCHEMA_VERSION,
   artifactConnectionSchema,
   artifactManifestSchema,
   commentsDocumentSchema,
+  reviewCommentSchema,
   reviewSubmissionSchema,
   type ArtifactConnection,
   type ReviewState,
@@ -113,6 +117,44 @@ describe("artifact schema v6 contract", () => {
       artifactSha256,
     })).toThrow("comments.json does not belong to this artifact");
     expect(() => commentsDocumentSchema.parse(comments(5))).toThrow();
+  });
+
+  it("accepts only the canonical virtual target for artifact-wide comments", () => {
+    const generalFeedback = {
+      id: "22222222-2222-4222-8222-222222222222",
+      createdAt: timestamp,
+      block: {
+        id: ARTIFACT_ROOT_BLOCK_ID,
+        type: ARTIFACT_ROOT_BLOCK_TYPE,
+        heading: null,
+      },
+      selection: {
+        quote: ARTIFACT_ROOT_TEXT,
+        start: 0,
+        end: ARTIFACT_ROOT_TEXT.length,
+        prefix: "",
+        suffix: "",
+      },
+      body: "Apply the inline comments consistently across the artifact.",
+    };
+
+    expect(reviewCommentSchema.parse(generalFeedback)).toEqual(generalFeedback);
+    expect(commentsDocumentSchema.parse({
+      ...comments(),
+      comments: [generalFeedback],
+    }).comments).toEqual([generalFeedback]);
+    expect(() => reviewCommentSchema.parse({
+      ...generalFeedback,
+      block: { ...generalFeedback.block, id: "another-block" },
+    })).toThrow();
+    expect(() => reviewCommentSchema.parse({
+      ...generalFeedback,
+      block: { id: ARTIFACT_ROOT_BLOCK_ID, type: "paragraph", heading: null },
+    })).toThrow();
+    expect(() => reviewCommentSchema.parse({
+      ...generalFeedback,
+      selection: { ...generalFeedback.selection, end: 0 },
+    })).toThrow();
   });
 
   it("binds submissions to the v6 review session, round, artifact, and hashes", () => {

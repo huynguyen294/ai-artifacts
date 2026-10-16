@@ -19,7 +19,7 @@ export type SelectionDraft = {
   quote: string;
   start: number;
   end: number;
-  range: Range;
+  range?: Range;
   contextElement: HTMLElement;
 };
 
@@ -53,10 +53,15 @@ export function SelectionCommentPopover({ draft, body, onBodyChange, onCancel, o
   });
 
   useEffect(() => {
+    if (!draft.range) {
+      refs.setPositionReference(draft.contextElement);
+      return;
+    }
+    const range = draft.range;
     const reference: VirtualElement = {
       contextElement: draft.contextElement,
-      getBoundingClientRect: () => draft.range.getBoundingClientRect(),
-      getClientRects: () => draft.range.getClientRects(),
+      getBoundingClientRect: () => range.getBoundingClientRect(),
+      getClientRects: () => range.getClientRects(),
     };
     refs.setPositionReference(reference);
   }, [draft, refs]);

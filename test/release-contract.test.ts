@@ -32,6 +32,42 @@ describe("v1.0.2 release contract", () => {
     ]);
   });
 
+  it("contributes the safe-open command for artifact.md Explorer, editor, and editor-tab context menus", async () => {
+    const packageJson = JSON.parse(await read("package.json"));
+    const openCommand = packageJson.contributes.commands.find(
+      (command: any) => command.command === "agentPlus.openArtifactReview",
+    );
+
+    expect(openCommand).toEqual({
+      command: "agentPlus.openArtifactReview",
+      title: "Open Artifact Review",
+      category: "AI Artifacts",
+    });
+    expect(packageJson.contributes.menus).toEqual({
+      "explorer/context": [
+        {
+          command: "agentPlus.openArtifactReview",
+          when: "resourceFilename == artifact.md && resourceScheme == file && !explorerResourceIsFolder",
+          group: "navigation@0",
+        },
+      ],
+      "editor/context": [
+        {
+          command: "agentPlus.openArtifactReview",
+          when: "resourceFilename == artifact.md && resourceScheme == file",
+          group: "navigation@0",
+        },
+      ],
+      "editor/title/context": [
+        {
+          command: "agentPlus.openArtifactReview",
+          when: "resourceFilename == artifact.md && resourceScheme == file",
+          group: "navigation@0",
+        },
+      ],
+    });
+  });
+
   it("keeps release-facing docs on the global v6 and reinstall contract", async () => {
     const [readme, philosophy, architecture, components, instructions, contract, changelog, documentationChanges] =
       await Promise.all([

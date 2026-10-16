@@ -60,7 +60,8 @@
     "commands": [
       {
         "command": "agentPlus.openArtifactReview",
-        "title": "AI Artifacts: Open Artifact Review"
+        "title": "Open Artifact Review",
+        "category": "AI Artifacts"
       },
       {
         "command": "agentPlus.searchArtifact",
@@ -127,6 +128,29 @@
         "title": "AI Artifacts: Uninstall Integration for Windsurf"
       }
     ],
+    "menus": {
+      "explorer/context": [
+        {
+          "command": "agentPlus.openArtifactReview",
+          "when": "resourceFilename == artifact.md && resourceScheme == file && !explorerResourceIsFolder",
+          "group": "navigation@0"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "agentPlus.openArtifactReview",
+          "when": "resourceFilename == artifact.md && resourceScheme == file",
+          "group": "navigation@0"
+        }
+      ],
+      "editor/title/context": [
+        {
+          "command": "agentPlus.openArtifactReview",
+          "when": "resourceFilename == artifact.md && resourceScheme == file",
+          "group": "navigation@0"
+        }
+      ]
+    },
     "customEditors": [
       {
         "viewType": "agentPlus.artifactReview",

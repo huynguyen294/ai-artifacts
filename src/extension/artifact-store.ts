@@ -2,8 +2,12 @@ import { createHash, randomUUID } from "node:crypto";
 import { constants, promises as fs } from "node:fs";
 import path from "node:path";
 import {
+  ARTIFACT_ROOT_BLOCK_ID,
+  ARTIFACT_ROOT_BLOCK_TYPE,
+  ARTIFACT_ROOT_TEXT,
   ARTIFACT_SCHEMA_VERSION,
   commentsDocumentSchema,
+  reviewCommentSchema,
   reviewSubmissionSchema,
   type CommentDraft,
   type CommentsDocument,
@@ -153,6 +157,53 @@ async function waitForArtifactTransaction(artifactDirectory: string): Promise<vo
   throw new Error("The artifact is still completing a review update. Try again shortly.");
 }
 
+function resolveCommentTarget(
+  blocks: ReviewState["blocks"],
+  draft: CommentDraft,
+): Pick<ReviewComment, "block" | "selection"> {
+  const { start, end, quote } = draft.selection;
+
+  if (draft.blockId === ARTIFACT_ROOT_BLOCK_ID) {
+    if (quote !== ARTIFACT_ROOT_TEXT || start !== 0 || end !== ARTIFACT_ROOT_TEXT.length) {
+      throw new Error("Invalid general feedback target.");
+    }
+    return {
+      block: {
+        id: ARTIFACT_ROOT_BLOCK_ID,
+        type: ARTIFACT_ROOT_BLOCK_TYPE,
+        heading: null,
+      },
+      selection: {
+        quote: ARTIFACT_ROOT_TEXT,
+        start: 0,
+        end: ARTIFACT_ROOT_TEXT.length,
+        prefix: "",
+        suffix: "",
+      },
+    };
+  }
+
+  const block = blocks.find((candidate) => candidate.id === draft.blockId);
+  if (!block) throw new Error("The selected Markdown block no longer exists.");
+  if (!Number.isInteger(start) || !Number.isInteger(end) || start < 0 || end <= start) {
+    throw new Error("Invalid selection range.");
+  }
+  if (block.text.slice(start, end) !== quote) {
+    throw new Error("The selected text no longer matches the plan.");
+  }
+
+  return {
+    block: { id: block.id, type: block.type, heading: block.heading },
+    selection: {
+      quote,
+      start,
+      end,
+      prefix: block.text.slice(Math.max(0, start - 40), start),
+      suffix: block.text.slice(end, end + 40),
+    },
+  };
+}
+
 export class ArtifactStore {
   readonly artifactDirectory: string;
   readonly manifestPath: string;
@@ -242,30 +293,15 @@ export class ArtifactStore {
     const state = await this.load();
     this.assertWritableState(state);
     if (state.submission) throw new Error("This artifact review round was already submitted.");
-    const block = state.blocks.find((candidate) => candidate.id === draft.blockId);
-    if (!block) throw new Error("The selected Markdown block no longer exists.");
     if (!draft.body.trim()) throw new Error("Comment cannot be empty.");
-    const { start, end, quote } = draft.selection;
-    if (!Number.isInteger(start) || !Number.isInteger(end) || start < 0 || end <= start) {
-      throw new Error("Invalid selection range.");
-    }
-    if (block.text.slice(start, end) !== quote) {
-      throw new Error("The selected text no longer matches the plan.");
-    }
+    const target = resolveCommentTarget(state.blocks, draft);
 
-    const comment: ReviewComment = {
+    const comment = reviewCommentSchema.parse({
       id: randomUUID(),
       createdAt: new Date().toISOString(),
-      block: { id: block.id, type: block.type, heading: block.heading },
-      selection: {
-        quote,
-        start,
-        end,
-        prefix: block.text.slice(Math.max(0, start - 40), start),
-        suffix: block.text.slice(end, end + 40),
-      },
+      ...target,
       body: draft.body.trim(),
-    };
+    });
     state.comments.comments.push(comment);
     await this.writeComments(state.comments);
     return this.load();

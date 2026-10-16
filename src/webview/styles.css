@@ -135,13 +135,15 @@ button:disabled {
   display: flex;
   align-items: center;
   justify-content: flex-end;
+  gap: 8px;
   min-height: 40px;
   padding: 12px;
   padding-bottom: 0px;
   /* border-bottom: 1px solid var(--vscode-panel-border); */
   background: var(--vscode-editor-background);
 }
-.review-utility-bar .comments-toggle {
+.review-utility-bar .comments-toggle,
+.review-utility-bar .general-feedback-toggle {
   display: inline-flex;
   align-items: center;
   gap: 6px;

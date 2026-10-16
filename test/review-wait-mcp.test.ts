@@ -12,7 +12,12 @@ import {
   OWNER_ONLY_FILE_MODE,
   globalArtifactsRoot,
 } from "../src/shared/artifact-files";
-import { ARTIFACT_SCHEMA_VERSION } from "../src/shared/contracts";
+import {
+  ARTIFACT_ROOT_BLOCK_ID,
+  ARTIFACT_ROOT_BLOCK_TYPE,
+  ARTIFACT_ROOT_TEXT,
+  ARTIFACT_SCHEMA_VERSION,
+} from "../src/shared/contracts";
 
 const temporaryDirectories: string[] = [];
 const processes: ChildProcessWithoutNullStreams[] = [];
@@ -388,6 +393,16 @@ describe("artifact review MCP server v8", () => {
       body: "Add recovery behavior.",
     });
     expect(commented.comments.comments).toHaveLength(1);
+    const withGeneralFeedback = await store.addComment({
+      blockId: ARTIFACT_ROOT_BLOCK_ID,
+      selection: {
+        quote: ARTIFACT_ROOT_TEXT,
+        start: 0,
+        end: ARTIFACT_ROOT_TEXT.length,
+      },
+      body: "Keep the whole artifact focused on recovery.",
+    });
+    expect(withGeneralFeedback.comments.comments).toHaveLength(2);
 
     const waiting = callToolTracked(client, "wait_for_artifact_review", {
       artifactDirectory: created.artifactDirectory,
@@ -404,6 +419,17 @@ describe("artifact review MCP server v8", () => {
 
     const reviewed = await waiting.promise;
     const commentsRaw = await readFile(path.join(created.artifactDirectory, "comments.json"), "utf8");
+    expect(JSON.parse(commentsRaw).comments).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        block: {
+          id: ARTIFACT_ROOT_BLOCK_ID,
+          type: ARTIFACT_ROOT_BLOCK_TYPE,
+          heading: null,
+        },
+        selection: expect.objectContaining({ quote: ARTIFACT_ROOT_TEXT }),
+        body: "Keep the whole artifact focused on recovery.",
+      }),
+    ]));
     expect(reviewed.structuredContent).toMatchObject({
       schemaVersion: ARTIFACT_SCHEMA_VERSION,
       artifactId: created.artifactId,

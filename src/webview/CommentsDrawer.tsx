@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import type { ReviewComment } from "../shared/contracts";
+import { ARTIFACT_ROOT_BLOCK_TYPE, type ReviewComment } from "../shared/contracts";
 
 type Props = {
   open: boolean;
@@ -26,16 +26,25 @@ export function CommentsDrawer({ open, comments, submitted, onClose, onJump, onR
         <div className="drawer-heading">
           <div>
             <h2>Comments ({comments.length})</h2>
-            <p>Select a comment to find it in the artifact.</p>
+            <p>Select a comment to view its context.</p>
           </div>
           <button autoFocus className="icon-button" aria-label="Close comments" onClick={onClose}>×</button>
         </div>
         <div className="comment-list">
-          {comments.length === 0 && <p className="empty">No comments yet. Select text in the artifact to add one.</p>}
+          {comments.length === 0 && (
+            <p className="empty">No comments yet. Select text or add general feedback to create one.</p>
+          )}
           {comments.map((comment, index) => (
             <section className="comment-card" key={comment.id}>
               <button className="comment-jump" onClick={() => onJump(comment)}>
-                <span className="comment-meta">#{index + 1}{comment.block.heading ? ` · ${comment.block.heading}` : ""}</span>
+                <span className="comment-meta">
+                  #{index + 1}
+                  {comment.block.type === ARTIFACT_ROOT_BLOCK_TYPE
+                    ? " · General feedback"
+                    : comment.block.heading
+                      ? ` · ${comment.block.heading}`
+                      : ""}
+                </span>
                 <blockquote>{comment.selection.quote}</blockquote>
                 <span className="comment-body">{comment.body}</span>
               </button>

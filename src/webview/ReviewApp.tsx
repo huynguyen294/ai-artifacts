@@ -7,6 +7,11 @@ import {
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
 } from "react";
+import {
+  ARTIFACT_ROOT_BLOCK_ID,
+  ARTIFACT_ROOT_BLOCK_TYPE,
+  ARTIFACT_ROOT_TEXT,
+} from "../shared/contracts";
 import type {
   ExtensionToWebviewMessage,
   MarkdownBlock,
@@ -124,6 +129,7 @@ export function App(): ReactNode {
   const [copied, setCopied] = useState(false);
   const [connectPromptCopied, setConnectPromptCopied] = useState(false);
   const reviewRoundRef = useRef<number | undefined>(undefined);
+  const generalFeedbackButtonRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     const listener = (event: MessageEvent<ExtensionToWebviewMessage>): void => {
@@ -175,6 +181,7 @@ export function App(): ReactNode {
   const commentsByBlock = useMemo(() => {
     const result = new Map<string, ReviewComment[]>();
     for (const comment of state?.comments.comments ?? []) {
+      if (comment.block.type === ARTIFACT_ROOT_BLOCK_TYPE) continue;
       const comments = result.get(comment.block.id) ?? [];
       comments.push(comment);
       result.set(comment.block.id, comments);
@@ -203,6 +210,20 @@ export function App(): ReactNode {
     setError(undefined);
   };
 
+  const beginGeneralFeedback = (event: ReactMouseEvent<HTMLButtonElement>): void => {
+    setDraft({
+      blockId: ARTIFACT_ROOT_BLOCK_ID,
+      quote: ARTIFACT_ROOT_TEXT,
+      start: 0,
+      end: ARTIFACT_ROOT_TEXT.length,
+      contextElement: event.currentTarget,
+    });
+    setBody("");
+    setActiveComment(undefined);
+    setError(undefined);
+    window.getSelection()?.removeAllRanges();
+  };
+
   const submitComment = (): void => {
     if (!draft || !body.trim()) return;
     vscode.postMessage({
@@ -222,6 +243,15 @@ export function App(): ReactNode {
   };
 
   const jumpToComment = (comment: ReviewComment): void => {
+    if (comment.block.type === ARTIFACT_ROOT_BLOCK_TYPE) {
+      const anchor = generalFeedbackButtonRef.current;
+      if (!anchor) return;
+      anchor.scrollIntoView({ behavior: "smooth", block: "start" });
+      anchor.focus({ preventScroll: true });
+      setActiveComment({ id: comment.id, anchor });
+      setDrawerOpen(false);
+      return;
+    }
     const mark = [...document.querySelectorAll<HTMLElement>("[data-comment-ids]")].find((element) =>
       element.dataset.commentIds?.split(",").includes(comment.id),
     );
@@ -385,6 +415,19 @@ export function App(): ReactNode {
       )}
 
       <nav className="review-utility-bar" aria-label="Artifact review tools">
+        <button
+          ref={generalFeedbackButtonRef}
+          className="ghost general-feedback-toggle"
+          disabled={isSubmitted || state.lifecycle.readOnly || hasUnsavedComment}
+          aria-haspopup="dialog"
+          aria-expanded={draft?.blockId === ARTIFACT_ROOT_BLOCK_ID}
+          title={isSubmitted
+            ? "This artifact review round was already submitted."
+            : blockedTitle ?? "Add feedback that applies to the entire artifact"}
+          onClick={beginGeneralFeedback}
+        >
+          General feedback
+        </button>
         <button
           className="ghost comments-toggle"
           aria-expanded={drawerOpen}

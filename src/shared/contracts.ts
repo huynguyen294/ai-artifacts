@@ -2,6 +2,9 @@ import { z } from "zod";
 
 export const ARTIFACT_SCHEMA_VERSION = 6 as const;
 export const ARTIFACT_CONNECTION_SCHEMA_VERSION = 1 as const;
+export const ARTIFACT_ROOT_BLOCK_ID = "__artifact_root__" as const;
+export const ARTIFACT_ROOT_BLOCK_TYPE = "artifact" as const;
+export const ARTIFACT_ROOT_TEXT = "Applies to the entire artifact" as const;
 export const artifactIdSchema = z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/);
 export const artifactKindSchema = z.string().regex(/^[a-z][a-z0-9-]{0,63}$/);
 
@@ -119,12 +122,30 @@ export const artifactManifestSchema = z.object({
   reviewSessionId: z.string().uuid(),
 }).strict();
 
-export const reviewCommentSchema = z.object({
+export const markdownBlockTypeSchema = z.enum([
+  "heading",
+  "paragraph",
+  "list-item",
+  "quote",
+  "code",
+  "table-cell",
+]);
+
+const reviewCommentBaseShape = {
   id: z.string().uuid(),
   createdAt: z.string().datetime(),
+};
+
+const markdownCommentBlockIdSchema = z.string().min(1).refine(
+  (value) => value !== ARTIFACT_ROOT_BLOCK_ID,
+  { message: "The artifact root block ID is reserved for artifact-wide comments." },
+);
+
+const markdownReviewCommentSchema = z.object({
+  ...reviewCommentBaseShape,
   block: z.object({
-    id: z.string().min(1),
-    type: z.enum(["heading", "paragraph", "list-item", "quote", "code", "table-cell"]),
+    id: markdownCommentBlockIdSchema,
+    type: markdownBlockTypeSchema,
     heading: z.string().nullable(),
   }),
   selection: z.object({
@@ -136,6 +157,28 @@ export const reviewCommentSchema = z.object({
   }),
   body: z.string().min(1),
 });
+
+const artifactReviewCommentSchema = z.object({
+  ...reviewCommentBaseShape,
+  block: z.object({
+    id: z.literal(ARTIFACT_ROOT_BLOCK_ID),
+    type: z.literal(ARTIFACT_ROOT_BLOCK_TYPE),
+    heading: z.null(),
+  }),
+  selection: z.object({
+    quote: z.literal(ARTIFACT_ROOT_TEXT),
+    start: z.literal(0),
+    end: z.literal(ARTIFACT_ROOT_TEXT.length),
+    prefix: z.literal(""),
+    suffix: z.literal(""),
+  }),
+  body: z.string().min(1),
+});
+
+export const reviewCommentSchema = z.union([
+  markdownReviewCommentSchema,
+  artifactReviewCommentSchema,
+]);
 
 export const commentsDocumentSchema = z.object({
   schemaVersion: z.literal(ARTIFACT_SCHEMA_VERSION),
@@ -163,11 +206,12 @@ export type ReviewComment = z.infer<typeof reviewCommentSchema>;
 export type CommentsDocument = z.infer<typeof commentsDocumentSchema>;
 export type ReviewDecision = z.infer<typeof reviewDecisionSchema>;
 export type ReviewSubmission = z.infer<typeof reviewSubmissionSchema>;
+export type MarkdownBlockType = z.infer<typeof markdownBlockTypeSchema>;
 
 export type MarkdownBlock = {
   id: string;
   index: number;
-  type: ReviewComment["block"]["type"];
+  type: MarkdownBlockType;
   text: string;
   heading: string | null;
   sourceStart: number;

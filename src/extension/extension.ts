@@ -43,7 +43,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       webviewOptions: { retainContextWhenHidden: true },
       supportsMultipleEditorsPerDocument: false,
     }),
-    vscode.commands.registerCommand("agentPlus.openArtifactReview", async () => {
+    vscode.commands.registerCommand("agentPlus.openArtifactReview", async (resource?: unknown) => {
+      if (resource instanceof vscode.Uri) {
+        await artifactReviewOpenCoordinator.open(resource);
+        return;
+      }
       const activeTextUri = vscode.window.activeTextEditor?.document.uri;
       const activeTabInput = vscode.window.tabGroups.activeTabGroup.activeTab?.input;
       const activeCustomUri =

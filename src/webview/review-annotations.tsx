@@ -1,5 +1,5 @@
 import { cloneElement, Fragment, isValidElement, type ReactElement, type ReactNode } from "react";
-import type { ReviewComment } from "../shared/contracts";
+import { ARTIFACT_ROOT_BLOCK_TYPE, type ReviewComment } from "../shared/contracts";
 
 type CommentClickHandler = (commentId: string, anchor: HTMLElement) => void;
 
@@ -101,6 +101,7 @@ export function annotateChildren(
   onCommentClick: CommentClickHandler,
   preserveWhitespace = false,
 ): ReactNode {
+  const inlineComments = comments.filter((comment) => comment.block.type !== ARTIFACT_ROOT_BLOCK_TYPE);
   const leaves: string[] = [];
   collectTextLeaves(children, leaves);
   const normalizedLeaves = normalizeLeaves(leaves, preserveWhitespace);
@@ -110,7 +111,7 @@ export function annotateChildren(
   const rebuild = (node: ReactNode): ReactNode => {
     if (typeof node === "string" || typeof node === "number") {
       const value = normalizedLeaves[leafIndex++] ?? "";
-      const result = markedText(value, cursor, comments, onCommentClick);
+      const result = markedText(value, cursor, inlineComments, onCommentClick);
       cursor += value.length;
       return result;
     }
