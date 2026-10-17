@@ -2,11 +2,20 @@ import { z } from "zod";
 
 export const ARTIFACT_SCHEMA_VERSION = 6 as const;
 export const ARTIFACT_CONNECTION_SCHEMA_VERSION = 1 as const;
+export const ARTIFACT_CONVERSATION_SCHEMA_VERSION = 1 as const;
 export const ARTIFACT_ROOT_BLOCK_ID = "__artifact_root__" as const;
 export const ARTIFACT_ROOT_BLOCK_TYPE = "artifact" as const;
 export const ARTIFACT_ROOT_TEXT = "Applies to the entire artifact" as const;
 export const artifactIdSchema = z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/);
 export const artifactKindSchema = z.string().regex(/^[a-z][a-z0-9-]{0,63}$/);
+export const artifactConversationIdSchema = z.string().uuid();
+export const conversationNameSchema = z
+  .string()
+  .min(1)
+  .max(200)
+  .refine((value) => value.trim().length > 0, {
+    message: "conversationName must not be blank.",
+  });
 
 export const artifactConnectionSourceSchema = z.enum(["create", "inspect"]);
 export type ArtifactConnectionSource = z.infer<typeof artifactConnectionSourceSchema>;
@@ -242,12 +251,72 @@ export const commentDraftSchema = z.object({
   body: z.string().min(1),
 });
 
+export const artifactConversationMetadataSchema = z.object({
+  schemaVersion: z.literal(ARTIFACT_CONVERSATION_SCHEMA_VERSION),
+  artifactConversationId: artifactConversationIdSchema,
+  conversationName: conversationNameSchema,
+  createdAt: z.string().datetime(),
+}).strict();
+
+export type ArtifactConversationMetadata = z.infer<typeof artifactConversationMetadataSchema>;
+
+export const artifactConversationMembershipSchema = z.object({
+  schemaVersion: z.literal(ARTIFACT_CONVERSATION_SCHEMA_VERSION),
+  artifactConversationId: artifactConversationIdSchema,
+  artifactId: artifactIdSchema,
+  registeredAt: z.string().datetime(),
+}).strict();
+
+export type ArtifactConversationMembership = z.infer<typeof artifactConversationMembershipSchema>;
+
+export const artifactConversationInputSchema = z.object({
+  artifactConversationId: artifactConversationIdSchema.optional(),
+  conversationName: conversationNameSchema.optional(),
+}).strict();
+
+export type ArtifactConversationInput = z.infer<typeof artifactConversationInputSchema>;
+
+export const conversationArtifactItemSchema = z.object({
+  artifactId: artifactIdSchema,
+  title: z.string().min(1).max(200),
+  kind: artifactKindSchema,
+  registeredAt: z.string().datetime(),
+  isCurrent: z.boolean(),
+}).strict();
+
+export type ConversationArtifactItem = z.infer<typeof conversationArtifactItemSchema>;
+
+export const conversationArtifactGroupSchema = z.object({
+  artifactConversationId: artifactConversationIdSchema,
+  conversationName: conversationNameSchema,
+  currentArtifactRegisteredAt: z.string().datetime(),
+  artifacts: z.array(conversationArtifactItemSchema),
+}).strict();
+
+export type ConversationArtifactGroup = z.infer<typeof conversationArtifactGroupSchema>;
+
+export const conversationArtifactsViewStateSchema = z.discriminatedUnion("status", [
+  z.object({ status: z.literal("loading") }).strict(),
+  z.object({
+    status: z.literal("ready"),
+    groups: z.array(conversationArtifactGroupSchema),
+    skippedCount: z.number().int().nonnegative(),
+  }).strict(),
+  z.object({
+    status: z.literal("error"),
+    message: z.string().min(1),
+  }).strict(),
+]);
+
+export type ConversationArtifactsViewState = z.infer<typeof conversationArtifactsViewStateSchema>;
+
 export const webviewToExtensionMessageSchema = z.discriminatedUnion("type", [
   commentDraftSchema.extend({ type: z.literal("addComment") }),
   z.object({ type: z.literal("removeComment"), commentId: z.string().uuid() }),
   z.object({ type: z.literal("submitReview"), decision: reviewDecisionSchema }),
   z.object({ type: z.literal("copyArtifactConnectPrompt") }),
   z.object({ type: z.literal("openExternal"), url: z.string().url() }),
+  z.object({ type: z.literal("openConversationArtifact"), artifactId: artifactIdSchema }).strict(),
   z.object({ type: z.literal("ready") }),
 ]);
 
@@ -258,6 +327,7 @@ export type SendStatus = "idle" | "submitting" | "submitted" | "error";
 
 export type ExtensionToWebviewMessage =
   | { type: "state"; state: ReviewState }
+  | { type: "conversationArtifactsState"; state: ConversationArtifactsViewState }
   | { type: "sendState"; status: SendStatus; message?: string; retryable?: boolean }
   | { type: "artifactConnectPromptCopied" }
   | { type: "error"; message: string };

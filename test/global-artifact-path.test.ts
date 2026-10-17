@@ -9,6 +9,9 @@ import {
   ARTIFACT_MARKDOWN_FILE,
   ARTIFACT_UPDATE_LOCK_FILE,
   COMMENTS_FILE,
+  CONVERSATION_METADATA_FILE,
+  CONVERSATION_REGISTERED_ARTIFACTS_DIRECTORY,
+  CONVERSATION_REGISTRY_DIRECTORY,
   MANAGED_ASSETS_DIRECTORY,
   MANAGED_MCP_SCRIPT_FILE,
   MANAGED_RUNTIME_DIRECTORY,
@@ -18,6 +21,11 @@ import {
   REVIEW_SUBMISSION_FILE,
   aiArtifactsRoot,
   artifactCollectionRoot,
+  conversationDirectory,
+  conversationMetadataPath,
+  conversationRegisteredArtifactPath,
+  conversationRegisteredArtifactsDirectory,
+  conversationRegistryRoot,
   globalArtifactsRoot,
   managedAssetsRoot,
   managedMcpScriptPath,
@@ -67,6 +75,12 @@ describe("global artifact path foundation", () => {
   it("resolves canonical product root and managed asset paths", () => {
     const root = aiArtifactsRoot({ userHome });
     const collection = artifactCollectionRoot({ userHome });
+    const conversations = conversationRegistryRoot({ userHome });
+    const convId = "11111111-1111-4111-8111-111111111111";
+    const convDir = conversationDirectory(convId, { userHome });
+    const convMeta = conversationMetadataPath(convId, { userHome });
+    const regArtifactsDir = conversationRegisteredArtifactsDirectory(convId, { userHome });
+    const regArtifactPath = conversationRegisteredArtifactPath(convId, "artifact-001", { userHome });
     const managed = managedAssetsRoot({ userHome });
     const runtime = managedRuntimeDirectory({ userHome });
     const mcpScript = managedMcpScriptPath({ userHome });
@@ -74,22 +88,50 @@ describe("global artifact path foundation", () => {
 
     expect(root).toBe(path.join(userHome, ARTIFACTS_DIRECTORY));
     expect(collection).toBe(path.join(root, ARTIFACT_COLLECTION_DIRECTORY));
+    expect(conversations).toBe(path.join(root, CONVERSATION_REGISTRY_DIRECTORY));
+    expect(convDir).toBe(path.join(conversations, convId));
+    expect(convMeta).toBe(path.join(convDir, CONVERSATION_METADATA_FILE));
+    expect(regArtifactsDir).toBe(path.join(convDir, CONVERSATION_REGISTERED_ARTIFACTS_DIRECTORY));
+    expect(regArtifactPath).toBe(path.join(regArtifactsDir, "artifact-001.json"));
     expect(managed).toBe(path.join(root, MANAGED_ASSETS_DIRECTORY));
     expect(runtime).toBe(path.join(managed, MANAGED_RUNTIME_DIRECTORY));
     expect(mcpScript).toBe(path.join(runtime, MANAGED_MCP_SCRIPT_FILE));
     expect(workspaces).toBe(path.join(managed, MANAGED_WORKSPACES_DIRECTORY));
 
-    // Artifacts collection and managed assets are siblings, never nested
+    // Artifacts collection, conversation-registry, and managed assets are siblings, never nested
     expect(path.dirname(collection)).toBe(root);
+    expect(path.dirname(conversations)).toBe(root);
     expect(path.dirname(managed)).toBe(root);
     expect(collection).not.toBe(managed);
+    expect(conversations).not.toBe(collection);
+    expect(conversations).not.toBe(managed);
 
     // Relative user home rejection
     expect(() => aiArtifactsRoot({ userHome: "relative" })).toThrow("must be an absolute path");
+    expect(() => conversationRegistryRoot({ userHome: "relative" })).toThrow("must be an absolute path");
+    expect(() => conversationDirectory(convId, { userHome: "relative" })).toThrow("must be an absolute path");
+    expect(() => conversationMetadataPath(convId, { userHome: "relative" })).toThrow("must be an absolute path");
+    expect(() => conversationRegisteredArtifactsDirectory(convId, { userHome: "relative" })).toThrow("must be an absolute path");
+    expect(() => conversationRegisteredArtifactPath(convId, "artifact-001", { userHome: "relative" })).toThrow("must be an absolute path");
     expect(() => managedAssetsRoot({ userHome: "relative" })).toThrow("must be an absolute path");
     expect(() => managedRuntimeDirectory({ userHome: "relative" })).toThrow("must be an absolute path");
     expect(() => managedMcpScriptPath({ userHome: "relative" })).toThrow("must be an absolute path");
     expect(() => managedWorkspaceRegistryDirectory({ userHome: "relative" })).toThrow("must be an absolute path");
+  });
+
+  it("rejects malformed UUIDs and path traversal in conversation path helpers", () => {
+    const validConvId = "11111111-1111-4111-8111-111111111111";
+
+    for (const invalidConvId of ["not-a-uuid", "../managed", "..\\managed", `${validConvId}/../managed`, ""]) {
+      expect(() => conversationDirectory(invalidConvId, { userHome })).toThrow();
+      expect(() => conversationMetadataPath(invalidConvId, { userHome })).toThrow();
+      expect(() => conversationRegisteredArtifactsDirectory(invalidConvId, { userHome })).toThrow();
+      expect(() => conversationRegisteredArtifactPath(invalidConvId, "artifact-001", { userHome })).toThrow();
+    }
+
+    for (const invalidArtifactId of ["../outside", "..\\outside", "nested/artifact", "nested\\artifact", ".hidden", ""]) {
+      expect(() => conversationRegisteredArtifactPath(validConvId, invalidArtifactId, { userHome })).toThrow();
+    }
   });
 
   it("uses the explicit test seam without reading the real user home", () => {
