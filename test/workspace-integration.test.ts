@@ -301,7 +301,7 @@ describe("Workspace Integration Asset Verifiers", () => {
       CODEX_ARTIFACTS_REGISTRY_DIRECTORY: installedPaths.workspacesDirectory,
     });
     const initialized = await client.request("initialize", { protocolVersion: "2025-06-18" });
-    expect(initialized.serverInfo.version).toBe("9.0.0");
+    expect(initialized.serverInfo.version).toBe("10.0.0");
     expect(initialized.instructions).toContain("resolve_artifact_window");
     client.notify("notifications/initialized");
     const catalog = await client.request("tools/list");

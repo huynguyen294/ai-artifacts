@@ -10,6 +10,10 @@ import {
   ARTIFACTS_DIRECTORY,
   OWNER_ONLY_DIRECTORY_MODE,
   OWNER_ONLY_FILE_MODE,
+  conversationDirectory,
+  conversationMetadataPath,
+  conversationRegisteredArtifactPath,
+  conversationRegistryRoot,
   globalArtifactsRoot,
 } from "../src/shared/artifact-files";
 import {
@@ -142,7 +146,8 @@ function startClient(registry: string, extraEnvironment: NodeJS.ProcessEnv = {})
 
 async function initialize(client: TestClient): Promise<void> {
   const initialized = await client.request("initialize", { protocolVersion: "2025-06-18" });
-  expect(initialized.serverInfo.version).toBe("9.0.0");
+  expect(initialized.serverInfo.version).toBe("10.0.0");
+  expect(initialized.instructions).toContain("artifactConversationId");
   expect(initialized.instructions).toContain("resolve_artifact_window");
   expect(initialized.instructions).toContain("create_artifact");
   expect(initialized.instructions).toContain("inspect_artifact_review");
@@ -2524,6 +2529,384 @@ describe("artifact review MCP server v8", () => {
       reuseRoundToken: false,
       useSameArtifactHandle: false,
     });
+  });
+  it("creates a new conversation on create_artifact when artifactConversationId is omitted and registers subsequent artifacts when provided", async () => {
+    const fixture = await workspaceFixture();
+    const client = startClient(fixture.registry);
+    await initialize(client);
+
+    const first = await callTool(client, "create_artifact", {
+      title: "First Plan",
+      kind: "implementation-plan",
+      markdown: initialMarkdown,
+      conversationName: "Auth Refactor Thread",
+    });
+    expect(first.isError).not.toBe(true);
+    const conversationId = first.structuredContent.artifactConversationId;
+    expect(conversationId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+    expect(first.structuredContent.conversationName).toBe("Auth Refactor Thread");
+
+    const metadataRaw = JSON.parse(
+      await readFile(conversationMetadataPath(conversationId, { userHome: fixture.userHome }), "utf8"),
+    );
+    expect(metadataRaw).toMatchObject({
+      schemaVersion: 1,
+      artifactConversationId: conversationId,
+      conversationName: "Auth Refactor Thread",
+    });
+
+    const firstMembership = JSON.parse(
+      await readFile(
+        conversationRegisteredArtifactPath(conversationId, first.structuredContent.artifactId, { userHome: fixture.userHome }),
+        "utf8",
+      ),
+    );
+    expect(firstMembership).toMatchObject({
+      schemaVersion: 1,
+      artifactConversationId: conversationId,
+      artifactId: first.structuredContent.artifactId,
+    });
+
+    const second = await callTool(client, "create_artifact", {
+      title: "Second Plan",
+      kind: "implementation-plan",
+      markdown: initialMarkdown,
+      artifactConversationId: conversationId,
+      conversationName: "Ignored Override Name",
+    });
+    expect(second.isError).not.toBe(true);
+    expect(second.structuredContent.artifactConversationId).toBe(conversationId);
+    expect(second.structuredContent.conversationName).toBe("Auth Refactor Thread");
+
+    const secondMembership = JSON.parse(
+      await readFile(
+        conversationRegisteredArtifactPath(conversationId, second.structuredContent.artifactId, { userHome: fixture.userHome }),
+        "utf8",
+      ),
+    );
+    expect(secondMembership).toMatchObject({
+      schemaVersion: 1,
+      artifactConversationId: conversationId,
+      artifactId: second.structuredContent.artifactId,
+    });
+  });
+
+  it("fails closed with CONVERSATION_NOT_FOUND before consuming window selectionToken or creating artifact directory", async () => {
+    const fixture = await workspaceFixture();
+    const client = startClient(fixture.registry);
+    await initialize(client);
+
+    const resolved = await callTool(client, "resolve_artifact_window", {});
+    const selected = resolved.structuredContent.candidates[0];
+    const missingConversationId = randomUUID();
+
+    const failedCreate = await callTool(client, "create_artifact", {
+      title: "Missing Conversation Create",
+      kind: "implementation-plan",
+      markdown: initialMarkdown,
+      artifactConversationId: missingConversationId,
+      connection: {
+        targetMode: "explicit-window",
+        selectionToken: selected.selectionToken,
+      },
+    });
+    expect(failedCreate.isError).toBe(true);
+    expect(failedCreate.structuredContent).toMatchObject({
+      code: "CONVERSATION_NOT_FOUND",
+      retryable: false,
+      expectedNextTool: "create_artifact",
+      useSameArtifactHandle: false,
+    });
+    await expect(access(fixture.globalRoot)).rejects.toThrow();
+
+    // Window selection token must still be valid because pre-validation failed before resolveCreateTarget
+    const validCreate = await callTool(client, "create_artifact", {
+      title: "Recovered Create With Same Window Token",
+      kind: "implementation-plan",
+      markdown: initialMarkdown,
+      connection: {
+        targetMode: "explicit-window",
+        selectionToken: selected.selectionToken,
+      },
+    });
+    expect(validCreate.isError).not.toBe(true);
+    expect(validCreate.structuredContent.artifactConversationId).toEqual(expect.any(String));
+    expect(validCreate.structuredContent.conversationName).toBe("Recovered Create With Same Window Token");
+  });
+
+  it("does not write conversation registry state when create_artifact fails window selection and rolls back conversation on connection commit failure", async () => {
+    const fixture = await workspaceFixture();
+    const firstSnapshotPath = path.join(fixture.registry, (await readdir(fixture.registry))[0]!);
+    const firstSnapshot = JSON.parse(await readFile(firstSnapshotPath, "utf8"));
+    firstSnapshot.focused = false;
+    await atomicWrite(firstSnapshotPath, `${JSON.stringify(firstSnapshot, null, 2)}\n`);
+
+    const now = Date.now();
+    const secondInstanceId = randomUUID();
+    await writeFile(path.join(fixture.registry, `${secondInstanceId}.json`), `${JSON.stringify({
+      schemaVersion: 2,
+      instanceId: secondInstanceId,
+      processId: process.pid,
+      workspaceFile: null,
+      focused: false,
+      folders: [{ path: fixture.workspace, realPath: await realpath(fixture.workspace) }],
+      activeFile: null,
+      updatedAt: new Date(now).toISOString(),
+      expiresAt: new Date(now + 60_000).toISOString(),
+    }, null, 2)}\n`, "utf8");
+
+    const client = startClient(fixture.registry);
+    await initialize(client);
+
+    const ambiguous = await callTool(client, "create_artifact", {
+      title: "Ambiguous Conversation Plan",
+      kind: "plan",
+      markdown: "# Plan\n",
+    });
+    expect(ambiguous.isError).toBe(true);
+    expect(ambiguous.content[0].text).toContain("WINDOW_SELECTION_REQUIRED");
+    await expect(access(conversationRegistryRoot({ userHome: fixture.userHome }))).rejects.toThrow();
+
+    // Restore focus and verify rollback when connection commit fails
+    firstSnapshot.focused = true;
+    await atomicWrite(firstSnapshotPath, `${JSON.stringify(firstSnapshot, null, 2)}\n`);
+
+    const failingClient = startClient(fixture.registry, {
+      NODE_ENV: "test",
+      CODEX_ARTIFACTS_TEST_FAIL_CREATE: "at-connection",
+    });
+    await initialize(failingClient);
+    const failedConnection = await callTool(failingClient, "create_artifact", {
+      title: "Rolled Back Conversation Plan",
+      kind: "plan",
+      markdown: "# Plan\n",
+    });
+    expect(failedConnection.isError).toBe(true);
+    expect(await readdir(fixture.globalRoot)).toEqual([]);
+    const convRoot = conversationRegistryRoot({ userHome: fixture.userHome });
+    expect(await readdir(convRoot)).toEqual([]);
+  });
+
+  it("registers or creates conversations in inspect_artifact_review without mutating reviewRound or artifact.json.updatedAt and echoes artifactConversationId in wait/advance", async () => {
+    const fixture = await workspaceFixture();
+    const client = startClient(fixture.registry);
+    await initialize(client);
+
+    const created = await createArtifact(client, fixture.workspace, { title: "Inspect Conversation Artifact" });
+    const manifestBefore = JSON.parse(await readFile(path.join(created.artifactDirectory, "artifact.json"), "utf8"));
+
+    // 1. Inspect without artifactConversationId creates a new conversation and registers the artifact
+    const inspectedNewConv = await callTool(client, "inspect_artifact_review", {
+      artifactDirectory: created.artifactDirectory,
+      conversationName: "Reconnected Session Thread",
+    });
+    expect(inspectedNewConv.isError).not.toBe(true);
+    const newConvId = inspectedNewConv.structuredContent.artifactConversationId;
+    expect(newConvId).toEqual(expect.any(String));
+    expect(newConvId).not.toBe(created.artifactConversationId);
+    expect(inspectedNewConv.structuredContent.conversationName).toBe("Reconnected Session Thread");
+
+    const manifestAfterNewConv = JSON.parse(await readFile(path.join(created.artifactDirectory, "artifact.json"), "utf8"));
+    expect(manifestAfterNewConv.reviewRound).toBe(manifestBefore.reviewRound);
+    expect(manifestAfterNewConv.updatedAt).toBe(manifestBefore.updatedAt);
+
+    // 2. Inspect with existing artifactConversationId updates registeredAt in that conversation
+    const membershipPath = conversationRegisteredArtifactPath(newConvId, created.artifactId, { userHome: fixture.userHome });
+    const firstMembership = JSON.parse(await readFile(membershipPath, "utf8"));
+    await new Promise((resolve) => setTimeout(resolve, 15));
+
+    const inspectedExistingConv = await callTool(client, "inspect_artifact_review", {
+      artifactDirectory: created.artifactDirectory,
+      artifactConversationId: newConvId,
+    });
+    expect(inspectedExistingConv.isError).not.toBe(true);
+    expect(inspectedExistingConv.structuredContent.artifactConversationId).toBe(newConvId);
+    expect(inspectedExistingConv.structuredContent.conversationName).toBe("Reconnected Session Thread");
+
+    const updatedMembership = JSON.parse(await readFile(membershipPath, "utf8"));
+    expect(Date.parse(updatedMembership.registeredAt)).toBeGreaterThanOrEqual(Date.parse(firstMembership.registeredAt));
+
+    const manifestAfterExistingConv = JSON.parse(await readFile(path.join(created.artifactDirectory, "artifact.json"), "utf8"));
+    expect(manifestAfterExistingConv.reviewRound).toBe(manifestBefore.reviewRound);
+    expect(manifestAfterExistingConv.updatedAt).toBe(manifestBefore.updatedAt);
+
+    // 3. Echo artifactConversationId in wait_for_artifact_review and advance_and_wait_for_artifact
+    await writeComments(created.artifactDirectory, ["Please update with conversation echo."]);
+    await submitDecision(created.artifactDirectory, "revise", ["Please update with conversation echo."]);
+
+    const waited = await callTool(client, "wait_for_artifact_review", {
+      artifactDirectory: created.artifactDirectory,
+      expectedReviewRound: 1,
+      artifactConversationId: newConvId,
+    });
+    expect(waited.isError).not.toBe(true);
+    expect(waited.structuredContent.artifactConversationId).toBe(newConvId);
+
+    const advancing = callToolTracked(client, "advance_and_wait_for_artifact", {
+      artifactDirectory: created.artifactDirectory,
+      expectedReviewRound: 1,
+      roundToken: waited.structuredContent.roundToken,
+      markdown: "# Artifact\n\nUpdated in round 2.\n",
+      artifactConversationId: newConvId,
+    });
+    await advancing.sent;
+    await waitForRound(created.artifactDirectory, 2);
+    await submitDecision(created.artifactDirectory, "approve");
+    const advanced = await advancing.promise;
+    expect(advanced.isError).not.toBe(true);
+    expect(advanced.structuredContent.artifactConversationId).toBe(newConvId);
+  });
+
+  it("rejects unknown keys and malformed or missing artifactConversationId in inspect_artifact_review before consuming reconnect window tokens", async () => {
+    const fixture = await workspaceFixture();
+    const client = startClient(fixture.registry);
+    await initialize(client);
+
+    const created = await createArtifact(client, fixture.workspace, { title: "Inspect Validation Artifact" });
+
+    const unknownKey = await callTool(client, "inspect_artifact_review", {
+      artifactDirectory: created.artifactDirectory,
+      unexpectedField: "should-fail",
+    });
+    expect(unknownKey.isError).toBe(true);
+    expect(unknownKey.content[0].text).toContain("unrecognized key(s): unexpectedField");
+
+    const malformedConvId = await callTool(client, "inspect_artifact_review", {
+      artifactDirectory: created.artifactDirectory,
+      artifactConversationId: "not-a-uuid",
+    });
+    expect(malformedConvId.isError).toBe(true);
+    expect(malformedConvId.content[0].text).toContain("INVALID_ARTIFACT_INPUT");
+
+    const resolved = await callTool(client, "resolve_artifact_window", {});
+    const selected = resolved.structuredContent.candidates[0];
+    const missingConvId = randomUUID();
+
+    const missingConvInspect = await callTool(client, "inspect_artifact_review", {
+      artifactDirectory: created.artifactDirectory,
+      intent: "reconnect",
+      artifactConversationId: missingConvId,
+      connection: {
+        targetMode: "explicit-window",
+        selectionToken: selected.selectionToken,
+      },
+    });
+    expect(missingConvInspect.isError).toBe(true);
+    expect(missingConvInspect.structuredContent).toMatchObject({
+      code: "CONVERSATION_NOT_FOUND",
+      retryable: false,
+      expectedNextTool: "inspect_artifact_review",
+      useSameArtifactHandle: true,
+    });
+
+    // Reconnect window selection token must still be valid because pre-validation failed before token claim/consume
+    const validReconnect = await callTool(client, "inspect_artifact_review", {
+      artifactDirectory: created.artifactDirectory,
+      intent: "reconnect",
+      artifactConversationId: created.artifactConversationId,
+      connection: {
+        targetMode: "explicit-window",
+        selectionToken: selected.selectionToken,
+      },
+    });
+    expect(validReconnect.isError).not.toBe(true);
+    expect(validReconnect.structuredContent.artifactConversationId).toBe(created.artifactConversationId);
+  });
+
+  it("does not mutate conversation registry when inspect_artifact_review reconnect fails window selection and rolls back new or existing conversation membership on connection commit failure", async () => {
+    const fixture = await workspaceFixture();
+    const client = startClient(fixture.registry);
+    await initialize(client);
+
+    const first = await createArtifact(client, fixture.workspace, { title: "First Artifact" });
+    const second = await createArtifact(client, fixture.workspace, { title: "Second Artifact" });
+    const convRoot = conversationRegistryRoot({ userHome: fixture.userHome });
+
+    const firstMembershipPath = conversationRegisteredArtifactPath(
+      first.artifactConversationId,
+      first.artifactId,
+      { userHome: fixture.userHome },
+    );
+    const initialFirstMembership = JSON.parse(await readFile(firstMembershipPath, "utf8"));
+
+    // 1. Reconnect window selection failure happens before any conversation creation or membership mutation
+    const firstSnapshotPath = path.join(fixture.registry, (await readdir(fixture.registry))[0]!);
+    const firstSnapshot = JSON.parse(await readFile(firstSnapshotPath, "utf8"));
+    firstSnapshot.focused = false;
+    await atomicWrite(firstSnapshotPath, `${JSON.stringify(firstSnapshot, null, 2)}\n`);
+
+    const now = Date.now();
+    const secondInstanceId = randomUUID();
+    await writeFile(path.join(fixture.registry, `${secondInstanceId}.json`), `${JSON.stringify({
+      schemaVersion: 2,
+      instanceId: secondInstanceId,
+      processId: process.pid,
+      workspaceFile: null,
+      focused: false,
+      folders: [{ path: fixture.workspace, realPath: await realpath(fixture.workspace) }],
+      activeFile: null,
+      updatedAt: new Date(now).toISOString(),
+      expiresAt: new Date(now + 60_000).toISOString(),
+    }, null, 2)}\n`, "utf8");
+
+    const conversationsBeforeAmbiguous = (await readdir(convRoot)).sort();
+    const ambiguousReconnect = await callTool(client, "inspect_artifact_review", {
+      artifactDirectory: first.artifactDirectory,
+      intent: "reconnect",
+      connection: {
+        targetMode: "artifact-window",
+        windowInstanceId: randomUUID(),
+      },
+    });
+    expect(ambiguousReconnect.isError).toBe(true);
+    expect(ambiguousReconnect.structuredContent).toMatchObject({
+      code: "WINDOW_SELECTION_REQUIRED",
+    });
+    expect((await readdir(convRoot)).sort()).toEqual(conversationsBeforeAmbiguous);
+    expect(JSON.parse(await readFile(firstMembershipPath, "utf8"))).toEqual(initialFirstMembership);
+
+    // Restore focus and test connection commit failures during reconnect
+    firstSnapshot.focused = true;
+    await atomicWrite(firstSnapshotPath, `${JSON.stringify(firstSnapshot, null, 2)}\n`);
+
+    const failingClient = startClient(fixture.registry, {
+      NODE_ENV: "test",
+      CODEX_ARTIFACTS_TEST_FAIL_RECONNECT: "invalid-state-at-connection",
+    });
+    await initialize(failingClient);
+
+    // 2a. Failure when creating a new conversation on reconnect removes the newly created conversation
+    const failedNewConvReconnect = await callTool(failingClient, "inspect_artifact_review", {
+      artifactDirectory: first.artifactDirectory,
+      intent: "reconnect",
+      conversationName: "Should Roll Back New Conversation",
+    });
+    expect(failedNewConvReconnect.isError).toBe(true);
+    expect((await readdir(convRoot)).sort()).toEqual(conversationsBeforeAmbiguous);
+
+    // 2b. Failure when registering an artifact into an existing conversation where it was NOT a member removes the membership
+    const secondInFirstConvPath = conversationRegisteredArtifactPath(
+      first.artifactConversationId,
+      second.artifactId,
+      { userHome: fixture.userHome },
+    );
+    const failedExistingNewMember = await callTool(failingClient, "inspect_artifact_review", {
+      artifactDirectory: second.artifactDirectory,
+      intent: "reconnect",
+      artifactConversationId: first.artifactConversationId,
+    });
+    expect(failedExistingNewMember.isError).toBe(true);
+    await expect(access(secondInFirstConvPath)).rejects.toThrow();
+
+    // 2c. Failure when re-registering an existing member restores its previous registeredAt
+    await new Promise((resolve) => setTimeout(resolve, 15));
+    const failedExistingMemberUpdate = await callTool(failingClient, "inspect_artifact_review", {
+      artifactDirectory: first.artifactDirectory,
+      intent: "reconnect",
+      artifactConversationId: first.artifactConversationId,
+    });
+    expect(failedExistingMemberUpdate.isError).toBe(true);
+    expect(JSON.parse(await readFile(firstMembershipPath, "utf8"))).toEqual(initialFirstMembership);
   });
 });
 
