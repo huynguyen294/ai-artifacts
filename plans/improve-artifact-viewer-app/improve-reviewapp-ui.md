@@ -1,2 +1,1 @@
-- thêm nút review message kế comment kiểu là một common review cho toàn artifact
 - improve UI

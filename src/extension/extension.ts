@@ -26,6 +26,12 @@ import {
 } from "./workspace-integration";
 import { WorkspaceRegistryPublisher } from "./workspace-registry-publisher";
 import { executeArtifactRetentionCleanup } from "./artifact-retention";
+import { summarizeIntegrationVerification } from "./integration-verification";
+import {
+  INSTALLATION_GUIDE_URL,
+  LAST_NOTIFIED_VERSION_KEY,
+  maybeShowUpgradeNotification,
+} from "./upgrade-notification";
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
   const provider = new ArtifactReviewProvider(context);
@@ -36,6 +42,22 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       await vscode.commands.executeCommand("vscode.openWith", artifactUri, ArtifactReviewProvider.viewType);
     },
   });
+  const installAllDetectedIntegrationsAndNotify = async (): Promise<void> => {
+    try {
+      await installAllDetectedIntegrations(context);
+      const verification = await checkAllIntegrations(context);
+      const summary = summarizeIntegrationVerification(verification);
+      if (summary.severity === "warning") {
+        void vscode.window.showWarningMessage(summary.message);
+      } else {
+        void vscode.window.showInformationMessage(summary.message);
+      }
+    } catch (error) {
+      void vscode.window.showErrorMessage(
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+  };
 
   context.subscriptions.push(
     workspaceRegistryPublisher,
@@ -81,22 +103,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     }),
 
     // 1. All Detected
-    vscode.commands.registerCommand("agentPlus.installAllIntegrations", async () => {
-      try {
-        const result = await installAllDetectedIntegrations(context);
-        if (result.installedClients.length > 0) {
-          void vscode.window.showInformationMessage(
-            `AI Artifacts MCP installed for detected clients: ${result.installedClients.join(", ")}. Please restart your AI client(s) to activate.`,
-          );
-        } else {
-          void vscode.window.showInformationMessage(
-            "AI Artifacts base MCP server was set up in ~/.ai-artifacts/managed/runtime/. No additional external clients were detected.",
-          );
-        }
-      } catch (error) {
-        void vscode.window.showErrorMessage(error instanceof Error ? error.message : String(error));
-      }
-    }),
+    vscode.commands.registerCommand(
+      "agentPlus.installAllIntegrations",
+      installAllDetectedIntegrationsAndNotify,
+    ),
 
     // 2. Copilot (base setup + Code/User/mcp.json)
     vscode.commands.registerCommand("agentPlus.installCopilotIntegration", async () => {
@@ -188,12 +198,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.commands.registerCommand("agentPlus.verifyGlobalIntegration", async () => {
       try {
         const report = await checkAllIntegrations(context);
-        const skillStatus = report.skillCurrent ? "Ready" : "Outdated / Missing";
-        const baseStatus = report.baseCurrent ? "Ready" : "Outdated / Missing";
-        const clientSummaries = report.clients.map((c) => `${c.name}: ${c.status}${c.isDetected ? " (detected)" : ""}`);
-        void vscode.window.showInformationMessage(
-          `AI Artifacts Skill (.agents): ${skillStatus}. Base (.vscode): ${baseStatus}. Clients: [${clientSummaries.join("; ")}]`,
-        );
+        const summary = summarizeIntegrationVerification(report);
+        if (summary.severity === "warning") {
+          void vscode.window.showWarningMessage(summary.message);
+        } else {
+          void vscode.window.showInformationMessage(summary.message);
+        }
       } catch (error) {
         void vscode.window.showErrorMessage(error instanceof Error ? error.message : String(error));
       }
@@ -299,6 +309,22 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       await vscode.commands.executeCommand("agentPlus.installAllIntegrations");
     }),
   );
+
+  void maybeShowUpgradeNotification({
+    currentVersion: context.extension.packageJSON.version,
+    getLastNotifiedVersion: () =>
+      context.globalState.get<string>(LAST_NOTIFIED_VERSION_KEY),
+    setLastNotifiedVersion: (version) =>
+      context.globalState.update(LAST_NOTIFIED_VERSION_KEY, version),
+    showInformationMessage: (message, ...actions) =>
+      vscode.window.showInformationMessage(message, ...actions),
+    runInstaller: installAllDetectedIntegrationsAndNotify,
+    openInstallationGuide: () =>
+      vscode.env.openExternal(vscode.Uri.parse(INSTALLATION_GUIDE_URL)),
+    reportDiagnostic: (message, error) => {
+      console.error(`AI Artifacts upgrade notification: ${message}`, error);
+    },
+  });
 
   try {
     const artifactConnectionWatcher = await setupGlobalArtifactConnectionWatcher<vscode.Uri, vscode.FileSystemWatcher>({
