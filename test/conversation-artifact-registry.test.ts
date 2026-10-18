@@ -41,9 +41,23 @@ async function createDummyArtifactManifest(artifactId: string): Promise<void> {
   await fs.mkdir(artifactDir, { recursive: true });
   await fs.writeFile(
     path.join(artifactDir, ARTIFACT_MANIFEST_FILE),
-    JSON.stringify({ schemaVersion: 6, id: artifactId }),
+    JSON.stringify(
+      {
+        schemaVersion: 6,
+        kind: "plan",
+        artifactId,
+        title: `Title for ${artifactId}`,
+        createdAt: "2026-04-17T10:00:00.000Z",
+        updatedAt: "2026-04-17T10:00:00.000Z",
+        reviewRound: 1,
+        reviewSessionId: "12345678-1234-4234-8234-123456789abc",
+      },
+      null,
+      2,
+    ),
     "utf8",
   );
+  await fs.writeFile(path.join(artifactDir, "artifact.md"), "# Dummy Markdown\n", "utf8");
 }
 
 beforeEach(async () => {
@@ -385,6 +399,84 @@ describe("ConversationArtifactRegistry", () => {
     // Conversation 2 directory was removed completely
     await expect(
       fs.lstat(conversationDirectory(conv2.conversation.artifactConversationId, { userHome })),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("cleans up memberships with malformed manifest, mismatched artifactId, or missing markdown, and removes empty conversation", async () => {
+    // Artifact 1: malformed JSON in artifact.json
+    const malformedDir = path.join(globalArtifactsRoot({ userHome }), "malformed-art");
+    await fs.mkdir(malformedDir, { recursive: true });
+    await fs.writeFile(path.join(malformedDir, ARTIFACT_MANIFEST_FILE), "{ not-json", "utf8");
+    await fs.writeFile(path.join(malformedDir, "artifact.md"), "# Broken", "utf8");
+
+    // Artifact 2: ID mismatch
+    const mismatchDir = path.join(globalArtifactsRoot({ userHome }), "mismatch-art");
+    await fs.mkdir(mismatchDir, { recursive: true });
+    await fs.writeFile(
+      path.join(mismatchDir, ARTIFACT_MANIFEST_FILE),
+      JSON.stringify({
+        schemaVersion: 6,
+        kind: "plan",
+        artifactId: "different-id",
+        title: "Mismatch",
+        createdAt: "2026-04-17T10:00:00.000Z",
+        updatedAt: "2026-04-17T10:00:00.000Z",
+        reviewRound: 1,
+        reviewSessionId: "12345678-1234-4234-8234-123456789abc",
+      }),
+      "utf8",
+    );
+    await fs.writeFile(path.join(mismatchDir, "artifact.md"), "# Mismatch", "utf8");
+
+    // Artifact 3: missing artifact.md
+    const noMdDir = path.join(globalArtifactsRoot({ userHome }), "no-markdown-art");
+    await fs.mkdir(noMdDir, { recursive: true });
+    await fs.writeFile(
+      path.join(noMdDir, ARTIFACT_MANIFEST_FILE),
+      JSON.stringify({
+        schemaVersion: 6,
+        kind: "plan",
+        artifactId: "no-markdown-art",
+        title: "No Markdown",
+        createdAt: "2026-04-17T10:00:00.000Z",
+        updatedAt: "2026-04-17T10:00:00.000Z",
+        reviewRound: 1,
+        reviewSessionId: "12345678-1234-4234-8234-123456789abc",
+      }),
+      "utf8",
+    );
+
+    const conv = await createConversationAndRegisterArtifact({
+      userHome,
+      artifactConversationId: "33333333-3333-4333-8333-333333333333",
+      conversationName: "Malformed & Mismatched Conv",
+      artifactId: "malformed-art",
+      registeredAt: "2026-04-17T10:00:00.000Z",
+    });
+    await registerArtifactInConversation({
+      userHome,
+      artifactConversationId: conv.conversation.artifactConversationId,
+      artifactId: "mismatch-art",
+      registeredAt: "2026-04-17T10:05:00.000Z",
+    });
+    await registerArtifactInConversation({
+      userHome,
+      artifactConversationId: conv.conversation.artifactConversationId,
+      artifactId: "no-markdown-art",
+      registeredAt: "2026-04-17T10:10:00.000Z",
+    });
+
+    const cleanupResult = await cleanupStaleConversations({ userHome });
+    expect(cleanupResult).toEqual({
+      scannedConversations: 1,
+      removedMemberships: 3,
+      removedConversations: 1,
+      skippedCount: 0,
+    });
+
+    // Entire conversation folder removed
+    await expect(
+      fs.lstat(conversationDirectory(conv.conversation.artifactConversationId, { userHome })),
     ).rejects.toMatchObject({ code: "ENOENT" });
   });
 

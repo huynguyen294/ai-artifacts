@@ -15,6 +15,7 @@ import {
 import {
   ARTIFACTS_DIRECTORY,
   ARTIFACT_MANIFEST_FILE,
+  ARTIFACT_MARKDOWN_FILE,
   CONVERSATION_METADATA_FILE,
   CONVERSATION_REGISTERED_ARTIFACTS_DIRECTORY,
   OWNER_ONLY_DIRECTORY_MODE,
@@ -31,6 +32,7 @@ import {
   enforceOwnerOnlyDirectory,
   enforceOwnerOnlyFile,
   ensureManagedDirectory,
+  parseArtifactManifest,
   sameFilesystemPath,
 } from "./artifact-validation";
 
@@ -854,19 +856,48 @@ export async function cleanupStaleConversations(
       const memberFilePath = path.join(canonicalRegisteredArtifactsDir, memberEntry.name);
 
       const manifestPath = path.join(collectionRoot, artifactId, ARTIFACT_MANIFEST_FILE);
-      let artifactExists = false;
+      const markdownPath = path.join(collectionRoot, artifactId, ARTIFACT_MARKDOWN_FILE);
+      let isArtifactValid = false;
+      let shouldRemoveMembership = false;
+
       try {
         const manifestStat = await fs.lstat(manifestPath);
-        artifactExists = !manifestStat.isSymbolicLink() && manifestStat.isFile();
+        if (manifestStat.isSymbolicLink() || !manifestStat.isFile()) {
+          shouldRemoveMembership = true;
+        } else {
+          const markdownStat = await fs.lstat(markdownPath);
+          if (markdownStat.isSymbolicLink() || !markdownStat.isFile()) {
+            shouldRemoveMembership = true;
+          } else {
+            const rawManifestJson = await fs.readFile(manifestPath, "utf8");
+            const parsedJson = JSON.parse(rawManifestJson);
+            const manifest = parseArtifactManifest(parsedJson);
+
+            if (manifest.artifactId === artifactId) {
+              isArtifactValid = true;
+            } else {
+              shouldRemoveMembership = true;
+            }
+          }
+        }
       } catch (error) {
-        if (errorCode(error) !== "ENOENT") {
-          logDiagnostic?.(`Could not stat artifact manifest for ${artifactId}`, error);
+        const code = errorCode(error);
+        if (code === "ENOENT") {
+          shouldRemoveMembership = true;
+        } else if (
+          error instanceof SyntaxError
+          || error instanceof z.ZodError
+          || (error instanceof Error && error.message.includes("artifact schema version"))
+        ) {
+          shouldRemoveMembership = true;
+        } else {
+          logDiagnostic?.(`Could not validate artifact ${artifactId} for membership cleanup`, error);
           hadSkippedEntries = true;
           continue;
         }
       }
 
-      if (!artifactExists) {
+      if (shouldRemoveMembership && !isArtifactValid) {
         try {
           await fs.unlink(memberFilePath);
           result.removedMemberships++;
@@ -876,7 +907,7 @@ export async function cleanupStaleConversations(
             hadSkippedEntries = true;
           }
         }
-      } else {
+      } else if (isArtifactValid) {
         remainingValidMemberships++;
       }
     }
