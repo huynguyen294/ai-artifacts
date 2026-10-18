@@ -355,6 +355,9 @@ export function App(): ReactNode {
     : hasUnsavedComment
       ? "Save or cancel the comment draft first."
       : undefined;
+  const totalConversationArtifacts = conversationState.status === "ready"
+    ? conversationState.groups.reduce((sum, g) => sum + g.artifacts.length, 0)
+    : 0;
 
   return (
     <div className="app-shell">
@@ -478,7 +481,11 @@ export function App(): ReactNode {
             className="ghost conversations-toggle"
             aria-expanded={conversationsDrawerOpen}
             aria-controls="conversation-artifacts-drawer"
-            title="Open conversation artifacts panel"
+            title={
+              totalConversationArtifacts > 0
+                ? `View artifacts in this conversation (${totalConversationArtifacts})`
+                : "View artifacts in this conversation"
+            }
             onClick={openConversationsDrawer}
           >
             <svg aria-hidden="true" width="14" height="14" viewBox="0 0 16 16" fill="none">
@@ -489,13 +496,13 @@ export function App(): ReactNode {
                 strokeLinecap="round"
               />
             </svg>
-            <span>Conversations</span>
-            {conversationState.status === "ready" && conversationState.groups.length > 0 && (
+            <span>Conversation Artifacts</span>
+            {totalConversationArtifacts > 0 && (
               <span
                 className="comment-count-badge"
-                aria-label={`${conversationState.groups.reduce((sum, g) => sum + g.artifacts.length, 0)} artifacts`}
+                aria-label={`${totalConversationArtifacts} artifacts`}
               >
-                {conversationState.groups.reduce((sum, g) => sum + g.artifacts.length, 0)}
+                {totalConversationArtifacts}
               </span>
             )}
           </button>

@@ -181,7 +181,7 @@ A file link in the agent's response is a regular file link, not a deep link, and
 
 1. **Highlight text:** Select any paragraph, heading, list item, quote, code block, or table cell.
 2. **Add inline comments:** Type your feedback in the floating comment popover. Press `Enter` or click **Comment** to save your feedback.
-3. **Inspect feedback:** Open the **Comments (N)** drawer to jump between annotated passages.
+3. **Inspect feedback & conversation artifacts:** Open the **Comments (N)** drawer to jump between annotated passages, or open the **Artifacts in Conversation** drawer to browse and open/switch to other artifacts created or reconnected in the same chat session.
 4. **Submit your decision:**
    - **Review (Revise):** Sends your batch comments back to the AI. The agent answers questions in chat, updates the Markdown where changes were requested, and opens the next review round. If your comments only ask questions, the agent answers in chat and opens the next round without changing the document.
    - **Proceed:** Approves the plan and concludes the review. For plans, the agent starts carrying out the approved work immediately.
@@ -213,9 +213,13 @@ The AI agent calls the MCP `create_artifact` tool, which generates an isolated s
   comments.json
   review-submission.json  # Present after a decision is submitted
   artifact-connection.json # Optional schema-v1 target-window routing state
+
+~/.ai-artifacts/conversation-registry/<conversation-id>/
+  conversation.json       # Schema-v1 conversation metadata
+  registered-artifacts/   # Registered artifact index files
 ```
 
-`artifact.json` records the schema-v6 manifest `{ schemaVersion: 6, kind, artifactId, title, createdAt, updatedAt, reviewRound, reviewSessionId }` without workspace ownership fields. Artifacts are owned by review sessions, not repository paths. Optional `artifact-connection.json` contains only UI-routing state (`windowInstanceId`, connection revision, open-request ID, source, and timestamp); it never replaces the manifest.
+`artifact.json` records the schema-v6 manifest `{ schemaVersion: 6, kind, artifactId, title, createdAt, updatedAt, reviewRound, reviewSessionId }` without workspace ownership fields. Artifacts are owned by review sessions, not repository paths. Optional `artifact-connection.json` contains only UI-routing state (`windowInstanceId`, connection revision, open-request ID, source, and timestamp); it never replaces the manifest. The conversation registry groups artifacts from the same chat for the webview drawer and is cleaned up alongside expired artifacts.
 
 ### Automatic retention cleanup
 
@@ -235,7 +239,7 @@ The AI agent calls the MCP `create_artifact` tool, which generates an isolated s
 ## Compatibility and upgrades
 
 - Version 1.0.2 supports only schema v6 stored under `~/.ai-artifacts/artifacts/`.
-- Version 1.0.2 ships MCP server 9.0.0 and optional connection schema v1 while providing the five-tool catalog.
+- Version 1.0.2 ships MCP server 10.0.0, conversation registry schema v1, and optional connection schema v1 while providing the five-tool catalog.
 - Schema v3/v4/v5 and workspace-local `.ai-artifacts` or `.codex-artifacts` lifecycles are not opened, advanced, or migrated by v1.0.x. Existing files remain untouched on disk.
 - This is a hard compatibility cutoff. A rollback to a 0.9.x extension also requires reinstalling the matching older runtime and skill; do not use a 0.9.x runtime with v1.0.x artifacts.
 - After every extension upgrade, reinstall integrations and restart the AI client before starting a new chat.

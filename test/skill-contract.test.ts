@@ -167,6 +167,8 @@ describe("create-review-artifact skill contract", () => {
       "WINDOW_CONNECTION_MISMATCH",
       "ARTIFACT_CONNECTION_INVALID",
       "ARTIFACT_CONNECTION_WRITE_FAILED",
+      "CONVERSATION_NOT_FOUND",
+      "CONVERSATION_REGISTRY_INVALID",
       "ARTIFACT_NOT_FOUND",
     ]) expect(skill).toContain(code);
     expect(skill).not.toContain("WORKSPACE_NOT_REGISTERED");
@@ -214,5 +216,24 @@ describe("create-review-artifact skill contract", () => {
     expect(contract).toContain("artifactLink");
     expect(contract).toContain("`artifactLink` is a regular file link, not a deep link");
     expect(contract).toContain("does not guarantee that a custom editor opens");
+  });
+
+  it("documents conversation artifact tracking across create, inspect, and reconnect", async () => {
+    const [skill, contract] = await Promise.all([
+      readFile(path.join(skillDirectory, "SKILL.md"), "utf8"),
+      readFile(path.join(skillDirectory, "references", "artifact-contract.md"), "utf8"),
+    ]);
+
+    expect(skill).toContain("artifactConversationId");
+    expect(skill).toContain("conversationName");
+    expect(skill).not.toContain("conversation: {");
+    expect(contract).not.toContain("conversation: {");
+    expect(skill).toContain("CONVERSATION_NOT_FOUND");
+    expect(skill).toContain("CONVERSATION_REGISTRY_INVALID");
+    expect(skill).toContain("~/.ai-artifacts/conversation-registry/<artifactConversationId>/");
+    expect(contract).toContain("~/.ai-artifacts/conversation-registry/<artifactConversationId>/");
+    expect(contract).toContain("artifactConversationId");
+    expect(contract).toContain("CONVERSATION_NOT_FOUND");
+    expect(contract).toContain("CONVERSATION_REGISTRY_INVALID");
   });
 });

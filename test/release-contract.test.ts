@@ -84,15 +84,16 @@ describe("v1.0.2 release contract", () => {
     for (const document of [readme, philosophy, architecture, components, instructions, contract]) {
       expect(document).toMatch(/schema[- ]v6/i);
       expect(document).toContain("~/.ai-artifacts/artifacts/");
+      expect(document).toContain("~/.ai-artifacts/conversation-registry/");
     }
     expect(readme).toContain("reinstall every integration");
     expect(readme).toContain("same user filesystem");
     expect(readme).toContain("not a deep link");
-    expect(readme).toContain("MCP server 9.0.0");
+    expect(readme).toContain("MCP server 10.0.0");
     expect(readme).toContain("artifact-connection.json");
     expect(readme).toContain("The target may be unfocused; other windows ignore the event");
     expect(philosophy).toContain("Focus is a ranking hint, not identity, authorization, or a requirement");
-    expect(architecture).toContain("MCP server 9.0.0");
+    expect(architecture).toContain("MCP server 10.0.0");
     expect(architecture).toContain("artifact-connection.json` creation and change");
     expect(architecture).toContain("Both wait and advance preserve existing connection state");
     expect(components).toContain("WINDOW_SELECTION_REQUIRED");
@@ -105,7 +106,9 @@ describe("v1.0.2 release contract", () => {
     expect(changelog).toContain("## [1.0.0] - 2026-09-20");
     expect(changelog).toContain("MCP server 9.0.0");
     expect(changelog).not.toContain("## [1.1.0]");
+    expect(changelog).toContain("MCP server 10.0.0");
     expect(documentationChanges).toContain("Automatic artifact retention cleanup and bounded lifetime model");
+    expect(documentationChanges).toContain("Artifacts in Conversations, Conversation Registry v1, and MCP server 10.0.0");
   });
 
   it("keeps the public setting and version matrix on the 1.0.2 targeted-window contract", async () => {

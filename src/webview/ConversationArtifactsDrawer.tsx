@@ -84,7 +84,7 @@ export function ConversationArtifactsDrawer({
       >
         <div className="drawer-heading">
           <div>
-            <h2>Conversations</h2>
+            <h2>Conversation Artifacts</h2>
             <p>Artifacts in related conversations.</p>
           </div>
           <button

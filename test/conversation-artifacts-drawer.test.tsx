@@ -72,7 +72,7 @@ describe("ConversationArtifactsDrawer", () => {
         onOpenArtifact={() => {}}
       />,
     );
-    expect(html).toContain("Conversations");
+    expect(html).toContain("Conversation Artifacts");
     expect(html).toContain("Loading conversations…");
     expect(html).toContain("drawer-backdrop");
   });
@@ -86,7 +86,7 @@ describe("ConversationArtifactsDrawer", () => {
         onOpenArtifact={() => {}}
       />,
     );
-    expect(html).toContain("Conversations");
+    expect(html).toContain("Conversation Artifacts");
     expect(html).toContain("role=\"alert\"");
     expect(html).toContain("Failed to read conversation registry");
   });

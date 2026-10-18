@@ -6,10 +6,27 @@ Release history has been standardized and tracked starting from version **0.2.6*
 
 ## [1.0.2] - 2026-10-07
 
+### Artifacts in Conversations & MCP server 10.0.0
+
+- Added **Artifacts in Conversation** drawer in the review editor:
+  - Quick browsing and switching between all artifacts created or reconnected in the same conversation session.
+  - Real-time search filter by title or artifact ID, status badges (`Current`, `Waiting`, `Approved`, `Revised`, `Saved`), and seamless opening of selected artifacts in review editor tabs.
+  - Accessible keyboard navigation with focus trap coordination.
+- Upgraded MCP server runtime to **10.0.0**:
+  - `create_artifact` and `inspect_artifact_review` accept optional flat fields `artifactConversationId?: string` and `conversationName?: string`.
+  - Returns `artifactConversationId` on creation and inspection, and echoes `artifactConversationId` when supplied on wait and advance tools.
+  - Added multi-process safe conversation registry (`~/.ai-artifacts/conversation-registry/<artifactConversationId>/`, schema v1) with file locking (`.conversation.lock`) and rollback on connection failure.
+  - Added error codes `CONVERSATION_NOT_FOUND` and `CONVERSATION_REGISTRY_INVALID`.
+- Provider & Extension:
+  - Added `ConversationArtifactService` with bounded concurrency (`8`) and strict artifact integrity checks.
+  - Added async non-blocking message queue in `ArtifactReviewProvider` separating mutations from read queries.
+  - Extended retention cleanup to prune invalid/expired entries from the conversation registry.
+
 ### Documentation
 
 - Reworked the README for a clearer onboarding flow, compatibility guidance, usage instructions, artifact search and reconnect steps, and lifecycle behavior.
 - Added walkthrough GIFs for artifact creation, inline feedback, and reconnecting an existing artifact.
+- Updated canonical architecture, philosophy, component maps, and agent skill contract for MCP server 10.0.0 and conversation grouping.
 
 ## [1.0.1] - 2026-09-21
 
