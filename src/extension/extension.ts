@@ -32,14 +32,35 @@ import {
   LAST_NOTIFIED_VERSION_KEY,
   maybeShowUpgradeNotification,
 } from "./upgrade-notification";
+import {
+  ConversationArtifactService,
+  setupConversationRegistryWatcher,
+} from "./conversation-artifact-service";
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
   const provider = new ArtifactReviewProvider(context);
   const workspaceRegistryPublisher = new WorkspaceRegistryPublisher();
   const artifactReviewOpenCoordinator = new ArtifactReviewOpenCoordinator<vscode.Uri>({
     uriFromFilePath: (filePath) => vscode.Uri.file(filePath),
-    openWith: async (artifactUri) => {
-      await vscode.commands.executeCommand("vscode.openWith", artifactUri, ArtifactReviewProvider.viewType);
+    openWith: async (artifactUri, openOptions) => {
+      if (openOptions?.preview !== undefined) {
+        await vscode.commands.executeCommand(
+          "vscode.openWith",
+          artifactUri,
+          ArtifactReviewProvider.viewType,
+          { preview: openOptions.preview },
+        );
+      } else {
+        await vscode.commands.executeCommand("vscode.openWith", artifactUri, ArtifactReviewProvider.viewType);
+      }
+    },
+  });
+  const conversationArtifactService = new ConversationArtifactService<vscode.Uri>({
+    uriFromFilePath: (filePath) => vscode.Uri.file(filePath),
+    openArtifactReview: (artifactUri, openOptions) =>
+      artifactReviewOpenCoordinator.open(artifactUri, openOptions),
+    reportError: (message) => {
+      void vscode.window.showErrorMessage(message);
     },
   });
   const installAllDetectedIntegrationsAndNotify = async (): Promise<void> => {
@@ -61,6 +82,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   context.subscriptions.push(
     workspaceRegistryPublisher,
+    conversationArtifactService,
     vscode.window.registerCustomEditorProvider(ArtifactReviewProvider.viewType, provider, {
       webviewOptions: { retainContextWhenHidden: true },
       supportsMultipleEditorsPerDocument: false,
@@ -350,6 +372,22 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     const message = error instanceof Error ? error.message : String(error);
     console.error("Starting the global artifact watcher failed:", error);
     void vscode.window.showErrorMessage(`AI Artifacts could not watch global artifact storage: ${message}`);
+  }
+
+  try {
+    const conversationWatcher = await setupConversationRegistryWatcher<vscode.Uri, vscode.FileSystemWatcher>({
+      service: conversationArtifactService,
+      createWatcher: (registryRoot, pattern) =>
+        vscode.workspace.createFileSystemWatcher(
+          new vscode.RelativePattern(vscode.Uri.file(registryRoot), pattern),
+          false,
+          false,
+          false,
+        ),
+    });
+    context.subscriptions.push(conversationWatcher);
+  } catch (error) {
+    console.error("Starting the conversation registry watcher failed:", error);
   }
 
   // Best-effort asynchronous retention cleanup (does not block extension activation)

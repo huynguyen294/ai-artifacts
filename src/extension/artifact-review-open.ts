@@ -19,9 +19,13 @@ export type ValidatedArtifactReviewTarget = SafeGlobalArtifactHandle & {
   manifest: ArtifactManifest;
 };
 
+export type ArtifactReviewOpenOptions = {
+  preview?: boolean;
+};
+
 export type ArtifactReviewOpenDependencies<TUri extends ArtifactFileUri> = {
   uriFromFilePath: (filePath: string) => TUri;
-  openWith: (artifactUri: TUri) => Promise<void>;
+  openWith: (artifactUri: TUri, options?: ArtifactReviewOpenOptions) => Promise<void>;
 };
 
 function canonicalArtifactOpenKey(artifactPath: string): string {
@@ -49,9 +53,15 @@ export async function openArtifactReview<TUri extends ArtifactFileUri>(
   artifactUri: TUri,
   dependencies: ArtifactReviewOpenDependencies<TUri>,
   options: GlobalArtifactsRootOptions = {},
+  openOptions?: ArtifactReviewOpenOptions,
 ): Promise<ValidatedArtifactReviewTarget> {
   const target = await validateArtifactReviewTarget(artifactUri.fsPath, options);
-  await dependencies.openWith(dependencies.uriFromFilePath(target.artifactPath));
+  const uri = dependencies.uriFromFilePath(target.artifactPath);
+  if (openOptions !== undefined) {
+    await dependencies.openWith(uri, openOptions);
+  } else {
+    await dependencies.openWith(uri);
+  }
   return target;
 }
 
@@ -63,13 +73,17 @@ export class ArtifactReviewOpenCoordinator<TUri extends ArtifactFileUri> {
     private readonly options: GlobalArtifactsRootOptions = {},
   ) {}
 
-  async open(artifactUri: TUri): Promise<ValidatedArtifactReviewTarget> {
+  async open(
+    artifactUri: TUri,
+    openOptions?: ArtifactReviewOpenOptions,
+  ): Promise<ValidatedArtifactReviewTarget> {
     const target = await validateArtifactReviewTarget(artifactUri.fsPath, this.options);
-    const key = canonicalArtifactOpenKey(target.artifactPath);
+    const modeSuffix = openOptions?.preview !== undefined ? `:preview=${String(openOptions.preview)}` : "";
+    const key = `${canonicalArtifactOpenKey(target.artifactPath)}${modeSuffix}`;
     const existing = this.inFlight.get(key);
     if (existing) return existing;
 
-    const request = this.openTarget(target);
+    const request = this.openTarget(target, openOptions);
     this.inFlight.set(key, request);
     try {
       return await request;
@@ -80,8 +94,14 @@ export class ArtifactReviewOpenCoordinator<TUri extends ArtifactFileUri> {
 
   private async openTarget(
     target: ValidatedArtifactReviewTarget,
+    openOptions?: ArtifactReviewOpenOptions,
   ): Promise<ValidatedArtifactReviewTarget> {
-    await this.dependencies.openWith(this.dependencies.uriFromFilePath(target.artifactPath));
+    const uri = this.dependencies.uriFromFilePath(target.artifactPath);
+    if (openOptions !== undefined) {
+      await this.dependencies.openWith(uri, openOptions);
+    } else {
+      await this.dependencies.openWith(uri);
+    }
     return target;
   }
 }
