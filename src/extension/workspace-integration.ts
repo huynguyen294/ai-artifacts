@@ -8,16 +8,23 @@ import {
 } from "./global-integration-status";
 import {
   ClaudeClientDriver,
+  ClineClientDriver,
   CodexClientDriver,
   CopilotClientDriver,
   CursorClientDriver,
   WindsurfClientDriver,
   getAllClientDrivers,
+  getClineSettingsPath,
   getVsCodeUserMcpPath,
   type McpClientDriver,
 } from "./mcp-clients/index";
 import { upsertJsonMcpServer, writeTextFileAtomic } from "./mcp-clients/json-mcp-helper";
 import { cleanupBaseMcpServer } from "./mcp-clients/base-cleanup";
+import {
+  REVIEW_SKILL_ASSETS,
+  sameFile,
+  replaceSkillDirectory,
+} from "./mcp-clients/skill-helper";
 import {
   OWNER_ONLY_FILE_MODE,
   aiArtifactsRoot,
@@ -40,12 +47,6 @@ export type BaseIntegrationPaths = {
   sourceSkill: string;
 };
 
-const REVIEW_SKILL_ASSETS = [
-  "SKILL.md",
-  path.join("references", "artifact-contract.md"),
-  path.join("agents", "openai.yaml"),
-];
-
 export function getCopilotConfigPath(context?: vscode.ExtensionContext): string {
   if (context?.globalStorageUri?.fsPath) {
     try {
@@ -53,6 +54,21 @@ export function getCopilotConfigPath(context?: vscode.ExtensionContext): string 
     } catch {}
   }
   return getVsCodeUserMcpPath();
+}
+
+export function getClineConfigPath(context?: vscode.ExtensionContext): string {
+  if (context?.globalStorageUri?.fsPath) {
+    try {
+      return path.resolve(
+        context.globalStorageUri.fsPath,
+        "..",
+        "saoudrizwan.claude-dev",
+        "settings",
+        "cline_mcp_settings.json",
+      );
+    } catch {}
+  }
+  return getClineSettingsPath();
 }
 
 export function getBaseIntegrationPaths(
@@ -80,16 +96,6 @@ export function getBaseIntegrationPaths(
   };
 }
 
-async function sameFile(left: string, right: string): Promise<boolean> {
-  try {
-    const [leftContents, rightContents] = await Promise.all([fs.readFile(left), fs.readFile(right)]);
-    return leftContents.equals(rightContents);
-  } catch (error: any) {
-    if (error?.code === "ENOENT") return false;
-    throw error;
-  }
-}
-
 async function pathExists(target: string): Promise<boolean> {
   return fs.stat(target).then(() => true, (error: any) => {
     if (error?.code === "ENOENT") return false;
@@ -105,47 +111,6 @@ export async function skillAssetsAreCurrent(paths: BaseIntegrationPaths): Promis
     ),
   );
   return (await Promise.all(checks)).every(Boolean);
-}
-
-async function replaceSkillDirectory(source: string, target: string): Promise<void> {
-  const targetParent = path.dirname(target);
-  await fs.mkdir(targetParent, { recursive: true });
-  const stagingRoot = await fs.mkdtemp(path.join(targetParent, ".create-review-artifact-install-"));
-  const stagedSkill = path.join(stagingRoot, "next");
-  const previousSkill = path.join(stagingRoot, "previous");
-  let previousMoved = false;
-  let keepRecoveryDirectory = false;
-
-  try {
-    await fs.cp(source, stagedSkill, { recursive: true, force: true });
-    try {
-      await fs.rename(target, previousSkill);
-      previousMoved = true;
-    } catch (error: any) {
-      if (error?.code !== "ENOENT") throw error;
-    }
-
-    try {
-      await fs.rename(stagedSkill, target);
-    } catch (error) {
-      if (previousMoved) {
-        try {
-          await fs.rename(previousSkill, target);
-        } catch (restoreError) {
-          keepRecoveryDirectory = true;
-          throw new AggregateError(
-            [error, restoreError],
-            `Failed to install the review skill and restore the previous copy. Recovery files remain at "${stagingRoot}".`,
-          );
-        }
-      }
-      throw error;
-    }
-  } finally {
-    if (!keepRecoveryDirectory) {
-      await fs.rm(stagingRoot, { recursive: true, force: true }).catch(() => {});
-    }
-  }
 }
 
 export async function baseScriptIsCurrent(paths: BaseIntegrationPaths): Promise<boolean> {
@@ -236,7 +201,8 @@ export async function installAllDetectedIntegrations(
 ): Promise<{ installedClients: string[] }> {
   const { paths } = await setupBaseMcpServer(context);
   const copilotConfigPath = getCopilotConfigPath(context);
-  const drivers = getAllClientDrivers(copilotConfigPath);
+  const clineConfigPath = getClineConfigPath(context);
+  const drivers = getAllClientDrivers(copilotConfigPath, clineConfigPath, paths.sourceSkill);
   const installedClients: string[] = [];
 
   for (const driver of drivers) {
@@ -301,7 +267,7 @@ export async function installClaudeIntegration(
   context: vscode.ExtensionContext,
 ): Promise<void> {
   const { paths } = await setupBaseMcpServer(context);
-  const claudeDriver = new ClaudeClientDriver();
+  const claudeDriver = new ClaudeClientDriver(undefined, undefined, paths.sourceSkill);
   await claudeDriver.install(paths.targetMcpScript);
 }
 
@@ -314,13 +280,24 @@ export async function installWindsurfIntegration(
   await windsurfDriver.install(paths.targetMcpScript);
 }
 
-// 7. Uninstall all detected integrations
+// 7. Cline
+export async function installClineIntegration(
+  context: vscode.ExtensionContext,
+): Promise<void> {
+  const { paths } = await setupBaseMcpServer(context);
+  const clineConfigPath = getClineConfigPath(context);
+  const clineDriver = new ClineClientDriver(clineConfigPath);
+  await clineDriver.install(paths.targetMcpScript);
+}
+
+// 8. Uninstall all detected integrations
 export async function uninstallAllDetectedIntegrations(
   context?: vscode.ExtensionContext,
   options?: { cleanupBase?: boolean; userHome?: string },
 ): Promise<{ uninstalledClients: string[] }> {
   const copilotConfigPath = getCopilotConfigPath(context);
-  const drivers = getAllClientDrivers(copilotConfigPath);
+  const clineConfigPath = getClineConfigPath(context);
+  const drivers = getAllClientDrivers(copilotConfigPath, clineConfigPath);
   const uninstalledClients: string[] = [];
 
   for (const driver of drivers) {
@@ -368,6 +345,14 @@ export async function uninstallWindsurfIntegration(): Promise<boolean> {
   return driver.uninstall();
 }
 
+export async function uninstallClineIntegration(
+  context?: vscode.ExtensionContext,
+): Promise<boolean> {
+  const clineConfigPath = getClineConfigPath(context);
+  const driver = new ClineClientDriver(clineConfigPath);
+  return driver.uninstall();
+}
+
 export type ClientVerificationReport = {
   id: string;
   name: string;
@@ -390,7 +375,8 @@ export async function checkAllIntegrations(
   ]);
   const assetsCurrent = skillCurrent && baseCurrent;
   const copilotConfigPath = getCopilotConfigPath(context);
-  const drivers = getAllClientDrivers(copilotConfigPath);
+  const clineConfigPath = getClineConfigPath(context);
+  const drivers = getAllClientDrivers(copilotConfigPath, clineConfigPath, paths.sourceSkill);
   const clients: ClientVerificationReport[] = [];
 
   for (const driver of drivers) {

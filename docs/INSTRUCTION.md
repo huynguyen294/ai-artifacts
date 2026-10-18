@@ -71,7 +71,7 @@ If product intent, documentation, tests, and implementation disagree, call out t
 - `src/extension/artifact-search.ts`: extension-local schema-v6 title normalization, bounded concurrency discovery, and title-only filtering.
 - `src/extension/artifact-search-command.ts`: VS Code Quick Pick UI controller, in-memory filter updates, and safe cancellation/open coordination.
 - `src/extension/workspace-integration.ts`: centralized MCP installation, base runtime provisioning, and legacy cleanup.
-- `src/extension/mcp-clients/`: dedicated configuration drivers for Codex, Cursor, Claude Code, Windsurf, and GitHub Copilot (VS Code).
+- `src/extension/mcp-clients/`: dedicated configuration drivers for Codex, Cursor, Claude Code, Windsurf, GitHub Copilot (VS Code), and Cline.
 - `src/webview/`: review UI and typed messages to the extension host; includes `ConversationArtifactsDrawer.tsx` for conversation artifact navigation; no direct filesystem or process access.
 - `src/shared/`: shared schemas, file contracts, artifact-connection safety/persistence, validation, and grouped workspace registry rules.
 - `skills/create-review-artifact/`: Codex trigger and lifecycle orchestration contract.

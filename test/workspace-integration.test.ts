@@ -408,12 +408,15 @@ describe("Workspace Integration Asset Verifiers", () => {
     const windsurfConfig = path.join(targetDir, ".codeium", "windsurf", "mcp_config.json");
     const globalStoragePath = path.join(targetDir, "Code", "User", "globalStorage", "huynguyen294.ai-artifacts");
     const copilotConfig = path.resolve(globalStoragePath, "..", "..", "mcp.json");
+    const clineConfig = path.resolve(globalStoragePath, "..", "saoudrizwan.claude-dev", "settings", "cline_mcp_settings.json");
     const codexConfig = path.join(codexHome, "config.toml");
     const artifactsRoot = globalArtifactsRoot({ userHome: targetDir });
     const productRoot = path.join(targetDir, ".ai-artifacts");
     const retainedArtifact = path.join(artifactsRoot, "retained-artifact", "artifact.md");
     const unrelatedSiblingFile = path.join(productRoot, "unrelated-sibling.txt");
     const unrelatedSkill = path.join(targetDir, ".agents", "skills", "unrelated-skill", "SKILL.md");
+    const unrelatedClaudeSkill = path.join(targetDir, ".claude", "skills", "unrelated-claude", "SKILL.md");
+    const claudeSkill = path.join(targetDir, ".claude", "skills", "create-review-artifact", "SKILL.md");
     const originalCodexHome = process.env.CODEX_HOME;
 
     vi.spyOn(os, "homedir").mockReturnValue(targetDir);
@@ -426,11 +429,13 @@ describe("Workspace Integration Asset Verifiers", () => {
         fs.mkdir(path.join(targetDir, ".claude"), { recursive: true }),
         fs.mkdir(path.dirname(windsurfConfig), { recursive: true }),
         fs.mkdir(path.dirname(copilotConfig), { recursive: true }),
+        fs.mkdir(path.dirname(clineConfig), { recursive: true }),
         fs.mkdir(path.dirname(retainedArtifact), { recursive: true }),
         fs.mkdir(path.join(targetDir, ".vscode", "ai-artifacts"), { recursive: true }),
         fs.mkdir(path.join(targetDir, ".agents", "skills", "create-plan-artifact"), { recursive: true }),
         fs.mkdir(path.dirname(unrelatedSiblingFile), { recursive: true }),
         fs.mkdir(path.dirname(unrelatedSkill), { recursive: true }),
+        fs.mkdir(path.dirname(unrelatedClaudeSkill), { recursive: true }),
       ]);
       await Promise.all([
         fs.writeFile(
@@ -453,10 +458,16 @@ describe("Workspace Integration Asset Verifiers", () => {
           `${JSON.stringify({ inputs: [{ id: "keep-input" }], servers: { keep_copilot: { type: "http", url: "https://example.test" } } }, null, 2)}\n`,
           "utf8",
         ),
+        fs.writeFile(
+          clineConfig,
+          `${JSON.stringify({ mcpServers: { keep_cline: { command: "keep" } } }, null, 2)}\n`,
+          "utf8",
+        ),
         fs.writeFile(codexConfig, 'model = "gpt-test"\n\n[mcp_servers.keep_codex]\ncommand = "keep"\n', "utf8"),
         fs.writeFile(retainedArtifact, "# Retain me\n", "utf8"),
         fs.writeFile(unrelatedSiblingFile, "do not touch me\n", "utf8"),
         fs.writeFile(unrelatedSkill, "# Unrelated skill\n", "utf8"),
+        fs.writeFile(unrelatedClaudeSkill, "# Unrelated Claude skill\n", "utf8"),
         fs.writeFile(
           path.join(targetDir, ".vscode", "ai-artifacts", "codex-artifacts-review-mcp.mjs"),
           "// legacy runtime\n",
@@ -481,16 +492,19 @@ describe("Workspace Integration Asset Verifiers", () => {
         "Codex",
         "Claude",
         "Windsurf",
+        "Cline",
       ]);
       await expect(
         fs.access(path.join(targetDir, ".vscode", "ai-artifacts", "codex-artifacts-review-mcp.mjs")),
       ).rejects.toThrow();
       await expect(fs.access(path.join(targetDir, ".agents", "skills", "create-plan-artifact"))).rejects.toThrow();
+      await expect(fs.access(claudeSkill)).resolves.toBeUndefined();
 
       let report = await checkAllIntegrations(context);
       expect(report.baseCurrent).toBe(true);
       expect(report.skillCurrent).toBe(true);
       expect(report.clients.filter((client) => client.isDetected).map((client) => client.status)).toEqual([
+        "ready",
         "ready",
         "ready",
         "ready",
@@ -514,6 +528,7 @@ describe("Workspace Integration Asset Verifiers", () => {
         "outdated",
         "outdated",
         "outdated",
+        "outdated",
       ]);
 
       await installAllDetectedIntegrations(context);
@@ -526,12 +541,14 @@ describe("Workspace Integration Asset Verifiers", () => {
         "ready",
         "ready",
         "ready",
+        "ready",
       ]);
 
       const cursorBeforeUninstall = JSON.parse(await fs.readFile(cursorConfig, "utf8"));
       const claudeBeforeUninstall = JSON.parse(await fs.readFile(claudeConfig, "utf8"));
       const windsurfBeforeUninstall = JSON.parse(await fs.readFile(windsurfConfig, "utf8"));
       const copilotBeforeUninstall = JSON.parse(await fs.readFile(copilotConfig, "utf8"));
+      const clineBeforeUninstall = JSON.parse(await fs.readFile(clineConfig, "utf8"));
       const codexBeforeUninstall = await fs.readFile(codexConfig, "utf8");
       expect(cursorBeforeUninstall).toMatchObject({ theme: "dark", mcpServers: { keep_cursor: { command: "keep" } } });
       expect(claudeBeforeUninstall).toMatchObject({
@@ -545,6 +562,9 @@ describe("Workspace Integration Asset Verifiers", () => {
       expect(copilotBeforeUninstall).toMatchObject({
         inputs: [{ id: "keep-input" }],
         servers: { keep_copilot: { type: "http" } },
+      });
+      expect(clineBeforeUninstall).toMatchObject({
+        mcpServers: { keep_cline: { command: "keep" } },
       });
       expect(codexBeforeUninstall).toContain('model = "gpt-test"');
       expect(codexBeforeUninstall).toContain("[mcp_servers.keep_codex]");
@@ -560,9 +580,11 @@ describe("Workspace Integration Asset Verifiers", () => {
       await expect(fs.access(installedPaths.targetDirectory)).rejects.toThrow();
       await expect(fs.access(installedPaths.targetSkill)).rejects.toThrow();
       await expect(fs.access(path.join(targetDir, ".vscode", "ai-artifacts"))).rejects.toThrow();
+      await expect(fs.access(path.dirname(claudeSkill))).rejects.toThrow();
       await expect(fs.access(productRoot)).resolves.toBeUndefined();
       await expect(fs.readFile(unrelatedSiblingFile, "utf8")).resolves.toBe("do not touch me\n");
       await expect(fs.readFile(unrelatedSkill, "utf8")).resolves.toBe("# Unrelated skill\n");
+      await expect(fs.readFile(unrelatedClaudeSkill, "utf8")).resolves.toBe("# Unrelated Claude skill\n");
 
       const afterHash = crypto
         .createHash("sha256")
@@ -578,6 +600,7 @@ describe("Workspace Integration Asset Verifiers", () => {
       const claudeAfterUninstall = JSON.parse(await fs.readFile(claudeConfig, "utf8"));
       const windsurfAfterUninstall = JSON.parse(await fs.readFile(windsurfConfig, "utf8"));
       const copilotAfterUninstall = JSON.parse(await fs.readFile(copilotConfig, "utf8"));
+      const clineAfterUninstall = JSON.parse(await fs.readFile(clineConfig, "utf8"));
       const codexAfterUninstall = await fs.readFile(codexConfig, "utf8");
       expect(cursorAfterUninstall).toMatchObject({ theme: "dark", mcpServers: { keep_cursor: { command: "keep" } } });
       expect(claudeAfterUninstall).toMatchObject({
@@ -592,10 +615,14 @@ describe("Workspace Integration Asset Verifiers", () => {
         inputs: [{ id: "keep-input" }],
         servers: { keep_copilot: { type: "http" } },
       });
+      expect(clineAfterUninstall).toMatchObject({
+        mcpServers: { keep_cline: { command: "keep" } },
+      });
       expect(cursorAfterUninstall.mcpServers.ai_artifacts).toBeUndefined();
       expect(claudeAfterUninstall.mcpServers.ai_artifacts).toBeUndefined();
       expect(windsurfAfterUninstall.mcpServers.ai_artifacts).toBeUndefined();
       expect(copilotAfterUninstall.servers.ai_artifacts).toBeUndefined();
+      expect(clineAfterUninstall.mcpServers.ai_artifacts).toBeUndefined();
       expect(codexAfterUninstall).toContain("[mcp_servers.keep_codex]");
       expect(codexAfterUninstall).not.toContain("[mcp_servers.ai_artifacts]");
     } finally {

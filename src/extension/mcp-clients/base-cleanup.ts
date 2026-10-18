@@ -23,11 +23,13 @@ export async function cleanupBaseMcpServer(options?: { userHome?: string }): Pro
   const legacyDirectory = path.join(home, ".vscode", "ai-artifacts");
   const targetSkill = path.join(home, ".agents", "skills", "create-review-artifact");
   const targetLegacySkill = path.join(home, ".agents", "skills", "create-plan-artifact");
+  const claudeSkill = path.join(home, ".claude", "skills", "create-review-artifact");
 
   await Promise.allSettled([
     safeRemoveTarget(managedDirectory),
     safeRemoveTarget(legacyDirectory),
     safeRemoveTarget(targetSkill),
     safeRemoveTarget(targetLegacySkill),
+    safeRemoveTarget(claudeSkill),
   ]);
 }
