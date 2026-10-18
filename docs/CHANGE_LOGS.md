@@ -14,6 +14,42 @@ Minor typos, formatting fixes, or cosmetic wording adjustments that do not chang
 
 Each entry includes the date, category, summary of changes, rationale, and affected components or files.
 
+## 2026-10-18 — Cline MCP Installer & Client Driver Support
+
+### Changes
+
+- Added dedicated configuration driver for the Cline VS Code extension (`ClineClientDriver`):
+  - `src/extension/mcp-clients/cline-client.ts`: Manages MCP server configuration in the extension's `cline_mcp_settings.json` within VS Code global storage (`<user-data-dir>/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json`). Standalone Cline installations are not detected or configured.
+  - Implements `McpClientDriver` with `mcpServers` stdio configuration, reusing atomic JSON helpers (`upsertJsonMcpServer` and `removeJsonMcpServer`).
+- Extended integration management:
+  - `src/extension/mcp-clients/index.ts`: Exported `ClineClientDriver` and updated `getAllClientDrivers` to include Cline with optional custom configuration path support.
+  - `src/extension/workspace-integration.ts`: Added dynamic path resolver `getClineConfigPath(context)` using `context.globalStorageUri`, added `installClineIntegration` and `uninstallClineIntegration`, and integrated Cline into `installAllDetectedIntegrations`, `uninstallAllDetectedIntegrations`, and `checkAllIntegrations`.
+- Registered Command Palette commands:
+  - `package.json` and `src/extension/extension.ts`: Added `agentPlus.installClineIntegration` ("AI Artifacts: Install Integration for Cline") and `agentPlus.uninstallClineIntegration` ("AI Artifacts: Uninstall Integration for Cline").
+- Test suite updates:
+  - `test/mcp-client-drivers.test.ts`: Added unit tests for Cline driver installation, check status, and atomic uninstallation preserving unrelated servers.
+  - `test/workspace-integration.test.ts`: Updated multi-client integration test to cover all six supported AI clients (GitHub Copilot, Cursor, Codex, Claude, Windsurf, Cline).
+- Documentation:
+  - Updated `README.md`, `docs/INSTRUCTION.md`, and `docs/COMPONENTS.md` to document Cline as a supported MCP client and detail its installation commands.
+
+### Rationale
+
+- Cline is one of the most widely used open-source autonomous coding agents for VS Code. Adding a dedicated non-destructive MCP installer allows Cline users to seamlessly review Codex-generated and agent-created artifacts using the standard `ai_artifacts` review lifecycle.
+
+### Affected components or files
+
+- `src/extension/mcp-clients/cline-client.ts`
+- `src/extension/mcp-clients/index.ts`
+- `src/extension/workspace-integration.ts`
+- `src/extension/extension.ts`
+- `package.json`
+- `test/mcp-client-drivers.test.ts`
+- `test/workspace-integration.test.ts`
+- `README.md`
+- `docs/INSTRUCTION.md`
+- `docs/COMPONENTS.md`
+- `docs/CHANGE_LOGS.md`
+
 ## 2026-10-18 — Artifacts in Conversations, Conversation Registry v1, and MCP server 10.0.0
 
 ### Changes

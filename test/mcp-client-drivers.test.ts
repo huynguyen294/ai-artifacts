@@ -14,6 +14,7 @@ import { ClaudeClientDriver } from "../src/extension/mcp-clients/claude-client";
 import { WindsurfClientDriver } from "../src/extension/mcp-clients/windsurf-client";
 import { CodexClientDriver } from "../src/extension/mcp-clients/codex-client";
 import { CopilotClientDriver } from "../src/extension/mcp-clients/copilot-client";
+import { ClineClientDriver, getClineSettingsPath } from "../src/extension/mcp-clients/cline-client";
 import { cleanupBaseMcpServer } from "../src/extension/mcp-clients/base-cleanup";
 import { runUninstall } from "../src/extension/uninstall-entry";
 
@@ -266,6 +267,70 @@ describe("Client Drivers", () => {
     expect(content.inputs).toEqual([]);
   });
 
+  it("Cline driver initializes cline_mcp_settings.json cleanly and preserves other servers", async () => {
+    const customConfig = path.join(
+      tempHome,
+      "Code",
+      "User",
+      "globalStorage",
+      "saoudrizwan.claude-dev",
+      "settings",
+      "cline_mcp_settings.json",
+    );
+    const existing = {
+      mcpServers: {
+        other_tool: {
+          command: "python",
+          args: ["-m", "other"],
+        },
+      },
+    };
+    await writeJsonConfig(customConfig, existing);
+
+    const clineDriver = new ClineClientDriver(customConfig);
+    const scriptPath = "C:/path/to/server.mjs";
+    await clineDriver.install(scriptPath);
+
+    const check = await clineDriver.check(scriptPath);
+    expect(check.status).toBe("ready");
+
+    const content = JSON.parse(await fs.readFile(customConfig, "utf8"));
+    expect(content.mcpServers.other_tool).toBeDefined();
+    expect(content.mcpServers.ai_artifacts).toEqual({
+      command: "node",
+      args: [scriptPath],
+    });
+  });
+
+  it("Cline driver only detects the VS Code extension configuration", async () => {
+    const clineStandaloneDirectory = path.join(tempHome, ".cline");
+    const vscodeConfig = path.join(
+      tempHome,
+      "Code",
+      "User",
+      "globalStorage",
+      "saoudrizwan.claude-dev",
+      "settings",
+      "cline_mcp_settings.json",
+    );
+    await fs.mkdir(clineStandaloneDirectory, { recursive: true });
+
+    const clineDriver = new ClineClientDriver(vscodeConfig);
+    expect(clineDriver.isDetected()).toBe(false);
+
+    const originalSettingsPath = process.env.CLINE_MCP_SETTINGS_PATH;
+    process.env.CLINE_MCP_SETTINGS_PATH = path.join(clineStandaloneDirectory, "cline_mcp_settings.json");
+    try {
+      expect(getClineSettingsPath()).not.toBe(process.env.CLINE_MCP_SETTINGS_PATH);
+    } finally {
+      if (originalSettingsPath === undefined) {
+        delete process.env.CLINE_MCP_SETTINGS_PATH;
+      } else {
+        process.env.CLINE_MCP_SETTINGS_PATH = originalSettingsPath;
+      }
+    }
+  });
+
   it("Cursor driver uninstalls ai_artifacts cleanly", async () => {
     const cursorDriver = new CursorClientDriver();
     const customConfig = path.join(tempHome, ".cursor", "mcp.json");
@@ -460,6 +525,40 @@ describe("Client Drivers", () => {
     const content = JSON.parse(await fs.readFile(customConfig, "utf8"));
     expect(content.servers["dhis2-docs"]).toBeDefined();
     expect(content.servers.ai_artifacts).toBeUndefined();
+  });
+
+  it("Cline driver uninstalls ai_artifacts while preserving other servers", async () => {
+    const customConfig = path.join(
+      tempHome,
+      "Code",
+      "User",
+      "globalStorage",
+      "saoudrizwan.claude-dev",
+      "settings",
+      "cline_mcp_settings.json",
+    );
+    const existing = {
+      mcpServers: {
+        other_tool: {
+          command: "python",
+          args: ["-m", "other"],
+        },
+      },
+    };
+    await writeJsonConfig(customConfig, existing);
+
+    const clineDriver = new ClineClientDriver(customConfig);
+    const scriptPath = "C:/path/to/server.mjs";
+    await clineDriver.install(scriptPath);
+    expect((await clineDriver.check(scriptPath)).status).toBe("ready");
+
+    const uninstalled = await clineDriver.uninstall();
+    expect(uninstalled).toBe(true);
+    expect((await clineDriver.check(scriptPath)).status).toBe("missing");
+
+    const content = JSON.parse(await fs.readFile(customConfig, "utf8"));
+    expect(content.mcpServers.other_tool).toBeDefined();
+    expect(content.mcpServers.ai_artifacts).toBeUndefined();
   });
 });
 

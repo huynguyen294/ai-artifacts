@@ -45,6 +45,7 @@
     "onCommand:agentPlus.installCursorIntegration",
     "onCommand:agentPlus.installClaudeIntegration",
     "onCommand:agentPlus.installWindsurfIntegration",
+    "onCommand:agentPlus.installClineIntegration",
     "onCommand:agentPlus.copyMcpConfig",
     "onCommand:agentPlus.copyReviewSkill",
     "onCommand:agentPlus.verifyGlobalIntegration",
@@ -53,7 +54,8 @@
     "onCommand:agentPlus.uninstallCodexIntegration",
     "onCommand:agentPlus.uninstallCursorIntegration",
     "onCommand:agentPlus.uninstallClaudeIntegration",
-    "onCommand:agentPlus.uninstallWindsurfIntegration"
+    "onCommand:agentPlus.uninstallWindsurfIntegration",
+    "onCommand:agentPlus.uninstallClineIntegration"
   ],
   "main": "./dist/extension.cjs",
   "contributes": {
@@ -92,6 +94,10 @@
         "title": "AI Artifacts: Install Integration for Windsurf"
       },
       {
+        "command": "agentPlus.installClineIntegration",
+        "title": "AI Artifacts: Install Integration for Cline"
+      },
+      {
         "command": "agentPlus.copyMcpConfig",
         "title": "AI Artifacts: Copy MCP Configuration JSON"
       },
@@ -126,6 +132,10 @@
       {
         "command": "agentPlus.uninstallWindsurfIntegration",
         "title": "AI Artifacts: Uninstall Integration for Windsurf"
+      },
+      {
+        "command": "agentPlus.uninstallClineIntegration",
+        "title": "AI Artifacts: Uninstall Integration for Cline"
       }
     ],
     "menus": {

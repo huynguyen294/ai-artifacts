@@ -463,7 +463,7 @@ This layer is the protocol source of truth. A contract change must be propagated
 
 - Deploy the centralized MCP server runtime into `~/.ai-artifacts/managed/runtime/`.
 - Deploy the bundled skill into the global agent-skills directory (`~/.agents/skills/create-review-artifact/`).
-- Provide dedicated, non-destructive configuration drivers for Codex (`config.toml`), Cursor (`mcp.json`), Claude Code (`.claude.json`), Windsurf (`mcp_config.json`), and GitHub Copilot (`Code/User/mcp.json`).
+- Provide dedicated, non-destructive configuration drivers for Codex (`config.toml`), Cursor (`mcp.json`), Claude Code (`.claude.json`), Windsurf (`mcp_config.json`), GitHub Copilot (`Code/User/mcp.json`), and Cline (`cline_mcp_settings.json`).
 - Expose dedicated setup commands plus `AI Artifacts: Install All Detected Integrations` and `AI Artifacts: Copy MCP Configuration JSON`.
 - Verify whether installed assets and client configurations match the extension requirements.
 - Report ready, missing, outdated, or configuration-conflict states across environments.
@@ -597,7 +597,7 @@ Tests document the expected responsibility boundaries:
 | Installed skill contract                                                               | `test/skill-contract.test.ts`                                                                   |
 | Connection watcher, targeted unfocused auto-open, dedupe, exact-handle command, and open coordination | `test/artifact-review-open.test.ts`, `test/artifact-link-contract.test.ts`          |
 | Extension-local artifact search core, discovery, limit cap, and Quick Pick controller | `test/artifact-search.test.ts`, `test/artifact-search-command.test.ts`                         |
-| Five-client install/reinstall/verify/uninstall and artifact retention                   | `test/workspace-integration.test.ts`, `test/mcp-client-drivers.test.ts`, `test/artifact-retention.test.ts` |
+| Six-client install/reinstall/verify/uninstall and artifact retention                   | `test/workspace-integration.test.ts`, `test/mcp-client-drivers.test.ts`, `test/artifact-retention.test.ts` |
 
 For responsibility or protocol changes, update the shared contract first, trace every producer and consumer, and run:
 

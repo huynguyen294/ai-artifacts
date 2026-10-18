@@ -17,12 +17,14 @@ import {
   installCopilotIntegration,
   installCursorIntegration,
   installWindsurfIntegration,
+  installClineIntegration,
   uninstallAllDetectedIntegrations,
   uninstallClaudeIntegration,
   uninstallCodexIntegration,
   uninstallCopilotIntegration,
   uninstallCursorIntegration,
   uninstallWindsurfIntegration,
+  uninstallClineIntegration,
 } from "./workspace-integration";
 import { WorkspaceRegistryPublisher } from "./workspace-registry-publisher";
 import { executeArtifactRetentionCleanup } from "./artifact-retention";
@@ -191,7 +193,19 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       }
     }),
 
-    // 7. Copy MCP Configuration JSON
+    // 7. Cline
+    vscode.commands.registerCommand("agentPlus.installClineIntegration", async () => {
+      try {
+        await installClineIntegration(context);
+        void vscode.window.showInformationMessage(
+          "AI Artifacts MCP installed for Cline (cline_mcp_settings.json). Please reload Cline or window to activate.",
+        );
+      } catch (error) {
+        void vscode.window.showErrorMessage(error instanceof Error ? error.message : String(error));
+      }
+    }),
+
+    // 8. Copy MCP Configuration JSON
     vscode.commands.registerCommand("agentPlus.copyMcpConfig", async () => {
       try {
         const snippet = getMcpConfigSnippet(context);
@@ -321,6 +335,22 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
           );
         } else {
           void vscode.window.showInformationMessage("AI Artifacts MCP was not found in Windsurf configuration.");
+        }
+      } catch (error) {
+        void vscode.window.showErrorMessage(error instanceof Error ? error.message : String(error));
+      }
+    }),
+
+    // 16. Uninstall Cline
+    vscode.commands.registerCommand("agentPlus.uninstallClineIntegration", async () => {
+      try {
+        const removed = await uninstallClineIntegration(context);
+        if (removed) {
+          void vscode.window.showInformationMessage(
+            "AI Artifacts MCP uninstalled for Cline (cline_mcp_settings.json). Please reload Cline or window to apply changes.",
+          );
+        } else {
+          void vscode.window.showInformationMessage("AI Artifacts MCP was not found in Cline configuration.");
         }
       } catch (error) {
         void vscode.window.showErrorMessage(error instanceof Error ? error.message : String(error));

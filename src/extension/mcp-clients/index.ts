@@ -4,6 +4,7 @@ import { CursorClientDriver } from "./cursor-client";
 import { ClaudeClientDriver } from "./claude-client";
 import { WindsurfClientDriver } from "./windsurf-client";
 import { CopilotClientDriver } from "./copilot-client";
+import { ClineClientDriver } from "./cline-client";
 
 export interface McpClientDriver {
   readonly id: string;
@@ -20,14 +21,19 @@ export { CursorClientDriver } from "./cursor-client";
 export { ClaudeClientDriver } from "./claude-client";
 export { WindsurfClientDriver } from "./windsurf-client";
 export { CopilotClientDriver, getVsCodeUserDirectory, getVsCodeUserMcpPath } from "./copilot-client";
+export { ClineClientDriver, getClineSettingsPath } from "./cline-client";
 
-export function getAllClientDrivers(copilotConfigPath?: string): McpClientDriver[] {
+export function getAllClientDrivers(
+  copilotConfigPath?: string,
+  clineConfigPath?: string,
+): McpClientDriver[] {
   return [
     new CopilotClientDriver(copilotConfigPath),
     new CursorClientDriver(),
     new CodexClientDriver(),
     new ClaudeClientDriver(),
     new WindsurfClientDriver(),
+    new ClineClientDriver(clineConfigPath),
   ];
 }
 
