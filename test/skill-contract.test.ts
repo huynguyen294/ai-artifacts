@@ -210,12 +210,13 @@ describe("create-review-artifact skill contract", () => {
     ]);
     expect(skill).toContain("artifactLink");
     expect(skill).toContain("regular file link");
-    expect(skill).toContain("It is not a deep link and does not guarantee that a custom editor opens");
+    expect(skill).toContain("It is not a deep link; it opens `artifact.md` in a plain Markdown/text editor");
+    expect(skill).toContain("Open Artifact Review");
     expect(skill).not.toContain("re-open the artifact review tab");
     expect(contract).toContain("artifactUrl");
     expect(contract).toContain("artifactLink");
-    expect(contract).toContain("`artifactLink` is a regular file link, not a deep link");
-    expect(contract).toContain("does not guarantee that a custom editor opens");
+    expect(contract).toContain("`artifactLink` is a regular file link, not a deep link; it opens `artifact.md` in a plain Markdown/text editor");
+    expect(contract).toContain("Open Artifact Review");
   });
 
   it("documents conversation artifact tracking across create, inspect, and reconnect", async () => {
