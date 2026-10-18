@@ -257,7 +257,7 @@ The protocol is the communication medium between the independently running MCP p
 - Automatically open the corresponding `artifact.md` when configured and targeted, even if that window is unfocused. Disabling auto-open does not undo the MCP connection commit.
 - Deduplicate successful open-request IDs, coordinate concurrent opens by canonical artifact path, and call `vscode.openWith` for VS Code reuse/reveal behavior. Failed opens remain retryable.
 - Register commands to:
-  - Open an artifact review.
+  - Open an artifact review from a selected `artifact.md`, an active Markdown or Artifact Review editor, or the global-collection file-picker fallback. Expose **Open Artifact Review** in Explorer, Markdown editor, and editor-tab context menus for file-backed `artifact.md`, then use the shared safe open coordinator rather than bypassing artifact validation.
   - Search artifacts by title in the global collection (`agentPlus.searchArtifact`).
   - Install, verify, and uninstall all supported integrations or one specific client.
   - Copy the current MCP configuration or production skill.

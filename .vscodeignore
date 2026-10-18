@@ -15,6 +15,8 @@ releases/**
 dist/integration/codex-artifacts-stamp-origin.mjs
 tsconfig.json
 vite.config.ts
+vite.config.dev.ts
+dev/**
 *.vsix
 *.tgz
 debug.log

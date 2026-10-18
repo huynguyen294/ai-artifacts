@@ -34,6 +34,9 @@ Each entry includes the date, category, summary of changes, rationale, and affec
 - Documentation & Skills:
   - Updated `SKILL.md` and `artifact-contract.md` to guide AI agents in tracking `artifactConversationId` across the conversation lifecycle and recovering from `CONVERSATION_NOT_FOUND`.
   - Updated `README.md`, `docs/INSTRUCTION.md`, `docs/ARCHITECTURE.md`, `docs/PHILOSOPHY.md`, and `docs/COMPONENTS.md` for MCP server 10.0.0, conversation registry schema v1, and drawer navigation semantics.
+- Added **Open Artifact Review** context-menu recovery path:
+  - Explorer, Markdown editor, and editor-tab context menus expose the command for file-backed `artifact.md` files.
+  - The command reuses `ArtifactReviewOpenCoordinator` and its global-root, manifest-identity, and linked-path validation before opening the review editor, so a regular chat file link that opens as plain Markdown can be safely reopened for review.
 
 ### Rationale
 
@@ -46,6 +49,7 @@ Each entry includes the date, category, summary of changes, rationale, and affec
 - `src/integration/artifact-review-mcp-v4.ts`
 - `src/extension/conversation-artifact-service.ts`, `src/extension/artifact-review-open.ts`, `src/extension/artifact-review-provider.ts`, `src/extension/artifact-retention.ts`, `src/extension/extension.ts`
 - `src/webview/ReviewApp.tsx`, `src/webview/ConversationArtifactsDrawer.tsx`, `src/webview/focus-trap.ts`, `src/webview/styles.css`
+- `src/extension/extension.ts`, `src/extension/artifact-review-open.ts`, `package.json`
 - `skills/create-review-artifact/SKILL.md`, `skills/create-review-artifact/references/artifact-contract.md`
 - `README.md`, `CHANGELOG.md`, `docs/INSTRUCTION.md`, `docs/ARCHITECTURE.md`, `docs/PHILOSOPHY.md`, `docs/COMPONENTS.md`, `docs/CHANGE_LOGS.md`
 

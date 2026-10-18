@@ -187,6 +187,7 @@
     "build:extension": "esbuild src/extension/extension.ts --bundle --minify --platform=node --format=cjs --external:vscode --outfile=dist/extension.cjs",
     "build:uninstall": "esbuild src/extension/uninstall-entry.ts --bundle --minify --platform=node --format=cjs --outfile=dist/uninstall.cjs",
     "build:webview": "vite build",
+    "dev:webview": "vite --config vite.config.dev.ts",
     "build:enhancements": "esbuild src/webview/enhancements/shiki-entry.ts --bundle --minify --platform=browser --format=iife --outfile=dist/webview/shiki.js && esbuild src/webview/enhancements/mermaid-entry.ts --bundle --minify --platform=browser --format=iife --outfile=dist/webview/mermaid.js",
     "build:integration": "esbuild src/integration/artifact-review-mcp-v4.ts --bundle --minify --platform=node --format=esm --outfile=dist/integration/codex-artifacts-review-mcp.mjs",
     "check": "tsc --noEmit",

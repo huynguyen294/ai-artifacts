@@ -175,7 +175,7 @@ The review editor opens automatically in the focused IDE window, or the only ope
 
 If it doesn't open, run **AI Artifacts: Open Artifact Review**. You can control automatic opening with `agentPlus.autoOpenArtifactReview`.
 
-A file link in the agent's response is a regular file link, not a deep link, and may open the Markdown file instead of the review editor. The target may be unfocused; other windows ignore the event.
+A file link in the agent's response is a regular file link, not a deep link, and may open `artifact.md` in the default Markdown text editor instead of the review editor. To reopen that artifact in the review editor, right-click `artifact.md` in Explorer, in the Markdown editor, or on its editor tab and choose **Open Artifact Review**. The command validates the artifact before opening it. The target may be unfocused; other windows ignore the event.
 
 ### 3. Review, annotate, and drive execution
 

@@ -21,6 +21,7 @@ Release history has been standardized and tracked starting from version **0.2.6*
   - Added `ConversationArtifactService` with bounded concurrency (`8`) and strict artifact integrity checks.
   - Added async non-blocking message queue in `ArtifactReviewProvider` separating mutations from read queries.
   - Extended retention cleanup to prune invalid/expired entries from the conversation registry.
+  - Added **Open Artifact Review** to Explorer, Markdown editor, and editor-tab context menus for `artifact.md`, allowing a chat file link opened as plain Markdown to be reopened in the validated review editor.
 
 ### Documentation
 
