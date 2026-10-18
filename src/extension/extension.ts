@@ -38,7 +38,7 @@ import {
 } from "./conversation-artifact-service";
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
-  const provider = new ArtifactReviewProvider(context);
+// Initialize extension services
   const workspaceRegistryPublisher = new WorkspaceRegistryPublisher();
   const artifactReviewOpenCoordinator = new ArtifactReviewOpenCoordinator<vscode.Uri>({
     uriFromFilePath: (filePath) => vscode.Uri.file(filePath),
@@ -63,6 +63,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       void vscode.window.showErrorMessage(message);
     },
   });
+  const provider = new ArtifactReviewProvider(context, conversationArtifactService);
   const installAllDetectedIntegrationsAndNotify = async (): Promise<void> => {
     try {
       await installAllDetectedIntegrations(context);

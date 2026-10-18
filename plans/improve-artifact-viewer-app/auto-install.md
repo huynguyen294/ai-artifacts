@@ -1,0 +1,4 @@
+- tham khảo luồng từ upgrade-noti.md, luồng sẽ sinh ra từ luồng này
+- khi upgrade thì nếu chưa có global state thì auto install detected luôn, và message thông báo status, thêm 1 dòng in đậm. Nếu client của bạn chưa có vui lòng manual guide, có nút qua manual install guide. verifacation message thay đổi chung.
+- tôi muốn đi theo hướng user mới thì nên auto install và README cũng đổi Get started thành Installation guide. Nó nằm ở đầu của docs, đầu tiên là sẽ automation install detected và thông báo, nếu không detect được thì dùng installation guide. Docs cũng nên có hướng dẫn reload window nếu không có gì được install.
+- còn upgrade không phải version mới thì hiện thông báo như hiện tại.

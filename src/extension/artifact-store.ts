@@ -206,6 +206,7 @@ function resolveCommentTarget(
 
 export class ArtifactStore {
   readonly artifactDirectory: string;
+  readonly artifactId: string;
   readonly manifestPath: string;
   readonly commentsPath: string;
   readonly submissionPath: string;
@@ -216,6 +217,7 @@ export class ArtifactStore {
     globalRootOptions: GlobalArtifactsRootOptions = {},
   ) {
     this.artifactDirectory = path.dirname(artifactPath);
+    this.artifactId = path.basename(this.artifactDirectory);
     const files = artifactPaths(this.artifactDirectory);
     this.manifestPath = files.manifestPath;
     this.commentsPath = files.commentsPath;
