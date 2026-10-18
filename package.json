@@ -3,7 +3,7 @@
   "displayName": "AI Artifacts - Interactive Planning & Review",
   "publisher": "huynguyen294",
   "description": "Interactive review editor for AI-generated planning artifacts, markdown specs, and proposals. Connects via MCP to Cursor, Codex, Windsurf, Claude, and more.",
-  "version": "1.0.2",
+  "version": "1.1.0",
   "type": "module",
   "license": "MIT",
   "icon": "media/icon.png",
@@ -60,7 +60,8 @@
     "commands": [
       {
         "command": "agentPlus.openArtifactReview",
-        "title": "AI Artifacts: Open Artifact Review"
+        "title": "Open Artifact Review",
+        "category": "AI Artifacts"
       },
       {
         "command": "agentPlus.searchArtifact",
@@ -127,6 +128,29 @@
         "title": "AI Artifacts: Uninstall Integration for Windsurf"
       }
     ],
+    "menus": {
+      "explorer/context": [
+        {
+          "command": "agentPlus.openArtifactReview",
+          "when": "resourceFilename == artifact.md && resourceScheme == file && !explorerResourceIsFolder",
+          "group": "navigation@0"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "agentPlus.openArtifactReview",
+          "when": "resourceFilename == artifact.md && resourceScheme == file",
+          "group": "navigation@0"
+        }
+      ],
+      "editor/title/context": [
+        {
+          "command": "agentPlus.openArtifactReview",
+          "when": "resourceFilename == artifact.md && resourceScheme == file",
+          "group": "navigation@0"
+        }
+      ]
+    },
     "customEditors": [
       {
         "viewType": "agentPlus.artifactReview",
@@ -163,6 +187,7 @@
     "build:extension": "esbuild src/extension/extension.ts --bundle --minify --platform=node --format=cjs --external:vscode --outfile=dist/extension.cjs",
     "build:uninstall": "esbuild src/extension/uninstall-entry.ts --bundle --minify --platform=node --format=cjs --outfile=dist/uninstall.cjs",
     "build:webview": "vite build",
+    "dev:webview": "vite --config vite.config.dev.ts",
     "build:enhancements": "esbuild src/webview/enhancements/shiki-entry.ts --bundle --minify --platform=browser --format=iife --outfile=dist/webview/shiki.js && esbuild src/webview/enhancements/mermaid-entry.ts --bundle --minify --platform=browser --format=iife --outfile=dist/webview/mermaid.js",
     "build:integration": "esbuild src/integration/artifact-review-mcp-v4.ts --bundle --minify --platform=node --format=esm --outfile=dist/integration/codex-artifacts-review-mcp.mjs",
     "check": "tsc --noEmit",

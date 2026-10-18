@@ -7,6 +7,7 @@ Codex Artifacts is a VS Code extension for reviewing Codex-generated Markdown th
 - Package version source of truth: `package.json`
 - Current and only supported artifact schema: `v6`
 - Artifact storage: global per-user `~/.ai-artifacts/artifacts/`
+- Conversation registry: global per-user `~/.ai-artifacts/conversation-registry/` (schema v1)
 - Compatibility: schemas `v3`/`v4`/`v5` and workspace-local lifecycles are unsupported and are not live-migrated
 - Primary environment: VS Code extension host, local MCP server, and React webview
 - Filesystem support: extension host and MCP process must see the same user home and filesystem
@@ -37,6 +38,7 @@ If product intent, documentation, tests, and implementation disagree, call out t
 - The skill must not create, edit, repair, or bypass lifecycle files directly.
 - Round tokens are in-memory, one-time, exact-state-bound, and expiring. Cancellation or restart preserves artifact state; recover only by inspecting an exact retained artifact handle.
 - Artifact lifetime exceeds waiter lifetime, which exceeds chat-turn lifetime. Artifact lifetime is bounded by configured retention (`agentPlus.artifactRetentionDays`); automatic cleanup permanently deletes validated expired artifacts when the extension activates. Cancellation and takeover must not mutate lifecycle files.
+- Conversation registry (`~/.ai-artifacts/conversation-registry/<artifactConversationId>/`, schema v1) groups artifacts in the same conversation for the webview drawer. It uses lockfiles for multi-process safety and is cleaned up alongside expired artifacts during retention cleanup. Navigating artifacts via the drawer is window-local and never mutates `artifact-connection.json` or review state.
 - Schema v6 is the only readable and writable lifecycle. Schema-v3/v4/v5 and workspace-local artifacts are rejected and are not live-migrated.
 - Artifacts are owned by review sessions, not repository paths; `artifact.json` contains no `location.workspaceRoot` field.
 - After creation, wait/inspect/advance/reconnect use the exact global artifact handle.
@@ -61,14 +63,16 @@ If product intent, documentation, tests, and implementation disagree, call out t
 
 ## Ownership map
 
-- `src/integration/artifact-review-mcp-v4.ts`: historical filename for the current MCP 9.0.0/schema-v6 tools, window resolution, connection commits, artifact creation, waiter ownership/takeover, round grants, inspection, and transactional round commits.
+- `src/integration/artifact-review-mcp-v4.ts`: historical filename for the current MCP 10.0.0/schema-v6 tools, window resolution, conversation grouping, connection commits, artifact creation, waiter ownership/takeover, round grants, inspection, and transactional round commits.
+- `src/shared/conversation-artifact-registry.ts`: schema-v1 conversation registry persistence, atomic lockfiles, and safe retention pruning.
+- `src/extension/conversation-artifact-service.ts`: extension-side conversation artifacts discovery and validation.
 - `src/extension/artifact-store.ts`: trusted artifact loading, comment writes, and submission writes.
 - `src/extension/workspace-registry-publisher.ts`: live VS Code workspace heartbeat.
 - `src/extension/artifact-search.ts`: extension-local schema-v6 title normalization, bounded concurrency discovery, and title-only filtering.
 - `src/extension/artifact-search-command.ts`: VS Code Quick Pick UI controller, in-memory filter updates, and safe cancellation/open coordination.
 - `src/extension/workspace-integration.ts`: centralized MCP installation, base runtime provisioning, and legacy cleanup.
 - `src/extension/mcp-clients/`: dedicated configuration drivers for Codex, Cursor, Claude Code, Windsurf, and GitHub Copilot (VS Code).
-- `src/webview/`: review UI and typed messages to the extension host; no direct filesystem or process access.
+- `src/webview/`: review UI and typed messages to the extension host; includes `ConversationArtifactsDrawer.tsx` for conversation artifact navigation; no direct filesystem or process access.
 - `src/shared/`: shared schemas, file contracts, artifact-connection safety/persistence, validation, and grouped workspace registry rules.
 - `skills/create-review-artifact/`: Codex trigger and lifecycle orchestration contract.
 - `test/`: executable regression coverage for contracts and failure behavior.

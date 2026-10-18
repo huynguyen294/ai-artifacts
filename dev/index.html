@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en" class="vscode-dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AI Artifacts Review - Dev Host</title>
+    <link rel="stylesheet" href="./vscode-theme.css" />
+    <script>
+      // Global VS Code Webview API Shim for Standalone Dev Host
+      // Executes before any ES module is parsed or evaluated
+      window.__dev_vscode_queue = [];
+      window.__dev_vscode_handler = null;
+
+      window.setDevVsCodeHandler = function(handler) {
+        window.__dev_vscode_handler = handler;
+        if (typeof handler === "function") {
+          while (window.__dev_vscode_queue.length > 0) {
+            var queuedMessage = window.__dev_vscode_queue.shift();
+            handler(queuedMessage);
+          }
+        }
+      };
+
+      window.acquireVsCodeApi = function() {
+        return {
+          postMessage: function(message) {
+            if (typeof window.__dev_vscode_handler === "function") {
+              window.__dev_vscode_handler(message);
+            } else {
+              window.__dev_vscode_queue.push(message);
+            }
+          },
+          getState: function() {
+            return undefined;
+          },
+          setState: function(state) {}
+        };
+      };
+    </script>
+  </head>
+  <body class="vscode-dark">
+    <div
+      id="root"
+      data-style-nonce="dev-style-nonce"
+      data-shiki-uri="/shiki.js"
+      data-mermaid-uri="/mermaid.js"
+    ></div>
+    <script type="module" src="./main.tsx"></script>
+  </body>
+</html>

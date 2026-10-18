@@ -14,6 +14,45 @@ Minor typos, formatting fixes, or cosmetic wording adjustments that do not chang
 
 Each entry includes the date, category, summary of changes, rationale, and affected components or files.
 
+## 2026-10-18 — Artifacts in Conversations, Conversation Registry v1, and MCP server 10.0.0
+
+### Changes
+
+- Added Conversation Registry (schema v1) under `~/.ai-artifacts/conversation-registry/<artifactConversationId>/`:
+  - `src/shared/conversation-artifact-registry.ts`: Multi-process safe registry tracking conversation metadata (`conversation.json`) and per-artifact index entries (`registered-artifacts/<artifactId>.json`), guarded by atomic `.conversation.lock`. Includes stale conversation cleanup integrated into retention cleanup.
+  - Upgraded MCP server runtime to `10.0.0` in `src/integration/artifact-review-mcp-v4.ts`: accepts optional flat fields `artifactConversationId?: string` and `conversationName?: string` on `create_artifact` and `inspect_artifact_review`, automatically commits conversation registration, rolls back registration if connection commit fails, returns `artifactConversationId` on create/inspect, and echoes it on wait/advance when supplied.
+  - Added new machine-readable error codes `CONVERSATION_NOT_FOUND` (retryable by resetting conversation context) and `CONVERSATION_REGISTRY_INVALID` (non-retryable registry corruption).
+- Added Extension-side Conversation Artifacts Support:
+  - `src/extension/conversation-artifact-service.ts`: Resolves artifacts registered in a conversation with bounded concurrency (`8`) and validates `artifact.json` and `artifact.md` integrity.
+  - `src/extension/artifact-review-open.ts`: Extended `ArtifactReviewOpenCoordinator.open` to support preview and tab options (`{ preview, preserveFocus }`).
+  - `src/extension/artifact-review-provider.ts`: Added asynchronous non-blocking message queue for store mutations (`addComment`, `removeComment`, `submitReview`) while running read operations (`listConversationArtifacts`, `openConversationArtifact`) concurrently with monotonic request tracking.
+- Added Webview Conversation Artifacts Sidebar Drawer:
+  - `src/webview/ConversationArtifactsDrawer.tsx`: Sidebar drawer in the review editor listing all artifacts in the conversation with instant title/ID search, status badges (`Current`, `Waiting`, `Approved`, `Revised`, `Saved`), and standard review editor tab opening.
+  - `src/webview/focus-trap.ts`: Reusable focus trap management coordinating keyboard navigation between the review content, comments drawer, and conversation artifacts drawer with mutual exclusion.
+- Retention cleanup integration:
+  - Extended `src/extension/artifact-retention.ts` to prune invalid/expired entries from `~/.ai-artifacts/conversation-registry/` and delete empty conversation directories alongside expired artifacts.
+- Documentation & Skills:
+  - Updated `SKILL.md` and `artifact-contract.md` to guide AI agents in tracking `artifactConversationId` across the conversation lifecycle and recovering from `CONVERSATION_NOT_FOUND`.
+  - Updated `README.md`, `docs/INSTRUCTION.md`, `docs/ARCHITECTURE.md`, `docs/PHILOSOPHY.md`, and `docs/COMPONENTS.md` for MCP server 10.0.0, conversation registry schema v1, and drawer navigation semantics.
+- Added **Open Artifact Review** context-menu recovery path:
+  - Explorer, Markdown editor, and editor-tab context menus expose the command for file-backed `artifact.md` files.
+  - The command reuses `ArtifactReviewOpenCoordinator` and its global-root, manifest-identity, and linked-path validation before opening the review editor, so a regular chat file link that opens as plain Markdown can be safely reopened for review.
+
+### Rationale
+
+- In complex engineering workflows, a single agent conversation often produces multiple related artifacts (for example, architecture designs, phased implementation plans, test checklists). Users needed a fast, low-friction way to discover, browse, and switch between these related documents directly inside the review editor without losing their place or having to search manually through the command palette.
+- The conversation registry decouples artifact grouping from artifact identity: each artifact remains independent and schema-v6 compliant, while grouping is tracked through a dedicated multi-process safe index.
+
+### Affected components and files
+
+- `src/shared/contracts.ts`, `src/shared/artifact-files.ts`, `src/shared/conversation-artifact-registry.ts`
+- `src/integration/artifact-review-mcp-v4.ts`
+- `src/extension/conversation-artifact-service.ts`, `src/extension/artifact-review-open.ts`, `src/extension/artifact-review-provider.ts`, `src/extension/artifact-retention.ts`, `src/extension/extension.ts`
+- `src/webview/ReviewApp.tsx`, `src/webview/ConversationArtifactsDrawer.tsx`, `src/webview/focus-trap.ts`, `src/webview/styles.css`
+- `src/extension/extension.ts`, `src/extension/artifact-review-open.ts`, `package.json`
+- `skills/create-review-artifact/SKILL.md`, `skills/create-review-artifact/references/artifact-contract.md`
+- `README.md`, `CHANGELOG.md`, `docs/INSTRUCTION.md`, `docs/ARCHITECTURE.md`, `docs/PHILOSOPHY.md`, `docs/COMPONENTS.md`, `docs/CHANGE_LOGS.md`
+
 ## 2026-09-21 — Automatic artifact retention cleanup and bounded lifetime model
 
 ### Changes

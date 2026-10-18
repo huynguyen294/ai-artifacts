@@ -3,10 +3,14 @@ import { describe, expect, it } from "vitest";
 import * as contracts from "../src/shared/contracts";
 import {
   ARTIFACT_CONNECTION_SCHEMA_VERSION,
+  ARTIFACT_ROOT_BLOCK_ID,
+  ARTIFACT_ROOT_BLOCK_TYPE,
+  ARTIFACT_ROOT_TEXT,
   ARTIFACT_SCHEMA_VERSION,
   artifactConnectionSchema,
   artifactManifestSchema,
   commentsDocumentSchema,
+  reviewCommentSchema,
   reviewSubmissionSchema,
   type ArtifactConnection,
   type ReviewState,
@@ -113,6 +117,44 @@ describe("artifact schema v6 contract", () => {
       artifactSha256,
     })).toThrow("comments.json does not belong to this artifact");
     expect(() => commentsDocumentSchema.parse(comments(5))).toThrow();
+  });
+
+  it("accepts only the canonical virtual target for artifact-wide comments", () => {
+    const generalFeedback = {
+      id: "22222222-2222-4222-8222-222222222222",
+      createdAt: timestamp,
+      block: {
+        id: ARTIFACT_ROOT_BLOCK_ID,
+        type: ARTIFACT_ROOT_BLOCK_TYPE,
+        heading: null,
+      },
+      selection: {
+        quote: ARTIFACT_ROOT_TEXT,
+        start: 0,
+        end: ARTIFACT_ROOT_TEXT.length,
+        prefix: "",
+        suffix: "",
+      },
+      body: "Apply the inline comments consistently across the artifact.",
+    };
+
+    expect(reviewCommentSchema.parse(generalFeedback)).toEqual(generalFeedback);
+    expect(commentsDocumentSchema.parse({
+      ...comments(),
+      comments: [generalFeedback],
+    }).comments).toEqual([generalFeedback]);
+    expect(() => reviewCommentSchema.parse({
+      ...generalFeedback,
+      block: { ...generalFeedback.block, id: "another-block" },
+    })).toThrow();
+    expect(() => reviewCommentSchema.parse({
+      ...generalFeedback,
+      block: { id: ARTIFACT_ROOT_BLOCK_ID, type: "paragraph", heading: null },
+    })).toThrow();
+    expect(() => reviewCommentSchema.parse({
+      ...generalFeedback,
+      selection: { ...generalFeedback.selection, end: 0 },
+    })).toThrow();
   });
 
   it("binds submissions to the v6 review session, round, artifact, and hashes", () => {
@@ -229,5 +271,112 @@ describe("artifact connection schema v1 contract", () => {
     });
     expect(parsedManifest.schemaVersion).toBe(6);
     expect(parsedComments.schemaVersion).toBe(6);
+  });
+});
+
+describe("artifact conversation schema v1 contract", () => {
+  const artifactConversationId = "33333333-3333-4333-8333-333333333333";
+
+  it("locks conversation schema version to 1 and validates conversation metadata", () => {
+    expect(contracts.ARTIFACT_CONVERSATION_SCHEMA_VERSION).toBe(1);
+    const validMeta = {
+      schemaVersion: 1,
+      artifactConversationId,
+      conversationName: "Improve Artifact Viewer",
+      createdAt: timestamp,
+    };
+    expect(contracts.artifactConversationMetadataSchema.parse(validMeta)).toEqual(validMeta);
+
+    // Rejects wrong schemaVersion, malformed UUID, blank/overlong name, extra fields
+    expect(() => contracts.artifactConversationMetadataSchema.parse({ ...validMeta, schemaVersion: 2 })).toThrow();
+    expect(() => contracts.artifactConversationMetadataSchema.parse({ ...validMeta, artifactConversationId: "not-a-uuid" })).toThrow();
+    expect(() => contracts.artifactConversationMetadataSchema.parse({ ...validMeta, conversationName: "" })).toThrow();
+    expect(() => contracts.artifactConversationMetadataSchema.parse({ ...validMeta, conversationName: "   " })).toThrow();
+    expect(() => contracts.artifactConversationMetadataSchema.parse({ ...validMeta, conversationName: "a".repeat(201) })).toThrow();
+    expect(() => contracts.artifactConversationMetadataSchema.parse({ ...validMeta, extraField: true })).toThrow();
+  });
+
+  it("validates conversation membership and rejects extra or malformed fields", () => {
+    const validMembership = {
+      schemaVersion: 1,
+      artifactConversationId,
+      artifactId: "artifact-001",
+      registeredAt: timestamp,
+    };
+    expect(contracts.artifactConversationMembershipSchema.parse(validMembership)).toEqual(validMembership);
+
+    expect(() => contracts.artifactConversationMembershipSchema.parse({ ...validMembership, schemaVersion: 2 })).toThrow();
+    expect(() => contracts.artifactConversationMembershipSchema.parse({ ...validMembership, artifactConversationId: "../escape" })).toThrow();
+    expect(() => contracts.artifactConversationMembershipSchema.parse({ ...validMembership, artifactId: "../escape" })).toThrow();
+    expect(() => contracts.artifactConversationMembershipSchema.parse({ ...validMembership, title: "copied-title" })).toThrow();
+  });
+
+  it("validates optional conversation input and view state schemas", () => {
+    expect(contracts.artifactConversationInputSchema.parse({})).toEqual({});
+    expect(contracts.artifactConversationInputSchema.parse({
+      artifactConversationId,
+      conversationName: "New Conversation",
+    })).toEqual({
+      artifactConversationId,
+      conversationName: "New Conversation",
+    });
+    expect(() => contracts.artifactConversationInputSchema.parse({ extra: 1 })).toThrow();
+
+    const readyState = {
+      status: "ready" as const,
+      groups: [
+        {
+          artifactConversationId,
+          conversationName: "Improve Artifact Viewer",
+          currentArtifactRegisteredAt: timestamp,
+          artifacts: [
+            {
+              artifactId: "artifact-001",
+              title: "Global artifact storage",
+              kind: "implementation-plan",
+              registeredAt: timestamp,
+              isCurrent: true,
+            },
+          ],
+        },
+      ],
+      skippedCount: 0,
+    };
+    expect(contracts.conversationArtifactsViewStateSchema.parse({ status: "loading" })).toEqual({ status: "loading" });
+    expect(contracts.conversationArtifactsViewStateSchema.parse(readyState)).toEqual(readyState);
+    expect(contracts.conversationArtifactsViewStateSchema.parse({ status: "error", message: "Failed to read" })).toEqual({
+      status: "error",
+      message: "Failed to read",
+    });
+  });
+
+  it("validates openConversationArtifact webview message and rejects arbitrary file paths", () => {
+    expect(contracts.webviewToExtensionMessageSchema.parse({
+      type: "openConversationArtifact",
+      artifactId: "artifact-001",
+    })).toEqual({
+      type: "openConversationArtifact",
+      artifactId: "artifact-001",
+    });
+
+    expect(() => contracts.webviewToExtensionMessageSchema.parse({
+      type: "openConversationArtifact",
+      artifactId: "../outside",
+    })).toThrow();
+
+    expect(() => contracts.webviewToExtensionMessageSchema.parse({
+      type: "openConversationArtifact",
+      artifactId: "artifact-001",
+      artifactPath: "C:\\arbitrary\\path.md",
+    })).toThrow();
+  });
+
+  it("keeps artifactManifestSchema strictly unchanged without conversation fields", () => {
+    expect(() =>
+      artifactManifestSchema.parse({
+        ...manifest(),
+        artifactConversationId,
+      }),
+    ).toThrow();
   });
 });

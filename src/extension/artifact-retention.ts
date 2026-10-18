@@ -14,6 +14,10 @@ import {
   parseArtifactManifest,
 } from "../shared/artifact-validation";
 import { artifactIdSchema } from "../shared/contracts";
+import {
+  cleanupStaleConversations,
+  type CleanupStaleConversationsResult,
+} from "../shared/conversation-artifact-registry";
 
 export const DEFAULT_RETENTION_DAYS = 30;
 export const DAY_IN_MS = 24 * 60 * 60 * 1000;
@@ -31,6 +35,7 @@ export type RetentionCleanupResult = {
   deletedCount: number;
   skippedCount: number;
   failedCount: number;
+  conversationCleanup?: CleanupStaleConversationsResult;
 };
 
 function errorCode(error: unknown): string | undefined {
@@ -290,6 +295,16 @@ export async function executeArtifactRetentionCleanup(
       // Malformed manifest, missing files, or parse errors: skip safely without mutation
       result.skippedCount++;
     }
+  }
+
+  // Best-effort cleanup of stale conversation memberships and empty conversation directories
+  try {
+    result.conversationCleanup = await cleanupStaleConversations({
+      ...rootOptions,
+      logDiagnostic: (msg, err) => logDiagnostic(`[Conversation Cleanup] ${msg}`, err),
+    });
+  } catch (convCleanupError) {
+    logDiagnostic("Non-blocking conversation cleanup encountered an error", convCleanupError);
   }
 
   return result;

@@ -7,6 +7,11 @@ import {
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
 } from "react";
+import {
+  ARTIFACT_ROOT_BLOCK_ID,
+  ARTIFACT_ROOT_BLOCK_TYPE,
+  ARTIFACT_ROOT_TEXT,
+} from "../shared/contracts";
 import type {
   ExtensionToWebviewMessage,
   MarkdownBlock,
@@ -14,12 +19,15 @@ import type {
   ReviewDecision,
   ReviewState,
   SendStatus,
+  ConversationArtifactsViewState,
 } from "../shared/contracts";
 import { vscode } from "./vscode-api";
 import { MarkdownRenderer } from "./MarkdownRenderer";
 import { SelectionCommentPopover, type SelectionDraft } from "./SelectionCommentPopover";
 import { CommentDetailPopover } from "./CommentDetailPopover";
 import { CommentsDrawer } from "./CommentsDrawer";
+import { ConversationArtifactsDrawer } from "./ConversationArtifactsDrawer";
+import { trapFocusInContainer } from "./focus-trap";
 import { deriveReviewActions } from "./review-actions";
 
 function elementOf(node: Node): Element | null {
@@ -117,6 +125,8 @@ export function App(): ReactNode {
   const [draft, setDraft] = useState<SelectionDraft | null>(null);
   const [body, setBody] = useState("");
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [conversationsDrawerOpen, setConversationsDrawerOpen] = useState(false);
+  const [conversationState, setConversationState] = useState<ConversationArtifactsViewState>({ status: "loading" });
   const [activeComment, setActiveComment] = useState<{ id: string; anchor: HTMLElement }>();
   const [sendStatus, setSendStatus] = useState<SendStatus>("idle");
   const [sendMessage, setSendMessage] = useState<string>();
@@ -124,6 +134,9 @@ export function App(): ReactNode {
   const [copied, setCopied] = useState(false);
   const [connectPromptCopied, setConnectPromptCopied] = useState(false);
   const reviewRoundRef = useRef<number | undefined>(undefined);
+  const generalFeedbackButtonRef = useRef<HTMLButtonElement>(null);
+  const conversationsButtonRef = useRef<HTMLButtonElement>(null);
+  const commentsButtonRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     const listener = (event: MessageEvent<ExtensionToWebviewMessage>): void => {
@@ -138,6 +151,7 @@ export function App(): ReactNode {
           setDraft(null);
           setBody("");
           setDrawerOpen(false);
+          setConversationsDrawerOpen(false);
           setActiveComment(undefined);
           window.getSelection()?.removeAllRanges();
         }
@@ -155,6 +169,8 @@ export function App(): ReactNode {
           setSendStatus("idle");
           setSendMessage(undefined);
         }
+      } else if (message.type === "conversationArtifactsState") {
+        setConversationState(message.state);
       } else if (message.type === "sendState") {
         setSendStatus(message.status);
         setSendMessage(message.message);
@@ -175,6 +191,7 @@ export function App(): ReactNode {
   const commentsByBlock = useMemo(() => {
     const result = new Map<string, ReviewComment[]>();
     for (const comment of state?.comments.comments ?? []) {
+      if (comment.block.type === ARTIFACT_ROOT_BLOCK_TYPE) continue;
       const comments = result.get(comment.block.id) ?? [];
       comments.push(comment);
       result.set(comment.block.id, comments);
@@ -203,6 +220,20 @@ export function App(): ReactNode {
     setError(undefined);
   };
 
+  const beginGeneralFeedback = (event: ReactMouseEvent<HTMLButtonElement>): void => {
+    setDraft({
+      blockId: ARTIFACT_ROOT_BLOCK_ID,
+      quote: ARTIFACT_ROOT_TEXT,
+      start: 0,
+      end: ARTIFACT_ROOT_TEXT.length,
+      contextElement: event.currentTarget,
+    });
+    setBody("");
+    setActiveComment(undefined);
+    setError(undefined);
+    window.getSelection()?.removeAllRanges();
+  };
+
   const submitComment = (): void => {
     if (!draft || !body.trim()) return;
     vscode.postMessage({
@@ -222,6 +253,15 @@ export function App(): ReactNode {
   };
 
   const jumpToComment = (comment: ReviewComment): void => {
+    if (comment.block.type === ARTIFACT_ROOT_BLOCK_TYPE) {
+      const anchor = generalFeedbackButtonRef.current;
+      if (!anchor) return;
+      anchor.scrollIntoView({ behavior: "smooth", block: "start" });
+      anchor.focus({ preventScroll: true });
+      setActiveComment({ id: comment.id, anchor });
+      setDrawerOpen(false);
+      return;
+    }
     const mark = [...document.querySelectorAll<HTMLElement>("[data-comment-ids]")].find((element) =>
       element.dataset.commentIds?.split(",").includes(comment.id),
     );
@@ -248,6 +288,53 @@ export function App(): ReactNode {
     }
   };
 
+  const openConversationsDrawer = useCallback((): void => {
+    setConversationsDrawerOpen(true);
+    if (typeof window !== "undefined" && window.innerWidth < 1100) {
+      setDrawerOpen(false);
+    }
+  }, []);
+
+  const closeConversationsDrawer = useCallback((): void => {
+    setConversationsDrawerOpen(false);
+    conversationsButtonRef.current?.focus();
+  }, []);
+
+  const openCommentsDrawer = useCallback((): void => {
+    setDrawerOpen(true);
+    if (typeof window !== "undefined" && window.innerWidth < 1100) {
+      setConversationsDrawerOpen(false);
+    }
+  }, []);
+
+  const closeCommentsDrawer = useCallback((): void => {
+    setDrawerOpen(false);
+    commentsButtonRef.current?.focus();
+  }, []);
+
+  const handleOpenArtifact = useCallback((artifactId: string): void => {
+    vscode.postMessage({ type: "openConversationArtifact", artifactId });
+  }, []);
+
+  useEffect(() => {
+    if (!drawerOpen && !conversationsDrawerOpen) return;
+    const handleKeyDown = (event: KeyboardEvent): void => {
+      if (event.key !== "Tab") return;
+      const activeDrawerId = conversationsDrawerOpen
+        ? "conversation-artifacts-drawer"
+        : drawerOpen
+          ? "artifact-comments-drawer"
+          : null;
+      if (!activeDrawerId) return;
+      const container = document.getElementById(activeDrawerId);
+      if (container) {
+        trapFocusInContainer(container, event);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [drawerOpen, conversationsDrawerOpen]);
+
   if (!state) return <main className="loading">{error ?? "Loading artifact…"}</main>;
 
   const comments = state.comments.comments;
@@ -268,6 +355,9 @@ export function App(): ReactNode {
     : hasUnsavedComment
       ? "Save or cancel the comment draft first."
       : undefined;
+  const totalConversationArtifacts = conversationState.status === "ready"
+    ? conversationState.groups.reduce((sum, g) => sum + g.artifacts.length, 0)
+    : 0;
 
   return (
     <div className="app-shell">
@@ -385,26 +475,74 @@ export function App(): ReactNode {
       )}
 
       <nav className="review-utility-bar" aria-label="Artifact review tools">
-        <button
-          className="ghost comments-toggle"
-          aria-expanded={drawerOpen}
-          aria-controls="artifact-comments-drawer"
-          title="Open comments panel"
-          onClick={() => setDrawerOpen(true)}
-        >
-          <svg aria-hidden="true" width="14" height="14" viewBox="0 0 16 16" fill="none">
-            <path
-              d="M2.5 3.75C2.5 2.78 3.28 2 4.25 2h7.5c.97 0 1.75.78 1.75 1.75v5.5c0 .97-.78 1.75-1.75 1.75H7l-3.1 2.4c-.58.45-1.4.04-1.4-.7V3.75Z"
-              stroke="currentColor"
-              strokeWidth="1.2"
-              strokeLinejoin="round"
-            />
-          </svg>
-          <span>View comments</span>
-          <span className="comment-count-badge" aria-label={`${comments.length} comments`}>
-            {comments.length}
-          </span>
-        </button>
+        <div className="review-utility-bar-left">
+          <button
+            ref={conversationsButtonRef}
+            className="ghost conversations-toggle"
+            aria-expanded={conversationsDrawerOpen}
+            aria-controls="conversation-artifacts-drawer"
+            title={
+              totalConversationArtifacts > 0
+                ? `View artifacts in this conversation (${totalConversationArtifacts})`
+                : "View artifacts in this conversation"
+            }
+            onClick={openConversationsDrawer}
+          >
+            <svg aria-hidden="true" width="14" height="14" viewBox="0 0 16 16" fill="none">
+              <path
+                d="M2 4.5h12M2 8h12M2 11.5h8"
+                stroke="currentColor"
+                strokeWidth="1.3"
+                strokeLinecap="round"
+              />
+            </svg>
+            <span>Conversation Artifacts</span>
+            {totalConversationArtifacts > 0 && (
+              <span
+                className="comment-count-badge"
+                aria-label={`${totalConversationArtifacts} artifacts`}
+              >
+                {totalConversationArtifacts}
+              </span>
+            )}
+          </button>
+        </div>
+        <div className="review-utility-bar-right">
+          <button
+            ref={generalFeedbackButtonRef}
+            className="ghost general-feedback-toggle"
+            disabled={isSubmitted || state.lifecycle.readOnly || hasUnsavedComment}
+            aria-haspopup="dialog"
+            aria-expanded={draft?.blockId === ARTIFACT_ROOT_BLOCK_ID}
+            title={isSubmitted
+              ? "This artifact review round was already submitted."
+              : blockedTitle ?? "Add feedback that applies to the entire artifact"}
+            onClick={beginGeneralFeedback}
+          >
+            General feedback
+          </button>
+          <button
+            ref={commentsButtonRef}
+            className="ghost comments-toggle"
+            aria-expanded={drawerOpen}
+            aria-controls="artifact-comments-drawer"
+            title="Open comments panel"
+            onClick={openCommentsDrawer}
+          >
+            <svg aria-hidden="true" width="14" height="14" viewBox="0 0 16 16" fill="none">
+              <path
+                d="M2.5 3.75C2.5 2.78 3.28 2 4.25 2h7.5c.97 0 1.75.78 1.75 1.75v5.5c0 .97-.78 1.75-1.75 1.75H7l-3.1 2.4c-.58.45-1.4.04-1.4-.7V3.75Z"
+                stroke="currentColor"
+                strokeWidth="1.2"
+                strokeLinejoin="round"
+              />
+            </svg>
+            <span>View comments</span>
+            <span className="comment-count-badge" aria-label={`${comments.length} comments`}>
+              {comments.length}
+            </span>
+          </button>
+        </div>
       </nav>
 
       <main className="document-workspace">
@@ -442,11 +580,17 @@ export function App(): ReactNode {
           onRemove={() => removeComment(selectedComment.id)}
         />
       )}
+      <ConversationArtifactsDrawer
+        open={conversationsDrawerOpen}
+        state={conversationState}
+        onClose={closeConversationsDrawer}
+        onOpenArtifact={handleOpenArtifact}
+      />
       <CommentsDrawer
         open={drawerOpen}
         comments={comments}
         submitted={isSubmitted || state.lifecycle.readOnly}
-        onClose={() => setDrawerOpen(false)}
+        onClose={closeCommentsDrawer}
         onJump={jumpToComment}
         onRemove={removeComment}
       />

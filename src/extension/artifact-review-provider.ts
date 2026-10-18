@@ -1,21 +1,44 @@
 import * as vscode from "vscode";
 import { buildArtifactConnectPrompt } from "../shared/artifact-connect-prompt";
-import { webviewToExtensionMessageSchema, type ExtensionToWebviewMessage } from "../shared/contracts";
+import {
+  webviewToExtensionMessageSchema,
+  type ConversationArtifactsViewState,
+  type ExtensionToWebviewMessage,
+} from "../shared/contracts";
 import { ArtifactStore } from "./artifact-store";
+import type { OpenConversationArtifactResult } from "./conversation-artifact-service";
 
 function nonce(): string {
   const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
   return Array.from({ length: 32 }, () => alphabet[Math.floor(Math.random() * alphabet.length)]).join("");
 }
 
+export type ConversationArtifactProviderController = {
+  getConversationsViewState: (currentArtifactId: string) => Promise<ConversationArtifactsViewState>;
+  openConversationArtifact: (artifactId: string) => Promise<OpenConversationArtifactResult>;
+  onDidChange: (listener: () => void | Promise<void>) => { dispose: () => void };
+};
+
+export type ArtifactStoreController = Pick<
+  ArtifactStore,
+  "artifactDirectory" | "artifactId" | "load" | "addComment" | "removeComment" | "submitReview"
+>;
+
 export class ArtifactReviewProvider implements vscode.CustomTextEditorProvider {
   static readonly viewType = "agentPlus.artifactReview";
 
-  constructor(private readonly context: vscode.ExtensionContext) {}
+  constructor(
+    private readonly context: vscode.ExtensionContext,
+    private readonly conversationService?: ConversationArtifactProviderController,
+    private readonly createStore: (artifactPath: string) => ArtifactStoreController = (artifactPath) =>
+      new ArtifactStore(artifactPath),
+  ) {}
 
   async resolveCustomTextEditor(document: vscode.TextDocument, panel: vscode.WebviewPanel): Promise<void> {
-    const store = new ArtifactStore(document.uri.fsPath);
+    const store = this.createStore(document.uri.fsPath);
     let sending = false;
+    let disposed = false;
+    let conversationRefreshSeq = 0;
 
     panel.webview.options = {
       enableScripts: true,
@@ -25,10 +48,49 @@ export class ArtifactReviewProvider implements vscode.CustomTextEditorProvider {
 
     const post = (message: ExtensionToWebviewMessage): Thenable<boolean> => panel.webview.postMessage(message);
     const refresh = async (): Promise<void> => {
+      if (disposed) return;
       try {
-        await post({ type: "state", state: await store.load() });
+        const state = await store.load();
+        if (disposed) return;
+        await post({ type: "state", state });
       } catch (error) {
+        if (disposed) return;
         await post({ type: "error", message: error instanceof Error ? error.message : String(error) });
+      }
+    };
+
+    const refreshConversations = async (showLoading = false): Promise<void> => {
+      if (disposed) return;
+      const seq = ++conversationRefreshSeq;
+      if (!this.conversationService) {
+        await post({
+          type: "conversationArtifactsState",
+          state: { status: "ready", groups: [], skippedCount: 0 },
+        });
+        return;
+      }
+      if (showLoading) {
+        await post({
+          type: "conversationArtifactsState",
+          state: { status: "loading" },
+        });
+      }
+      try {
+        const state = await this.conversationService.getConversationsViewState(store.artifactId);
+        if (disposed || seq !== conversationRefreshSeq) return;
+        await post({
+          type: "conversationArtifactsState",
+          state,
+        });
+      } catch (error) {
+        if (disposed || seq !== conversationRefreshSeq) return;
+        await post({
+          type: "conversationArtifactsState",
+          state: {
+            status: "error",
+            message: error instanceof Error ? error.message : String(error),
+          },
+        });
       }
     };
 
@@ -38,7 +100,13 @@ export class ArtifactReviewProvider implements vscode.CustomTextEditorProvider {
         switch (message.type) {
           case "ready":
             await refresh();
+            void refreshConversations(true);
             return;
+          case "openConversationArtifact": {
+            if (!this.conversationService) return;
+            await this.conversationService.openConversationArtifact(message.artifactId);
+            return;
+          }
           case "addComment":
             await store.addComment(message);
             await refresh();
@@ -110,10 +178,16 @@ export class ArtifactReviewProvider implements vscode.CustomTextEditorProvider {
     fileWatcher.onDidChange(() => void refresh());
     fileWatcher.onDidDelete(() => void refresh());
 
+    const conversationSubscription = this.conversationService?.onDidChange(() => {
+      void refreshConversations(false);
+    });
+
     panel.onDidDispose(() => {
+      disposed = true;
       messageSubscription.dispose();
       documentSubscription.dispose();
       fileWatcher.dispose();
+      conversationSubscription?.dispose();
     });
   }
 

@@ -8,13 +8,13 @@ async function read(relativePath: string): Promise<string> {
   return readFile(path.join(repositoryRoot, relativePath), "utf8");
 }
 
-describe("v1.0.2 release contract", () => {
+describe("v1.1.0 release contract", () => {
   it("keeps package and lock metadata synchronized", async () => {
     const packageJson = JSON.parse(await read("package.json"));
     const packageLock = JSON.parse(await read("package-lock.json"));
 
     expect(packageJson.name).toBe("ai-artifacts");
-    expect(packageJson.version).toBe("1.0.2");
+    expect(packageJson.version).toBe("1.1.0");
     expect(packageLock.name).toBe(packageJson.name);
     expect(packageLock.version).toBe(packageJson.version);
     expect(packageLock.packages[""].name).toBe(packageJson.name);
@@ -30,6 +30,42 @@ describe("v1.0.2 release contract", () => {
     expect(selectors).toEqual([
       { filenamePattern: "**/.ai-artifacts/artifacts/**/artifact.md" },
     ]);
+  });
+
+  it("contributes the safe-open command for artifact.md Explorer, editor, and editor-tab context menus", async () => {
+    const packageJson = JSON.parse(await read("package.json"));
+    const openCommand = packageJson.contributes.commands.find(
+      (command: any) => command.command === "agentPlus.openArtifactReview",
+    );
+
+    expect(openCommand).toEqual({
+      command: "agentPlus.openArtifactReview",
+      title: "Open Artifact Review",
+      category: "AI Artifacts",
+    });
+    expect(packageJson.contributes.menus).toEqual({
+      "explorer/context": [
+        {
+          command: "agentPlus.openArtifactReview",
+          when: "resourceFilename == artifact.md && resourceScheme == file && !explorerResourceIsFolder",
+          group: "navigation@0",
+        },
+      ],
+      "editor/context": [
+        {
+          command: "agentPlus.openArtifactReview",
+          when: "resourceFilename == artifact.md && resourceScheme == file",
+          group: "navigation@0",
+        },
+      ],
+      "editor/title/context": [
+        {
+          command: "agentPlus.openArtifactReview",
+          when: "resourceFilename == artifact.md && resourceScheme == file",
+          group: "navigation@0",
+        },
+      ],
+    });
   });
 
   it("keeps release-facing docs on the global v6 and reinstall contract", async () => {
@@ -48,15 +84,16 @@ describe("v1.0.2 release contract", () => {
     for (const document of [readme, philosophy, architecture, components, instructions, contract]) {
       expect(document).toMatch(/schema[- ]v6/i);
       expect(document).toContain("~/.ai-artifacts/artifacts/");
+      expect(document).toContain("~/.ai-artifacts/conversation-registry/");
     }
     expect(readme).toContain("reinstall every integration");
     expect(readme).toContain("same user filesystem");
     expect(readme).toContain("not a deep link");
-    expect(readme).toContain("MCP server 9.0.0");
+    expect(readme).toContain("MCP server 10.0.0");
     expect(readme).toContain("artifact-connection.json");
     expect(readme).toContain("The target may be unfocused; other windows ignore the event");
     expect(philosophy).toContain("Focus is a ranking hint, not identity, authorization, or a requirement");
-    expect(architecture).toContain("MCP server 9.0.0");
+    expect(architecture).toContain("MCP server 10.0.0");
     expect(architecture).toContain("artifact-connection.json` creation and change");
     expect(architecture).toContain("Both wait and advance preserve existing connection state");
     expect(components).toContain("WINDOW_SELECTION_REQUIRED");
@@ -64,20 +101,22 @@ describe("v1.0.2 release contract", () => {
     expect(instructions).toContain("Artifacts are owned by review sessions");
     expect(contract).toContain("schema-v1 UI-routing state only");
     expect(contract).toContain("AI Artifacts: Install All Detected Integrations");
-    expect(changelog).toContain("## [1.0.2] - 2026-10-07");
+    expect(changelog).toContain("## [1.1.0] - 2026-10-18");
     expect(changelog).toContain("## [1.0.1] - 2026-09-21");
     expect(changelog).toContain("## [1.0.0] - 2026-09-20");
     expect(changelog).toContain("MCP server 9.0.0");
-    expect(changelog).not.toContain("## [1.1.0]");
+    expect(changelog).not.toContain("## [1.2.0]");
+    expect(changelog).toContain("MCP server 10.0.0");
     expect(documentationChanges).toContain("Automatic artifact retention cleanup and bounded lifetime model");
+    expect(documentationChanges).toContain("Artifacts in Conversations, Conversation Registry v1, and MCP server 10.0.0");
   });
 
-  it("keeps the public setting and version matrix on the 1.0.2 targeted-window contract", async () => {
+  it("keeps the public setting and version matrix on the 1.1.0 targeted-window contract", async () => {
     const packageJson = JSON.parse(await read("package.json"));
     const autoOpen = packageJson.contributes.configuration.properties["agentPlus.autoOpenArtifactReview"];
     const retentionDays = packageJson.contributes.configuration.properties["agentPlus.artifactRetentionDays"];
 
-    expect(packageJson.version).toBe("1.0.2");
+    expect(packageJson.version).toBe("1.1.0");
     expect(autoOpen.type).toBe("boolean");
     expect(autoOpen.default).toBe(true);
     expect(autoOpen.description).toContain("selected target window");

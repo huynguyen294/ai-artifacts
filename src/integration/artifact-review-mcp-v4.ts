@@ -23,14 +23,18 @@ import {
   WindowNotFoundError,
   WindowSelectionExpiredError,
   WindowSelectionRequiredError,
+  artifactConversationIdSchema,
+  artifactConversationMembershipSchema,
   artifactIdSchema,
   artifactKindSchema,
   artifactManifestSchema,
   artifactWindowConnectionInputSchema,
   commentsDocumentSchema,
+  conversationNameSchema,
   explicitWindowConnectionInputSchema,
   reconnectConnectionInputSchema,
   type ArtifactConnection,
+  type ArtifactConversationMetadata,
   type ArtifactManifest,
   type ExplicitWindowConnectionInput,
   type ReconnectConnectionInput,
@@ -42,8 +46,18 @@ import {
   OWNER_ONLY_DIRECTORY_MODE,
   OWNER_ONLY_FILE_MODE,
   REVIEW_SUBMISSION_FILE,
+  conversationRegisteredArtifactPath,
   type GlobalArtifactsRootOptions,
 } from "../shared/artifact-files";
+import {
+  ConversationNotFoundError,
+  ConversationRegistryError,
+  createConversationAndRegisterArtifact,
+  readConversationMetadata,
+  registerArtifactInConversation,
+  removeArtifactFromConversation,
+  removeConversation,
+} from "../shared/conversation-artifact-registry";
 import {
   readFreshWorkspaceSnapshots,
   workspaceRegistryDirectory,
@@ -62,7 +76,7 @@ import {
 } from "../shared/artifact-connection";
 
 const SERVER_NAME = "codex-artifacts";
-const SERVER_VERSION = "9.0.0";
+const SERVER_VERSION = "10.0.0";
 const RESOLVE_WINDOW_TOOL_NAME = "resolve_artifact_window";
 const CREATE_TOOL_NAME = "create_artifact";
 const WAIT_TOOL_NAME = "wait_for_artifact_review";
@@ -149,7 +163,9 @@ type ArtifactRecoveryCode =
   | "WINDOW_CONNECTION_MISMATCH"
   | "ARTIFACT_CONNECTION_INVALID"
   | "ARTIFACT_CONNECTION_WRITE_FAILED"
-  | "ARTIFACT_NOT_FOUND";
+  | "ARTIFACT_NOT_FOUND"
+  | "CONVERSATION_NOT_FOUND"
+  | "CONVERSATION_REGISTRY_INVALID";
 
 type ArtifactRecoveryMetadata = {
   code: ArtifactRecoveryCode;
@@ -218,6 +234,28 @@ function asLifecycleRecoveryError(error: unknown, context: RecoveryContext = {})
   if (error instanceof McpWindowSelectionRequiredError || error instanceof WindowSelectionRequiredError) return error;
   if (error instanceof ArtifactRecoveryError) return error;
   const message = error instanceof Error ? error.message : String(error);
+  if (error instanceof ConversationNotFoundError || message.startsWith("CONVERSATION_NOT_FOUND:")) {
+    const text = message.startsWith("CONVERSATION_NOT_FOUND:")
+      ? message.slice("CONVERSATION_NOT_FOUND:".length).trim()
+      : message;
+    return recoveryError("CONVERSATION_NOT_FOUND", text, {
+      retryable: false,
+      expectedNextTool: context.isCreate ? CREATE_TOOL_NAME : INSPECT_TOOL_NAME,
+      reuseRoundToken: false,
+      useSameArtifactHandle: !context.isCreate,
+    });
+  }
+  if (error instanceof ConversationRegistryError || message.startsWith("CONVERSATION_REGISTRY_INVALID:")) {
+    const text = message.startsWith("CONVERSATION_REGISTRY_INVALID:")
+      ? message.slice("CONVERSATION_REGISTRY_INVALID:".length).trim()
+      : message;
+    return recoveryError("CONVERSATION_REGISTRY_INVALID", text, {
+      retryable: false,
+      expectedNextTool: context.isCreate ? CREATE_TOOL_NAME : INSPECT_TOOL_NAME,
+      reuseRoundToken: false,
+      useSameArtifactHandle: !context.isCreate,
+    });
+  }
   if (errorCode(error) === "ENOENT" || message.startsWith("ARTIFACT_NOT_FOUND:")) {
     const text = message.startsWith("ARTIFACT_NOT_FOUND:")
       ? message.slice("ARTIFACT_NOT_FOUND:".length).trim()
@@ -433,7 +471,43 @@ function workspaceSnapshotsDir(): string {
 
 const windowTokenStore = new WindowSelectionTokenStore();
 
-type CreateArtifactInput = {
+type OptionalConversationInput = {
+  artifactConversationId?: string;
+  conversationName?: string;
+};
+
+function parseOptionalConversationArguments(args: JsonObject | undefined): OptionalConversationInput {
+  const rawConvId = args?.artifactConversationId;
+  const rawConvName = args?.conversationName;
+
+  let artifactConversationId: string | undefined;
+  if (rawConvId !== undefined) {
+    const parsed = artifactConversationIdSchema.safeParse(rawConvId);
+    if (!parsed.success) {
+      throw new Error("INVALID_ARTIFACT_INPUT: artifactConversationId must be a valid UUID.");
+    }
+    artifactConversationId = parsed.data;
+  }
+
+  let conversationName: string | undefined;
+  if (rawConvName !== undefined) {
+    if (typeof rawConvName !== "string") {
+      throw new Error("INVALID_ARTIFACT_INPUT: conversationName must contain 1 to 200 non-blank characters.");
+    }
+    const parsed = conversationNameSchema.safeParse(rawConvName.trim());
+    if (!parsed.success) {
+      throw new Error("INVALID_ARTIFACT_INPUT: conversationName must contain 1 to 200 non-blank characters.");
+    }
+    conversationName = parsed.data;
+  }
+
+  return {
+    ...(artifactConversationId !== undefined ? { artifactConversationId } : {}),
+    ...(conversationName !== undefined ? { conversationName } : {}),
+  };
+}
+
+type CreateArtifactInput = OptionalConversationInput & {
   title: string;
   kind: string;
   markdown: string;
@@ -442,7 +516,14 @@ type CreateArtifactInput = {
 
 function parseCreateArguments(args: JsonObject | undefined): CreateArtifactInput {
   if (args && typeof args === "object") {
-    const recognizedKeys = new Set(["title", "kind", "markdown", "connection"]);
+    const recognizedKeys = new Set([
+      "title",
+      "kind",
+      "markdown",
+      "connection",
+      "artifactConversationId",
+      "conversationName",
+    ]);
     for (const key of Object.keys(args)) {
       if (!recognizedKeys.has(key)) {
         throw new Error(`INVALID_ARTIFACT_INPUT: unrecognized key '${key}'.`);
@@ -477,11 +558,14 @@ function parseCreateArguments(args: JsonObject | undefined): CreateArtifactInput
     connection = parsed.data;
   }
 
+  const conversationArgs = parseOptionalConversationArguments(args);
+
   return {
     title: title.trim(),
     kind,
     markdown,
     ...(connection ? { connection } : {}),
+    ...conversationArgs,
   };
 }
 
@@ -530,7 +614,11 @@ async function resolveCreateTarget(
 async function persistArtifact(
   input: CreateArtifactInput,
   target: { windowInstanceId: string },
-): Promise<{ context: ArtifactContext; connection: ArtifactConnection }> {
+): Promise<{
+  context: ArtifactContext;
+  connection: ArtifactConnection;
+  conversation: ArtifactConversationMetadata;
+}> {
   const rootOptions = globalRootOptions();
   const collectionRoot = await ensureSafeGlobalArtifactsRoot(rootOptions);
   const createdAt = new Date().toISOString();
@@ -549,6 +637,9 @@ async function persistArtifact(
       if (errorCode(error) === "EEXIST") continue;
       throw error;
     }
+
+    let createdConversationId: string | undefined;
+    let registeredInExistingConversationId: string | undefined;
 
     try {
       const safeArtifactDirectory = await ensureSafeGlobalArtifactDirectory(
@@ -588,6 +679,31 @@ async function persistArtifact(
         files.commentsPath,
         `${JSON.stringify(comments, null, 2)}\n`,
       );
+      if (process.env.NODE_ENV === "test" && process.env.CODEX_ARTIFACTS_TEST_FAIL_CREATE === "at-conversation") {
+        throw new ConversationRegistryError("Injected conversation registration failure.");
+      }
+
+      let conversation: ArtifactConversationMetadata;
+      if (input.artifactConversationId) {
+        const reg = await registerArtifactInConversation({
+          ...rootOptions,
+          artifactConversationId: input.artifactConversationId,
+          artifactId,
+          registeredAt: createdAt,
+        });
+        registeredInExistingConversationId = input.artifactConversationId;
+        conversation = reg.conversation;
+      } else {
+        const reg = await createConversationAndRegisterArtifact({
+          ...rootOptions,
+          conversationName: input.conversationName ?? input.title,
+          artifactId,
+          registeredAt: createdAt,
+        });
+        createdConversationId = reg.conversation.artifactConversationId;
+        conversation = reg.conversation;
+      }
+
       if (process.env.NODE_ENV === "test" && process.env.CODEX_ARTIFACTS_TEST_FAIL_CREATE === "at-connection") {
         throw new Error("Injected connection write failure.");
       }
@@ -599,8 +715,17 @@ async function persistArtifact(
         },
       );
       const context = await loadArtifactContext(safeArtifactDirectory);
-      return { context, connection };
+      return { context, connection, conversation };
     } catch (error) {
+      if (createdConversationId) {
+        await removeConversation(createdConversationId, rootOptions).catch(() => undefined);
+      } else if (registeredInExistingConversationId) {
+        await removeArtifactFromConversation(
+          registeredInExistingConversationId,
+          artifactId,
+          rootOptions,
+        ).catch(() => undefined);
+      }
       try {
         await fs.rm(artifactDirectory, { recursive: true });
       } catch (rollbackError) {
@@ -615,8 +740,15 @@ async function persistArtifact(
   throw new Error("ARTIFACT_CREATE_CONFLICT: could not allocate a unique artifact ID.");
 }
 
-async function createArtifact(args: JsonObject | undefined): Promise<{ context: ArtifactContext; connection: ArtifactConnection }> {
+async function createArtifact(args: JsonObject | undefined): Promise<{
+  context: ArtifactContext;
+  connection: ArtifactConnection;
+  conversation: ArtifactConversationMetadata;
+}> {
   const input = parseCreateArguments(args);
+  if (input.artifactConversationId) {
+    await readConversationMetadata(input.artifactConversationId, globalRootOptions());
+  }
   const target = await resolveCreateTarget(input);
   return persistArtifact(input, target);
 }
@@ -1265,7 +1397,11 @@ function toolError(error: unknown): JsonObject {
   };
 }
 
-function artifactHandle(context: ArtifactContext, connection?: ArtifactConnection): JsonObject {
+function artifactHandle(
+  context: ArtifactContext,
+  connection?: ArtifactConnection,
+  conversation?: ArtifactConversationMetadata,
+): JsonObject {
   const artifactUrl = toArtifactFileUrl(context.artifactPath);
   const artifactLink = formatArtifactLink(context.manifest.title, artifactUrl);
   return {
@@ -1278,6 +1414,10 @@ function artifactHandle(context: ArtifactContext, connection?: ArtifactConnectio
     reviewRound: context.reviewRound,
     artifactSha256: context.artifactSha256,
     kind: context.manifest.kind,
+    ...(conversation ? {
+      artifactConversationId: conversation.artifactConversationId,
+      conversationName: conversation.conversationName,
+    } : {}),
     ...(connection ? {
       connection: {
         schemaVersion: connection.schemaVersion,
@@ -1289,6 +1429,15 @@ function artifactHandle(context: ArtifactContext, connection?: ArtifactConnectio
       },
     } : {}),
   };
+}
+
+function parseOptionalEchoConversationId(args: JsonObject | undefined): string | undefined {
+  if (args?.artifactConversationId === undefined) return undefined;
+  const parsed = artifactConversationIdSchema.safeParse(args.artifactConversationId);
+  if (!parsed.success) {
+    throw new Error("INVALID_ARTIFACT_INPUT: artifactConversationId must be a valid UUID.");
+  }
+  return parsed.data;
 }
 
 function parseExpectedReviewRound(args: JsonObject | undefined): number {
@@ -1322,10 +1471,47 @@ async function handleResolveWindowTool(id: unknown, args: JsonObject | undefined
 
 async function handleCreateTool(id: unknown, args: JsonObject | undefined): Promise<void> {
   try {
-    const { context, connection } = await createArtifact(args);
-    respond(id, toolResult(artifactHandle(context, connection)));
+    const { context, connection, conversation } = await createArtifact(args);
+    respond(id, toolResult(artifactHandle(context, connection, conversation)));
   } catch (error) {
     respond(id, toolError(asLifecycleRecoveryError(error, { isCreate: true })));
+  }
+}
+
+const WAIT_ALLOWED_KEYS: ReadonlySet<string> = new Set([
+  "artifactDirectory",
+  "expectedReviewRound",
+  "takeover",
+  "artifactConversationId",
+]);
+
+const INSPECT_ALLOWED_KEYS: ReadonlySet<string> = new Set([
+  "artifactDirectory",
+  "expectedReviewRound",
+  "takeover",
+  "intent",
+  "connection",
+  "artifactConversationId",
+  "conversationName",
+]);
+
+const ADVANCE_ALLOWED_KEYS: ReadonlySet<string> = new Set([
+  "artifactDirectory",
+  "expectedReviewRound",
+  "roundToken",
+  "markdown",
+  "artifactConversationId",
+]);
+
+function assertAllowedToolKeys(
+  toolName: string,
+  args: JsonObject | undefined,
+  allowedKeys: ReadonlySet<string>,
+): void {
+  for (const key of Object.keys(args ?? {})) {
+    if (!allowedKeys.has(key)) {
+      throw new Error(`INVALID_ARTIFACT_INPUT: ${toolName} received unrecognized key(s): ${key}.`);
+    }
   }
 }
 
@@ -1335,7 +1521,9 @@ async function handleWaitTool(id: unknown, args: JsonObject | undefined): Promis
   let reservedWaiter: ActiveArtifactWaiter | undefined;
   let artifactDirectory: string | undefined;
   try {
+    assertAllowedToolKeys(WAIT_TOOL_NAME, args, WAIT_ALLOWED_KEYS);
     const expectedReviewRound = parseExpectedReviewRound(args);
+    const artifactConversationId = parseOptionalEchoConversationId(args);
     artifactDirectory = args?.artifactDirectory;
     if (typeof artifactDirectory !== "string" || !path.isAbsolute(artifactDirectory)) {
       throw new Error("artifactDirectory must be an absolute path.");
@@ -1359,7 +1547,10 @@ async function handleWaitTool(id: unknown, args: JsonObject | undefined): Promis
       reservedWaiter,
     );
     reservedWaiter = undefined;
-    respond(id, toolResult(grantSubmittedRound(context, result)));
+    respond(id, toolResult({
+      ...grantSubmittedRound(context, result),
+      ...(artifactConversationId ? { artifactConversationId } : {}),
+    }));
   } catch (error) {
     respond(id, toolError(asLifecycleRecoveryError(error)));
   } finally {
@@ -1370,6 +1561,7 @@ async function handleWaitTool(id: unknown, args: JsonObject | undefined): Promis
 
 async function handleInspectTool(id: unknown, args: JsonObject | undefined): Promise<void> {
   try {
+    assertAllowedToolKeys(INSPECT_TOOL_NAME, args, INSPECT_ALLOWED_KEYS);
     const artifactDirectory = args?.artifactDirectory;
     if (typeof artifactDirectory !== "string" || !path.isAbsolute(artifactDirectory)) {
       throw new Error("artifactDirectory must be an absolute path.");
@@ -1384,6 +1576,7 @@ async function handleInspectTool(id: unknown, args: JsonObject | undefined): Pro
     const expectedReviewRound = args?.expectedReviewRound !== undefined
       ? parseExpectedReviewRound(args)
       : undefined;
+    const conversationArgs = parseOptionalConversationArguments(args);
 
     let context = await loadArtifactContext(artifactDirectory);
     if (expectedReviewRound !== undefined && context.reviewRound !== expectedReviewRound) {
@@ -1414,9 +1607,14 @@ async function handleInspectTool(id: unknown, args: JsonObject | undefined): Pro
       }
     }
 
+    const rootOptions = globalRootOptions();
+    if (conversationArgs.artifactConversationId) {
+      await readConversationMetadata(conversationArgs.artifactConversationId, rootOptions);
+    }
+
     let targetReconnectWindow: { windowInstanceId: string } | undefined;
 
-    // Routing preflight happens BEFORE takeover when intent is reconnect
+    // Routing preflight happens BEFORE takeover and BEFORE conversation registration when intent is reconnect
     if (intent === "reconnect") {
       const snapshotsDir = workspaceSnapshotsDir();
       const now = Date.now();
@@ -1482,6 +1680,40 @@ async function handleInspectTool(id: unknown, args: JsonObject | undefined): Pro
       intent === "explicit-chat-update" ? intent : undefined,
     );
 
+    let createdInspectConversationId: string | undefined;
+    let existingInspectConversationId: string | undefined;
+    let previousMembershipRegisteredAt: string | undefined;
+    let conversation: ArtifactConversationMetadata;
+    if (conversationArgs.artifactConversationId) {
+      existingInspectConversationId = conversationArgs.artifactConversationId;
+      try {
+        const existingMembershipRaw = await fs.readFile(
+          conversationRegisteredArtifactPath(conversationArgs.artifactConversationId, context.artifactId, rootOptions),
+          "utf8",
+        );
+        const parsedMembership = artifactConversationMembershipSchema.safeParse(JSON.parse(existingMembershipRaw));
+        if (parsedMembership.success) {
+          previousMembershipRegisteredAt = parsedMembership.data.registeredAt;
+        }
+      } catch {
+        previousMembershipRegisteredAt = undefined;
+      }
+      const reg = await registerArtifactInConversation({
+        ...rootOptions,
+        artifactConversationId: conversationArgs.artifactConversationId,
+        artifactId: context.artifactId,
+      });
+      conversation = reg.conversation;
+    } else {
+      const reg = await createConversationAndRegisterArtifact({
+        ...rootOptions,
+        conversationName: conversationArgs.conversationName ?? context.manifest.title,
+        artifactId: context.artifactId,
+      });
+      createdInspectConversationId = reg.conversation.artifactConversationId;
+      conversation = reg.conversation;
+    }
+
     let connection: ArtifactConnection | null = null;
     if (intent === "reconnect" && targetReconnectWindow) {
       try {
@@ -1493,6 +1725,20 @@ async function handleInspectTool(id: unknown, args: JsonObject | undefined): Pro
           source: "inspect",
         });
       } catch (error) {
+        if (createdInspectConversationId) {
+          await removeConversation(createdInspectConversationId, rootOptions).catch(() => undefined);
+        } else if (existingInspectConversationId) {
+          if (previousMembershipRegisteredAt !== undefined) {
+            await registerArtifactInConversation({
+              ...rootOptions,
+              artifactConversationId: existingInspectConversationId,
+              artifactId: context.artifactId,
+              registeredAt: previousMembershipRegisteredAt,
+            }).catch(() => undefined);
+          } else {
+            await removeArtifactFromConversation(existingInspectConversationId, context.artifactId, rootOptions).catch(() => undefined);
+          }
+        }
         if (error instanceof ArtifactConnectionInvalidError || error instanceof ArtifactConnectionWriteError) {
           throw error;
         }
@@ -1504,7 +1750,7 @@ async function handleInspectTool(id: unknown, args: JsonObject | undefined): Pro
     }
 
     respond(id, toolResult({
-      ...artifactHandle(context, connection ?? undefined),
+      ...artifactHandle(context, connection ?? undefined, conversation),
       manifest: context.manifest,
       markdown: inspection.markdown,
       comments: inspection.comments,
@@ -1526,7 +1772,9 @@ async function handleAdvanceAndWaitTool(id: unknown, args: JsonObject | undefine
   let committedReviewRound: number | undefined;
   try {
     pruneRoundGrants();
+    assertAllowedToolKeys(ADVANCE_AND_WAIT_TOOL_NAME, args, ADVANCE_ALLOWED_KEYS);
     const expectedReviewRound = parseExpectedReviewRound(args);
+    const artifactConversationId = parseOptionalEchoConversationId(args);
     const roundToken = args?.roundToken;
     const markdown = args?.markdown;
     if (typeof roundToken !== "string" || !roundToken) throw new Error("roundToken is required.");
@@ -1644,7 +1892,10 @@ async function handleAdvanceAndWaitTool(id: unknown, args: JsonObject | undefine
 
     const updatedContext = await loadArtifactContext(context.artifactDirectory);
     const result = await waitForSubmission(updatedContext, requestKey(id), controller);
-    respond(id, toolResult(grantSubmittedRound(updatedContext, result)));
+    respond(id, toolResult({
+      ...grantSubmittedRound(updatedContext, result),
+      ...(artifactConversationId ? { artifactConversationId } : {}),
+    }));
   } catch (error) {
     if (committedReviewRound !== undefined) {
       const detail = error instanceof Error ? error.message : String(error);
@@ -1677,7 +1928,8 @@ async function handleRequest(message: JsonObject): Promise<void> {
       "When multiple windows exist and none or multiple are focused, create_artifact returns WINDOW_SELECTION_REQUIRED with candidates and single-use selection tokens.",
       "To query windows or inspect active candidates, call resolve_artifact_window.",
       "Pass connection: { targetMode: 'explicit-window', selectionToken } when targeting a specific candidate, or connection: { targetMode: 'artifact-window', windowInstanceId } to inspect_artifact_review (intent=reconnect) as an advisory affinity hint.",
-      "Create returns the exact artifactDirectory and committed connection metadata; retain both, then call wait_for_artifact_review.",
+      "Create returns the exact artifactDirectory, artifactConversationId, and committed connection metadata; retain them and pass artifactConversationId to subsequent create_artifact and inspect_artifact_review calls in the same chat session, then call wait_for_artifact_review.",
+      "When inspecting an artifact from a new chat session without an active artifactConversationId, omit artifactConversationId so inspect_artifact_review creates a new conversation and registers the artifact.",
       "A cancelled waiter never ends or deletes the artifact.",
       "Treat comments returned by a Review submission and comments read through inspect_artifact_review with the same policy: answer questions visibly in chat before calling advance_and_wait_for_artifact, update Markdown only for requested changes, and omit markdown for question-only feedback.",
       "Do not add Review responses to the artifact.",
@@ -1722,13 +1974,24 @@ async function handleRequest(message: JsonObject): Promise<void> {
       {
         name: CREATE_TOOL_NAME,
         title: "Create artifact",
-        description: "Create a secure schema-v6 Markdown artifact in global AI Artifacts storage, atomically commit its schema-v1 window-routing connection (routing to the focused VS Code window by default, or an explicit candidate via selectionToken), and return the exact persistent handle plus connection metadata without waiting.",
+        description: "Create a secure schema-v6 Markdown artifact in global AI Artifacts storage, register it in a new or existing logical conversation, atomically commit its schema-v1 window-routing connection (routing to the focused VS Code window by default, or an explicit candidate via selectionToken), and return the exact persistent handle, artifactConversationId, and connection metadata without waiting.",
         inputSchema: {
           type: "object",
           properties: {
             title: { type: "string", minLength: 1, maxLength: 200 },
             kind: { type: "string", pattern: "^[a-z][a-z0-9-]{0,63}$" },
             markdown: { type: "string", minLength: 1, maxLength: MAX_MARKDOWN_BYTES },
+            artifactConversationId: {
+              type: "string",
+              format: "uuid",
+              description: "Optional active conversation UUID for the current chat session. Omit for the first artifact in a chat to create a new conversation.",
+            },
+            conversationName: {
+              type: "string",
+              minLength: 1,
+              maxLength: 200,
+              description: "Optional human-readable conversation name when creating a new conversation. Defaults to the artifact title.",
+            },
             connection: {
               type: "object",
               description: "Optional explicit window targeting connection parameters.",
@@ -1759,6 +2022,11 @@ async function handleRequest(message: JsonObject): Promise<void> {
             artifactDirectory: { type: "string" },
             expectedReviewRound: { type: "integer", minimum: 1 },
             takeover: { type: "boolean", default: false },
+            artifactConversationId: {
+              type: "string",
+              format: "uuid",
+              description: "Optional active conversation UUID echoed back in the lifecycle result.",
+            },
           },
           required: ["artifactDirectory", "expectedReviewRound"],
           additionalProperties: false,
@@ -1768,7 +2036,7 @@ async function handleRequest(message: JsonObject): Promise<void> {
       {
         name: INSPECT_TOOL_NAME,
         title: "Inspect artifact review",
-        description: "Read the current manifest, Markdown, comments, optional submission, connection metadata, and validated hashes for an exact artifact. With intent=reconnect, re-evaluate and atomically bind an active VS Code window (sole live window, validated artifact-window affinity, unique focused window, or explicit via connection.selectionToken). Takeover first cancels and drains its current waiter. Returns a one-time round token when saved feedback is present or when intent is explicit-chat-update.",
+        description: "Read the current manifest, Markdown, comments, optional submission, connection metadata, and validated hashes for an exact artifact, and register/update its membership in the active or newly created conversation. With intent=reconnect, re-evaluate and atomically bind an active VS Code window (sole live window, validated artifact-window affinity, unique focused window, or explicit via connection.selectionToken). Takeover first cancels and drains its current waiter. Returns a one-time round token when saved feedback is present or when intent is explicit-chat-update.",
         inputSchema: {
           type: "object",
           properties: {
@@ -1779,6 +2047,17 @@ async function handleRequest(message: JsonObject): Promise<void> {
               type: "string",
               enum: ["explicit-chat-update", "reconnect"],
               description: "Specify reconnect to bind the artifact to an active VS Code window, or explicit-chat-update when the user explicitly requests changes in chat on a round without saved comments.",
+            },
+            artifactConversationId: {
+              type: "string",
+              format: "uuid",
+              description: "Optional active conversation UUID for the current chat session. Omit when inspecting from a new chat session to create a new conversation and register this artifact.",
+            },
+            conversationName: {
+              type: "string",
+              minLength: 1,
+              maxLength: 200,
+              description: "Optional human-readable conversation name when creating a new conversation from inspect. Defaults to the artifact title.",
             },
             connection: {
               description: "Optional window targeting connection parameters for reconnect. Provide artifact-window with cached windowInstanceId as an advisory affinity hint, or explicit-window with selectionToken for user-selected window.",
@@ -1830,6 +2109,11 @@ async function handleRequest(message: JsonObject): Promise<void> {
             expectedReviewRound: { type: "integer", minimum: 1 },
             roundToken: { type: "string" },
             markdown: { type: "string", minLength: 1, maxLength: MAX_MARKDOWN_BYTES },
+            artifactConversationId: {
+              type: "string",
+              format: "uuid",
+              description: "Optional active conversation UUID echoed back in the lifecycle result.",
+            },
           },
           required: ["artifactDirectory", "expectedReviewRound", "roundToken"],
           additionalProperties: false,

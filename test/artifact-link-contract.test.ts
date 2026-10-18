@@ -48,8 +48,9 @@ describe("regular artifact file-link contract", () => {
     expect(integrationSource).toContain("pathToFileURL(filePath).href");
     expect(integrationSource).toContain("return `[${safeTitle}](${artifactUrl})`");
     expect(skill).toContain("regular file link");
-    expect(skill).toContain("It is not a deep link and does not guarantee that a custom editor opens");
-    expect(contract).toContain("`artifactLink` is a regular file link, not a deep link");
-    expect(contract).toContain("does not guarantee that a custom editor opens");
+    expect(skill).toContain("It is not a deep link; it opens `artifact.md` in a plain Markdown/text editor");
+    expect(skill).toContain("Open Artifact Review");
+    expect(contract).toContain("`artifactLink` is a regular file link, not a deep link; it opens `artifact.md` in a plain Markdown/text editor");
+    expect(contract).toContain("Open Artifact Review");
   });
 });

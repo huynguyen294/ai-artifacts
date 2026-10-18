@@ -1,0 +1,259 @@
+/* ==========================================================================
+   Standard VS Code Theme Variables & Environment Emulation for Dev Host
+   These tokens must be attached to :root and html/body so that styles.css
+   can resolve them via standard CSS variable inheritance.
+   ========================================================================== */
+
+:root,
+html.vscode-dark,
+body.vscode-dark {
+  /* Typography */
+  --vscode-font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
+  --vscode-font-size: 13px;
+  --vscode-font-weight: normal;
+  --vscode-editor-font-family: "Cascadia Code", Consolas, "Courier New", monospace;
+  --vscode-editor-font-size: 14px;
+  --vscode-editor-font-weight: normal;
+
+  /* Global Colors */
+  --vscode-foreground: #cccccc;
+  --vscode-editor-background: #1e1e1e;
+  --vscode-editor-foreground: #d4d4d4;
+  --vscode-descriptionForeground: #8b949e;
+  --vscode-sideBar-background: #252526;
+  --vscode-panel-border: rgba(128, 128, 128, 0.35);
+  --vscode-widget-border: #454545;
+  --vscode-widget-shadow: rgba(0, 0, 0, 0.36);
+
+  /* Links & Accents */
+  --vscode-textLink-foreground: #3794ff;
+  --vscode-textLink-activeForeground: #3794ff;
+  --vscode-focusBorder: #007fd4;
+  --vscode-contrastBorder: transparent;
+
+  /* Buttons */
+  --vscode-button-background: #0078d4;
+  --vscode-button-foreground: #ffffff;
+  --vscode-button-hoverBackground: #026ec1;
+  --vscode-button-secondaryBackground: #3a3d41;
+  --vscode-button-secondaryForeground: #ffffff;
+  --vscode-button-secondaryHoverBackground: #45494e;
+
+  /* Form Controls */
+  --vscode-input-background: #252526;
+  --vscode-input-foreground: #cccccc;
+  --vscode-input-border: #3c3c3c;
+  --vscode-input-placeholderForeground: #767676;
+  --vscode-inputValidation-errorBackground: #5a1d1d;
+
+  /* Badges & Selection */
+  --vscode-badge-background: #4d4d4d;
+  --vscode-badge-foreground: #ffffff;
+  --vscode-editor-selectionBackground: #264f78;
+  --vscode-editor-selectionForeground: #ffffff;
+  --vscode-editor-lineHighlightBackground: #2a2d2e;
+  --vscode-list-hoverBackground: #2a2d2e;
+  --vscode-list-activeSelectionBackground: #04395e;
+
+  /* Markdown Blocks & Syntax */
+  --vscode-textBlockQuote-background: #252526;
+  --vscode-textBlockQuote-border: #0078d4;
+  --vscode-textBlockQuote-foreground: #cccccc;
+  --vscode-textCodeBlock-background: #1e1e1e;
+  --vscode-editorWidget-background: #252526;
+
+  /* Status & Icons */
+  --vscode-errorForeground: #f48771;
+  --vscode-editorWarning-foreground: #cca700;
+  --vscode-editorInfo-foreground: #75beff;
+  --vscode-testing-iconPassed: #73c991;
+}
+
+html.vscode-light,
+body.vscode-light {
+  --vscode-font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
+  --vscode-font-size: 13px;
+  --vscode-font-weight: normal;
+  --vscode-editor-font-family: "Cascadia Code", Consolas, "Courier New", monospace;
+  --vscode-editor-font-size: 14px;
+  --vscode-editor-font-weight: normal;
+
+  --vscode-foreground: #333333;
+  --vscode-editor-background: #ffffff;
+  --vscode-editor-foreground: #24292f;
+  --vscode-descriptionForeground: #717171;
+  --vscode-sideBar-background: #f3f3f3;
+  --vscode-panel-border: rgba(128, 128, 128, 0.35);
+  --vscode-widget-border: #d4d4d4;
+  --vscode-widget-shadow: rgba(0, 0, 0, 0.16);
+
+  --vscode-textLink-foreground: #0066cc;
+  --vscode-textLink-activeForeground: #0066cc;
+  --vscode-focusBorder: #0090f1;
+  --vscode-contrastBorder: transparent;
+
+  --vscode-button-background: #005fb8;
+  --vscode-button-foreground: #ffffff;
+  --vscode-button-hoverBackground: #004c99;
+  --vscode-button-secondaryBackground: #e5e5e5;
+  --vscode-button-secondaryForeground: #333333;
+  --vscode-button-secondaryHoverBackground: #cccccc;
+
+  --vscode-input-background: #ffffff;
+  --vscode-input-foreground: #333333;
+  --vscode-input-border: #cecece;
+  --vscode-input-placeholderForeground: #767676;
+  --vscode-inputValidation-errorBackground: #fdd;
+
+  --vscode-badge-background: #c4c4c4;
+  --vscode-badge-foreground: #333333;
+  --vscode-editor-selectionBackground: #add6ff;
+  --vscode-editor-selectionForeground: #000000;
+  --vscode-editor-lineHighlightBackground: #f0f0f0;
+  --vscode-list-hoverBackground: #e8e8e8;
+  --vscode-list-activeSelectionBackground: #0060c0;
+
+  --vscode-textBlockQuote-background: #f8f8f8;
+  --vscode-textBlockQuote-border: #005fb8;
+  --vscode-textBlockQuote-foreground: #333333;
+  --vscode-textCodeBlock-background: #f3f3f3;
+  --vscode-editorWidget-background: #f3f3f3;
+
+  --vscode-errorForeground: #e51400;
+  --vscode-editorWarning-foreground: #bf8803;
+  --vscode-editorInfo-foreground: #1a85ff;
+  --vscode-testing-iconPassed: #388a34;
+}
+
+html.vscode-high-contrast,
+body.vscode-high-contrast {
+  --vscode-font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
+  --vscode-font-size: 13px;
+  --vscode-font-weight: normal;
+  --vscode-editor-font-family: "Cascadia Code", Consolas, "Courier New", monospace;
+  --vscode-editor-font-size: 14px;
+  --vscode-editor-font-weight: normal;
+
+  --vscode-foreground: #ffffff;
+  --vscode-editor-background: #000000;
+  --vscode-editor-foreground: #ffffff;
+  --vscode-descriptionForeground: #ffffff;
+  --vscode-sideBar-background: #000000;
+  --vscode-panel-border: #6fc3df;
+  --vscode-widget-border: #6fc3df;
+  --vscode-widget-shadow: none;
+
+  --vscode-textLink-foreground: #f38518;
+  --vscode-textLink-activeForeground: #f38518;
+  --vscode-focusBorder: #f38518;
+  --vscode-contrastBorder: #6fc3df;
+
+  --vscode-button-background: #000000;
+  --vscode-button-foreground: #ffffff;
+  --vscode-button-hoverBackground: #000000;
+  --vscode-button-border: #6fc3df;
+  --vscode-button-secondaryBackground: #000000;
+  --vscode-button-secondaryForeground: #ffffff;
+  --vscode-button-secondaryHoverBackground: #000000;
+
+  --vscode-input-background: #000000;
+  --vscode-input-foreground: #ffffff;
+  --vscode-input-border: #6fc3df;
+  --vscode-input-placeholderForeground: #ffffff;
+  --vscode-inputValidation-errorBackground: #000000;
+
+  --vscode-badge-background: #000000;
+  --vscode-badge-foreground: #ffffff;
+  --vscode-editor-selectionBackground: #ffffff;
+  --vscode-editor-selectionForeground: #000000;
+  --vscode-editor-lineHighlightBackground: #000000;
+  --vscode-list-hoverBackground: rgba(255, 255, 255, 0.1);
+  --vscode-list-activeSelectionBackground: #000000;
+
+  --vscode-textBlockQuote-background: #000000;
+  --vscode-textBlockQuote-border: #ffffff;
+  --vscode-textBlockQuote-foreground: #ffffff;
+  --vscode-textCodeBlock-background: #000000;
+  --vscode-editorWidget-background: #000000;
+
+  --vscode-errorForeground: #f48771;
+  --vscode-editorWarning-foreground: #cca700;
+  --vscode-editorInfo-foreground: #75beff;
+  --vscode-testing-iconPassed: #73c991;
+}
+
+/* Ensure global typography explicitly inherits VS Code font */
+html,
+body {
+  font-family: var(--vscode-font-family);
+  font-size: var(--vscode-font-size, 13px);
+  color: var(--vscode-foreground);
+  background: var(--vscode-editor-background);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Floating Dev Toolbar Styles */
+.dev-toolbar-container {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  z-index: 99999;
+  font-family: var(--vscode-font-family);
+  user-select: none;
+}
+
+.dev-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--vscode-editor-background);
+  color: var(--vscode-foreground);
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 8px;
+  padding: 8px 12px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  font-size: 12px;
+  backdrop-filter: blur(10px);
+}
+
+.dev-toolbar-badge {
+  font-weight: 700;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  padding: 3px 6px;
+  border-radius: 4px;
+  background: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+  text-transform: uppercase;
+}
+
+.dev-toolbar-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  border-left: 1px solid var(--vscode-panel-border);
+  padding-left: 8px;
+}
+
+.dev-toolbar button {
+  background: var(--vscode-button-secondaryBackground);
+  color: var(--vscode-button-secondaryForeground);
+  border: 1px solid var(--vscode-panel-border);
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.dev-toolbar button:hover {
+  background: var(--vscode-button-secondaryHoverBackground);
+}
+
+.dev-toolbar button.active {
+  background: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+  border-color: var(--vscode-button-background);
+}

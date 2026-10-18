@@ -1,7 +1,12 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import { parseMarkdownBlocks } from "../src/shared/markdown-blocks";
-import type { ReviewComment } from "../src/shared/contracts";
+import {
+  ARTIFACT_ROOT_BLOCK_ID,
+  ARTIFACT_ROOT_BLOCK_TYPE,
+  ARTIFACT_ROOT_TEXT,
+  type ReviewComment,
+} from "../src/shared/contracts";
 import { MarkdownRenderer } from "../src/webview/MarkdownRenderer";
 
 vi.mock("../src/webview/vscode-api", () => ({ vscode: { postMessage: vi.fn() } }));
@@ -36,5 +41,40 @@ describe("MarkdownRenderer", () => {
     );
     expect(html).not.toContain("<script>");
     expect(html).toContain("Before alert(1) after.");
+  });
+
+  it("never renders an inline highlight for artifact-wide feedback", () => {
+    const markdown = "# Plan\n\nReview the entire artifact.";
+    const blocks = parseMarkdownBlocks(markdown);
+    const paragraph = blocks.find((block) => block.type === "paragraph")!;
+    const comment: ReviewComment = {
+      id: "22222222-2222-4222-8222-222222222222",
+      createdAt: "2026-10-16T00:00:00.000Z",
+      block: {
+        id: ARTIFACT_ROOT_BLOCK_ID,
+        type: ARTIFACT_ROOT_BLOCK_TYPE,
+        heading: null,
+      },
+      selection: {
+        quote: ARTIFACT_ROOT_TEXT,
+        start: 0,
+        end: ARTIFACT_ROOT_TEXT.length,
+        prefix: "",
+        suffix: "",
+      },
+      body: "Keep the direction consistent.",
+    };
+    const html = renderToStaticMarkup(
+      <MarkdownRenderer
+        markdown={markdown}
+        blocks={blocks}
+        commentsByBlock={new Map([[paragraph.id, [comment]]])}
+        onCommentClick={() => {}}
+      />,
+    );
+
+    expect(html).toContain("Review the entire artifact.");
+    expect(html).not.toContain("<mark");
+    expect(html).not.toContain("data-comment-ids");
   });
 });

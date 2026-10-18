@@ -19,7 +19,12 @@ import {
   OWNER_ONLY_FILE_MODE,
   globalArtifactsRoot,
 } from "../src/shared/artifact-files";
-import { ARTIFACT_SCHEMA_VERSION } from "../src/shared/contracts";
+import {
+  ARTIFACT_ROOT_BLOCK_ID,
+  ARTIFACT_ROOT_BLOCK_TYPE,
+  ARTIFACT_ROOT_TEXT,
+  ARTIFACT_SCHEMA_VERSION,
+} from "../src/shared/contracts";
 
 const temporaryDirectories: string[] = [];
 const markdown = "# Artifact\n\nBuild the review view.\n";
@@ -199,6 +204,56 @@ describe("ArtifactStore", () => {
 
     const removed = await store.removeComment(state.comments.comments[0]!.id);
     expect(removed.comments.comments).toEqual([]);
+  });
+
+  it("persists canonical general feedback and allows it to submit Review", async () => {
+    const { directory, store } = await fixture();
+    const state = await store.addComment({
+      blockId: ARTIFACT_ROOT_BLOCK_ID,
+      selection: {
+        quote: ARTIFACT_ROOT_TEXT,
+        start: 0,
+        end: ARTIFACT_ROOT_TEXT.length,
+      },
+      body: "Follow the comments and revise the artifact in this direction.",
+    });
+
+    expect(state.blocks.some((block) => block.id === ARTIFACT_ROOT_BLOCK_ID)).toBe(false);
+    expect(state.comments.comments).toHaveLength(1);
+    expect(state.comments.comments[0]).toMatchObject({
+      block: {
+        id: ARTIFACT_ROOT_BLOCK_ID,
+        type: ARTIFACT_ROOT_BLOCK_TYPE,
+        heading: null,
+      },
+      selection: {
+        quote: ARTIFACT_ROOT_TEXT,
+        start: 0,
+        end: ARTIFACT_ROOT_TEXT.length,
+        prefix: "",
+        suffix: "",
+      },
+      body: "Follow the comments and revise the artifact in this direction.",
+    });
+    expect(JSON.parse(await readFile(path.join(directory, "comments.json"), "utf8")))
+      .toEqual(state.comments);
+
+    const submitted = await store.submitReview("revise");
+    expect(submitted.submission?.decision).toBe("revise");
+  });
+
+  it.each([
+    ["quote", { quote: "Applies to this artifact", start: 0, end: ARTIFACT_ROOT_TEXT.length }],
+    ["start", { quote: ARTIFACT_ROOT_TEXT, start: 1, end: ARTIFACT_ROOT_TEXT.length }],
+    ["end", { quote: ARTIFACT_ROOT_TEXT, start: 0, end: ARTIFACT_ROOT_TEXT.length - 1 }],
+  ])("rejects non-canonical general feedback %s", async (_field, selection) => {
+    const { store } = await fixture();
+
+    await expect(store.addComment({
+      blockId: ARTIFACT_ROOT_BLOCK_ID,
+      selection,
+      body: "Do not persist this target.",
+    })).rejects.toThrow("Invalid general feedback target");
   });
 
   it("rejects content changed outside the review update protocol", async () => {

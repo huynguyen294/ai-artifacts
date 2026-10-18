@@ -1,0 +1,2 @@
+- cần sửa lại để linh hoạt hơn khi có upgrade
+- các upgrade sẽ là dynamic: ví dụ schema có trường mới nhưng schema cũ không có thì dùng giá trị default, runtime cũ không chặn hoàn toàn mà dùng giá trị default, runtime nên được xây dựng theo dynamic như thế

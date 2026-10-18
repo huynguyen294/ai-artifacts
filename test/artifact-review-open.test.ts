@@ -344,6 +344,19 @@ describe("artifact review open coordinator", () => {
 
     expect(openWith).toHaveBeenCalledTimes(2);
   });
+  it("forwards explicit openOptions such as preview: false to openWith", async () => {
+    const { userHome, artifactPath } = await fixture("open-options-001");
+    const openWith = vi.fn(async (_uri: TestUri, _options?: { preview?: boolean }) => undefined);
+    const coordinator = new ArtifactReviewOpenCoordinator<TestUri>({
+      uriFromFilePath: (fsPath) => ({ fsPath }),
+      openWith,
+    }, { userHome });
+
+    await coordinator.open({ fsPath: artifactPath }, { preview: false });
+
+    expect(openWith).toHaveBeenCalledTimes(1);
+    expect(openWith).toHaveBeenCalledWith({ fsPath: artifactPath }, { preview: false });
+  });
 });
 
 describe("targeted artifact-connection event handler", () => {
@@ -611,7 +624,9 @@ describe("global artifact-connection watcher setup", () => {
     expect(extensionSource).toContain("new vscode.RelativePattern(vscode.Uri.file(collectionRoot), pattern)");
     expect(extensionSource).toContain("localWindowInstanceId: () => workspaceRegistryPublisher.currentInstanceId");
     expect(extensionSource).toContain("setupGlobalArtifactConnectionWatcher");
-    expect(extensionSource.match(/artifactReviewOpenCoordinator\.open\(/g)).toHaveLength(3);
+    expect(extensionSource).toContain("resource instanceof vscode.Uri");
+    expect(extensionSource.match(/artifactReviewOpenCoordinator\.open\(/g)).toHaveLength(5);
+    expect(extensionSource).toContain("setupConversationRegistryWatcher");
     expect(extensionSource).toContain("ArtifactReviewProvider.viewType");
     expect(extensionSource).toContain("supportsMultipleEditorsPerDocument: false");
     expect(extensionSource).toContain("context.subscriptions.push(artifactConnectionWatcher)");

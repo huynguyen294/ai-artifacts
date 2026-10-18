@@ -2,8 +2,20 @@ import { z } from "zod";
 
 export const ARTIFACT_SCHEMA_VERSION = 6 as const;
 export const ARTIFACT_CONNECTION_SCHEMA_VERSION = 1 as const;
+export const ARTIFACT_CONVERSATION_SCHEMA_VERSION = 1 as const;
+export const ARTIFACT_ROOT_BLOCK_ID = "__artifact_root__" as const;
+export const ARTIFACT_ROOT_BLOCK_TYPE = "artifact" as const;
+export const ARTIFACT_ROOT_TEXT = "Applies to the entire artifact" as const;
 export const artifactIdSchema = z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/);
 export const artifactKindSchema = z.string().regex(/^[a-z][a-z0-9-]{0,63}$/);
+export const artifactConversationIdSchema = z.string().uuid();
+export const conversationNameSchema = z
+  .string()
+  .min(1)
+  .max(200)
+  .refine((value) => value.trim().length > 0, {
+    message: "conversationName must not be blank.",
+  });
 
 export const artifactConnectionSourceSchema = z.enum(["create", "inspect"]);
 export type ArtifactConnectionSource = z.infer<typeof artifactConnectionSourceSchema>;
@@ -119,12 +131,30 @@ export const artifactManifestSchema = z.object({
   reviewSessionId: z.string().uuid(),
 }).strict();
 
-export const reviewCommentSchema = z.object({
+export const markdownBlockTypeSchema = z.enum([
+  "heading",
+  "paragraph",
+  "list-item",
+  "quote",
+  "code",
+  "table-cell",
+]);
+
+const reviewCommentBaseShape = {
   id: z.string().uuid(),
   createdAt: z.string().datetime(),
+};
+
+const markdownCommentBlockIdSchema = z.string().min(1).refine(
+  (value) => value !== ARTIFACT_ROOT_BLOCK_ID,
+  { message: "The artifact root block ID is reserved for artifact-wide comments." },
+);
+
+const markdownReviewCommentSchema = z.object({
+  ...reviewCommentBaseShape,
   block: z.object({
-    id: z.string().min(1),
-    type: z.enum(["heading", "paragraph", "list-item", "quote", "code", "table-cell"]),
+    id: markdownCommentBlockIdSchema,
+    type: markdownBlockTypeSchema,
     heading: z.string().nullable(),
   }),
   selection: z.object({
@@ -136,6 +166,28 @@ export const reviewCommentSchema = z.object({
   }),
   body: z.string().min(1),
 });
+
+const artifactReviewCommentSchema = z.object({
+  ...reviewCommentBaseShape,
+  block: z.object({
+    id: z.literal(ARTIFACT_ROOT_BLOCK_ID),
+    type: z.literal(ARTIFACT_ROOT_BLOCK_TYPE),
+    heading: z.null(),
+  }),
+  selection: z.object({
+    quote: z.literal(ARTIFACT_ROOT_TEXT),
+    start: z.literal(0),
+    end: z.literal(ARTIFACT_ROOT_TEXT.length),
+    prefix: z.literal(""),
+    suffix: z.literal(""),
+  }),
+  body: z.string().min(1),
+});
+
+export const reviewCommentSchema = z.union([
+  markdownReviewCommentSchema,
+  artifactReviewCommentSchema,
+]);
 
 export const commentsDocumentSchema = z.object({
   schemaVersion: z.literal(ARTIFACT_SCHEMA_VERSION),
@@ -163,11 +215,12 @@ export type ReviewComment = z.infer<typeof reviewCommentSchema>;
 export type CommentsDocument = z.infer<typeof commentsDocumentSchema>;
 export type ReviewDecision = z.infer<typeof reviewDecisionSchema>;
 export type ReviewSubmission = z.infer<typeof reviewSubmissionSchema>;
+export type MarkdownBlockType = z.infer<typeof markdownBlockTypeSchema>;
 
 export type MarkdownBlock = {
   id: string;
   index: number;
-  type: ReviewComment["block"]["type"];
+  type: MarkdownBlockType;
   text: string;
   heading: string | null;
   sourceStart: number;
@@ -198,12 +251,72 @@ export const commentDraftSchema = z.object({
   body: z.string().min(1),
 });
 
+export const artifactConversationMetadataSchema = z.object({
+  schemaVersion: z.literal(ARTIFACT_CONVERSATION_SCHEMA_VERSION),
+  artifactConversationId: artifactConversationIdSchema,
+  conversationName: conversationNameSchema,
+  createdAt: z.string().datetime(),
+}).strict();
+
+export type ArtifactConversationMetadata = z.infer<typeof artifactConversationMetadataSchema>;
+
+export const artifactConversationMembershipSchema = z.object({
+  schemaVersion: z.literal(ARTIFACT_CONVERSATION_SCHEMA_VERSION),
+  artifactConversationId: artifactConversationIdSchema,
+  artifactId: artifactIdSchema,
+  registeredAt: z.string().datetime(),
+}).strict();
+
+export type ArtifactConversationMembership = z.infer<typeof artifactConversationMembershipSchema>;
+
+export const artifactConversationInputSchema = z.object({
+  artifactConversationId: artifactConversationIdSchema.optional(),
+  conversationName: conversationNameSchema.optional(),
+}).strict();
+
+export type ArtifactConversationInput = z.infer<typeof artifactConversationInputSchema>;
+
+export const conversationArtifactItemSchema = z.object({
+  artifactId: artifactIdSchema,
+  title: z.string().min(1).max(200),
+  kind: artifactKindSchema,
+  registeredAt: z.string().datetime(),
+  isCurrent: z.boolean(),
+}).strict();
+
+export type ConversationArtifactItem = z.infer<typeof conversationArtifactItemSchema>;
+
+export const conversationArtifactGroupSchema = z.object({
+  artifactConversationId: artifactConversationIdSchema,
+  conversationName: conversationNameSchema,
+  currentArtifactRegisteredAt: z.string().datetime(),
+  artifacts: z.array(conversationArtifactItemSchema),
+}).strict();
+
+export type ConversationArtifactGroup = z.infer<typeof conversationArtifactGroupSchema>;
+
+export const conversationArtifactsViewStateSchema = z.discriminatedUnion("status", [
+  z.object({ status: z.literal("loading") }).strict(),
+  z.object({
+    status: z.literal("ready"),
+    groups: z.array(conversationArtifactGroupSchema),
+    skippedCount: z.number().int().nonnegative(),
+  }).strict(),
+  z.object({
+    status: z.literal("error"),
+    message: z.string().min(1),
+  }).strict(),
+]);
+
+export type ConversationArtifactsViewState = z.infer<typeof conversationArtifactsViewStateSchema>;
+
 export const webviewToExtensionMessageSchema = z.discriminatedUnion("type", [
   commentDraftSchema.extend({ type: z.literal("addComment") }),
   z.object({ type: z.literal("removeComment"), commentId: z.string().uuid() }),
   z.object({ type: z.literal("submitReview"), decision: reviewDecisionSchema }),
   z.object({ type: z.literal("copyArtifactConnectPrompt") }),
   z.object({ type: z.literal("openExternal"), url: z.string().url() }),
+  z.object({ type: z.literal("openConversationArtifact"), artifactId: artifactIdSchema }).strict(),
   z.object({ type: z.literal("ready") }),
 ]);
 
@@ -214,6 +327,7 @@ export type SendStatus = "idle" | "submitting" | "submitted" | "error";
 
 export type ExtensionToWebviewMessage =
   | { type: "state"; state: ReviewState }
+  | { type: "conversationArtifactsState"; state: ConversationArtifactsViewState }
   | { type: "sendState"; status: SendStatus; message?: string; retryable?: boolean }
   | { type: "artifactConnectPromptCopied" }
   | { type: "error"; message: string };
