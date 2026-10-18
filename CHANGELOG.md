@@ -4,7 +4,7 @@ All notable changes to the **AI Artifacts** (`agent-plus`) project will be docum
 
 Release history has been standardized and tracked starting from version **0.2.6**. Package builds prior to this version are not considered part of the official changelog.
 
-## [1.0.2] - 2026-10-07
+## [1.1.0] - 2026-10-18
 
 ### Artifacts in Conversations & MCP server 10.0.0
 

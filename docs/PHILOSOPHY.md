@@ -59,9 +59,9 @@ AI Artifacts provides a dedicated review layer for AI-generated Markdown. It ena
 
 The agent skill triggers only when the user explicitly requests creating or updating an artifact, reading saved feedback, or reconnecting an existing lifecycle. The document type alone is never an auto-trigger condition.
 
-## Implementation status 1.0.2
+## Implementation status 1.1.0
 
-Version 1.0.2 uses artifact schema v6, connection schema v1, conversation registry schema v1, and MCP server 10.0.0. Every lifecycle is stored beneath the per-user `~/.ai-artifacts/artifacts/` collection. `artifact.json` remains the source of truth for artifact identity without repository path ownership; optional `artifact-connection.json` records only the current UI-routing request. Schemas v3/v4/v5 and workspace-local artifact directories are outside the live protocol and are not migrated. This hard cutoff avoids ambiguous mixed-version writes: extension upgrades must be followed by integration reinstall and AI-client restart.
+Version 1.1.0 uses artifact schema v6, connection schema v1, conversation registry schema v1, and MCP server 10.0.0. Every lifecycle is stored beneath the per-user `~/.ai-artifacts/artifacts/` collection. `artifact.json` remains the source of truth for artifact identity without repository path ownership; optional `artifact-connection.json` records only the current UI-routing request. Schemas v3/v4/v5 and workspace-local artifact directories are outside the live protocol and are not migrated. This hard cutoff avoids ambiguous mixed-version writes: extension upgrades must be followed by integration reinstall and AI-client restart.
 
 A conversation often produces multiple related artifacts over time (for example, architecture designs, phased implementation plans, test checklists). AI Artifacts introduces the conversation registry (`~/.ai-artifacts/conversation-registry/<artifactConversationId>/`) to group these artifacts together for quick visual switching in the **Artifacts in Conversation** drawer. This grouping is purely an in-editor navigation layer: it does not weaken individual artifact identity (`artifact.json` remains schema v6), does not alter window-routing state (`artifact-connection.json`), and does not couple separate artifact lifecycles or waiters.
 

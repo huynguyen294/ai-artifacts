@@ -122,7 +122,7 @@ After installing the integration, reload your editor and restart your agent to l
 <details>
 <summary>Runtime version and expected tools</summary>
 
-Version 1.0.2 ships MCP server 9.0.0. The catalog contains exactly five tools: `resolve_artifact_window`, `create_artifact`, `wait_for_artifact_review`, `inspect_artifact_review`, and `advance_and_wait_for_artifact`. A client that still reports an older version or exposes an older catalog must be reinstalled and restarted.
+Version 1.1.0 ships MCP server 10.0.0. The catalog contains exactly five tools: `resolve_artifact_window`, `create_artifact`, `wait_for_artifact_review`, `inspect_artifact_review`, and `advance_and_wait_for_artifact`. A client that still reports an older version or exposes an older catalog must be reinstalled and restarted.
 
 </details>
 
@@ -238,10 +238,10 @@ The AI agent calls the MCP `create_artifact` tool, which generates an isolated s
 
 ## Compatibility and upgrades
 
-- Version 1.0.2 supports only schema v6 stored under `~/.ai-artifacts/artifacts/`.
-- Version 1.0.2 ships MCP server 10.0.0, conversation registry schema v1, and optional connection schema v1 while providing the five-tool catalog.
-- Schema v3/v4/v5 and workspace-local `.ai-artifacts` or `.codex-artifacts` lifecycles are not opened, advanced, or migrated by v1.0.x. Existing files remain untouched on disk.
-- This is a hard compatibility cutoff. A rollback to a 0.9.x extension also requires reinstalling the matching older runtime and skill; do not use a 0.9.x runtime with v1.0.x artifacts.
+- Version 1.1.0 supports only schema v6 stored under `~/.ai-artifacts/artifacts/`.
+- Version 1.1.0 ships MCP server 10.0.0, conversation registry schema v1, and optional connection schema v1 while providing the five-tool catalog.
+- Schema v3/v4/v5 and workspace-local `.ai-artifacts` or `.codex-artifacts` lifecycles are not opened, advanced, or migrated by v1.1.x. Existing files remain untouched on disk.
+- This is a hard compatibility cutoff. A rollback to a 0.9.x extension also requires reinstalling the matching older runtime and skill; do not use a 0.9.x runtime with v1.1.x artifacts.
 - After every extension upgrade, reinstall integrations and restart the AI client before starting a new chat.
 
 ## Uninstalling and cleanup
@@ -271,7 +271,7 @@ Press `F5` to launch an Extension Development Host. Package and install locally:
 
 ```powershell
 npm run package
-code --install-extension releases/ai-artifacts-1.0.2.vsix
+code --install-extension releases/ai-artifacts-1.1.0.vsix
 ```
 
 ## Documentation
