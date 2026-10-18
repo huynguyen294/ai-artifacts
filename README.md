@@ -89,7 +89,7 @@ Open the Command Palette (`Ctrl+Shift+P` on Windows/Linux or `Cmd+Shift+P` on ma
   - **`AI Artifacts: Install Integration for GitHub Copilot`**: Automatically configures VS Code User global configuration (`Code/User/mcp.json`) for GitHub Copilot.
   - **`AI Artifacts: Install Integration for Cursor`**: Automatically configures `~/.cursor/mcp.json`.
   - **`AI Artifacts: Install Integration for Codex`**: Automatically configures `~/.codex/config.toml`.
-  - **`AI Artifacts: Install Integration for Claude`**: Automatically configures `~/.claude.json`.
+  - **`AI Artifacts: Install Integration for Claude`**: Automatically configures `~/.claude.json` and deploys the `create-review-artifact` Agent Skill to `~/.claude/skills/create-review-artifact/`.
   - **`AI Artifacts: Install Integration for Windsurf`**: Automatically configures `~/.codeium/windsurf/mcp_config.json`.
   - **`AI Artifacts: Install Integration for Cline`**: Automatically configures the Cline VS Code extension's `cline_mcp_settings.json`.
 - Or run **`AI Artifacts: Copy MCP Configuration JSON`** to copy the ready-to-use JSON configuration snippet directly to your clipboard to paste into any MCP-compatible editor.
@@ -103,6 +103,7 @@ Open the Command Palette (`Ctrl+Shift+P` on Windows/Linux or `Cmd+Shift+P` on ma
 ~/.ai-artifacts/managed/runtime/ai-artifacts-review-mcp.mjs  # Centralized MCP runtime server
 ~/.ai-artifacts/managed/workspaces/                          # Live workspace heartbeat registry
 ~/.agents/skills/create-review-artifact/                     # Shared agent skill & instructions
+~/.claude/skills/create-review-artifact/                     # Claude Code agent skill
 ```
 
 </details>
@@ -250,7 +251,7 @@ The AI agent calls the MCP `create_artifact` tool, which generates an isolated s
 
 AI Artifacts provides two comprehensive ways to remove MCP configurations and runtime assets:
 
-- **Automatic Cleanup upon Extension Uninstall:** When you uninstall the AI Artifacts extension from VS Code or Cursor (`Extensions -> Uninstall`), an automated lifecycle hook (`vscode:uninstall`) runs a standalone script that automatically removes the `ai_artifacts` MCP configuration from all detected AI clients and completely deletes base runtime assets (`~/.ai-artifacts/managed/`, legacy `~/.vscode/ai-artifacts/`, and `~/.agents/skills/create-review-artifact/`).
+- **Automatic Cleanup upon Extension Uninstall:** When you uninstall the AI Artifacts extension from VS Code or Cursor (`Extensions -> Uninstall`), an automated lifecycle hook (`vscode:uninstall`) runs a standalone script that automatically removes the `ai_artifacts` MCP configuration from all detected AI clients and completely deletes base runtime assets (`~/.ai-artifacts/managed/`, legacy `~/.vscode/ai-artifacts/`, `~/.agents/skills/create-review-artifact/`, and `~/.claude/skills/create-review-artifact/`).
 - **Manual Cleanup via Command Palette:** If you want to disconnect MCP integrations while keeping the VS Code extension active, open the Command Palette (`Ctrl+Shift+P` / `Cmd+Shift+P`):
   - **`AI Artifacts: Uninstall All Detected Integrations`**: Removes MCP configs from all detected editors and clears base runtime assets.
   - Or choose a specific client: **`AI Artifacts: Uninstall Integration for GitHub Copilot`**, **`... for Cursor`**, **`... for Codex`**, **`... for Claude`**, **`... for Windsurf`**, or **`... for Cline`**.
@@ -273,7 +274,7 @@ Press `F5` to launch an Extension Development Host. Package and install locally:
 
 ```powershell
 npm run package
-code --install-extension releases/ai-artifacts-1.1.0.vsix
+code --install-extension releases/ai-artifacts-1.1.2.vsix
 ```
 
 ## Documentation

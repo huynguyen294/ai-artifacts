@@ -148,10 +148,9 @@ describe("Client Drivers", () => {
   });
 
   it("Claude driver initializes .claude.json while preserving root keys", async () => {
-    const claudeDriver = new ClaudeClientDriver();
     const customConfig = path.join(tempHome, ".claude.json");
+    const claudeDriver = new ClaudeClientDriver(customConfig);
     await fs.writeFile(customConfig, JSON.stringify({ opusProMigrationComplete: true }), "utf8");
-    Object.defineProperty(claudeDriver, "configPath", { value: customConfig });
 
     const scriptPath = "/Users/test/.ai-artifacts/managed/runtime/ai-artifacts-review-mcp.mjs";
     await claudeDriver.install(scriptPath);
@@ -164,6 +163,20 @@ describe("Client Drivers", () => {
     expect(json.opusProMigrationComplete).toBe(true);
     expect(json.mcpServers.ai_artifacts.command).toBe("node");
     expect(json.mcpServers.ai_artifacts.args[0]).toBe(scriptPath);
+
+    const skillMain = path.join(claudeDriver.skillDirectory, "SKILL.md");
+    expect((await fs.stat(skillMain)).isFile()).toBe(true);
+  });
+
+  it("Claude driver reports missing when MCP is configured but skill is absent", async () => {
+    const customConfig = path.join(tempHome, ".claude.json");
+    const claudeDriver = new ClaudeClientDriver(customConfig);
+    const scriptPath = "/Users/test/.ai-artifacts/managed/runtime/ai-artifacts-review-mcp.mjs";
+    await upsertJsonMcpServer(customConfig, "ai_artifacts", scriptPath);
+
+    const check = await claudeDriver.check(scriptPath);
+    expect(check.status).toBe("missing");
+    expect(check.detail).toContain("Claude skill directory is missing SKILL.md");
   });
 
   it("Windsurf driver initializes mcp_config.json cleanly", async () => {
@@ -349,14 +362,14 @@ describe("Client Drivers", () => {
   });
 
   it("Claude driver uninstalls ai_artifacts while preserving root keys", async () => {
-    const claudeDriver = new ClaudeClientDriver();
     const customConfig = path.join(tempHome, ".claude.json");
+    const claudeDriver = new ClaudeClientDriver(customConfig);
     await fs.writeFile(customConfig, JSON.stringify({ opusProMigrationComplete: true }), "utf8");
-    Object.defineProperty(claudeDriver, "configPath", { value: customConfig });
 
     const scriptPath = "/path/to/server.mjs";
     await claudeDriver.install(scriptPath);
     expect((await claudeDriver.check(scriptPath)).status).toBe("ready");
+    expect(await fs.stat(claudeDriver.skillDirectory)).toBeDefined();
 
     const uninstalled = await claudeDriver.uninstall();
     expect(uninstalled).toBe(true);
@@ -365,6 +378,7 @@ describe("Client Drivers", () => {
     const json = JSON.parse(await fs.readFile(customConfig, "utf8"));
     expect(json.opusProMigrationComplete).toBe(true);
     expect(json.mcpServers.ai_artifacts).toBeUndefined();
+    expect(await fs.stat(claudeDriver.skillDirectory).catch(() => null)).toBeNull();
   });
 
   it("Windsurf driver uninstalls ai_artifacts cleanly", async () => {
@@ -578,6 +592,7 @@ describe("Uninstall & Base Assets Cleanup", () => {
     const baseDir = path.join(tempHome, ".vscode", "ai-artifacts");
     const skillDir = path.join(tempHome, ".agents", "skills", "create-review-artifact");
     const legacySkillDir = path.join(tempHome, ".agents", "skills", "create-plan-artifact");
+    const claudeSkillDir = path.join(tempHome, ".claude", "skills", "create-review-artifact");
 
     await fs.mkdir(baseDir, { recursive: true });
     await fs.writeFile(path.join(baseDir, "ai-artifacts-review-mcp.mjs"), "// server", "utf8");
@@ -585,12 +600,15 @@ describe("Uninstall & Base Assets Cleanup", () => {
     await fs.writeFile(path.join(skillDir, "SKILL.md"), "# Skill", "utf8");
     await fs.mkdir(legacySkillDir, { recursive: true });
     await fs.writeFile(path.join(legacySkillDir, "SKILL.md"), "# Legacy", "utf8");
+    await fs.mkdir(claudeSkillDir, { recursive: true });
+    await fs.writeFile(path.join(claudeSkillDir, "SKILL.md"), "# Claude Skill", "utf8");
 
     await cleanupBaseMcpServer({ userHome: tempHome });
 
     expect(await fs.stat(baseDir).catch(() => null)).toBeNull();
     expect(await fs.stat(skillDir).catch(() => null)).toBeNull();
     expect(await fs.stat(legacySkillDir).catch(() => null)).toBeNull();
+    expect(await fs.stat(claudeSkillDir).catch(() => null)).toBeNull();
   });
 
   it("cleanupBaseMcpServer does not throw when folders do not exist", async () => {

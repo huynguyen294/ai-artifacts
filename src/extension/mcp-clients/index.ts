@@ -26,12 +26,13 @@ export { ClineClientDriver, getClineSettingsPath } from "./cline-client";
 export function getAllClientDrivers(
   copilotConfigPath?: string,
   clineConfigPath?: string,
+  sourceSkillDirectory?: string,
 ): McpClientDriver[] {
   return [
     new CopilotClientDriver(copilotConfigPath),
     new CursorClientDriver(),
     new CodexClientDriver(),
-    new ClaudeClientDriver(),
+    new ClaudeClientDriver(undefined, undefined, sourceSkillDirectory),
     new WindsurfClientDriver(),
     new ClineClientDriver(clineConfigPath),
   ];

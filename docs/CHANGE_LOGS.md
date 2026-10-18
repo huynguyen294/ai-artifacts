@@ -14,6 +14,38 @@ Minor typos, formatting fixes, or cosmetic wording adjustments that do not chang
 
 Each entry includes the date, category, summary of changes, rationale, and affected components or files.
 
+## 2026-10-18 — Claude Code Automatic Agent Skill Deployment & Lifecycle Sync
+
+### Changes
+
+- Added automatic Agent Skill deployment and synchronization for Claude Code:
+  - `src/extension/mcp-clients/skill-helper.ts`: Extracted shared skill sync helpers (`replaceSkillDirectory`, `sameFile`, `REVIEW_SKILL_ASSETS`) to eliminate circular dependencies between `workspace-integration.ts` and client drivers.
+  - `src/extension/mcp-clients/claude-client.ts`: Updated `ClaudeClientDriver` to automatically install the `create-review-artifact` skill to `~/.claude/skills/create-review-artifact/` upon `install()`, verify its presence (`SKILL.md`) alongside MCP configuration during `check()`, and remove it upon `uninstall()`, while safely preserving all other user skills in `~/.claude/skills/`.
+  - `src/extension/mcp-clients/base-cleanup.ts`: Included `~/.claude/skills/create-review-artifact` in `cleanupBaseMcpServer` so full extension uninstall clears all deployed artifacts review skills.
+  - `src/extension/mcp-clients/index.ts`: Updated `getAllClientDrivers` to pass `sourceSkillDirectory` down to `ClaudeClientDriver`.
+  - `src/extension/workspace-integration.ts`: Updated `checkAllIntegrations`, `installAllDetectedIntegrations`, and `installClaudeIntegration` to supply `paths.sourceSkill`.
+- Test suite updates:
+  - `test/mcp-client-drivers.test.ts`: Added unit tests verifying Claude driver skill deployment, missing skill detection, and clean skill removal on uninstall and base cleanup.
+  - `test/workspace-integration.test.ts`: Added end-to-end integration test verifying Claude skill installation and uninstallation alongside an unrelated Claude skill (`unrelated-claude`), ensuring non-interference.
+- Documentation:
+  - Updated `README.md` and `docs/CHANGE_LOGS.md` to document Claude Code's dual MCP + Skill automated lifecycle.
+
+### Rationale
+
+- Claude Code searches `~/.claude/skills/<skill-name>/` for personal agent skills instead of `~/.agents/skills/`. Previously, users had to manually copy the review skill into `.claude/skills/`. Automating skill deployment during Claude client installation ensures a seamless, zero-friction setup matching the other supported AI clients.
+
+### Affected components or files
+
+- `src/extension/mcp-clients/skill-helper.ts`
+- `src/extension/mcp-clients/claude-client.ts`
+- `src/extension/mcp-clients/base-cleanup.ts`
+- `src/extension/mcp-clients/index.ts`
+- `src/extension/workspace-integration.ts`
+- `test/mcp-client-drivers.test.ts`
+- `test/workspace-integration.test.ts`
+- `README.md`
+- `docs/CHANGE_LOGS.md`
+
 ## 2026-10-18 — Cline MCP Installer & Client Driver Support
 
 ### Changes

@@ -415,6 +415,8 @@ describe("Workspace Integration Asset Verifiers", () => {
     const retainedArtifact = path.join(artifactsRoot, "retained-artifact", "artifact.md");
     const unrelatedSiblingFile = path.join(productRoot, "unrelated-sibling.txt");
     const unrelatedSkill = path.join(targetDir, ".agents", "skills", "unrelated-skill", "SKILL.md");
+    const unrelatedClaudeSkill = path.join(targetDir, ".claude", "skills", "unrelated-claude", "SKILL.md");
+    const claudeSkill = path.join(targetDir, ".claude", "skills", "create-review-artifact", "SKILL.md");
     const originalCodexHome = process.env.CODEX_HOME;
 
     vi.spyOn(os, "homedir").mockReturnValue(targetDir);
@@ -433,6 +435,7 @@ describe("Workspace Integration Asset Verifiers", () => {
         fs.mkdir(path.join(targetDir, ".agents", "skills", "create-plan-artifact"), { recursive: true }),
         fs.mkdir(path.dirname(unrelatedSiblingFile), { recursive: true }),
         fs.mkdir(path.dirname(unrelatedSkill), { recursive: true }),
+        fs.mkdir(path.dirname(unrelatedClaudeSkill), { recursive: true }),
       ]);
       await Promise.all([
         fs.writeFile(
@@ -464,6 +467,7 @@ describe("Workspace Integration Asset Verifiers", () => {
         fs.writeFile(retainedArtifact, "# Retain me\n", "utf8"),
         fs.writeFile(unrelatedSiblingFile, "do not touch me\n", "utf8"),
         fs.writeFile(unrelatedSkill, "# Unrelated skill\n", "utf8"),
+        fs.writeFile(unrelatedClaudeSkill, "# Unrelated Claude skill\n", "utf8"),
         fs.writeFile(
           path.join(targetDir, ".vscode", "ai-artifacts", "codex-artifacts-review-mcp.mjs"),
           "// legacy runtime\n",
@@ -494,6 +498,7 @@ describe("Workspace Integration Asset Verifiers", () => {
         fs.access(path.join(targetDir, ".vscode", "ai-artifacts", "codex-artifacts-review-mcp.mjs")),
       ).rejects.toThrow();
       await expect(fs.access(path.join(targetDir, ".agents", "skills", "create-plan-artifact"))).rejects.toThrow();
+      await expect(fs.access(claudeSkill)).resolves.toBeUndefined();
 
       let report = await checkAllIntegrations(context);
       expect(report.baseCurrent).toBe(true);
@@ -575,9 +580,11 @@ describe("Workspace Integration Asset Verifiers", () => {
       await expect(fs.access(installedPaths.targetDirectory)).rejects.toThrow();
       await expect(fs.access(installedPaths.targetSkill)).rejects.toThrow();
       await expect(fs.access(path.join(targetDir, ".vscode", "ai-artifacts"))).rejects.toThrow();
+      await expect(fs.access(path.dirname(claudeSkill))).rejects.toThrow();
       await expect(fs.access(productRoot)).resolves.toBeUndefined();
       await expect(fs.readFile(unrelatedSiblingFile, "utf8")).resolves.toBe("do not touch me\n");
       await expect(fs.readFile(unrelatedSkill, "utf8")).resolves.toBe("# Unrelated skill\n");
+      await expect(fs.readFile(unrelatedClaudeSkill, "utf8")).resolves.toBe("# Unrelated Claude skill\n");
 
       const afterHash = crypto
         .createHash("sha256")

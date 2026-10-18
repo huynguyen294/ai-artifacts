@@ -4,6 +4,18 @@ All notable changes to the **AI Artifacts** (`agent-plus`) project will be docum
 
 Release history has been standardized and tracked starting from version **0.2.6**. Package builds prior to this version are not considered part of the official changelog.
 
+## [1.1.2] - 2026-10-18
+
+### Cline MCP Client & Claude Code Agent Skill Sync
+
+- Added dedicated configuration driver for the Cline VS Code extension (`ClineClientDriver`):
+  - Automatically manages `ai_artifacts` MCP stdio configuration in `cline_mcp_settings.json` within VS Code global storage.
+  - Added Command Palette commands `AI Artifacts: Install Integration for Cline` and `AI Artifacts: Uninstall Integration for Cline`.
+- Enhanced Claude Code integration (`ClaudeClientDriver`):
+  - Automatically installs and syncs the `create-review-artifact` Agent Skill to `~/.claude/skills/create-review-artifact/`.
+  - Verifies presence of `SKILL.md` alongside MCP configuration.
+  - Cleans up skill folder upon client uninstallation and full extension uninstallation (`cleanupBaseMcpServer`), safely preserving all unrelated Claude skills.
+
 ## [1.1.0] - 2026-10-18
 
 ### Artifacts in Conversations & MCP server 10.0.0
