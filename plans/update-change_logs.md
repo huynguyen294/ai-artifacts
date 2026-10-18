@@ -1,0 +1,2 @@
+- change logs nên group by feature và bug fixes, và mô tả summary các thay đổi, feature mới, behavior changed, bug fixes, không làm toàn bộ kỹ thuật như hiện tại
+- chuyển toàn bộ change logs cũ sang format mới, change log cũ đổi thành technical change logs
