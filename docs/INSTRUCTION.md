@@ -49,7 +49,10 @@ If product intent, documentation, tests, and implementation disagree, call out t
 - Preserve unrelated user skills, hooks, MCP configuration, and project files during install, upgrade, cleanup, or migration.
 - Preserve user review data in `~/.ai-artifacts/artifacts/` during integration or extension uninstall. Only exact extension-owned runtime assets under `~/.ai-artifacts/managed/` are removable managed state. Retention cleanup is the only automatic artifact deletion path and runs only when the extension activates, not during uninstall. If the extension is reinstalled after being absent longer than the retention window, activation may delete expired artifacts.
 - Treat artifact Markdown, comments, and decisions as potentially sensitive local data. Preserve owner-only POSIX modes and never claim POSIX-mode guarantees on Windows.
-- Extension upgrades require reinstalling integrations and restarting the AI client; do not add mixed-version compatibility without an explicit architecture decision.
+- Integration reinstall is required only when the bundled numeric `MCP_VERSION` or `SKILL_VERSION` differs from the corresponding verified receipt in `~/.ai-artifacts/managed/integration-version.json`; extension-only changes with current receipts must not force reinstall.
+- `MCP_VERSION` and `SKILL_VERSION` are independent monotonic integers, not SemVer or aliases for the extension package version. Missing, invalid, absent, or mismatched receipt entries are stale.
+- Commit MCP, `.agents`, and `.claude` receipt fields independently and only after the corresponding install and verification succeeds. Never mark a partial failure current.
+- Preserve only the declared skill customization points (`description:` and `USER CUSTOM RULES`) during reinstall. If target frontmatter or markers cannot be preserved deterministically, fail closed before replacing the target.
 
 ## Change guidelines
 
@@ -63,14 +66,14 @@ If product intent, documentation, tests, and implementation disagree, call out t
 
 ## Ownership map
 
-- `src/integration/artifact-review-mcp-v4.ts`: historical filename for the current MCP 10.0.0/schema-v6 tools, window resolution, conversation grouping, connection commits, artifact creation, waiter ownership/takeover, round grants, inspection, and transactional round commits.
+- `src/integration/artifact-review-mcp-v4.ts`: historical filename for the current numeric MCP version 10/schema-v6 tools, window resolution, conversation grouping, connection commits, artifact creation, waiter ownership/takeover, round grants, inspection, and transactional round commits.
 - `src/shared/conversation-artifact-registry.ts`: schema-v1 conversation registry persistence, atomic lockfiles, and safe retention pruning.
 - `src/extension/conversation-artifact-service.ts`: extension-side conversation artifacts discovery and validation.
 - `src/extension/artifact-store.ts`: trusted artifact loading, comment writes, and submission writes.
 - `src/extension/workspace-registry-publisher.ts`: live VS Code workspace heartbeat.
 - `src/extension/artifact-search.ts`: extension-local schema-v6 title normalization, bounded concurrency discovery, and title-only filtering.
 - `src/extension/artifact-search-command.ts`: VS Code Quick Pick UI controller, in-memory filter updates, and safe cancellation/open coordination.
-- `src/extension/workspace-integration.ts`: centralized MCP installation, base runtime provisioning, and legacy cleanup.
+- `src/extension/workspace-integration.ts`: centralized MCP installation, base runtime provisioning, per-target version receipts, customization-preserving skill replacement, and legacy cleanup.
 - `src/extension/mcp-clients/`: dedicated configuration drivers for Codex, Cursor, Claude Code, Windsurf, GitHub Copilot (VS Code), and Cline.
 - `src/webview/`: review UI and typed messages to the extension host; includes `ConversationArtifactsDrawer.tsx` for conversation artifact navigation; no direct filesystem or process access.
 - `src/shared/`: shared schemas, file contracts, artifact-connection safety/persistence, validation, and grouped workspace registry rules.

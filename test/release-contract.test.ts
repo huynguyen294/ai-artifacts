@@ -68,7 +68,7 @@ describe("v1.1.2 release contract", () => {
     });
   });
 
-  it("keeps release-facing docs on the global v6 and reinstall contract", async () => {
+  it("keeps release-facing docs on global v6 and independent integration versions", async () => {
     const [readme, philosophy, architecture, components, instructions, contract, changelog, documentationChanges] =
       await Promise.all([
         read("README.md"),
@@ -86,21 +86,37 @@ describe("v1.1.2 release contract", () => {
       expect(document).toContain("~/.ai-artifacts/artifacts/");
       expect(document).toContain("~/.ai-artifacts/conversation-registry/");
     }
-    expect(readme).toContain("reinstall every integration");
+    expect(readme).toContain("MCP_VERSION = 10");
+    expect(readme).toContain("SKILL_VERSION = 2");
+    expect(readme).toContain("~/.ai-artifacts/managed/integration-version.json");
+    expect(readme).toContain("USER CUSTOM RULES");
+    expect(readme).toContain("It does not prove that custom rules remain semantically compatible");
+    expect(readme).not.toContain("reinstall every integration");
+    expect(readme).not.toContain("After every extension upgrade");
     expect(readme).toContain("same user filesystem");
     expect(readme).toContain("not a deep link");
-    expect(readme).toContain("MCP server 10.0.0");
     expect(readme).toContain("artifact-connection.json");
     expect(readme).toContain("The target may be unfocused; other windows ignore the event");
     expect(philosophy).toContain("Focus is a ranking hint, not identity, authorization, or a requirement");
-    expect(architecture).toContain("MCP server 10.0.0");
+    expect(philosophy).toContain("numeric MCP version 10");
+    expect(philosophy).toContain("numeric skill version 2");
+    expect(philosophy).toContain("not SemVer");
+    expect(architecture).toContain("Integration asset versioning and skill customization");
+    expect(architecture).toContain("valid partial install");
+    expect(architecture).toContain("extension-only update with current receipts");
     expect(architecture).toContain("artifact-connection.json` creation and change");
     expect(architecture).toContain("Both wait and advance preserve existing connection state");
     expect(components).toContain("WINDOW_SELECTION_REQUIRED");
+    expect(components).toContain("numeric `MCP_VERSION` / `SKILL_VERSION`");
+    expect(components).toContain("Record verified MCP, `.agents`, and `.claude` versions independently");
     expect(instructions).toContain("Focus is only a ranking hint");
     expect(instructions).toContain("Artifacts are owned by review sessions");
+    expect(instructions).toContain("extension-only changes with current receipts must not force reinstall");
+    expect(instructions).toContain("Never mark a partial failure current");
     expect(contract).toContain("schema-v1 UI-routing state only");
     expect(contract).toContain("AI Artifacts: Install All Detected Integrations");
+    expect(changelog).toContain("## [Unreleased]");
+    expect(changelog).toContain("Skill Customization & Independent Integration Versioning");
     expect(changelog).toContain("## [1.1.2] - 2026-10-18");
     expect(changelog).toContain("## [1.1.0] - 2026-10-18");
     expect(changelog).toContain("## [1.0.1] - 2026-09-21");
@@ -108,6 +124,7 @@ describe("v1.1.2 release contract", () => {
     expect(changelog).toContain("MCP server 9.0.0");
     expect(changelog).not.toContain("## [1.2.0]");
     expect(changelog).toContain("MCP server 10.0.0");
+    expect(documentationChanges).toContain("Skill Customization & Independent Integration Asset Versioning");
     expect(documentationChanges).toContain("Automatic artifact retention cleanup and bounded lifetime model");
     expect(documentationChanges).toContain("Artifacts in Conversations, Conversation Registry v1, and MCP server 10.0.0");
   });

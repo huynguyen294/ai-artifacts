@@ -11,6 +11,7 @@
 - [How It Works](#how-it-works)
 - [Requirements & compatibility](#requirements--compatibility)
 - [Getting started](#getting-started)
+- [Customizing the Review Skill](#customizing-the-review-skill)
 - [Verification & troubleshooting](#verification--troubleshooting)
 - [Usage](#usage)
 - [Storage, behavior and security](#storage-behavior-and-security)
@@ -46,6 +47,7 @@
 - VS Code 1.95.0 or newer (or compatible editors like Cursor, Windsurf, VSCodium).
 - An AI Agent or extension supporting MCP / Skills (e.g. Codex extension, Cursor Agent, GitHub Copilot, Windsurf Cascade).
 - Node.js available as `node` in `PATH`; the installed MCP integration is launched with this command.
+- The extension host and MCP process must run as the same OS user and see the same user filesystem. Remote or split-host topologies are unsupported in v1.1.x.
 - When building from source: Node.js `^20.19.0 || >=22.12.0` and npm.
 
 ### Compatibility & Supported Agents
@@ -97,6 +99,7 @@ Open the Command Palette (`Ctrl+Shift+P` on Windows/Linux or `Cmd+Shift+P` on ma
 # Centralized runtime & skill assets:
 ~/.ai-artifacts/managed/runtime/ai-artifacts-review-mcp.mjs  # Centralized MCP runtime server
 ~/.ai-artifacts/managed/workspaces/                          # Live workspace heartbeat registry
+~/.ai-artifacts/managed/integration-version.json             # Installed MCP/skill version receipt
 ~/.agents/skills/create-review-artifact/                     # Shared agent skill & instructions
 ~/.claude/skills/create-review-artifact/                     # Claude Code agent skill
 ```
@@ -115,14 +118,45 @@ After installing the integration, reload your editor and restart your agent to l
 4. Run **AI Artifacts: Verify All Integrations** from the Command Palette.
 
 > [!NOTE]
-> **After an extension update:** reinstall every integration you use, then repeat the steps above. Extension updates do not automatically refresh the installed MCP runtime or skill.
+> **After an extension update:** reinstall only when AI Artifacts reports that the installed MCP runtime or skill is stale. Extension-only UI or documentation updates do not require integration reinstall. After reinstalling an asset, restart the affected AI client and start a new chat.
 
 <details>
 <summary>Runtime version and expected tools</summary>
 
-Version 1.1.0 ships MCP server 10.0.0. The catalog contains exactly five tools: `resolve_artifact_window`, `create_artifact`, `wait_for_artifact_review`, `inspect_artifact_review`, and `advance_and_wait_for_artifact`. A client that still reports an older version or exposes an older catalog must be reinstalled and restarted.
+Version 1.1.2 bundles numeric MCP version 10 and skill version 2. The MCP catalog contains exactly five tools: `resolve_artifact_window`, `create_artifact`, `wait_for_artifact_review`, `inspect_artifact_review`, and `advance_and_wait_for_artifact`. A client that reports a different MCP version or exposes an older catalog must be reinstalled and restarted.
 
 </details>
+
+## Customizing the Review Skill
+
+The installer maintains two independent copies of the skill when their clients are present:
+
+- `~/.agents/skills/create-review-artifact/SKILL.md` for Codex, Cursor, GitHub Copilot, Cline, and other clients that use the shared agent-skills directory.
+- `~/.claude/skills/create-review-artifact/SKILL.md` for Claude Code. Its customization is preserved independently and is not copied from `.agents`.
+
+Open either file directly in your editor (replace `code` with `cursor` when appropriate):
+
+```shell
+code ~/.agents/skills/create-review-artifact/SKILL.md
+code ~/.claude/skills/create-review-artifact/SKILL.md
+```
+
+The installer preserves two supported customization regions across skill updates:
+
+1. **Trigger — YAML `description:`**: Edit the `description:` field in the frontmatter to change when the host should activate the skill. A value that differs from the current or a previously released official description is treated as user customization and retained.
+2. **Behavior — `USER CUSTOM RULES`**: Put custom behavior between the markers at the end of `SKILL.md`:
+
+   ```markdown
+   <!-- >>> USER CUSTOM RULES >>> -->
+   Write artifacts in Vietnamese. Keep implementation plans component-oriented.
+   <!-- <<< USER CUSTOM RULES <<< -->
+   ```
+
+   Rules in this block override conflicting default skill rules. You may fully customize behavior here, including document language, chat response language, plan layout, or workspace file conventions. They cannot override system or developer instructions enforced by the AI host.
+
+`Ready` means the packaged skill assets are current after merging these supported customization regions. It does not prove that custom rules remain semantically compatible with the official artifact lifecycle.
+
+If the installer reports malformed YAML or custom-rule markers, it stops before replacing the installed skill. Back up the custom description and rules, then run **AI Artifacts: Copy create-review-artifact Skill Markdown** to obtain a clean official `SKILL.md`, or restore/reinstall the skill and add customizations back incrementally.
 
 ## Verification & troubleshooting
 
@@ -132,7 +166,7 @@ To ensure AI Artifacts is ready, verify the components and consult common troubl
 
 Run **`AI Artifacts: Verify All Integrations`** from the Command Palette (`Ctrl+Shift+P` / `Cmd+Shift+P`):
 
-- **Skill (.agents):** Must report **Ready** (confirms `create-review-artifact` is deployed to `~/.agents/skills/`).
+- **Skill (.agents):** Must report **Ready** (confirms the official `create-review-artifact` assets are current in `~/.agents/skills/` after preserving supported customization regions; it does not validate custom-rule semantics).
 - **Base (.vscode):** Must report **Ready** (confirms central MCP runtime server is deployed to `~/.ai-artifacts/managed/runtime/`).
 - **Clients:** Shows detected configuration state for each AI editor.
 
@@ -237,10 +271,13 @@ The AI agent calls the MCP `create_artifact` tool, which generates an isolated s
 ## Compatibility and upgrades
 
 - Version 1.1.0 supports only schema v6 stored under `~/.ai-artifacts/artifacts/`.
-- Version 1.1.0 ships MCP server 10.0.0, conversation registry schema v1, and optional connection schema v1 while providing the five-tool catalog.
+- The current integration uses numeric `MCP_VERSION = 10` and `SKILL_VERSION = 2`. These are independent monotonic asset versions, not SemVer and not the extension package version.
+- Successful installation records the verified MCP runtime, shared `.agents` skill, and detected Claude skill independently in `~/.ai-artifacts/managed/integration-version.json`. A missing or invalid receipt is treated as stale.
 - Schema v3/v4/v5 and workspace-local `.ai-artifacts` or `.codex-artifacts` lifecycles are not opened, advanced, or migrated by v1.1.x. Existing files remain untouched on disk.
 - This is a hard compatibility cutoff. A rollback to a 0.9.x extension also requires reinstalling the matching older runtime and skill; do not use a 0.9.x runtime with v1.1.x artifacts.
-- After every extension upgrade, reinstall integrations and restart the AI client before starting a new chat.
+- Reinstall only when the extension reports a stale MCP or skill asset because its numeric version changed. Extension-only updates with current receipts do not create another reinstall notification.
+- Reinstall preserves a valid custom `description:` and `USER CUSTOM RULES` block. Malformed customization fails closed without replacing the existing skill; fix the reported target and run the installer again.
+- After reinstalling, restart the affected AI client and start a new chat so it loads the updated runtime or skill.
 
 ## Uninstalling and cleanup
 

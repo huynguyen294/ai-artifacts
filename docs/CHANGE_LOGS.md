@@ -14,6 +14,40 @@ Minor typos, formatting fixes, or cosmetic wording adjustments that do not chang
 
 Each entry includes the date, category, summary of changes, rationale, and affected components or files.
 
+## 2026-11-02 — Skill Customization & Independent Integration Asset Versioning
+
+### Changes
+
+- Separated integration compatibility from the extension package version:
+  - Added numeric `MCP_VERSION = 10` and `SKILL_VERSION = 2` counters; they are monotonic integers rather than SemVer.
+  - Added the schema-v1 receipt `~/.ai-artifacts/managed/integration-version.json` with independent fields for the MCP runtime, shared `.agents` skill, and Claude `.claude` skill.
+  - Base setup commits MCP and `.agents` versions only after both assets verify; Claude commits its own target only after Claude install and verification succeeds, preserving truthful partial-install state.
+- Added customization-preserving skill replacement:
+  - Preserves a valid YAML `description:` when it differs from current or historical official descriptions.
+  - Preserves the exact content inside the `USER CUSTOM RULES` markers.
+  - Merges `.agents` and `.claude` from their own installed targets so customization does not leak between clients.
+  - Rejects malformed frontmatter or marker layouts before the first target rename and keeps staged whole-directory replacement, rollback, and obsolete-file cleanup.
+- Replaced package-version upgrade prompts with receipt-based stale-asset notifications:
+  - Missing or invalid receipts make required assets stale; invalid receipts also emit a diagnostic.
+  - Notification state fingerprints the bundled numeric versions and exact stale-asset set, so `Later` suppresses only the same state and partial installs remain visible.
+  - Extension-only updates with current receipts do not request integration reinstall.
+- Documented supported customization locations, recovery steps, the limited meaning of `Ready`, numeric asset versions, receipt ownership, and restart/new-chat requirements after an actual asset reinstall.
+
+### Rationale
+
+- Users need stable customization points that survive official skill updates without treating arbitrary edits as extension-owned content.
+- Independent numeric asset versions avoid unnecessary reinstall prompts for UI or documentation releases while still making MCP and skill compatibility explicit.
+- Per-target receipts ensure a failed or partial installation is never reported as fully current.
+
+### Affected components or files
+
+- Shared contracts and paths: `src/shared/contracts.ts`, `src/shared/artifact-files.ts`
+- MCP handshake: `src/integration/artifact-review-mcp-v4.ts`
+- Skill and installer: `skills/create-review-artifact/SKILL.md`, `src/extension/mcp-clients/skill-helper.ts`, `src/extension/mcp-clients/claude-client.ts`, `src/extension/workspace-integration.ts`
+- Upgrade notification: `src/extension/upgrade-notification.ts`, `src/extension/extension.ts`
+- Documentation: `README.md`, `docs/PHILOSOPHY.md`, `docs/ARCHITECTURE.md`, `docs/COMPONENTS.md`, `docs/INSTRUCTION.md`, `CHANGELOG.md`, `docs/CHANGE_LOGS.md`
+- Regression coverage: `test/artifact-contracts.test.ts`, `test/skill-contract.test.ts`, `test/workspace-integration.test.ts`, `test/mcp-client-drivers.test.ts`, `test/upgrade-notification.test.ts`, `test/release-contract.test.ts`
+
 ## 2026-10-26 — README Compatibility Matrix & Supported Agents Documentation Cleanup
 
 ### Changes
