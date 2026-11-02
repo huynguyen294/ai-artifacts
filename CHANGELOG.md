@@ -4,7 +4,7 @@ All notable changes to the **AI Artifacts** (`agent-plus`) project will be docum
 
 Release history has been standardized and tracked starting from version **0.2.6**. Package builds prior to this version are not considered part of the official changelog.
 
-## [Unreleased]
+## [1.1.3] - 2026-11-02
 
 ### Skill Customization & Independent Integration Versioning
 

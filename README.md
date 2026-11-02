@@ -123,7 +123,7 @@ After installing the integration, reload your editor and restart your agent to l
 <details>
 <summary>Runtime version and expected tools</summary>
 
-Version 1.1.2 bundles numeric MCP version 10 and skill version 2. The MCP catalog contains exactly five tools: `resolve_artifact_window`, `create_artifact`, `wait_for_artifact_review`, `inspect_artifact_review`, and `advance_and_wait_for_artifact`. A client that reports a different MCP version or exposes an older catalog must be reinstalled and restarted.
+Version 1.1.3 bundles numeric MCP version 10 and skill version 2. The MCP catalog contains exactly five tools: `resolve_artifact_window`, `create_artifact`, `wait_for_artifact_review`, `inspect_artifact_review`, and `advance_and_wait_for_artifact`. A client that reports a different MCP version or exposes an older catalog must be reinstalled and restarted.
 
 </details>
 
@@ -306,7 +306,7 @@ Press `F5` to launch an Extension Development Host. Package and install locally:
 
 ```powershell
 npm run package
-code --install-extension releases/ai-artifacts-1.1.2.vsix
+code --install-extension releases/ai-artifacts-1.1.3.vsix
 ```
 
 ## Documentation

@@ -59,9 +59,9 @@ AI Artifacts provides a dedicated review layer for AI-generated Markdown. It ena
 
 The agent skill triggers only when the user explicitly requests creating or updating an artifact, reading saved feedback, or reconnecting an existing lifecycle. The document type alone is never an auto-trigger condition.
 
-## Implementation status 1.1.2
+## Implementation status 1.1.3
 
-Version 1.1.2 uses artifact schema v6, connection schema v1, conversation registry schema v1, numeric MCP version 10, and numeric skill version 2. Every lifecycle is stored beneath the per-user `~/.ai-artifacts/artifacts/` collection. `artifact.json` remains the source of truth for artifact identity without repository path ownership; optional `artifact-connection.json` records only the current UI-routing request. Schemas v3/v4/v5 and workspace-local artifact directories are outside the live protocol and are not migrated.
+Version 1.1.3 uses artifact schema v6, connection schema v1, conversation registry schema v1, numeric MCP version 10, and numeric skill version 2. Every lifecycle is stored beneath the per-user `~/.ai-artifacts/artifacts/` collection. `artifact.json` remains the source of truth for artifact identity without repository path ownership; optional `artifact-connection.json` records only the current UI-routing request. Schemas v3/v4/v5 and workspace-local artifact directories are outside the live protocol and are not migrated.
 
 Artifact protocol compatibility and installed integration freshness are separate concerns. `MCP_VERSION` and `SKILL_VERSION` are independent monotonic counters, not SemVer and not aliases for the extension package version. The installer records verified MCP, `.agents`, and `.claude` assets independently in `~/.ai-artifacts/managed/integration-version.json`; missing, invalid, or mismatched entries are stale. Extension-only updates do not require reinstall when those receipts remain current. When an asset is stale, the user runs the existing installer and restarts the affected AI client.
 

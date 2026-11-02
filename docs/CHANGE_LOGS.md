@@ -19,6 +19,7 @@ Each entry includes the date, category, summary of changes, rationale, and affec
 ### Changes
 
 - Separated integration compatibility from the extension package version:
+  - Released the feature as extension version `1.1.3` while keeping numeric MCP version 10 and skill version 2 unchanged.
   - Added numeric `MCP_VERSION = 10` and `SKILL_VERSION = 2` counters; they are monotonic integers rather than SemVer.
   - Added the schema-v1 receipt `~/.ai-artifacts/managed/integration-version.json` with independent fields for the MCP runtime, shared `.agents` skill, and Claude `.claude` skill.
   - Base setup commits MCP and `.agents` versions only after both assets verify; Claude commits its own target only after Claude install and verification succeeds, preserving truthful partial-install state.
