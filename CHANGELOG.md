@@ -16,6 +16,10 @@ Release history has been standardized and tracked starting from version **0.2.6*
   - Verifies presence of `SKILL.md` alongside MCP configuration.
   - Cleans up skill folder upon client uninstallation and full extension uninstallation (`cleanupBaseMcpServer`), safely preserving all unrelated Claude skills.
 
+### Documentation
+
+- Streamlined the **Compatibility & Supported Agents** table in `README.md`, removing the redundant `Supported Features` column and standardizing MCP + Skill integration details for Claude and Cline.
+
 ## [1.1.0] - 2026-10-18
 
 ### Artifacts in Conversations & MCP server 10.0.0

@@ -14,6 +14,26 @@ Minor typos, formatting fixes, or cosmetic wording adjustments that do not chang
 
 Each entry includes the date, category, summary of changes, rationale, and affected components or files.
 
+## 2026-10-26 — README Compatibility Matrix & Supported Agents Documentation Cleanup
+
+### Changes
+
+- Streamlined the **Compatibility & Supported Agents** table in `README.md`:
+  - Removed the `Supported Features` column to eliminate redundant phrasing (*"multi-round review"*, *"inline feedback"*, *"full lifecycle"*, etc.) that misleadingly implied feature disparities across supported AI clients.
+  - Standardized the `Integration Type` column:
+    - Updated **Claude** to `MCP Server (claude.json) + Skill` to reflect automated skill deployment.
+    - Updated **Cline** to `MCP Server (cline_mcp_settings.json) + Skill` for consistency with other skill-capable clients.
+  - Removed redundant `Supported environments` subsection to keep onboarding requirements concise.
+
+### Rationale
+
+- All supported AI coding agents connect through the unified schema-v6 MCP server and share the same core review lifecycle (creation, inline feedback, multi-round iterations, waiter reconnect, and Proceed execution). Distributing synonyms across rows diluted documentation clarity. The simplified table focuses strictly on the client environment and integration type/config target.
+
+### Affected components or files
+
+- `README.md`
+- `docs/CHANGE_LOGS.md`
+
 ## 2026-10-18 — Claude Code Automatic Agent Skill Deployment & Lifecycle Sync
 
 ### Changes
