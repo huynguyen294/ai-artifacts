@@ -12,6 +12,7 @@ export const MANAGED_RUNTIME_DIRECTORY = "runtime";
 export const MANAGED_WORKSPACES_DIRECTORY = "workspaces";
 export const MANAGED_CLEANUP_DIRECTORY = "cleanup";
 export const MANAGED_MCP_SCRIPT_FILE = "ai-artifacts-review-mcp.mjs";
+export const MANAGED_INTEGRATION_VERSION_FILE = "integration-version.json";
 
 export const ARTIFACT_MANIFEST_FILE = "artifact.json";
 export const ARTIFACT_MARKDOWN_FILE = "artifact.md";
@@ -117,6 +118,14 @@ export function conversationRegisteredArtifactPath(
  */
 export function managedAssetsRoot(options: GlobalArtifactsRootOptions = {}): string {
   return path.join(aiArtifactsRoot(options), MANAGED_ASSETS_DIRECTORY);
+}
+
+/**
+ * Returns the installed integration version receipt path
+ * (~/.ai-artifacts/managed/integration-version.json).
+ */
+export function managedIntegrationVersionPath(options: GlobalArtifactsRootOptions = {}): string {
+  return path.join(managedAssetsRoot(options), MANAGED_INTEGRATION_VERSION_FILE);
 }
 
 /**

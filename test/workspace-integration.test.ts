@@ -7,7 +7,19 @@ import { createInterface } from "node:readline";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ArtifactStore } from "../src/extension/artifact-store";
 import { hasManagedCodexArtifactsMcp, upsertCodexArtifactsMcp } from "../src/extension/mcp-config";
-import { globalArtifactsRoot } from "../src/shared/artifact-files";
+import {
+  globalArtifactsRoot,
+  managedIntegrationVersionPath,
+} from "../src/shared/artifact-files";
+import { MCP_VERSION, SKILL_VERSION } from "../src/shared/contracts";
+import {
+  OFFICIAL_SKILL_DESCRIPTIONS,
+  USER_CUSTOM_RULES_BEGIN,
+  USER_CUSTOM_RULES_END,
+  extractCustomRulesBlock,
+  extractFrontmatterDescriptionEntry,
+  replaceSkillDirectory,
+} from "../src/extension/mcp-clients/skill-helper";
 
 // Mock vscode for any imports in workspace-integration-v4
 vi.mock("vscode", () => ({
@@ -23,14 +35,34 @@ import {
   baseScriptIsCurrent,
   checkAllIntegrations,
   installAllDetectedIntegrations,
+  installClaudeIntegration,
+  readInstalledIntegrationVersion,
   skillAssetsAreCurrent,
   getReviewSkillMarkdown,
   setupBaseMcpServer,
   uninstallAllDetectedIntegrations,
+  writeInstalledIntegrationVersion,
   type BaseIntegrationPaths,
 } from "../src/extension/workspace-integration";
 
 const installedMcpProcesses: ChildProcessWithoutNullStreams[] = [];
+const CURRENT_SKILL_DESCRIPTION = OFFICIAL_SKILL_DESCRIPTIONS.at(-1)!;
+const SOURCE_SKILL_MARKDOWN = [
+  "---",
+  "name: create-review-artifact",
+  `description: ${CURRENT_SKILL_DESCRIPTION}`,
+  "---",
+  "",
+  "# Skill content",
+  "",
+  "## User Custom Rules",
+  "",
+  "Custom rules override default rules when they conflict.",
+  "",
+  USER_CUSTOM_RULES_BEGIN,
+  USER_CUSTOM_RULES_END,
+  "",
+].join("\n");
 
 type InstalledMcpClient = {
   request: (method: string, params?: Record<string, unknown>) => Promise<any>;
@@ -105,7 +137,7 @@ describe("Workspace Integration Asset Verifiers", () => {
 
     await fs.mkdir(path.join(paths.sourceSkill, "references"), { recursive: true });
     await fs.mkdir(path.join(paths.sourceSkill, "agents"), { recursive: true });
-    await fs.writeFile(path.join(paths.sourceSkill, "SKILL.md"), "# Skill content", "utf8");
+    await fs.writeFile(path.join(paths.sourceSkill, "SKILL.md"), SOURCE_SKILL_MARKDOWN, "utf8");
     await fs.writeFile(path.join(paths.sourceSkill, "references", "artifact-contract.md"), "# Contract", "utf8");
     await fs.writeFile(path.join(paths.sourceSkill, "agents", "openai.yaml"), "prompt: test", "utf8");
   });
@@ -120,6 +152,22 @@ describe("Workspace Integration Asset Verifiers", () => {
     expect(await baseScriptIsCurrent(paths)).toBe(false);
     expect(await skillAssetsAreCurrent(paths)).toBe(false);
     expect(await baseAssetsAreCurrent(paths)).toBe(false);
+  });
+
+  it("classifies description frontmatter and custom marker states", () => {
+    expect(extractFrontmatterDescriptionEntry("# Legacy skill\n").status).toBe("absent");
+    expect(extractFrontmatterDescriptionEntry(SOURCE_SKILL_MARKDOWN)).toMatchObject({
+      status: "valid",
+      normalizedValue: CURRENT_SKILL_DESCRIPTION,
+    });
+    expect(extractFrontmatterDescriptionEntry(
+      SOURCE_SKILL_MARKDOWN.replace(`description: ${CURRENT_SKILL_DESCRIPTION}`, 'description: "unfinished'),
+    ).status).toBe("malformed");
+
+    expect(extractCustomRulesBlock("# Legacy skill\n").status).toBe("absent");
+    expect(extractCustomRulesBlock(SOURCE_SKILL_MARKDOWN)).toMatchObject({ status: "valid", content: "" });
+    expect(extractCustomRulesBlock(SOURCE_SKILL_MARKDOWN.replace(USER_CUSTOM_RULES_END, "")).status)
+      .toBe("malformed");
   });
 
   it("reports true when target assets match source exactly", async () => {
@@ -171,6 +219,185 @@ describe("Workspace Integration Asset Verifiers", () => {
     expect(await baseAssetsAreCurrent(paths)).toBe(false);
   });
 
+  it("preserves custom description and rules while replacing the whole skill directory", async () => {
+    const customDescription = "Create review artifacts whenever my team requests an architecture decision.";
+    const existingSkill = SOURCE_SKILL_MARKDOWN
+      .replace(`description: ${CURRENT_SKILL_DESCRIPTION}`, `description: ${customDescription}`)
+      .replace("# Skill content", "# Legacy core content")
+      .replace(USER_CUSTOM_RULES_END, "- Reply in Vietnamese.\n- Keep plans concise.\n" + USER_CUSTOM_RULES_END);
+    await fs.mkdir(paths.targetSkill, { recursive: true });
+    await fs.writeFile(path.join(paths.targetSkill, "SKILL.md"), existingSkill, "utf8");
+    await fs.writeFile(path.join(paths.targetSkill, "obsolete-instruction.md"), "obsolete\n", "utf8");
+
+    await replaceSkillDirectory(paths.sourceSkill, paths.targetSkill);
+
+    const installed = await fs.readFile(path.join(paths.targetSkill, "SKILL.md"), "utf8");
+    expect(installed).toContain(`description: ${customDescription}`);
+    expect(installed).toContain("- Reply in Vietnamese.\n- Keep plans concise.");
+    expect(installed).toContain("# Skill content");
+    expect(installed).not.toContain("# Legacy core content");
+    await expect(fs.access(path.join(paths.targetSkill, "obsolete-instruction.md"))).rejects.toThrow();
+    expect(await skillAssetsAreCurrent(paths)).toBe(true);
+  });
+
+  it("upgrades an old official description and treats CRLF customizations as current", async () => {
+    const oldOfficialDescription = OFFICIAL_SKILL_DESCRIPTIONS[0]!;
+    const oldOfficialSkill = SOURCE_SKILL_MARKDOWN
+      .replace(CURRENT_SKILL_DESCRIPTION, oldOfficialDescription)
+      .replaceAll("\n", "\r\n");
+    await fs.mkdir(paths.targetSkill, { recursive: true });
+    await fs.writeFile(path.join(paths.targetSkill, "SKILL.md"), oldOfficialSkill, "utf8");
+
+    await replaceSkillDirectory(paths.sourceSkill, paths.targetSkill);
+    const upgraded = await fs.readFile(path.join(paths.targetSkill, "SKILL.md"), "utf8");
+    expect(upgraded).toContain(`description: ${CURRENT_SKILL_DESCRIPTION}`);
+    expect(upgraded).not.toContain(oldOfficialDescription);
+
+    const customCrLf = upgraded
+      .replace(`description: ${CURRENT_SKILL_DESCRIPTION}`, "description: Review artifacts when I explicitly request one.")
+      .replace(USER_CUSTOM_RULES_END, "- Use Vietnamese.\n" + USER_CUSTOM_RULES_END)
+      .replaceAll("\n", "\r\n");
+    await fs.writeFile(path.join(paths.targetSkill, "SKILL.md"), customCrLf, "utf8");
+    expect(await skillAssetsAreCurrent(paths)).toBe(true);
+  });
+
+  it.each([
+    ["quoted", 'description: "Create artifacts when I explicitly request a review."'],
+    ["folded", "description: >\n  Create artifacts whenever I request\n  a structured review workflow."],
+    ["multiline plain scalar", "description: Create artifacts for my team\n  only when a design review is explicitly requested."],
+    ["quoted YAML key", '"description": Custom trigger'],
+  ])("preserves a %s custom description", async (_label, descriptionEntry) => {
+    const existingSkill = SOURCE_SKILL_MARKDOWN.replace(
+      `description: ${CURRENT_SKILL_DESCRIPTION}`,
+      descriptionEntry,
+    );
+    await fs.mkdir(paths.targetSkill, { recursive: true });
+    await fs.writeFile(path.join(paths.targetSkill, "SKILL.md"), existingSkill, "utf8");
+
+    await replaceSkillDirectory(paths.sourceSkill, paths.targetSkill);
+
+    const installed = await fs.readFile(path.join(paths.targetSkill, "SKILL.md"), "utf8");
+    expect(installed).toContain(descriptionEntry);
+    expect(await skillAssetsAreCurrent(paths)).toBe(true);
+  });
+
+  it("migrates a marker-free legacy target with an empty custom rules block", async () => {
+    const legacyDescription = "Create artifacts for explicit legacy workflow requests.";
+    const legacySkill = [
+      "---",
+      "name: create-review-artifact",
+      `description: ${legacyDescription}`,
+      "---",
+      "",
+      "# Legacy skill",
+      "",
+    ].join("\n");
+    await fs.mkdir(paths.targetSkill, { recursive: true });
+    await fs.writeFile(path.join(paths.targetSkill, "SKILL.md"), legacySkill, "utf8");
+
+    await replaceSkillDirectory(paths.sourceSkill, paths.targetSkill);
+
+    const installed = await fs.readFile(path.join(paths.targetSkill, "SKILL.md"), "utf8");
+    expect(installed).toContain(`description: ${legacyDescription}`);
+    expect(installed.slice(
+      installed.indexOf(USER_CUSTOM_RULES_BEGIN) + USER_CUSTOM_RULES_BEGIN.length,
+      installed.indexOf(USER_CUSTOM_RULES_END),
+    ).trim()).toBe("");
+  });
+
+  it.each([
+    ["one marker", SOURCE_SKILL_MARKDOWN.replace(USER_CUSTOM_RULES_END, "")],
+    ["duplicate marker", SOURCE_SKILL_MARKDOWN.replace(USER_CUSTOM_RULES_END, `${USER_CUSTOM_RULES_BEGIN}\n${USER_CUSTOM_RULES_END}`)],
+    ["reversed markers", SOURCE_SKILL_MARKDOWN.replace(`${USER_CUSTOM_RULES_BEGIN}\n${USER_CUSTOM_RULES_END}`, `${USER_CUSTOM_RULES_END}\n${USER_CUSTOM_RULES_BEGIN}`)],
+    ["malformed frontmatter", SOURCE_SKILL_MARKDOWN.replace(`description: ${CURRENT_SKILL_DESCRIPTION}`, 'description: "unfinished')],
+  ])("fails before swap for %s and leaves the target unchanged", async (_label, malformedSkill) => {
+    const sentinelPath = path.join(paths.targetSkill, "sentinel.txt");
+    await fs.mkdir(paths.targetSkill, { recursive: true });
+    await fs.writeFile(path.join(paths.targetSkill, "SKILL.md"), malformedSkill, "utf8");
+    await fs.writeFile(sentinelPath, "preserve me\n", "utf8");
+
+    let thrown: unknown;
+    try {
+      await replaceSkillDirectory(paths.sourceSkill, paths.targetSkill);
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(Error);
+    expect((thrown as Error).message).toContain(paths.targetSkill);
+    expect((thrown as Error).message).toContain(path.join(paths.targetSkill, "SKILL.md"));
+    expect((thrown as Error).message).toContain("run the installer command again");
+    await expect(fs.readFile(path.join(paths.targetSkill, "SKILL.md"), "utf8")).resolves.toBe(malformedSkill);
+    await expect(fs.readFile(sentinelPath, "utf8")).resolves.toBe("preserve me\n");
+  });
+
+  it("restores the previous directory when the staged directory swap fails", async () => {
+    const existingSkill = SOURCE_SKILL_MARKDOWN
+      .replace(CURRENT_SKILL_DESCRIPTION, "Create artifacts for my rollback workflow.")
+      .replace(USER_CUSTOM_RULES_END, "- Preserve this rule.\n" + USER_CUSTOM_RULES_END);
+    await fs.mkdir(paths.targetSkill, { recursive: true });
+    await fs.writeFile(path.join(paths.targetSkill, "SKILL.md"), existingSkill, "utf8");
+    await fs.writeFile(path.join(paths.targetSkill, "sentinel.txt"), "previous directory\n", "utf8");
+
+    const originalRename = fs.rename.bind(fs);
+    let injectedFailure = false;
+    vi.spyOn(fs, "rename").mockImplementation(async (oldPath, newPath) => {
+      if (
+        !injectedFailure
+        && path.basename(oldPath.toString()) === "next"
+        && path.resolve(newPath.toString()) === path.resolve(paths.targetSkill)
+      ) {
+        injectedFailure = true;
+        throw Object.assign(new Error("injected staged swap failure"), { code: "EIO" });
+      }
+      return originalRename(oldPath, newPath);
+    });
+
+    await expect(replaceSkillDirectory(paths.sourceSkill, paths.targetSkill)).rejects.toThrow(
+      "injected staged swap failure",
+    );
+    await expect(fs.readFile(path.join(paths.targetSkill, "SKILL.md"), "utf8")).resolves.toBe(existingSkill);
+    await expect(fs.readFile(path.join(paths.targetSkill, "sentinel.txt"), "utf8")).resolves.toBe(
+      "previous directory\n",
+    );
+    const stagingDirectories = (await fs.readdir(path.dirname(paths.targetSkill)))
+      .filter((entry) => entry.startsWith(".create-review-artifact-install-"));
+    expect(stagingDirectories).toEqual([]);
+  });
+
+  it("reads and atomically patches valid, missing, and invalid version receipts", async () => {
+    await expect(readInstalledIntegrationVersion({ userHome: targetDir })).resolves.toEqual({ status: "missing" });
+
+    await writeInstalledIntegrationVersion({
+      mcpVersion: MCP_VERSION,
+      skills: { agents: SKILL_VERSION },
+    }, { userHome: targetDir });
+    await writeInstalledIntegrationVersion({
+      skills: { claude: SKILL_VERSION },
+    }, { userHome: targetDir });
+    const complete = await readInstalledIntegrationVersion({ userHome: targetDir });
+    expect(complete).toMatchObject({
+      status: "valid",
+      manifest: {
+        mcpVersion: MCP_VERSION,
+        skills: { agents: SKILL_VERSION, claude: SKILL_VERSION },
+      },
+    });
+
+    await fs.writeFile(managedIntegrationVersionPath({ userHome: targetDir }), "{ invalid json", "utf8");
+    expect((await readInstalledIntegrationVersion({ userHome: targetDir })).status).toBe("invalid");
+    await writeInstalledIntegrationVersion({ skills: { agents: SKILL_VERSION } }, { userHome: targetDir });
+    const recovered = await readInstalledIntegrationVersion({ userHome: targetDir });
+    expect(recovered).toMatchObject({
+      status: "valid",
+      manifest: { skills: { agents: SKILL_VERSION } },
+    });
+    if (recovered.status === "valid") {
+      expect(recovered.manifest.mcpVersion).toBeUndefined();
+      expect(recovered.manifest.skills.claude).toBeUndefined();
+    }
+  });
+
   it("getReviewSkillMarkdown reads source SKILL.md", async () => {
     const mockContext = {
       extensionUri: { fsPath: sourceDir },
@@ -178,7 +405,7 @@ describe("Workspace Integration Asset Verifiers", () => {
     } as any;
 
     const content = await getReviewSkillMarkdown(mockContext);
-    expect(content).toBe("# Skill content");
+    expect(content).toBe(SOURCE_SKILL_MARKDOWN);
   });
 
   it("getReviewSkillMarkdown falls back to target SKILL.md when source is missing", async () => {
@@ -238,6 +465,13 @@ describe("Workspace Integration Asset Verifiers", () => {
     expect(await baseScriptIsCurrent(installedPaths)).toBe(true);
     expect(await skillAssetsAreCurrent(installedPaths)).toBe(true);
     expect(await baseAssetsAreCurrent(installedPaths)).toBe(true);
+    expect(await readInstalledIntegrationVersion({ userHome: targetDir })).toMatchObject({
+      status: "valid",
+      manifest: {
+        mcpVersion: MCP_VERSION,
+        skills: { agents: SKILL_VERSION },
+      },
+    });
     expect(await fs.readFile(installedPaths.targetMcpScript)).toEqual(
       await fs.readFile(installedPaths.sourceMcpScript),
     );
@@ -247,9 +481,17 @@ describe("Workspace Integration Asset Verifiers", () => {
       path.join("references", "artifact-contract.md"),
       path.join("agents", "openai.yaml"),
     ]) {
-      expect(await fs.readFile(path.join(installedPaths.targetSkill, relativePath))).toEqual(
-        await fs.readFile(path.join(installedPaths.sourceSkill, relativePath)),
-      );
+      if (relativePath === "SKILL.md") {
+        const [targetSkill, sourceSkill] = await Promise.all([
+          fs.readFile(path.join(installedPaths.targetSkill, relativePath), "utf8"),
+          fs.readFile(path.join(installedPaths.sourceSkill, relativePath), "utf8"),
+        ]);
+        expect(targetSkill.replace(/\r\n?/g, "\n")).toBe(sourceSkill.replace(/\r\n?/g, "\n"));
+      } else {
+        expect(await fs.readFile(path.join(installedPaths.targetSkill, relativePath))).toEqual(
+          await fs.readFile(path.join(installedPaths.sourceSkill, relativePath)),
+        );
+      }
     }
 
     const configPath = path.join(targetDir, ".codex", "config.toml");
@@ -301,7 +543,7 @@ describe("Workspace Integration Asset Verifiers", () => {
       CODEX_ARTIFACTS_REGISTRY_DIRECTORY: installedPaths.workspacesDirectory,
     });
     const initialized = await client.request("initialize", { protocolVersion: "2025-06-18" });
-    expect(initialized.serverInfo.version).toBe("10.0.0");
+    expect(initialized.serverInfo.version).toBe("10");
     expect(initialized.instructions).toContain("resolve_artifact_window");
     client.notify("notifications/initialized");
     const catalog = await client.request("tools/list");
@@ -397,6 +639,43 @@ describe("Workspace Integration Asset Verifiers", () => {
       artifactId: created.artifactId,
       reviewRound: 1,
       decision: "approve",
+    });
+  });
+
+  it("commits the Claude receipt only after Claude install and verification succeed", async () => {
+    const repositoryRoot = path.resolve(import.meta.dirname, "..");
+    vi.spyOn(os, "homedir").mockReturnValue(targetDir);
+    const context = {
+      extensionUri: { fsPath: repositoryRoot },
+      globalStorageUri: { fsPath: path.join(tempDir, "storage") },
+    } as any;
+    const claudeSkillDirectory = path.join(targetDir, ".claude", "skills", "create-review-artifact");
+    const malformedClaudeSkill = SOURCE_SKILL_MARKDOWN.replace(USER_CUSTOM_RULES_END, "");
+    await fs.mkdir(claudeSkillDirectory, { recursive: true });
+    await fs.writeFile(path.join(claudeSkillDirectory, "SKILL.md"), malformedClaudeSkill, "utf8");
+
+    await expect(installClaudeIntegration(context)).rejects.toThrow("run the installer command again");
+    const partial = await readInstalledIntegrationVersion({ userHome: targetDir });
+    expect(partial).toMatchObject({
+      status: "valid",
+      manifest: {
+        mcpVersion: MCP_VERSION,
+        skills: { agents: SKILL_VERSION },
+      },
+    });
+    if (partial.status === "valid") expect(partial.manifest.skills.claude).toBeUndefined();
+    await expect(fs.readFile(path.join(claudeSkillDirectory, "SKILL.md"), "utf8")).resolves.toBe(
+      malformedClaudeSkill,
+    );
+
+    await fs.rm(claudeSkillDirectory, { recursive: true, force: true });
+    await installClaudeIntegration(context);
+    expect(await readInstalledIntegrationVersion({ userHome: targetDir })).toMatchObject({
+      status: "valid",
+      manifest: {
+        mcpVersion: MCP_VERSION,
+        skills: { agents: SKILL_VERSION, claude: SKILL_VERSION },
+      },
     });
   });
 
@@ -499,6 +778,13 @@ describe("Workspace Integration Asset Verifiers", () => {
       ).rejects.toThrow();
       await expect(fs.access(path.join(targetDir, ".agents", "skills", "create-plan-artifact"))).rejects.toThrow();
       await expect(fs.access(claudeSkill)).resolves.toBeUndefined();
+      expect(await readInstalledIntegrationVersion({ userHome: targetDir })).toMatchObject({
+        status: "valid",
+        manifest: {
+          mcpVersion: MCP_VERSION,
+          skills: { agents: SKILL_VERSION, claude: SKILL_VERSION },
+        },
+      });
 
       let report = await checkAllIntegrations(context);
       expect(report.baseCurrent).toBe(true);
@@ -578,6 +864,7 @@ describe("Workspace Integration Asset Verifiers", () => {
       const uninstall = await uninstallAllDetectedIntegrations(context);
       expect(uninstall.uninstalledClients).toEqual(firstInstall.installedClients);
       await expect(fs.access(installedPaths.targetDirectory)).rejects.toThrow();
+      await expect(fs.access(managedIntegrationVersionPath({ userHome: targetDir }))).rejects.toThrow();
       await expect(fs.access(installedPaths.targetSkill)).rejects.toThrow();
       await expect(fs.access(path.join(targetDir, ".vscode", "ai-artifacts"))).rejects.toThrow();
       await expect(fs.access(path.dirname(claudeSkill))).rejects.toThrow();

@@ -9,7 +9,7 @@ import {
   removeJsonMcpServer,
   upsertJsonMcpServer,
 } from "./json-mcp-helper";
-import { replaceSkillDirectory } from "./skill-helper";
+import { replaceSkillDirectory, skillDirectoryIsCurrent } from "./skill-helper";
 
 export class ClaudeClientDriver implements McpClientDriver {
   readonly id = "claude";
@@ -35,7 +35,6 @@ export class ClaudeClientDriver implements McpClientDriver {
     if (this.sourceSkillDirectory) return this.sourceSkillDirectory;
     const baseHome = path.dirname(this.configPath);
     const deployedSkill = path.join(baseHome, ".agents", "skills", "create-review-artifact");
-    if (fsSync.existsSync(deployedSkill)) return deployedSkill;
     const candidates = [
       path.resolve(__dirname, "..", "..", "..", "skills", "create-review-artifact"),
       path.resolve(__dirname, "..", "skills", "create-review-artifact"),
@@ -68,6 +67,11 @@ export class ClaudeClientDriver implements McpClientDriver {
     const skillMain = path.join(this.skillDirectory, "SKILL.md");
     if (!fsSync.existsSync(skillMain)) {
       return { status: "missing", detail: "Claude skill directory is missing SKILL.md." };
+    }
+
+    const source = this.sourceSkill;
+    if (fsSync.existsSync(source) && !await skillDirectoryIsCurrent(source, this.skillDirectory)) {
+      return { status: "outdated", detail: "Claude review skill assets are outdated." };
     }
 
     return { status: "ready" };

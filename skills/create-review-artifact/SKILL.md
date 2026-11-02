@@ -96,3 +96,10 @@ Except for explicit non-retryable errors such as `ARTIFACT_CONNECTION_INVALID`, 
 - Only the MCP server creates artifacts, advances rounds, resets comments, consumes tokens, and writes lifecycle metadata.
 - Never edit `artifact.json`, `comments.json`, `review-submission.json`, or `artifact-connection.json` directly.
 - Write a coherent artifact, not a patch, changelog, task tracker, or progress report.
+
+## User Custom Rules
+
+Instructions inside the `USER CUSTOM RULES` block below override the default rules in this skill when they conflict. Keep custom rules inside the markers so they are preserved across skill updates and reinstalls.
+
+<!-- >>> USER CUSTOM RULES >>> -->
+<!-- <<< USER CUSTOM RULES <<< -->

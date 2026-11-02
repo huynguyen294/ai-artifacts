@@ -7,9 +7,13 @@ import {
   ARTIFACT_ROOT_BLOCK_TYPE,
   ARTIFACT_ROOT_TEXT,
   ARTIFACT_SCHEMA_VERSION,
+  INTEGRATION_VERSION_SCHEMA_VERSION,
+  MCP_VERSION,
+  SKILL_VERSION,
   artifactConnectionSchema,
   artifactManifestSchema,
   commentsDocumentSchema,
+  integrationVersionManifestSchema,
   reviewCommentSchema,
   reviewSubmissionSchema,
   type ArtifactConnection,
@@ -18,6 +22,8 @@ import {
 import {
   ARTIFACT_CONNECTION_FILE,
   ARTIFACT_MANIFEST_FILE,
+  MANAGED_INTEGRATION_VERSION_FILE,
+  managedIntegrationVersionPath,
 } from "../src/shared/artifact-files";
 import {
   artifactPaths,
@@ -186,6 +192,106 @@ describe("artifact schema v6 contract", () => {
     expect(state.artifact.schemaVersion).toBe(6);
     expect(state.comments.schemaVersion).toBe(6);
     expect(state.submission?.reviewSessionId).toBe(reviewSessionId);
+  });
+});
+
+describe("integration version receipt schema v1 contract", () => {
+  it("locks numeric bundled versions and accepts complete or partial receipts", () => {
+    expect(MCP_VERSION).toBe(10);
+    expect(SKILL_VERSION).toBe(2);
+    expect(INTEGRATION_VERSION_SCHEMA_VERSION).toBe(1);
+
+    const completeReceipt = {
+      schemaVersion: INTEGRATION_VERSION_SCHEMA_VERSION,
+      mcpVersion: MCP_VERSION,
+      skills: {
+        agents: SKILL_VERSION,
+        claude: SKILL_VERSION,
+      },
+      updatedAt: timestamp,
+    };
+    expect(integrationVersionManifestSchema.parse(completeReceipt)).toEqual(completeReceipt);
+
+    const partialReceipt = {
+      schemaVersion: INTEGRATION_VERSION_SCHEMA_VERSION,
+      skills: { agents: SKILL_VERSION },
+      updatedAt: timestamp,
+    };
+    expect(integrationVersionManifestSchema.parse(partialReceipt)).toEqual(partialReceipt);
+    expect(integrationVersionManifestSchema.parse({
+      schemaVersion: INTEGRATION_VERSION_SCHEMA_VERSION,
+      skills: {},
+      updatedAt: timestamp,
+    })).toEqual({
+      schemaVersion: INTEGRATION_VERSION_SCHEMA_VERSION,
+      skills: {},
+      updatedAt: timestamp,
+    });
+  });
+
+  it.each([
+    { field: "mcpVersion", value: 0 },
+    { field: "mcpVersion", value: -1 },
+    { field: "mcpVersion", value: 1.5 },
+    { field: "mcpVersion", value: "10" },
+    { field: "agents", value: 0 },
+    { field: "agents", value: -1 },
+    { field: "agents", value: 1.5 },
+    { field: "agents", value: "2" },
+    { field: "claude", value: 0 },
+    { field: "claude", value: -1 },
+    { field: "claude", value: 1.5 },
+    { field: "claude", value: "2" },
+  ])("rejects invalid $field receipt value $value", ({ field, value }) => {
+    const receipt = {
+      schemaVersion: INTEGRATION_VERSION_SCHEMA_VERSION,
+      mcpVersion: MCP_VERSION,
+      skills: {
+        agents: SKILL_VERSION,
+        claude: SKILL_VERSION,
+      },
+      updatedAt: timestamp,
+    } as Record<string, unknown>;
+    if (field === "mcpVersion") {
+      receipt.mcpVersion = value;
+    } else {
+      receipt.skills = {
+        ...(receipt.skills as Record<string, unknown>),
+        [field]: value,
+      };
+    }
+    expect(() => integrationVersionManifestSchema.parse(receipt)).toThrow();
+  });
+
+  it("rejects unsupported schema versions and unknown fields", () => {
+    const receipt = {
+      schemaVersion: INTEGRATION_VERSION_SCHEMA_VERSION,
+      mcpVersion: MCP_VERSION,
+      skills: { agents: SKILL_VERSION },
+      updatedAt: timestamp,
+    };
+    expect(() => integrationVersionManifestSchema.parse({
+      ...receipt,
+      schemaVersion: 2,
+    })).toThrow();
+    expect(() => integrationVersionManifestSchema.parse({
+      ...receipt,
+      extra: true,
+    })).toThrow();
+    expect(() => integrationVersionManifestSchema.parse({
+      ...receipt,
+      skills: { ...receipt.skills, cursor: SKILL_VERSION },
+    })).toThrow();
+  });
+
+  it("resolves the managed integration version path under the product root", () => {
+    const userHome = path.resolve("isolated-integration-version-home");
+    expect(managedIntegrationVersionPath({ userHome })).toBe(path.join(
+      userHome,
+      ".ai-artifacts",
+      "managed",
+      MANAGED_INTEGRATION_VERSION_FILE,
+    ));
   });
 });
 

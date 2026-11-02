@@ -179,6 +179,55 @@ describe("Client Drivers", () => {
     expect(check.detail).toContain("Claude skill directory is missing SKILL.md");
   });
 
+  it("Claude driver prefers the packaged skill over a customized .agents fallback", async () => {
+    const customConfig = path.join(tempHome, ".claude.json");
+    const deployedAgentsSkill = path.join(tempHome, ".agents", "skills", "create-review-artifact");
+    await fs.mkdir(deployedAgentsSkill, { recursive: true });
+    await fs.writeFile(
+      path.join(deployedAgentsSkill, "SKILL.md"),
+      "# Contaminated agents-only customization\n",
+      "utf8",
+    );
+    const claudeDriver = new ClaudeClientDriver(customConfig);
+
+    expect(path.resolve(claudeDriver.sourceSkill)).not.toBe(path.resolve(deployedAgentsSkill));
+    await claudeDriver.install("/Users/test/.ai-artifacts/managed/runtime/ai-artifacts-review-mcp.mjs");
+
+    const claudeSkill = await fs.readFile(path.join(claudeDriver.skillDirectory, "SKILL.md"), "utf8");
+    expect(claudeSkill).toContain("# Create Review Artifact");
+    expect(claudeSkill).not.toContain("Contaminated agents-only customization");
+  });
+
+  it("Claude driver accepts valid custom regions and reports modified core content as outdated", async () => {
+    const customConfig = path.join(tempHome, ".claude.json");
+    const claudeDriver = new ClaudeClientDriver(customConfig);
+    const scriptPath = "/Users/test/.ai-artifacts/managed/runtime/ai-artifacts-review-mcp.mjs";
+    await claudeDriver.install(scriptPath);
+    const skillPath = path.join(claudeDriver.skillDirectory, "SKILL.md");
+    const installed = await fs.readFile(skillPath, "utf8");
+    const customized = installed
+      .replace(
+        /^description:.*$/m,
+        "description: Create artifacts for my explicit Claude review requests.",
+      )
+      .replace(
+        "<!-- <<< USER CUSTOM RULES <<< -->",
+        "- Reply in Vietnamese.\n<!-- <<< USER CUSTOM RULES <<< -->",
+      )
+      .replaceAll("\n", "\r\n");
+    await fs.writeFile(skillPath, customized, "utf8");
+    expect((await claudeDriver.check(scriptPath)).status).toBe("ready");
+
+    await fs.writeFile(
+      skillPath,
+      customized.replace("# Create Review Artifact", "# Modified Core Review Artifact"),
+      "utf8",
+    );
+    const outdated = await claudeDriver.check(scriptPath);
+    expect(outdated.status).toBe("outdated");
+    expect(outdated.detail).toContain("Claude review skill assets are outdated");
+  });
+
   it("Windsurf driver initializes mcp_config.json cleanly", async () => {
     const windsurfDriver = new WindsurfClientDriver();
     const customConfig = path.join(tempHome, ".codeium", "windsurf", "mcp_config.json");

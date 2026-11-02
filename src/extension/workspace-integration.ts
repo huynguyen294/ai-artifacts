@@ -22,17 +22,27 @@ import { upsertJsonMcpServer, writeTextFileAtomic } from "./mcp-clients/json-mcp
 import { cleanupBaseMcpServer } from "./mcp-clients/base-cleanup";
 import {
   REVIEW_SKILL_ASSETS,
-  sameFile,
   replaceSkillDirectory,
+  sameFile,
+  skillDirectoryIsCurrent,
 } from "./mcp-clients/skill-helper";
 import {
   OWNER_ONLY_FILE_MODE,
   aiArtifactsRoot,
   managedAssetsRoot,
+  managedIntegrationVersionPath,
   managedMcpScriptPath,
   managedWorkspaceRegistryDirectory,
 } from "../shared/artifact-files";
 import { ensureManagedDirectory } from "../shared/artifact-validation";
+import {
+  INTEGRATION_VERSION_SCHEMA_VERSION,
+  MCP_VERSION,
+  SKILL_VERSION,
+  integrationVersionManifestSchema,
+  type InstalledSkillVersions,
+  type IntegrationVersionManifest,
+} from "../shared/contracts";
 
 export { cleanupBaseMcpServer } from "./mcp-clients/base-cleanup";
 
@@ -104,13 +114,7 @@ async function pathExists(target: string): Promise<boolean> {
 }
 
 export async function skillAssetsAreCurrent(paths: BaseIntegrationPaths): Promise<boolean> {
-  const checks = REVIEW_SKILL_ASSETS.map((relativePath) =>
-    sameFile(
-      path.join(paths.sourceSkill, relativePath),
-      path.join(paths.targetSkill, relativePath),
-    ),
-  );
-  return (await Promise.all(checks)).every(Boolean);
+  return skillDirectoryIsCurrent(paths.sourceSkill, paths.targetSkill);
 }
 
 export async function baseScriptIsCurrent(paths: BaseIntegrationPaths): Promise<boolean> {
@@ -123,6 +127,60 @@ export async function baseAssetsAreCurrent(paths: BaseIntegrationPaths): Promise
     baseScriptIsCurrent(paths),
   ]);
   return skillCurrent && scriptCurrent;
+}
+
+export type InstalledIntegrationVersionReadResult =
+  | { status: "valid"; manifest: IntegrationVersionManifest }
+  | { status: "missing" }
+  | { status: "invalid"; error: unknown };
+
+export async function readInstalledIntegrationVersion(
+  options: { userHome?: string } = {},
+): Promise<InstalledIntegrationVersionReadResult> {
+  const manifestPath = managedIntegrationVersionPath(options);
+  try {
+    const raw = await fs.readFile(manifestPath, "utf8");
+    const parsedJson = JSON.parse(raw);
+    const parsedManifest = integrationVersionManifestSchema.safeParse(parsedJson);
+    if (!parsedManifest.success) {
+      return { status: "invalid", error: parsedManifest.error };
+    }
+    return { status: "valid", manifest: parsedManifest.data };
+  } catch (error: any) {
+    if (error?.code === "ENOENT") return { status: "missing" };
+    if (error instanceof SyntaxError) return { status: "invalid", error };
+    throw error;
+  }
+}
+
+export async function writeInstalledIntegrationVersion(
+  patch: {
+    mcpVersion?: number;
+    skills?: Partial<InstalledSkillVersions>;
+  },
+  options: { userHome?: string } = {},
+): Promise<IntegrationVersionManifest> {
+  const current = await readInstalledIntegrationVersion(options);
+  const currentManifest = current.status === "valid" ? current.manifest : undefined;
+  const nextManifest = integrationVersionManifestSchema.parse({
+    schemaVersion: INTEGRATION_VERSION_SCHEMA_VERSION,
+    ...(patch.mcpVersion !== undefined
+      ? { mcpVersion: patch.mcpVersion }
+      : currentManifest?.mcpVersion !== undefined
+        ? { mcpVersion: currentManifest.mcpVersion }
+        : {}),
+    skills: {
+      ...(currentManifest?.skills ?? {}),
+      ...(patch.skills ?? {}),
+    },
+    updatedAt: new Date().toISOString(),
+  });
+  await writeTextFileAtomic(
+    managedIntegrationVersionPath(options),
+    `${JSON.stringify(nextManifest, null, 2)}\n`,
+    OWNER_ONLY_FILE_MODE,
+  );
+  return nextManifest;
 }
 
 export async function setupBaseMcpServer(
@@ -167,6 +225,18 @@ export async function setupBaseMcpServer(
   const legacyDirectory = path.join(userHome, ".vscode", "ai-artifacts");
   await fs.rm(path.join(legacyDirectory, "mcp.json"), { force: true }).catch(() => {});
 
+  const [scriptCurrent, skillCurrent] = await Promise.all([
+    baseScriptIsCurrent(paths),
+    skillAssetsAreCurrent(paths),
+  ]);
+  if (!scriptCurrent || !skillCurrent) {
+    throw new Error("Base MCP runtime or shared review skill verification failed after installation.");
+  }
+  await writeInstalledIntegrationVersion({
+    mcpVersion: MCP_VERSION,
+    skills: { agents: SKILL_VERSION },
+  }, { userHome });
+
   return { paths, assetsUpdated };
 }
 
@@ -209,6 +279,16 @@ export async function installAllDetectedIntegrations(
     if (driver.isDetected()) {
       await driver.install(paths.targetMcpScript);
       installedClients.push(driver.name);
+      if (driver.id === "claude") {
+        const check = await driver.check(paths.targetMcpScript);
+        if (check.status !== "ready") {
+          throw new Error(`Claude integration verification failed after installation: ${check.detail ?? check.status}`);
+        }
+        await writeInstalledIntegrationVersion(
+          { skills: { claude: SKILL_VERSION } },
+          { userHome: os.homedir() },
+        );
+      }
     }
   }
 
@@ -269,6 +349,11 @@ export async function installClaudeIntegration(
   const { paths } = await setupBaseMcpServer(context);
   const claudeDriver = new ClaudeClientDriver(undefined, undefined, paths.sourceSkill);
   await claudeDriver.install(paths.targetMcpScript);
+  const check = await claudeDriver.check(paths.targetMcpScript);
+  if (check.status !== "ready") {
+    throw new Error(`Claude integration verification failed after installation: ${check.detail ?? check.status}`);
+  }
+  await writeInstalledIntegrationVersion({ skills: { claude: SKILL_VERSION } });
 }
 
 // 6. Windsurf

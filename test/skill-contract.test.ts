@@ -1,10 +1,33 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import {
+  OFFICIAL_SKILL_DESCRIPTIONS,
+  USER_CUSTOM_RULES_BEGIN,
+  USER_CUSTOM_RULES_END,
+} from "../src/extension/mcp-clients/skill-helper";
 
 const skillDirectory = path.resolve(import.meta.dirname, "../skills/create-review-artifact");
 
 describe("create-review-artifact skill contract", () => {
+  it("locks the append-only official descriptions and one empty customization block", async () => {
+    const skill = await readFile(path.join(skillDirectory, "SKILL.md"), "utf8");
+    const expectedOfficialDescriptions = [
+      "Create or update a reviewable Markdown artifact and wait for the user's decision in the same Codex turn. Use only when the user explicitly asks to create or update an artifact.",
+      "Create, update, inspect, or reconnect an explicitly requested reviewable Markdown artifact and coordinate its review rounds.",
+    ];
+
+    expect(OFFICIAL_SKILL_DESCRIPTIONS).toEqual(expectedOfficialDescriptions);
+    expect(skill).toContain(`description: ${expectedOfficialDescriptions.at(-1)}`);
+    expect(skill.match(new RegExp(USER_CUSTOM_RULES_BEGIN.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g"))).toHaveLength(1);
+    expect(skill.match(new RegExp(USER_CUSTOM_RULES_END.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g"))).toHaveLength(1);
+    expect(skill.slice(
+      skill.indexOf(USER_CUSTOM_RULES_BEGIN) + USER_CUSTOM_RULES_BEGIN.length,
+      skill.indexOf(USER_CUSTOM_RULES_END),
+    ).trim()).toBe("");
+    expect(skill).toContain("override the default rules in this skill when they conflict");
+  });
+
   it("triggers only for explicit artifact creation, review inspection, or reconnect", async () => {
     const [skill, metadata] = await Promise.all([
       readFile(path.join(skillDirectory, "SKILL.md"), "utf8"),
