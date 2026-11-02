@@ -146,7 +146,7 @@ function startClient(registry: string, extraEnvironment: NodeJS.ProcessEnv = {})
 
 async function initialize(client: TestClient): Promise<void> {
   const initialized = await client.request("initialize", { protocolVersion: "2025-06-18" });
-  expect(initialized.serverInfo.version).toBe("10.0.0");
+  expect(initialized.serverInfo.version).toBe("10");
   expect(initialized.instructions).toContain("artifactConversationId");
   expect(initialized.instructions).toContain("resolve_artifact_window");
   expect(initialized.instructions).toContain("create_artifact");

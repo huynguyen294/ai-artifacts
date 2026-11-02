@@ -4,6 +4,25 @@ All notable changes to the **AI Artifacts** (`agent-plus`) project will be docum
 
 Release history has been standardized and tracked starting from version **0.2.6**. Package builds prior to this version are not considered part of the official changelog.
 
+## [1.1.3] - 2026-11-02
+
+### Skill Customization & Independent Integration Versioning
+
+- Added independently incremented numeric `MCP_VERSION = 10` and `SKILL_VERSION = 2` contracts. These asset versions are not SemVer and no longer use the extension package version as the reinstall trigger.
+- Added `~/.ai-artifacts/managed/integration-version.json` to record verified MCP, shared `.agents`, and Claude `.claude` skill versions independently, including valid partial-install state.
+- Changed upgrade notifications to report only stale integration assets and suppress only an identical `{ bundled versions, stale assets }` fingerprint. Extension-only updates with current receipts no longer request reinstall.
+- Added customization-preserving skill reinstall:
+  - Retains a valid user-modified YAML `description:` trigger.
+  - Retains the exact contents of the `USER CUSTOM RULES` block.
+  - Keeps `.agents` and `.claude` customizations independent.
+  - Fails closed before replacement when target YAML or markers cannot be preserved safely.
+- Kept whole-directory staged replacement, obsolete-file cleanup, verification-before-receipt commits, and rollback behavior.
+
+### Documentation
+
+- Added user guidance for supported skill customization, recovery, receipt locations, `Ready` semantics, and asset-version-based upgrade handling.
+- Updated architecture, component ownership, contributor invariants, documentation change logs, and release-contract coverage.
+
 ## [1.1.2] - 2026-10-18
 
 ### Cline MCP Client & Claude Code Agent Skill Sync
@@ -15,6 +34,10 @@ Release history has been standardized and tracked starting from version **0.2.6*
   - Automatically installs and syncs the `create-review-artifact` Agent Skill to `~/.claude/skills/create-review-artifact/`.
   - Verifies presence of `SKILL.md` alongside MCP configuration.
   - Cleans up skill folder upon client uninstallation and full extension uninstallation (`cleanupBaseMcpServer`), safely preserving all unrelated Claude skills.
+
+### Documentation
+
+- Streamlined the **Compatibility & Supported Agents** table in `README.md`, removing the redundant `Supported Features` column and standardizing MCP + Skill integration details for Claude and Cline.
 
 ## [1.1.0] - 2026-10-18
 

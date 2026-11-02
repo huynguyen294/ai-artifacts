@@ -3,12 +3,27 @@ import { z } from "zod";
 export const ARTIFACT_SCHEMA_VERSION = 6 as const;
 export const ARTIFACT_CONNECTION_SCHEMA_VERSION = 1 as const;
 export const ARTIFACT_CONVERSATION_SCHEMA_VERSION = 1 as const;
+export const INTEGRATION_VERSION_SCHEMA_VERSION = 1 as const;
+export const MCP_VERSION = 10 as const;
+export const SKILL_VERSION = 2 as const;
 export const ARTIFACT_ROOT_BLOCK_ID = "__artifact_root__" as const;
 export const ARTIFACT_ROOT_BLOCK_TYPE = "artifact" as const;
 export const ARTIFACT_ROOT_TEXT = "Applies to the entire artifact" as const;
 export const artifactIdSchema = z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/);
 export const artifactKindSchema = z.string().regex(/^[a-z][a-z0-9-]{0,63}$/);
 export const artifactConversationIdSchema = z.string().uuid();
+export const installedSkillVersionsSchema = z.object({
+  agents: z.number().int().positive().optional(),
+  claude: z.number().int().positive().optional(),
+}).strict();
+export const integrationVersionManifestSchema = z.object({
+  schemaVersion: z.literal(INTEGRATION_VERSION_SCHEMA_VERSION),
+  mcpVersion: z.number().int().positive().optional(),
+  skills: installedSkillVersionsSchema,
+  updatedAt: z.string().datetime(),
+}).strict();
+export type InstalledSkillVersions = z.infer<typeof installedSkillVersionsSchema>;
+export type IntegrationVersionManifest = z.infer<typeof integrationVersionManifestSchema>;
 export const conversationNameSchema = z
   .string()
   .min(1)

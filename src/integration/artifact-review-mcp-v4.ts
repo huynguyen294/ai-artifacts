@@ -16,6 +16,7 @@ import {
 } from "../shared/artifact-validation";
 import {
   ARTIFACT_SCHEMA_VERSION,
+  MCP_VERSION,
   ArtifactConnectionInvalidError,
   ArtifactConnectionWriteError,
   WindowConnectionMismatchError,
@@ -76,7 +77,7 @@ import {
 } from "../shared/artifact-connection";
 
 const SERVER_NAME = "codex-artifacts";
-const SERVER_VERSION = "10.0.0";
+const SERVER_VERSION = String(MCP_VERSION);
 const RESOLVE_WINDOW_TOOL_NAME = "resolve_artifact_window";
 const CREATE_TOOL_NAME = "create_artifact";
 const WAIT_TOOL_NAME = "wait_for_artifact_review";

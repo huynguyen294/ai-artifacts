@@ -110,7 +110,7 @@ The skill must never create or edit `artifact.json`, `comments.json`, `review-su
 
 **Responsibilities**
 
-- Expose one window resolver plus four lifecycle tools (MCP server 10.0.0):
+- Expose one window resolver plus four lifecycle tools (numeric MCP version 10):
   - `resolve_artifact_window`
   - `create_artifact`
   - `wait_for_artifact_review`
@@ -261,6 +261,7 @@ The protocol is the communication medium between the independently running MCP p
   - Search artifacts by title in the global collection (`agentPlus.searchArtifact`).
   - Install, verify, and uninstall all supported integrations or one specific client.
   - Copy the current MCP configuration or production skill.
+- Compare bundled numeric MCP/skill versions with `~/.ai-artifacts/managed/integration-version.json`, determine the exact stale assets, and show the existing installer action only for a new stale-state fingerprint.
 - Schedule best-effort asynchronous retention cleanup at activation: read `agentPlus.artifactRetentionDays`, enumerate validated schema-v6 candidates, and permanently delete expired artifacts via atomic rename to managed cleanup staging. Cleanup does not block activation or commands.
 - Own and dispose top-level VS Code subscriptions.
 
@@ -433,6 +434,7 @@ The parser, selection capture, renderer, and store must agree on the same visibl
 **Responsibilities**
 
 - Define the schema-v6 manifest/comments/submission contracts and the independent schema-v1 artifact-connection contract.
+- Define the schema-v1 installed-integration receipt and the independent numeric `MCP_VERSION` / `SKILL_VERSION` counters; these asset versions are monotonic integers, not SemVer or package versions.
 - Define comments, review decisions, submissions, Markdown blocks, review state, and webview messages.
 - Validate all untrusted JSON and webview input.
 - Bind comments and submissions to the correct artifact lifecycle.
@@ -463,11 +465,15 @@ This layer is the protocol source of truth. A contract change must be propagated
 
 - Deploy the centralized MCP server runtime into `~/.ai-artifacts/managed/runtime/`.
 - Deploy the bundled skill into the global agent-skills directory (`~/.agents/skills/create-review-artifact/`).
+- Deploy the Claude skill independently into `~/.claude/skills/create-review-artifact/` when Claude is installed.
 - Provide dedicated, non-destructive configuration drivers for Codex (`config.toml`), Cursor (`mcp.json`), Claude Code (`.claude.json`), Windsurf (`mcp_config.json`), GitHub Copilot (`Code/User/mcp.json`), and Cline (`cline_mcp_settings.json`).
 - Expose dedicated setup commands plus `AI Artifacts: Install All Detected Integrations` and `AI Artifacts: Copy MCP Configuration JSON`.
 - Verify whether installed assets and client configurations match the extension requirements.
 - Report ready, missing, outdated, or configuration-conflict states across environments.
 - Replace stale installed skill/runtime assets with the packaged source and remove obsolete files during reinstall.
+- Preserve a valid non-official YAML `description:` and the `USER CUSTOM RULES` block independently for `.agents` and `.claude`; fail closed before swapping when those regions are malformed or cannot be preserved deterministically.
+- Record verified MCP, `.agents`, and `.claude` versions independently in `~/.ai-artifacts/managed/integration-version.json`, committing each receipt only after the corresponding install and verification succeeds.
+- Treat `Ready` as asset synchronization after customization merge, not proof that arbitrary custom rules remain semantically compatible with the official lifecycle.
 - Remove only recognized legacy Codex Artifacts hooks, scripts, legacy `.vscode/ai-artifacts/` assets, and skill directories.
 - Preserve unrelated user configuration and all global user review data (`~/.ai-artifacts/artifacts/`) during uninstall.
 
@@ -597,7 +603,8 @@ Tests document the expected responsibility boundaries:
 | Installed skill contract                                                               | `test/skill-contract.test.ts`                                                                   |
 | Connection watcher, targeted unfocused auto-open, dedupe, exact-handle command, and open coordination | `test/artifact-review-open.test.ts`, `test/artifact-link-contract.test.ts`          |
 | Extension-local artifact search core, discovery, limit cap, and Quick Pick controller | `test/artifact-search.test.ts`, `test/artifact-search-command.test.ts`                         |
-| Six-client install/reinstall/verify/uninstall and artifact retention                   | `test/workspace-integration.test.ts`, `test/mcp-client-drivers.test.ts`, `test/artifact-retention.test.ts` |
+| Six-client install/reinstall/verify/uninstall, version receipts, customization merge, and artifact retention | `test/workspace-integration.test.ts`, `test/mcp-client-drivers.test.ts`, `test/skill-contract.test.ts`, `test/artifact-retention.test.ts` |
+| Integration upgrade notification and release-facing documentation contract            | `test/upgrade-notification.test.ts`, `test/release-contract.test.ts`                                |
 
 For responsibility or protocol changes, update the shared contract first, trace every producer and consumer, and run:
 
