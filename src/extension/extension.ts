@@ -9,6 +9,7 @@ import {
 import { ensureSafeGlobalArtifactsRoot } from "../shared/artifact-validation";
 import {
   checkAllIntegrations,
+  getDetectedSkillTargets,
   getMcpConfigSnippet,
   getReviewSkillMarkdown,
   installAllDetectedIntegrations,
@@ -18,6 +19,7 @@ import {
   installCursorIntegration,
   installWindsurfIntegration,
   installClineIntegration,
+  readInstalledIntegrationVersion,
   uninstallAllDetectedIntegrations,
   uninstallClaudeIntegration,
   uninstallCodexIntegration,
@@ -31,9 +33,11 @@ import { executeArtifactRetentionCleanup } from "./artifact-retention";
 import { summarizeIntegrationVerification } from "./integration-verification";
 import {
   INSTALLATION_GUIDE_URL,
-  LAST_NOTIFIED_VERSION_KEY,
+  LAST_NOTIFIED_INTEGRATION_STATE_KEY,
   maybeShowUpgradeNotification,
+  type IntegrationNotificationState,
 } from "./upgrade-notification";
+import { MCP_VERSION, SKILL_VERSION } from "../shared/contracts";
 import {
   ConversationArtifactService,
   setupConversationRegistryWatcher,
@@ -364,11 +368,18 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   );
 
   void maybeShowUpgradeNotification({
-    currentVersion: context.extension.packageJSON.version,
-    getLastNotifiedVersion: () =>
-      context.globalState.get<string>(LAST_NOTIFIED_VERSION_KEY),
-    setLastNotifiedVersion: (version) =>
-      context.globalState.update(LAST_NOTIFIED_VERSION_KEY, version),
+    bundledVersions: {
+      mcpVersion: MCP_VERSION,
+      skillVersion: SKILL_VERSION,
+    },
+    skillTargets: getDetectedSkillTargets(),
+    getInstalledIntegrationVersion: () => readInstalledIntegrationVersion(),
+    getLastNotifiedIntegrationState: () =>
+      context.globalState.get<IntegrationNotificationState>(
+        LAST_NOTIFIED_INTEGRATION_STATE_KEY,
+      ),
+    setLastNotifiedIntegrationState: (state) =>
+      context.globalState.update(LAST_NOTIFIED_INTEGRATION_STATE_KEY, state),
     showInformationMessage: (message, ...actions) =>
       vscode.window.showInformationMessage(message, ...actions),
     runInstaller: installAllDetectedIntegrationsAndNotify,

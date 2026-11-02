@@ -81,6 +81,12 @@ export function getClineConfigPath(context?: vscode.ExtensionContext): string {
   return getClineSettingsPath();
 }
 
+export function getDetectedSkillTargets(): Array<keyof InstalledSkillVersions> {
+  const targets: Array<keyof InstalledSkillVersions> = ["agents"];
+  if (new ClaudeClientDriver().isDetected()) targets.push("claude");
+  return targets;
+}
+
 export function getBaseIntegrationPaths(
   context: vscode.ExtensionContext,
   options?: { userHome?: string },
