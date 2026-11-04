@@ -42,7 +42,10 @@ function sha256(value: string): string {
 
 async function atomicWrite(filePath: string, value: string): Promise<void> {
   const temporaryPath = `${filePath}.test-${randomUUID()}`;
-  await writeFile(temporaryPath, value, "utf8");
+  await writeFile(temporaryPath, value, {
+    encoding: "utf8",
+    mode: OWNER_ONLY_FILE_MODE,
+  });
   try {
     await rename(temporaryPath, filePath);
   } catch (error: any) {

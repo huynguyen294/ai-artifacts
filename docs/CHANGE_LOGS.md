@@ -14,6 +14,12 @@ Minor typos, formatting fixes, or cosmetic wording adjustments that do not chang
 
 Each entry includes the date, category, summary of changes, rationale, and affected components or files.
 
+## 2026-11-04 — Version 1.1.4 Release Preparation
+
+- Set the extension version to `1.1.4` in package and lock metadata, updated the README VSIX installation example, and synchronized the release-contract assertions with the existing `1.1.4` changelog entry.
+- Kept the bundled numeric MCP version 11 and skill version 3. The package bump does not change their independent freshness contract.
+- Included the owner-only atomic test fixture correction. Copilot installer/provider improvements are deferred to a later change; no tag or publication is performed by this preparation.
+
 ## 2026-11-04 — Complete Review Feedback for All MCP Clients
 
 ### Changes
@@ -22,7 +28,7 @@ Each entry includes the date, category, summary of changes, rationale, and affec
 - A `revise` result includes `nextAction.type: "process-review-feedback"` for every artifact kind, alongside the existing state-bound submitted-review token. The instruction covers chat answers, requested Markdown edits, question-only preservation, clarification, and immediate advancement on the same artifact.
 - Kept terminal decision semantics, input contracts, schema-v6 storage, token validation, transactions, and inspect recovery unchanged. The implementation is shared across clients and models, with no client-specific branch.
 - Updated the official skill and contract to consume feedback directly from completed waits. Inspect remains available for saved feedback, reconnect, and recovery.
-- Increased the bundled MCP asset version from 10 to 11 and skill asset version from 2 to 3. Package metadata remains at 1.1.3; no new release is declared. Existing installers deploy the updated assets and record verified per-target receipts; clients must restart and open a fresh chat afterward.
+- Increased the bundled MCP asset version from 10 to 11 and skill asset version from 2 to 3. During initial implementation, package metadata remained at 1.1.3; the subsequent 1.1.4 preparation is recorded above. Existing installers deploy the updated assets and record verified per-target receipts; clients must restart and open a fresh chat afterward.
 
 ### Rationale
 

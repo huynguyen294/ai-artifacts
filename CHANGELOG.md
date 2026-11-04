@@ -12,6 +12,7 @@ Release history has been standardized and tracked starting from version **0.2.6*
 - Added `nextAction.type: "process-review-feedback"` for `revise` decisions across all artifact kinds. The directive guides agents to answer questions in chat, update Markdown only for requested changes, preserve question-only document bytes/SHA, clarify ambiguous feedback, and advance using the returned round token.
 - Updated the shared MCP review flow and official skill so agents can process submitted feedback without an additional inspection just to retrieve comments. Inspect remains available for chat feedback, reconnect, and recovery.
 - Added regression coverage for pending and existing submissions, feedback from advanced rounds, question-only preservation, terminal decisions, and matching text/structured results.
+- Created atomic test fixture files with owner-only permissions before rename to match the runtime's POSIX permission contract.
 
 ### Integration Assets & Documentation
 

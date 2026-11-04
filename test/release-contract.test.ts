@@ -8,13 +8,13 @@ async function read(relativePath: string): Promise<string> {
   return readFile(path.join(repositoryRoot, relativePath), "utf8");
 }
 
-describe("v1.1.3 release contract", () => {
+describe("v1.1.4 release contract", () => {
   it("keeps package and lock metadata synchronized", async () => {
     const packageJson = JSON.parse(await read("package.json"));
     const packageLock = JSON.parse(await read("package-lock.json"));
 
     expect(packageJson.name).toBe("ai-artifacts");
-    expect(packageJson.version).toBe("1.1.3");
+    expect(packageJson.version).toBe("1.1.4");
     expect(packageLock.name).toBe(packageJson.name);
     expect(packageLock.version).toBe(packageJson.version);
     expect(packageLock.packages[""].name).toBe(packageJson.name);
@@ -115,6 +115,7 @@ describe("v1.1.3 release contract", () => {
     expect(instructions).toContain("Never mark a partial failure current");
     expect(contract).toContain("schema-v1 UI-routing state only");
     expect(contract).toContain("AI Artifacts: Install All Detected Integrations");
+    expect(changelog).toContain("## [1.1.4] - 2026-11-04");
     expect(changelog).toContain("## [1.1.3] - 2026-11-02");
     expect(changelog).not.toContain("## [Unreleased]");
     expect(changelog).toContain("Skill Customization & Independent Integration Versioning");
@@ -130,12 +131,12 @@ describe("v1.1.3 release contract", () => {
     expect(documentationChanges).toContain("Artifacts in Conversations, Conversation Registry v1, and MCP server 10.0.0");
   });
 
-  it("keeps the public setting and version matrix on the 1.1.3 targeted-window contract", async () => {
+  it("keeps the public setting and version matrix on the 1.1.4 targeted-window contract", async () => {
     const packageJson = JSON.parse(await read("package.json"));
     const autoOpen = packageJson.contributes.configuration.properties["agentPlus.autoOpenArtifactReview"];
     const retentionDays = packageJson.contributes.configuration.properties["agentPlus.artifactRetentionDays"];
 
-    expect(packageJson.version).toBe("1.1.3");
+    expect(packageJson.version).toBe("1.1.4");
     expect(autoOpen.type).toBe("boolean");
     expect(autoOpen.default).toBe(true);
     expect(autoOpen.description).toContain("selected target window");
