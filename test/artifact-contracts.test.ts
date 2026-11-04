@@ -197,8 +197,8 @@ describe("artifact schema v6 contract", () => {
 
 describe("integration version receipt schema v1 contract", () => {
   it("locks numeric bundled versions and accepts complete or partial receipts", () => {
-    expect(MCP_VERSION).toBe(10);
-    expect(SKILL_VERSION).toBe(2);
+    expect(MCP_VERSION).toBe(11);
+    expect(SKILL_VERSION).toBe(3);
     expect(INTEGRATION_VERSION_SCHEMA_VERSION).toBe(1);
 
     const completeReceipt = {

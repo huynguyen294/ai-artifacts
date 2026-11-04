@@ -123,7 +123,7 @@ After installing the integration, reload your editor and restart your agent to l
 <details>
 <summary>Runtime version and expected tools</summary>
 
-Version 1.1.3 bundles numeric MCP version 10 and skill version 2. The MCP catalog contains exactly five tools: `resolve_artifact_window`, `create_artifact`, `wait_for_artifact_review`, `inspect_artifact_review`, and `advance_and_wait_for_artifact`. A client that reports a different MCP version or exposes an older catalog must be reinstalled and restarted.
+The current source bundles numeric MCP version 11 and skill version 3. The MCP catalog contains exactly five tools: `resolve_artifact_window`, `create_artifact`, `wait_for_artifact_review`, `inspect_artifact_review`, and `advance_and_wait_for_artifact`. A client that reports a different MCP version or exposes an older catalog must be reinstalled and restarted.
 
 </details>
 
@@ -215,7 +215,7 @@ A file link in the agent's response is a regular file link, not a deep link, and
 2. **Add inline comments:** Type your feedback in the floating comment popover. Press `Enter` or click **Comment** to save your feedback.
 3. **Inspect feedback & conversation artifacts:** Open the **Comments (N)** drawer to jump between annotated passages, or open the **Artifacts in Conversation** drawer to browse and open/switch to other artifacts created or reconnected in the same chat session.
 4. **Submit your decision:**
-   - **Review (Revise):** Sends your batch comments back to the AI. The agent answers questions in chat, updates the Markdown where changes were requested, and opens the next review round. If your comments only ask questions, the agent answers in chat and opens the next round without changing the document.
+   - **Review (Revise):** Sends your full batch comments and continuation instructions directly to the waiting AI, including after each advanced round. The agent answers questions in chat, updates the Markdown where changes were requested, and opens the next review round. If your comments only ask questions, the agent answers in chat and opens the next round without changing the document.
    - **Proceed:** Approves the plan and concludes the review. For plans, the agent starts carrying out the approved work immediately.
    - **Just save:** Saves the Markdown to a designated workspace path without executing code.
    - **Copy Markdown:** Copies the document's Markdown to your clipboard without ending the review.
@@ -271,7 +271,7 @@ The AI agent calls the MCP `create_artifact` tool, which generates an isolated s
 ## Compatibility and upgrades
 
 - Version 1.1.0 supports only schema v6 stored under `~/.ai-artifacts/artifacts/`.
-- The current integration uses numeric `MCP_VERSION = 10` and `SKILL_VERSION = 2`. These are independent monotonic asset versions, not SemVer and not the extension package version.
+- The current integration uses numeric `MCP_VERSION = 11` and `SKILL_VERSION = 3`. These are independent monotonic asset versions, not SemVer and not the extension package version.
 - Successful installation records the verified MCP runtime, shared `.agents` skill, and detected Claude skill independently in `~/.ai-artifacts/managed/integration-version.json`. A missing or invalid receipt is treated as stale.
 - Schema v3/v4/v5 and workspace-local `.ai-artifacts` or `.codex-artifacts` lifecycles are not opened, advanced, or migrated by v1.1.x. Existing files remain untouched on disk.
 - This is a hard compatibility cutoff. A rollback to a 0.9.x extension also requires reinstalling the matching older runtime and skill; do not use a 0.9.x runtime with v1.1.x artifacts.
