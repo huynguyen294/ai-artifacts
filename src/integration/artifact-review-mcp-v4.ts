@@ -37,6 +37,7 @@ import {
   type ArtifactConnection,
   type ArtifactConversationMetadata,
   type ArtifactManifest,
+  type CommentsDocument,
   type ExplicitWindowConnectionInput,
   type ReconnectConnectionInput,
   type ReviewDecision,
@@ -114,6 +115,7 @@ type ReviewWaitResult = {
   reviewRound: number;
   artifactSha256: string;
   commentsSha256: string;
+  comments: CommentsDocument;
   decision: ReviewDecision;
   submittedAt: string;
   artifactPath: string;
@@ -122,7 +124,7 @@ type ReviewWaitResult = {
   artifactUrl?: string;
   artifactLink?: string;
   nextAction?: {
-    type: "execute-approved-plan";
+    type: "process-review-feedback" | "execute-approved-plan";
     instruction: string;
   };
 };
@@ -330,7 +332,13 @@ function sha256(value: string): string {
   return createHash("sha256").update(value).digest("hex");
 }
 
-function approvedPlanAction(kind: string, decision: ReviewDecision): ReviewWaitResult["nextAction"] {
+function reviewDecisionAction(kind: string, decision: ReviewDecision): ReviewWaitResult["nextAction"] {
+  if (decision === "revise") {
+    return {
+      type: "process-review-feedback",
+      instruction: "Process every comment in comments.comments. Answer all questions visibly in chat and include artifactLink before starting the next wait. For requested changes, supply complete replacement markdown; for question-only feedback, omit markdown to preserve the artifact bytes and SHA. If feedback needs clarification, ask the user and do not consume the round token or advance until clarified. Otherwise call advance_and_wait_for_artifact immediately in this same turn using the retained exact artifactDirectory, the returned reviewRound as expectedReviewRound, and the returned roundToken, then continue waiting for the next review. Never directly edit managed lifecycle files, including artifact.md, and never put conversational answers into the artifact Markdown.",
+    };
+  }
   if (decision !== "approve" || (kind !== "plan" && kind !== "implementation-plan")) return undefined;
   return {
     type: "execute-approved-plan",
@@ -861,7 +869,7 @@ async function readValidatedSubmissionOnce(context: ArtifactContext): Promise<Re
   if (submission.decision === "revise" && currentComments.comments.length === 0) {
     throw new Error("A review request must include at least one comment.");
   }
-  const nextAction = approvedPlanAction(context.manifest.kind, submission.decision);
+  const nextAction = reviewDecisionAction(context.manifest.kind, submission.decision);
   return {
     schemaVersion: ARTIFACT_SCHEMA_VERSION,
     artifactId: context.artifactId,
@@ -870,6 +878,7 @@ async function readValidatedSubmissionOnce(context: ArtifactContext): Promise<Re
     reviewRound: context.reviewRound,
     artifactSha256: currentArtifactSha256,
     commentsSha256: currentCommentsSha256,
+    comments: currentComments,
     decision: submission.decision,
     submittedAt: submission.submittedAt,
     artifactPath: context.artifactPath,
@@ -1932,7 +1941,8 @@ async function handleRequest(message: JsonObject): Promise<void> {
       "Create returns the exact artifactDirectory, artifactConversationId, and committed connection metadata; retain them and pass artifactConversationId to subsequent create_artifact and inspect_artifact_review calls in the same chat session, then call wait_for_artifact_review.",
       "When inspecting an artifact from a new chat session without an active artifactConversationId, omit artifactConversationId so inspect_artifact_review creates a new conversation and registers the artifact.",
       "A cancelled waiter never ends or deletes the artifact.",
-      "Treat comments returned by a Review submission and comments read through inspect_artifact_review with the same policy: answer questions visibly in chat before calling advance_and_wait_for_artifact, update Markdown only for requested changes, and omit markdown for question-only feedback.",
+      "Both wait_for_artifact_review and advance_and_wait_for_artifact return the complete validated comments document for every submitted decision; read feedback from comments.comments. A revise result also returns nextAction.type=process-review-feedback and a one-time roundToken so feedback can be processed without an additional inspection just to fetch comments.",
+      "Treat comments returned by a Review submission and comments read through inspect_artifact_review with the same policy: answer questions visibly in chat before calling advance_and_wait_for_artifact, update Markdown only for requested changes, omit markdown for question-only feedback, and ask for clarification without consuming the token when needed.",
       "Do not add Review responses to the artifact.",
       "Pure reconnect uses inspect_artifact_review with intent=reconnect on the exact handle and same round; routing prioritizes sole live window, validated advisory artifact-window affinity, and unique focused window, or explicit candidate via selectionToken.",
       "For chat escape, inspect the exact handle with takeover=true.",
@@ -2016,7 +2026,7 @@ async function handleRequest(message: JsonObject): Promise<void> {
       {
         name: WAIT_TOOL_NAME,
         title: "Wait for artifact review",
-        description: "Attach one transient waiter to an exact artifact round. Return an existing submission immediately, or wait for Review, Proceed, or Just save. An approved plan returns an explicit execute-approved-plan next action. Takeover safely detaches the previous waiter.",
+        description: "Attach one transient waiter to an exact artifact round. Return an existing submission immediately, or wait for Review, Proceed, or Just save. Every decision returns the complete validated comments document; read comments.comments. Review returns a process-review-feedback next action and round token. An approved plan returns an execute-approved-plan next action. Takeover safely detaches the previous waiter.",
         inputSchema: {
           type: "object",
           properties: {
@@ -2102,7 +2112,7 @@ async function handleRequest(message: JsonObject): Promise<void> {
       {
         name: ADVANCE_AND_WAIT_TOOL_NAME,
         title: "Advance and wait for artifact review",
-        description: "Consume a validated one-time round token, optionally replace the complete Markdown, advance and reset the artifact round transactionally, then attach a waiter. Omitting markdown preserves the artifact bytes and SHA.",
+        description: "Consume a validated one-time round token, optionally replace the complete Markdown, advance and reset the artifact round transactionally, then wait for the next review. Omitting markdown preserves the artifact bytes and SHA. Return the next round's complete validated comments document at comments, with a process-review-feedback next action and new token for revise, or an execute-approved-plan next action for an approved plan.",
         inputSchema: {
           type: "object",
           properties: {

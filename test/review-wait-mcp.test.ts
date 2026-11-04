@@ -21,6 +21,7 @@ import {
   ARTIFACT_ROOT_BLOCK_TYPE,
   ARTIFACT_ROOT_TEXT,
   ARTIFACT_SCHEMA_VERSION,
+  MCP_VERSION,
 } from "../src/shared/contracts";
 
 const temporaryDirectories: string[] = [];
@@ -146,7 +147,7 @@ function startClient(registry: string, extraEnvironment: NodeJS.ProcessEnv = {})
 
 async function initialize(client: TestClient): Promise<void> {
   const initialized = await client.request("initialize", { protocolVersion: "2025-06-18" });
-  expect(initialized.serverInfo.version).toBe("10");
+  expect(initialized.serverInfo.version).toBe(String(MCP_VERSION));
   expect(initialized.instructions).toContain("artifactConversationId");
   expect(initialized.instructions).toContain("resolve_artifact_window");
   expect(initialized.instructions).toContain("create_artifact");
@@ -442,9 +443,16 @@ describe("artifact review MCP server v8", () => {
       reviewRound: 1,
       artifactSha256: sha256(initialMarkdown),
       commentsSha256: sha256(commentsRaw),
+      comments: submitted.comments,
       decision: "revise",
       roundToken: expect.any(String),
+      roundTokenSource: "submitted-review",
+      nextAction: {
+        type: "process-review-feedback",
+        instruction: expect.stringContaining("comments.comments"),
+      },
     });
+    expect(JSON.parse(reviewed.content[0].text)).toEqual(reviewed.structuredContent);
 
     const replacement = "# Artifact\n\nBuild the MCP review bridge with recovery behavior.\n";
     const advancing = callToolTracked(client, "advance_and_wait_for_artifact", {
@@ -605,6 +613,8 @@ describe("artifact review MCP server v8", () => {
       },
     });
     expect(approved.structuredContent.roundToken).toBeUndefined();
+    expect(approved.structuredContent.comments).toMatchObject({ reviewRound: 2, comments: [] });
+    expect(JSON.parse(approved.content[0].text)).toEqual(approved.structuredContent);
 
     const replay = await callTool(client, "advance_and_wait_for_artifact", {
       artifactDirectory: created.artifactDirectory,
@@ -618,6 +628,122 @@ describe("artifact review MCP server v8", () => {
       reuseRoundToken: false,
       useSameArtifactHandle: true,
     });
+  });
+
+  it.each([
+    { decision: "revise" as const, kind: "spec", bodies: ["Clarify the recovery workflow."] },
+    { decision: "approve" as const, kind: "spec", bodies: ["Keep this explanation available."] },
+    { decision: "save" as const, kind: "implementation-plan", bodies: ["Retain this note with the review."] },
+    { decision: "save" as const, kind: "implementation-plan", bodies: [] },
+  ])("returns complete existing $decision feedback for $kind", async ({ decision, kind, bodies }) => {
+    const fixture = await workspaceFixture();
+    const client = startClient(fixture.registry);
+    await initialize(client);
+    const created = await createArtifact(client, fixture.workspace, { kind });
+    await submitDecision(created.artifactDirectory, decision, bodies);
+    const commentsRaw = await readFile(path.join(created.artifactDirectory, "comments.json"), "utf8");
+
+    const result = await callTool(client, "wait_for_artifact_review", {
+      artifactDirectory: created.artifactDirectory,
+      expectedReviewRound: 1,
+    });
+
+    expect(result.isError, result.content?.[0]?.text).not.toBe(true);
+    expect(result.structuredContent).toMatchObject({
+      decision,
+      kind,
+      reviewRound: 1,
+      comments: JSON.parse(commentsRaw),
+      commentsSha256: sha256(commentsRaw),
+    });
+    expect(JSON.parse(result.content[0].text)).toEqual(result.structuredContent);
+    if (decision === "revise") {
+      expect(result.structuredContent.nextAction).toMatchObject({
+        type: "process-review-feedback",
+        instruction: expect.stringContaining("advance_and_wait_for_artifact"),
+      });
+      expect(result.structuredContent.roundToken).toEqual(expect.any(String));
+      expect(result.structuredContent.roundTokenSource).toBe("submitted-review");
+    } else {
+      expect(result.structuredContent.nextAction).toBeUndefined();
+      expect(result.structuredContent.roundToken).toBeUndefined();
+      expect(result.structuredContent.roundTokenSource).toBeUndefined();
+    }
+  });
+
+  it("returns fresh advanced-round feedback and advances question-only Review without changing Markdown", async () => {
+    const fixture = await workspaceFixture();
+    const client = startClient(fixture.registry);
+    await initialize(client);
+    const created = await createArtifact(client, fixture.workspace);
+    const store = new ArtifactStore(created.artifactPath, { userHome: fixture.userHome });
+    const waiting = callToolTracked(client, "wait_for_artifact_review", {
+      artifactDirectory: created.artifactDirectory,
+      expectedReviewRound: 1,
+    });
+    await waiting.sent;
+    await submitDecision(created.artifactDirectory, "revise", ["Describe recovery behavior."]);
+    const firstReview = await waiting.promise;
+    const replacement = "# Artifact\r\n\r\nBuild the review bridge with recovery behavior.\r\n";
+    const advancing = callToolTracked(client, "advance_and_wait_for_artifact", {
+      artifactDirectory: created.artifactDirectory,
+      expectedReviewRound: 1,
+      roundToken: firstReview.structuredContent.roundToken,
+      markdown: replacement,
+    });
+    await advancing.sent;
+    await waitForRound(created.artifactDirectory, 2);
+    await store.addComment({
+      blockId: ARTIFACT_ROOT_BLOCK_ID,
+      selection: { quote: ARTIFACT_ROOT_TEXT, start: 0, end: ARTIFACT_ROOT_TEXT.length },
+      body: "Why preserve the artifact during recovery?",
+    });
+    const submitted = await store.submitReview("revise");
+    const secondReview = await advancing.promise;
+    const commentsRaw = await readFile(path.join(created.artifactDirectory, "comments.json"), "utf8");
+
+    expect(secondReview.isError, secondReview.content?.[0]?.text).not.toBe(true);
+    expect(secondReview.structuredContent).toMatchObject({
+      decision: "revise",
+      reviewRound: 2,
+      artifactSha256: sha256(replacement),
+      commentsSha256: sha256(commentsRaw),
+      roundToken: expect.any(String),
+      roundTokenSource: "submitted-review",
+      nextAction: { type: "process-review-feedback" },
+    });
+    expect(secondReview.structuredContent.comments).toEqual(submitted.comments);
+    expect(secondReview.structuredContent.comments.comments.map((entry: any) => entry.body)).toEqual([
+      "Why preserve the artifact during recovery?",
+    ]);
+    expect(JSON.parse(secondReview.content[0].text)).toEqual(secondReview.structuredContent);
+
+    const questionOnlyAdvance = callToolTracked(client, "advance_and_wait_for_artifact", {
+      artifactDirectory: created.artifactDirectory,
+      expectedReviewRound: 2,
+      roundToken: secondReview.structuredContent.roundToken,
+    });
+    await questionOnlyAdvance.sent;
+    await waitForRound(created.artifactDirectory, 3);
+    expect(await readFile(created.artifactPath, "utf8")).toBe(replacement);
+    const round3 = await store.load();
+    expect(round3.artifact).toMatchObject({ reviewRound: 3, artifactId: created.artifactId });
+    expect(round3.comments).toMatchObject({
+      reviewRound: 3,
+      artifactSha256: sha256(replacement),
+      comments: [],
+    });
+    expect(round3.submission).toBeUndefined();
+    await store.submitReview("save");
+    const saved = await questionOnlyAdvance.promise;
+    expect(saved.structuredContent).toMatchObject({
+      decision: "save",
+      reviewRound: 3,
+      comments: round3.comments,
+    });
+    expect(saved.structuredContent.nextAction).toBeUndefined();
+    expect(saved.structuredContent.roundToken).toBeUndefined();
+    expect(JSON.parse(saved.content[0].text)).toEqual(saved.structuredContent);
   });
 
   it.each(["plan", "implementation-plan"])(
@@ -635,7 +761,7 @@ describe("artifact review MCP server v8", () => {
         expectedReviewRound: 1,
       });
       await waiting.sent;
-      await submitDecision(created.artifactDirectory, "approve");
+      await submitDecision(created.artifactDirectory, "approve", ["Keep the approved recovery scope."]);
       const approved = await waiting.promise;
       expect(approved.isError, approved.content?.[0]?.text).not.toBe(true);
       expect(approved.structuredContent).toMatchObject({
@@ -646,6 +772,11 @@ describe("artifact review MCP server v8", () => {
           instruction: expect.stringContaining("Perform all in-scope code, file, workspace, and command actions"),
         },
       });
+      expect(approved.structuredContent.comments.comments.map((entry: any) => entry.body)).toEqual([
+        "Keep the approved recovery scope.",
+      ]);
+      expect(approved.structuredContent.roundToken).toBeUndefined();
+      expect(JSON.parse(approved.content[0].text)).toEqual(approved.structuredContent);
     },
   );
 

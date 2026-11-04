@@ -4,6 +4,20 @@ All notable changes to the **AI Artifacts** (`agent-plus`) project will be docum
 
 Release history has been standardized and tracked starting from version **0.2.6**. Package builds prior to this version are not considered part of the official changelog.
 
+## [1.1.4] - 2026-11-04
+
+### Complete Review Feedback Across MCP Clients
+
+- Both `wait_for_artifact_review` and `advance_and_wait_for_artifact` now return the complete validated comments document for every submitted decision, including comment text and anchors, in both text JSON and `structuredContent`.
+- Added `nextAction.type: "process-review-feedback"` for `revise` decisions across all artifact kinds. The directive guides agents to answer questions in chat, update Markdown only for requested changes, preserve question-only document bytes/SHA, clarify ambiguous feedback, and advance using the returned round token.
+- Updated the shared MCP review flow and official skill so agents can process submitted feedback without an additional inspection just to retrieve comments. Inspect remains available for chat feedback, reconnect, and recovery.
+- Added regression coverage for pending and existing submissions, feedback from advanced rounds, question-only preservation, terminal decisions, and matching text/structured results.
+
+### Integration Assets & Documentation
+
+- Increased numeric `MCP_VERSION` from 10 to 11 and `SKILL_VERSION` from 2 to 3. Reinstall the affected integration, restart the AI client, and start a fresh chat to load the updated assets.
+- Synchronized the README, architecture, philosophy, component ownership, contributor instructions, and skill contract with the complete review feedback contract.
+
 ## [1.1.3] - 2026-11-02
 
 ### Skill Customization & Independent Integration Versioning

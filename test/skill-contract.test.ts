@@ -74,12 +74,17 @@ describe("create-review-artifact skill contract", () => {
       readFile(path.join(skillDirectory, "references", "artifact-contract.md"), "utf8"),
     ]);
     expect(skill).toContain("Treat Review-button feedback exactly like chat-inspected feedback");
+    expect(skill).toContain('`nextAction.type: "process-review-feedback"`');
+    expect(skill).toContain("`comments.comments`");
     expect(skill).toContain("Apply this policy to all saved comments");
     expect(skill).toContain("Question-only: answer every question directly in user-visible chat");
     expect(skill).toContain("Do not create or update a `## Review responses` section");
     expect(skill).not.toContain("Replace any existing `## Review responses` section");
     expect(contract).toContain("Review (`revise`) and chat-inspected feedback use the same classification and response policy");
     expect(contract).toContain("conversational answers belong in chat");
+    expect(contract).toContain("result.comments.comments");
+    expect(contract).toContain("process-review-feedback");
+    expect(contract).toContain("text JSON and `structuredContent`");
   });
 
   it("defines default waiting, chat escape, exact-handle reconnect, and question-only advancement", async () => {

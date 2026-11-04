@@ -14,6 +14,27 @@ Minor typos, formatting fixes, or cosmetic wording adjustments that do not chang
 
 Each entry includes the date, category, summary of changes, rationale, and affected components or files.
 
+## 2026-11-04 — Complete Review Feedback for All MCP Clients
+
+### Changes
+
+- Both `wait_for_artifact_review` and `advance_and_wait_for_artifact` return the complete validated comments document for every submitted decision, with the feedback list at `comments.comments` in both text JSON and `structuredContent`.
+- A `revise` result includes `nextAction.type: "process-review-feedback"` for every artifact kind, alongside the existing state-bound submitted-review token. The instruction covers chat answers, requested Markdown edits, question-only preservation, clarification, and immediate advancement on the same artifact.
+- Kept terminal decision semantics, input contracts, schema-v6 storage, token validation, transactions, and inspect recovery unchanged. The implementation is shared across clients and models, with no client-specific branch.
+- Updated the official skill and contract to consume feedback directly from completed waits. Inspect remains available for saved feedback, reconnect, and recovery.
+- Increased the bundled MCP asset version from 10 to 11 and skill asset version from 2 to 3. Package metadata remains at 1.1.3; no new release is declared. Existing installers deploy the updated assets and record verified per-target receipts; clients must restart and open a fresh chat afterward.
+
+### Rationale
+
+- The server already read and validated comments but omitted their content from wait results, making agents depend on an extra inspection just to retrieve submitted feedback.
+- Returning the same validated snapshot and an explicit continuation action makes the default review contract complete independently of the client's model or harness. Automated contract coverage and real agent continuation remain separate validation claims.
+
+### Affected components or files
+
+- MCP response/type, decision actions, tool descriptions, shared integration versions, and protocol regression tests.
+- Official `create-review-artifact` skill and reference contract, with customization points preserved.
+- README, architecture, philosophy, component ownership, contributor instructions, and version/documentation contract tests.
+
 ## 2026-11-02 — Skill Customization & Independent Integration Asset Versioning
 
 ### Changes

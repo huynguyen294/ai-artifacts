@@ -32,6 +32,7 @@ If product intent, documentation, tests, and implementation disagree, call out t
 - One independent user request owns one artifact ID and directory.
 - Review replaces the same `artifact.md`, advances `reviewRound`, resets review state, and does not retain revision history.
 - Review submissions and chat-inspected comments use one feedback policy: answer questions visibly in chat, update Markdown only for requested changes, and preserve Markdown/SHA for question-only rounds.
+- Both waiting tools return the complete validated comments document at `comments` for every submitted decision, with feedback at `comments.comments`. A `revise` result includes `nextAction.type: "process-review-feedback"` and its state-bound token for every artifact kind; agents do not need an extra inspection just to fetch submitted feedback.
 - Proceed on `plan` or `implementation-plan` returns `execute-approved-plan` and authorizes immediate execution in the same turn; acknowledgement without execution is incorrect.
 - The MCP server creates schema-v6 artifacts only beneath the canonical global collection, owns the transient waiter registry and round tokens, and commits review-round transitions.
 - The extension host validates bindings and writes user comments and create-once submissions.
@@ -66,7 +67,7 @@ If product intent, documentation, tests, and implementation disagree, call out t
 
 ## Ownership map
 
-- `src/integration/artifact-review-mcp-v4.ts`: historical filename for the current numeric MCP version 10/schema-v6 tools, window resolution, conversation grouping, connection commits, artifact creation, waiter ownership/takeover, round grants, inspection, and transactional round commits.
+- `src/integration/artifact-review-mcp-v4.ts`: historical filename for the current numeric MCP version 11/schema-v6 tools, window resolution, conversation grouping, connection commits, artifact creation, waiter ownership/takeover, complete review feedback results, round grants, inspection, and transactional round commits.
 - `src/shared/conversation-artifact-registry.ts`: schema-v1 conversation registry persistence, atomic lockfiles, and safe retention pruning.
 - `src/extension/conversation-artifact-service.ts`: extension-side conversation artifacts discovery and validation.
 - `src/extension/artifact-store.ts`: trusted artifact loading, comment writes, and submission writes.

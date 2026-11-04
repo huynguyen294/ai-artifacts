@@ -110,7 +110,7 @@ The skill must never create or edit `artifact.json`, `comments.json`, `review-su
 
 **Responsibilities**
 
-- Expose one window resolver plus four lifecycle tools (numeric MCP version 10):
+- Expose one window resolver plus four lifecycle tools (numeric MCP version 11):
   - `resolve_artifact_window`
   - `create_artifact`
   - `wait_for_artifact_review`
@@ -125,6 +125,7 @@ The skill must never create or edit `artifact.json`, `comments.json`, `review-su
 - Attach one transient tool call to `review-submission.json`, or return an existing submission immediately.
 - Detect a submission through filesystem watching with periodic polling as a fallback.
 - Validate that the submission belongs to the same schema, artifact, session, round, Markdown hash, and comments hash.
+- Return the complete validated comments document for every submitted decision from either waiting tool, identically in text JSON and `structuredContent`; `revise` also returns a `process-review-feedback` next action for any artifact kind.
 - Reserve at most one live waiter per canonical artifact directory and let cancellation/takeover detach it without touching lifecycle files.
 - Inspect validated Markdown, comments, and optional submission even when no Review submission exists.
 - For explicit reconnect, re-evaluate target window routing and atomically commit a new revision/open-request ID without changing lifecycle state.
@@ -494,8 +495,8 @@ This layer is the protocol source of truth. A contract change must be propagated
 4. The skill calls `wait_for_artifact_review` with the exact handle. The MCP reserves waiter ownership.
 5. Every extension window observes the connection event, but only the matching `windowInstanceId` validates and opens the custom editor when enabled. The target may be unfocused; non-target windows remain silent. Provider, store, webview, and Markdown pipeline render and persist review comments as before.
 6. The user submits Review (`revise`), Proceed (`approve`), or Just save (`save`); the store creates `review-submission.json` exactly once.
-7. The waiting MCP validates and returns the submission. Submitted Review includes a round token.
-8. For Review, the skill classifies feedback exactly as it does for chat escape: answer questions visibly, supply replacement Markdown only when changes are requested, then call `advance_and_wait_for_artifact`. Question-only Review omits Markdown.
+7. The waiting MCP validates and returns the submission metadata and the full comments document, including each comment's body and anchor. Submitted Review includes a round token and `nextAction.type: "process-review-feedback"`; this response contract is the same for initial and advanced waits, independently of client/model.
+8. For Review, the skill reads `comments.comments` directly and classifies feedback exactly as it does for chat escape: answer questions visibly, supply replacement Markdown only when changes are requested, then call `advance_and_wait_for_artifact`. Question-only Review omits Markdown; feedback needing clarification is answered before consuming the token. Inspect remains available for explicit chat feedback and recovery.
 9. Proceed and Just save end the current round without automatically advancing. Proceed returns `execute-approved-plan`, so the skill executes the approved code/file/workspace/command actions immediately in the same turn. The artifact remains persistent and reconnectable.
 
 ### Chat escape flow
