@@ -3,7 +3,7 @@ import {
   ARTIFACT_ROOT_BLOCK_ID,
   ARTIFACT_ROOT_BLOCK_TYPE,
   ARTIFACT_ROOT_TEXT,
-  type ConversationArtifactsViewState,
+  type ArtifactSessionTarget,
   type ReviewComment,
   type ReviewState,
 } from "../src/shared/contracts";
@@ -86,47 +86,22 @@ export function createInitialReviewState(): ReviewState {
   };
 }
 
-export function createInitialConversationState(): ConversationArtifactsViewState {
-  const now = new Date().toISOString();
+export function createInitialSessionsState(): { supported: boolean; sessions: ArtifactSessionTarget[] } {
   return {
-    status: "ready",
-    groups: [
+    supported: true,
+    sessions: [
       {
-        artifactConversationId: "b0000000-0000-4000-8000-000000000002",
-        conversationName: "Gateway Architecture Redesign",
-        currentArtifactRegisteredAt: now,
-        artifacts: [
-          {
-            artifactId: "cache-resilience-plan",
-            title: "Resilient Distributed Cache Implementation",
-            kind: "plan",
-            registeredAt: now,
-            isCurrent: true,
-          },
-          {
-            artifactId: "rate-limiting-spec",
-            title: "Token Bucket Rate Limiting Specification",
-            kind: "spec",
-            registeredAt: new Date(Date.now() - 1000 * 60 * 60 * 24).toISOString(),
-            isCurrent: false,
-          },
-        ],
+        sessionId: "b0000000-0000-4000-8000-000000000002",
+        title: "Gateway Architecture Redesign",
+        version: 2,
+        typeId: "feature",
+        typeLabel: "Feature",
       },
       {
-        artifactConversationId: "c0000000-0000-4000-8000-000000000003",
-        conversationName: "Database Optimization",
-        currentArtifactRegisteredAt: new Date(Date.now() - 1000 * 60 * 60 * 72).toISOString(),
-        artifacts: [
-          {
-            artifactId: "postgres-sharding-proposal",
-            title: "PostgreSQL Horizontal Sharding Proposal",
-            kind: "plan",
-            registeredAt: new Date(Date.now() - 1000 * 60 * 60 * 72).toISOString(),
-            isCurrent: false,
-          },
-        ],
+        sessionId: "c0000000-0000-4000-8000-000000000003",
+        title: "Database Optimization",
+        version: 1,
       },
     ],
-    skippedCount: 0,
   };
 }

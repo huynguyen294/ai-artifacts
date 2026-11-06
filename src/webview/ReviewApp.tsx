@@ -13,20 +13,20 @@ import {
   ARTIFACT_ROOT_TEXT,
 } from "../shared/contracts";
 import type {
+  ArtifactSessionTarget,
   ExtensionToWebviewMessage,
   MarkdownBlock,
   ReviewComment,
   ReviewDecision,
   ReviewState,
   SendStatus,
-  ConversationArtifactsViewState,
 } from "../shared/contracts";
 import { vscode } from "./vscode-api";
 import { MarkdownRenderer } from "./MarkdownRenderer";
 import { SelectionCommentPopover, type SelectionDraft } from "./SelectionCommentPopover";
 import { CommentDetailPopover } from "./CommentDetailPopover";
 import { CommentsDrawer } from "./CommentsDrawer";
-import { ConversationArtifactsDrawer } from "./ConversationArtifactsDrawer";
+import { ArtifactConnectDialog } from "./ArtifactConnectDialog";
 import { trapFocusInContainer } from "./focus-trap";
 import { deriveReviewActions } from "./review-actions";
 
@@ -125,8 +125,11 @@ export function App(): ReactNode {
   const [draft, setDraft] = useState<SelectionDraft | null>(null);
   const [body, setBody] = useState("");
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const [conversationsDrawerOpen, setConversationsDrawerOpen] = useState(false);
-  const [conversationState, setConversationState] = useState<ConversationArtifactsViewState>({ status: "loading" });
+  const [sessionSupport, setSessionSupport] = useState<{
+    supported: boolean;
+    sessions: ArtifactSessionTarget[];
+  }>({ supported: false, sessions: [] });
+  const [connectDialogOpen, setConnectDialogOpen] = useState(false);
   const [activeComment, setActiveComment] = useState<{ id: string; anchor: HTMLElement }>();
   const [sendStatus, setSendStatus] = useState<SendStatus>("idle");
   const [sendMessage, setSendMessage] = useState<string>();
@@ -135,7 +138,7 @@ export function App(): ReactNode {
   const [connectPromptCopied, setConnectPromptCopied] = useState(false);
   const reviewRoundRef = useRef<number | undefined>(undefined);
   const generalFeedbackButtonRef = useRef<HTMLButtonElement>(null);
-  const conversationsButtonRef = useRef<HTMLButtonElement>(null);
+  const connectButtonRef = useRef<HTMLButtonElement>(null);
   const commentsButtonRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
@@ -151,7 +154,7 @@ export function App(): ReactNode {
           setDraft(null);
           setBody("");
           setDrawerOpen(false);
-          setConversationsDrawerOpen(false);
+          setConnectDialogOpen(false);
           setActiveComment(undefined);
           window.getSelection()?.removeAllRanges();
         }
@@ -169,8 +172,11 @@ export function App(): ReactNode {
           setSendStatus("idle");
           setSendMessage(undefined);
         }
-      } else if (message.type === "conversationArtifactsState") {
-        setConversationState(message.state);
+      } else if (message.type === "artifactSessionsState") {
+        setSessionSupport({
+          supported: message.supported,
+          sessions: message.sessions,
+        });
       } else if (message.type === "sendState") {
         setSendStatus(message.status);
         setSendMessage(message.message);
@@ -288,23 +294,8 @@ export function App(): ReactNode {
     }
   };
 
-  const openConversationsDrawer = useCallback((): void => {
-    setConversationsDrawerOpen(true);
-    if (typeof window !== "undefined" && window.innerWidth < 1100) {
-      setDrawerOpen(false);
-    }
-  }, []);
-
-  const closeConversationsDrawer = useCallback((): void => {
-    setConversationsDrawerOpen(false);
-    conversationsButtonRef.current?.focus();
-  }, []);
-
   const openCommentsDrawer = useCallback((): void => {
     setDrawerOpen(true);
-    if (typeof window !== "undefined" && window.innerWidth < 1100) {
-      setConversationsDrawerOpen(false);
-    }
   }, []);
 
   const closeCommentsDrawer = useCallback((): void => {
@@ -312,28 +303,18 @@ export function App(): ReactNode {
     commentsButtonRef.current?.focus();
   }, []);
 
-  const handleOpenArtifact = useCallback((artifactId: string): void => {
-    vscode.postMessage({ type: "openConversationArtifact", artifactId });
-  }, []);
-
   useEffect(() => {
-    if (!drawerOpen && !conversationsDrawerOpen) return;
+    if (!drawerOpen) return;
     const handleKeyDown = (event: KeyboardEvent): void => {
       if (event.key !== "Tab") return;
-      const activeDrawerId = conversationsDrawerOpen
-        ? "conversation-artifacts-drawer"
-        : drawerOpen
-          ? "artifact-comments-drawer"
-          : null;
-      if (!activeDrawerId) return;
-      const container = document.getElementById(activeDrawerId);
+      const container = document.getElementById("artifact-comments-drawer");
       if (container) {
         trapFocusInContainer(container, event);
       }
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [drawerOpen, conversationsDrawerOpen]);
+  }, [drawerOpen]);
 
   if (!state) return <main className="loading">{error ?? "Loading artifact…"}</main>;
 
@@ -355,9 +336,6 @@ export function App(): ReactNode {
     : hasUnsavedComment
       ? "Save or cancel the comment draft first."
       : undefined;
-  const totalConversationArtifacts = conversationState.status === "ready"
-    ? conversationState.groups.reduce((sum, g) => sum + g.artifacts.length, 0)
-    : 0;
 
   return (
     <div className="app-shell">
@@ -415,8 +393,15 @@ export function App(): ReactNode {
               </svg>
             </button>
             <button
+              ref={connectButtonRef}
               className={`icon-button copy-button${connectPromptCopied ? " copied" : ""}`}
-              onClick={() => vscode.postMessage({ type: "copyArtifactConnectPrompt" })}
+              onClick={() => {
+                if (sessionSupport.supported) {
+                  setConnectDialogOpen(true);
+                } else {
+                  vscode.postMessage({ type: "copyArtifactConnectPrompt" });
+                }
+              }}
               aria-label={connectPromptCopied ? "AI connect prompt copied" : "Copy AI connect prompt"}
               title={connectPromptCopied ? "Copied!" : "Copy AI connect prompt"}
             >
@@ -477,32 +462,30 @@ export function App(): ReactNode {
       <nav className="review-utility-bar" aria-label="Artifact review tools">
         <div className="review-utility-bar-left">
           <button
-            ref={conversationsButtonRef}
-            className="ghost conversations-toggle"
-            aria-expanded={conversationsDrawerOpen}
-            aria-controls="conversation-artifacts-drawer"
+            type="button"
+            className="ghost sessions-toggle"
+            disabled={!sessionSupport.supported}
             title={
-              totalConversationArtifacts > 0
-                ? `View artifacts in this conversation (${totalConversationArtifacts})`
-                : "View artifacts in this conversation"
+              !sessionSupport.supported
+                ? "Sessions yêu cầu MCP server phiên bản 12 trở lên"
+                : `Mở Sessions của artifact này (${sessionSupport.sessions.length})`
             }
-            onClick={openConversationsDrawer}
+            onClick={() => {
+              vscode.postMessage({ type: "openArtifactSessions" });
+            }}
           >
-            <svg aria-hidden="true" width="14" height="14" viewBox="0 0 16 16" fill="none">
-              <path
-                d="M2 4.5h12M2 8h12M2 11.5h8"
-                stroke="currentColor"
-                strokeWidth="1.3"
-                strokeLinecap="round"
-              />
+            <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+              <path fillRule="evenodd" clipRule="evenodd" d="M11.536 2.164a1 1 0 0 1 .928 0l9 4.5a1 1 0 0 1 0 1.79l-9 4.5a1 1 0 0 1-.894 0l-9-4.5a1 1 0 0 1 0-1.79l9-4.5zm.464 1.713L4.472 7.5 12 11.264 19.528 7.5 12 3.877z" />
+              <path fillRule="evenodd" clipRule="evenodd" d="M2.536 10.664a1 1 0 0 1 1.358-.456L12 14.264l8.106-4.056a1 1 0 1 1 .894 1.789l-8.553 4.277a1 1 0 0 1-.894 0l-8.553-4.277a1 1 0 0 1-.464-1.333z" />
+              <path fillRule="evenodd" clipRule="evenodd" d="M2.536 15.664a1 1 0 0 1 1.358-.456L12 19.264l8.106-4.056a1 1 0 1 1 .894 1.789l-8.553 4.277a1 1 0 0 1-.894 0l-8.553-4.277a1 1 0 0 1-.464-1.333z" />
             </svg>
-            <span>Conversation Artifacts</span>
-            {totalConversationArtifacts > 0 && (
+            <span>Sessions</span>
+            {sessionSupport.sessions.length > 0 && (
               <span
                 className="comment-count-badge"
-                aria-label={`${totalConversationArtifacts} artifacts`}
+                aria-label={`${sessionSupport.sessions.length} sessions`}
               >
-                {totalConversationArtifacts}
+                {sessionSupport.sessions.length}
               </span>
             )}
           </button>
@@ -580,11 +563,20 @@ export function App(): ReactNode {
           onRemove={() => removeComment(selectedComment.id)}
         />
       )}
-      <ConversationArtifactsDrawer
-        open={conversationsDrawerOpen}
-        state={conversationState}
-        onClose={closeConversationsDrawer}
-        onOpenArtifact={handleOpenArtifact}
+      <ArtifactConnectDialog
+        open={connectDialogOpen}
+        sessions={sessionSupport.sessions}
+        onClose={() => {
+          setConnectDialogOpen(false);
+          connectButtonRef.current?.focus();
+        }}
+        onCopy={(options) => {
+          vscode.postMessage({
+            type: "copyArtifactConnectPrompt",
+            mode: options.mode,
+            sessionId: options.mode === "join" ? options.sessionId : undefined,
+          });
+        }}
       />
       <CommentsDrawer
         open={drawerOpen}

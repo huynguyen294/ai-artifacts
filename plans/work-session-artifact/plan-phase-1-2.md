@@ -1,12 +1,12 @@
 # Phase 1 + 2 — Session model, sidebar và điều hướng
 
-Trạng thái: **Chặng 2 (Bước 4 + Bước 5) ĐÃ HOÀN THÀNH. Sẵn sàng cho Chặng 3.**
+Trạng thái: **ĐỢT PHASE 1+2 ĐÃ HOÀN THÀNH 100% (Cả 3 Chặng: Chặng 1, 2, 3). Sẵn sàng bàn giao và review.**
 
 > [!NOTE]
 > - **Tiến độ tổng thể:**
 >   - ✅ **Chặng 1 (Headless Data Layer & MCP Contract — Bước 1, 2, 3):** ĐÃ HOÀN THÀNH.
 >   - ✅ **Chặng 2 (Sidebar TreeView & Session Tab Webview — Bước 4, 5):** ĐÃ HOÀN THÀNH.
->   - ⏳ **Chặng 3 (ReviewApp Navigation, Connect Dialog & Bulk Migration — Bước 6, 7):** PENDING - SẴN SÀNG TRIỂN KHAI.
+>   - ✅ **Chặng 3 (ReviewApp Navigation, Connect Dialog & Bulk Migration — Bước 6, 7):** ĐÃ HOÀN THÀNH.
 
 Bản này là hướng dẫn triển khai Phase 1+2, đã đối chiếu source hiện tại ngày 2026-11-06. Mục 1–12 giữ contract/phạm vi; mục 13 mô tả từng bước theo file/hàm, luồng xử lý, khả năng phải đạt và kiểm chứng. Mọi tên file/API/command được đánh dấu **mới/đề xuất** chưa tồn tại trong source; không đọc chúng như API đã triển khai. Nhãn nút Review App đã chốt là **Sessions**.
 
@@ -289,6 +289,8 @@ Riêng Phase 1 chưa có sidebar/manager UI (sidebar được triển khai tiế
 
 Activity Bar có mục AI Artifacts, mở sidebar gồm hai section:
 
+**Icon và label đã chốt, bổ sung trong Chặng 3:** dùng icon `layers` từ Codicons (các lớp xếp chồng), đóng gói thành SVG một màu 24×24, nền trong suốt và căn giữa dưới `media/`. Label/tiêu đề container là **AI Artifacts**, không thêm Manager/Management. Hai section giữ tên **Recent Artifacts** và **Sessions**. Không cần thêm thư viện icon runtime cho lựa chọn này.
+
 ```text
 AI ARTIFACTS
 
@@ -309,6 +311,7 @@ SESSIONS                            ⚙
 - Sessions chỉ hiển thị dữ liệu v2 và chỉ enable khi MCP đã cài đủ version. Khi chưa đủ, hiện hướng dẫn cập nhật; Recent Artifacts vẫn dùng được. Khi có candidate v1 và đủ MCP, hiện dòng phát hiện migration; click mở popup bulk theo mục 5. Không hiển thị từng conversation v1 như item Session.
 - **Đã chốt:** Recent Artifacts giới hạn 20 mục và có dòng “Xem tất cả…” gọi search artifact hiện tại. Sessions hiển thị toàn bộ bản đầu; chưa thêm phân trang hoặc setting giới hạn.
 - Loading/empty/error có nội dung riêng. Không hiển thị lỗi đọc registry thành “chưa có session”.
+- **Bổ sung trong Chặng 3:** Recent Artifacts và Sessions mặc định bung lần đầu trong workspace (`visibility: "visible"`); sau đó VS Code giữ trạng thái người dùng đã chọn. Không tự mở sidebar AI Artifacts khi extension khởi động.
 - Pin/group ghim, Archive session và filter/search session nâng cao chưa được chốt cho đợt này. Không tự đưa vào tiêu chí nghiệm thu.
 
 ### Lựa chọn kỹ thuật đề xuất
@@ -393,7 +396,7 @@ Tên file/command mới dưới đây là đề xuất, cần điều chỉnh th
 Thực hiện theo thỏa thuận gộp bước:
 - **Chặng 1 (ĐÃ HOÀN THÀNH):** Bước 1 + 2 + 3 (Nền dữ liệu Session v2, Session types global, Migration v1→v2 và Cleanup retention, Tích hợp MCP & Skill contract).
 - **Chặng 2 (ĐÃ HOÀN THÀNH):** Bước 4 + 5 (Sidebar Activity Bar, Quick Pick quản lý types, Custom readonly Editor cho Session tab).
-- **Chặng 3 (PENDING):** Bước 6 + 7 (Thay drawer bằng nút Sessions, Connect dialog New/Join, Bulk migration UI, Kiểm chứng kết hợp và nghiệm thu).
+- **Chặng 3 (ĐÃ HOÀN THÀNH):** Bước 6 + 7 (Thay drawer bằng nút Sessions, Connect dialog New/Join, Bulk migration UI, Kiểm chứng kết hợp và nghiệm thu).
 
 | Bước / Chặng | Trạng thái | Công việc và kết quả |
 | --- | --- | --- |
@@ -402,8 +405,8 @@ Thực hiện theo thỏa thuận gộp bước:
 | **Chặng 1: Bước 3** (Tích hợp MCP & Skill) | ✅ **Đã hoàn thành** | MCP tạo/reuse Session v2; preflight fail-closed chặn conversation v1 với mã lỗi `CONVERSATION_MIGRATION_REQUIRED`; skill v4 hỗ trợ 2 hướng recovery. |
 | **Chặng 2: Bước 4** (Sidebar & popup types) | ✅ **Đã hoàn thành** | Activity Bar, Recent Artifacts (cap 20 + Xem tất cả), Sessions chỉ v2; gate MCP 12; Quick Pick ⚙ quản lý types. |
 | **Chặng 2: Bước 5** (Tab Session chỉ đọc) | ✅ **Đã hoàn thành** | Provider/webview mở đúng Session ID qua `agentPlus.workSession`, hiện title/type/instructions và 3 vùng; mở artifact; refresh. |
-| **Chặng 3: Bước 6** (Review App & Migration UI) | ⏳ PENDING | Bỏ drawer cũ; nút Sessions trên Review App; popup inspect New/Join (disable Join v1); popup bulk migration từ sidebar. |
-| **Chặng 3: Bước 7** (Kiểm chứng & Nghiệm thu) | ⏳ PENDING | Hoàn tất regression tests; chạy check/test/build; kiểm tra Extension Host; báo cáo nghiệm thu. |
+| **Chặng 3: Bước 6** (Review App & Migration UI) | ✅ **Đã hoàn thành** | Bỏ drawer cũ; nút Sessions trên Review App; popup inspect New/Join (disable Join v1); popup bulk migration từ sidebar. |
+| **Chặng 3: Bước 7** (Kiểm chứng & Nghiệm thu) | ✅ **Đã hoàn thành** | Hoàn tất regression tests; chạy check/test/build; kiểm tra Extension Host; báo cáo nghiệm thu. |
 
 ---
 
@@ -465,7 +468,7 @@ Thực hiện theo thỏa thuận gộp bước:
 | `src/extension/conversation-artifact-service.ts` | Thay controller drawer bằng service Session; giữ filename/watcher để tránh rename lan rộng. Các method mới/đề xuất: list v2 cho sidebar, load view một Session, lookup liên quan một artifact gồm v2 và candidate v1. Trả DTO theo mục đích, không dựng `registeredAt` hoặc catalog agent. Giữ opener/notify/debounce/dispose đã có. |
 | **Mới:** `src/extension/work-session-sidebar.ts` | Hai TreeDataProvider riêng cho Recent/Sessions. Stable item ID; Recent dùng `discoverSearchableArtifacts`, sort updatedAt desc + artifactId rồi giới hạn 20 mục đã chốt; Xem tất cả gọi search hiện có. Sessions chỉ v2, title/type label/count/updatedAt; có trạng thái cần cập nhật và dòng N candidate riêng với item Session. |
 | **Mới:** `src/extension/session-type-command.ts` | Quick Pick/InputBox theo pattern `artifact-search-command.ts`: list/count types, item edit/delete buttons, thêm type, xác nhận delete đang dùng, refresh và dispose. Không dùng Quick Pick này cho popup Connect cần disable từng lựa chọn. |
-| `package.json` | Đề xuất container `agentPlus.artifacts`, hai view `agentPlus.recentArtifacts`/`agentPlus.sessions`; commands `agentPlus.openWorkSession`, `agentPlus.manageSessionTypes`, `agentPlus.migrateConversations`. Menu ⚙ chỉ `view == agentPlus.sessions`, không contribute + session. Session editor contribution hoàn tất ở bước 5; dùng icon có sẵn `media/icon.png`. |
+| `package.json` | Đề xuất container `agentPlus.artifacts`, hai view `agentPlus.recentArtifacts`/`agentPlus.sessions`; commands `agentPlus.openWorkSession`, `agentPlus.manageSessionTypes`, `agentPlus.migrateConversations`. Menu ⚙ chỉ `view == agentPlus.sessions`, không contribute + session. Session editor contribution hoàn tất ở bước 5; icon có sẵn `media/icon.png` được thay bằng SVG `layers` ở bổ sung Chặng 3, mục 13.6. |
 | `src/extension/extension.ts` | Compose support/service/providers/commands một lần; inject cùng instance cho sidebar và review provider. Reuse artifact open coordinator. Sau installer hoàn tất, refresh trạng thái hỗ trợ và các view; view hiện lại cũng kiểm tra file đã cài. Các entry handler Session/types/migration phải kiểm tra lại hỗ trợ, không chỉ disable UI. |
 | Tests mới cho support/sidebar/type command; tests service/release bị ảnh hưởng | Hỗ trợ MCP-only; hai danh sách/sort/count; type popup; registration/menu. `release-contract.test.ts` hiện so sánh toàn bộ menu: thêm expected view/menu mới và giữ assertions các safe-open menu cũ. |
 
@@ -504,6 +507,33 @@ Thực hiện theo thỏa thuận gộp bước:
 
 **Kiểm chứng bước:** tests provider/message/renderer và manual mở/reveal cùng ID; kiểm tra bundle `review.js` render đúng hai app. Không đổi Vite sang multi-entry; `build:webview` hiện tại vẫn dùng được.
 
+### Chặng 3: Bước 6 + 7 — ReviewApp Navigation, Connect Dialog & Bulk Migration (ĐÃ HOÀN THÀNH)
+
+> [!NOTE]
+> - **Trạng thái:** ✅ **Đã hoàn thành 100%** (Review Checkpoint 3 sẵn sàng)
+> - **Các file đã can thiệp & tạo mới:**
+>   - [`media/layers.svg`](file:///d:/workspace/my-projects/ai-artifacts/media/layers.svg) *(mới)*: Icon Codicons `layers` 24×24, nền trong suốt, một màu currentColor chuẩn Activity Bar.
+>   - [`package.json`](file:///d:/workspace/my-projects/ai-artifacts/package.json): Cập nhật icon container Activity Bar `media/layers.svg`, title `AI Artifacts`, cả hai view `agentPlus.recentArtifacts` và `agentPlus.sessions` có `visibility: "visible"`.
+>   - [`src/shared/contracts.ts`](file:///d:/workspace/my-projects/ai-artifacts/src/shared/contracts.ts): Bổ sung `artifactSessionTargetSchema` / `ArtifactSessionTarget`, cập nhật `webviewToExtensionMessageSchema` (thêm `openArtifactSessions`, `migrateSelectedConversation`, `copyArtifactConnectPrompt` với `mode` và `sessionId`), cập nhật `ExtensionToWebviewMessage` với `artifactSessionsState`.
+>   - [`src/shared/artifact-connect-prompt.ts`](file:///d:/workspace/my-projects/ai-artifacts/src/shared/artifact-connect-prompt.ts): Hỗ trợ các mode `legacy`, `new` (yêu cầu agent bỏ ID cũ), và `join` (gắn kết đúng session ID).
+>   - [`src/shared/conversation-artifact-registry.ts`](file:///d:/workspace/my-projects/ai-artifacts/src/shared/conversation-artifact-registry.ts): Export `listCandidatesForArtifact(currentArtifactId, options)`.
+>   - [`src/extension/conversation-artifact-service.ts`](file:///d:/workspace/my-projects/ai-artifacts/src/extension/conversation-artifact-service.ts): Bổ sung `getArtifactSessions(artifactId)` kết hợp sessions v2 và candidates v1.
+>   - [`src/extension/session-migration-command.ts`](file:///d:/workspace/my-projects/ai-artifacts/src/extension/session-migration-command.ts) *(mới)*: Coordinator dùng chung cho `runSingleMigration` và `runBulkMigration` (xác nhận dialog native, progress bar, đếm succeeded/skipped/failed).
+>   - [`src/extension/artifact-review-provider.ts`](file:///d:/workspace/my-projects/ai-artifacts/src/extension/artifact-review-provider.ts): Thay thế drawer logic bằng `refreshSessions`, gửi `artifactSessionsState`, xử lý `openArtifactSessions` (0/1/n session với QuickPick), `migrateSelectedConversation`, và copy connect prompt theo mode.
+>   - [`src/extension/extension.ts`](file:///d:/workspace/my-projects/ai-artifacts/src/extension/extension.ts): Nối command `agentPlus.migrateConversations` gọi `runBulkMigration` với đầy đủ notification progress và refresh providers.
+>   - [`src/webview/ArtifactConnectDialog.tsx`](file:///d:/workspace/my-projects/ai-artifacts/src/webview/ArtifactConnectDialog.tsx) *(mới)*: Dialog React chọn New Session vs Join Session, disabled v1 kèm tooltip & badge "Cần chuyển đổi v2", focus trap, phím Esc.
+>   - [`src/webview/ReviewApp.tsx`](file:///d:/workspace/my-projects/ai-artifacts/src/webview/ReviewApp.tsx): Gỡ bỏ hoàn toàn `ConversationArtifactsDrawer`; thêm nút **Sessions** (disabled khi MCP < 12); Connect button mở `ArtifactConnectDialog` khi MCP >= 12 hoặc copy trực tiếp khi MCP < 12.
+>   - Xoá `src/webview/ConversationArtifactsDrawer.tsx` và `test/conversation-artifacts-drawer.test.tsx`.
+>   - [`src/webview/styles.css`](file:///d:/workspace/my-projects/ai-artifacts/src/webview/styles.css): Dọn sạch 153 dòng CSS cũ của drawer, thêm styling cho `.sessions-toggle` và toàn bộ `.connect-dialog-*`.
+>   - Tests: [`test/session-migration-command.test.ts`](file:///d:/workspace/my-projects/ai-artifacts/test/session-migration-command.test.ts) *(mới)*, [`test/artifact-connect-dialog.test.tsx`](file:///d:/workspace/my-projects/ai-artifacts/test/artifact-connect-dialog.test.tsx) *(mới)*, [`test/artifact-connect-prompt.test.ts`](file:///d:/workspace/my-projects/ai-artifacts/test/artifact-connect-prompt.test.ts), [`test/artifact-review-provider.test.ts`](file:///d:/workspace/my-projects/ai-artifacts/test/artifact-review-provider.test.ts).
+> - **Kết quả đạt được (Phase Achievements):**
+>   - Đã gỡ bỏ sạch sẽ toàn bộ code drawer cũ khỏi Review App.
+>   - Điều hướng Sessions và Connect Dialog New/Join hoạt động mượt mà, phân cấp rõ rệt v1/v2 theo đúng quy chuẩn bảo vệ dữ liệu.
+>   - Bulk migration có dialog xác nhận và thanh progress notification chi tiết.
+>   - Toàn bộ 37 test files (548 tests passed, 0 failed, 3 skipped).
+>   - `npm run check` (tsc --noEmit) pass 100%.
+>   - `npm run build` pass sạch cả 5 targets.
+
 ### 13.6. Bước 6 — Nút Sessions, Connect dialog và migration UI
 
 **Phụ thuộc:** bước 1–5. **Đầu ra:** user thực hiện được toàn bộ điều hướng/migration đã chốt; không còn drawer conversation cũ.
@@ -511,6 +541,7 @@ Thực hiện theo thỏa thuận gộp bước:
 | File/component | Sửa cụ thể |
 | --- | --- |
 | `src/webview/ReviewApp.tsx`, `styles.css` | Xoá import/render/state/refs/count/focus handling chỉ dành cho ConversationArtifactsDrawer. Thay nút bằng **Sessions**, state loading/update-required/ready/error riêng; không làm lỗi Session che phần review đang hoạt động. Giữ CommentsDrawer, feedback/submit và focus trap của comments. |
+| `package.json`, SVG icon dưới `media/` — bổ sung nhỏ cho sidebar Chặng 2 | Đặt icon container `agentPlus.artifacts` thành SVG `layers` từ Codicons (một màu, 24×24, nền trong suốt, căn giữa); title **AI Artifacts**, không thêm Manager/Management. Giữ tên hai view Recent Artifacts và Sessions, đặt `visibility: "visible"` cho cả hai. Chỉ quy định trạng thái mặc định lần đầu trong workspace; giữ lựa chọn mở/thu gọn sau đó do VS Code quản lý. Không thêm lệnh tự mở sidebar khi extension khởi động. |
 | Xoá `src/webview/ConversationArtifactsDrawer.tsx` và test drawer tương ứng | Chỉ xoá sau khi không còn import. Bỏ DTO `ConversationArtifactsViewState`/item/group và messages chỉ phục vụ drawer; giữ legacy metadata/membership schemas cần cho discovery/migration/cleanup. Không xoá `focus-trap.ts` hoặc tests dùng chung với comments. |
 | **Mới:** `src/webview/ArtifactConnectDialog.tsx` | Dialog React nhỏ trong Review App, dùng CSS/focus patterns hiện có. New luôn là lựa chọn được phép khi Session support ready; Join chỉ enable đích v2. Đích v1 hiện disabled + giải thích cần migration, keyboard không chọn được; tooltip đặt trên wrapper có thể hover khi control disabled. Không thêm UI library. |
 | `src/shared/contracts.ts`, `src/extension/artifact-review-provider.ts` | Thay `refreshConversations`/controller cũ bằng Session state/actions. Các message đề xuất: yêu cầu mở Sessions của artifact, migrate conversation đã chọn, copy Connect prompt với mode new/join và optional sessionId. Host lấy artifactId/directory từ store đang mở, kiểm tra gate và membership/schema lại trước action; không tin candidate snapshot từ webview. |
@@ -567,10 +598,11 @@ Automated tests cần kiểm tra behavior thực:
 - Delete type đang dùng: huỷ giữ nguyên; xác nhận chuyển về mặc định; lỗi chuyển dở giữ type và báo lỗi. Rename refresh label mà không đổi ID/typeId.
 - Session provider đọc đúng target; link mở đúng artifact, session view không chạy review/takeover. Watcher refresh sau thay đổi/missing data và dispose khi đóng.
 - Smoke test đăng ký hai view và action ⚙ đúng view; không có command/menu tạo session thủ công.
+- Kiểm tra contributions dùng SVG `layers` và title **AI Artifacts** cho container; khai báo `visibility: "visible"` cho cả Recent Artifacts và Sessions.
 
 Manual trong Extension Development Host:
 
-1. Mở Activity Bar, thấy Recent Artifacts/Sessions và ⚙ đúng header; không có + session.
+1. Trong workspace chưa lưu trạng thái hai view, kiểm tra icon `layers` và tên AI Artifacts trên Activity Bar/tiêu đề sidebar; bấm icon thấy Recent Artifacts/Sessions mặc định bung và ⚙ đúng header; không có + session. Thu gọn một section rồi reload, kiểm tra giữ lựa chọn đó. Khi sidebar khác đang được chọn, reload không tự chuyển sang sidebar AI Artifacts.
 2. Tạo artifact qua runtime cùng build: lần đầu có session Conversation, lần sau reuse đúng ID; sidebar nhận cập nhật.
 3. Click Recent mở artifact; click Sessions mở tab đọc đúng ba vùng; nút Sessions từ artifact tới cùng tab. Thử artifact thuộc hai session và huỷ lựa chọn.
 4. ⚙ tạo custom type, đổi label, đóng/mở lại. Kiểm tra assignment bằng fixture/shared API Phase 1 vì selector UI thuộc Phase 3; xoá type đang dùng xác nhận chuyển các session về mặc định.

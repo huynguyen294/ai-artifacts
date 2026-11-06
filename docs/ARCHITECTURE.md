@@ -10,22 +10,24 @@ AI Artifacts MCP -- discovers live windows and coordinates review rounds
    |     artifact.json + artifact.md + comments.json
    |     + optional submission + optional artifact-connection.json
    |
-   +-- ~/.ai-artifacts/conversation-registry/<conversation-id>/
-   |     conversation.json + registered-artifacts/<artifact-id>.json
+   +-- ~/.ai-artifacts/conversation-registry/<session-id>/
+   |     conversation.json (v2) + layout.json + registered-artifacts/<artifact-id>.json
+   |
+   +-- ~/.ai-artifacts/session-types.json
    |
    v
-VS Code extension windows -- publish heartbeats, match connection target, open editor
+VS Code extension windows -- publish heartbeats, match connection target, open editor / session tab
    |
    v
-React webview -- renders Markdown, anchors comments, conversation drawer, and submits a decision
+React webview -- renders ReviewApp (Markdown, comments, Sessions nav, Connect dialog) & SessionApp (three-zone readonly session viewer)
 ```
 
 ## Ownership boundaries
 
 - The skill chooses when an artifact is appropriate, calls create directly or resolves windows when ambiguous, retains an exact handle mapping, tracks `artifactConversationId`, writes complete Markdown, answers review questions in chat, and reacts to decisions.
-- The MCP server discovers live VS Code windows, exclusively creates schema-v6 artifacts in global storage, commits schema-v1 window-routing requests, manages schema-v1 conversation registry, and advances review rounds. It generates IDs and review sessions, validates paths and candidate selection tokens, owns transient waiter registration, issues one-time round tokens, and commits round transitions transactionally.
-- Each extension host window publishes fresh canonical workspace roots plus its stable instance ID, focus hint, and active-file context. It validates connection targets and artifact bindings, opens only requests addressed to its own instance ID, serves conversation artifacts queries, and writes user comments/submissions.
-- The webview renders sanitized CommonMark/GFM, provides inline comments and conversation artifacts drawers, and sends typed messages to the extension host. It has no direct filesystem or process access.
+- The MCP server discovers live VS Code windows, exclusively creates schema-v6 artifacts in global storage, commits schema-v1 window-routing requests, manages schema-v2 Work Sessions with fail-closed v1 preflight (`CONVERSATION_MIGRATION_REQUIRED`), and advances review rounds. It generates IDs and review sessions, validates paths and candidate selection tokens, owns transient waiter registration, issues one-time round tokens, and commits round transitions transactionally.
+- Each extension host window publishes fresh canonical workspace roots plus its stable instance ID, focus hint, and active-file context. It validates connection targets and artifact bindings, opens only requests addressed to its own instance ID, serves sessions and artifact queries, and writes user comments/submissions.
+- The webview renders sanitized CommonMark/GFM, provides inline comments, session navigation, and Connect dialogs in `ReviewApp`, as well as three-zone read-only session inspection in `SessionApp`, sending typed messages to the extension host. It has no direct filesystem or process access.
 - `src/shared` is the single contract boundary used by the MCP, extension host, and webview.
 
 ## Lifetime model
@@ -63,7 +65,7 @@ Schema v6 is the sole live lifecycle protocol:
 - `comments.json` contains saved comments bound to the current round and artifact hash.
 - `review-submission.json` appears after Review, Proceed, or Just save.
 - `artifact-connection.json` is optional schema-v1 UI-routing state containing only `windowInstanceId`, `connectionRevision`, `openRequestId`, `source`, and `updatedAt`.
-- Conversation registry under `~/.ai-artifacts/conversation-registry/<artifactConversationId>/` stores schema-v1 `conversation.json` and per-artifact index files under `registered-artifacts/<artifact-id>.json`, guarded by `.conversation.lock`.
+- Work Session registry under `~/.ai-artifacts/conversation-registry/<sessionId>/` stores schema-v2 `conversation.json` (`sessionId`, `title`, `instructions`, `typeId`, `createdAt`), `layout.json` (ordering across `working`, `references`, `archived` zones), and per-artifact index files under `registered-artifacts/<artifactId>.json`. Writes are atomic without file locks; `Session.updatedAt` is dynamically computed on read from `max(createdAt, ...registeredAt)`. Global session types are stored in `~/.ai-artifacts/session-types.json`.
 
 Advancing always increments the round and resets handled comments. A question-only advance uses the existing Markdown unchanged. Schemas v3/v4/v5 are rejected and are not live-migrated.
 
@@ -95,9 +97,20 @@ Each window deduplicates successfully handled `openRequestId` values and coalesc
 
 The manual **AI Artifacts: Open Artifact Review** command accepts an `artifact.md` URI from Explorer, the Markdown editor context menu, or its editor-tab context menu. Without an explicit URI, it uses the active `artifact.md` or Artifact Review URI when available, then falls back to a file picker rooted at the global collection. Every entry point shares the same `ArtifactReviewOpenCoordinator` and fail-closed validation boundary as the watcher: the artifact must be a direct child of the global collection with a valid schema-v6 manifest, matching identity, and safe non-linked paths before `vscode.openWith` runs. This provides a user-controlled return path when a chat `artifactLink` opens a normal Markdown editor rather than the review editor. The **AI Artifacts: Search Artifact** command (`agentPlus.searchArtifact`) provides an extension-local search UI via VS Code Quick Pick. It enumerates valid schema-v6 direct children in `~/.ai-artifacts/artifacts/` with bounded concurrency, filters in-memory on normalized title (accent-insensitive, case-insensitive, deterministic order, capped at 1,000 items), and revalidates and opens the selected artifact through the shared `ArtifactReviewOpenCoordinator`. Search is strictly local to the current window and does not call MCP, invoke window routing, or mutate connection state. Users can copy the exact artifact handle into AI chat using the **Connect** button in the review header. A chat `artifactLink` is only a regular file link and may open a normal Markdown editor depending on the client.
 
-## Conversation artifacts drawer
+## Work Sessions and Activity Bar sidebar navigation
 
-The review webview features an **Artifacts in Conversation** sidebar drawer toggled via the header. The extension host's `ConversationArtifactService` resolves artifacts registered under the same conversation with bounded concurrency (`8`), revalidating `artifact.json` and `artifact.md` integrity. Selecting an artifact opens it in the current window via `ArtifactReviewOpenCoordinator.open(..., { preview: false })` in a standard review editor tab. Drawer navigation is local to the current window and does not re-route windows or mutate connection state.
+The legacy conversation drawer has been replaced by a first-class Work Session architecture and dedicated Activity Bar view:
+
+1. **AI Artifacts Activity Bar View**: Provides two views (`agentPlus.recentArtifacts` and `agentPlus.sessions`), defaulted to visible on first load:
+   - **Recent Artifacts**: Displays the 20 most recently updated artifacts (sorted by `updatedAt` desc) with quick access to full title search via **View all...** (`agentPlus.searchArtifact`).
+   - **Sessions**: Displays all v2 Work Sessions with their session type labels (`Conversation`, `Project`, `Feature`, `Fix`, or custom types), artifact counts, and dynamic `updatedAt` recency.
+   - **Session Types Management**: A gear action (`agentPlus.manageSessionTypes`) on the Sessions view header opens a native VS Code QuickPick to create, rename, or delete global session types.
+   - **Migration Detection**: Displays the count of legacy v1 conversations with an action to launch bulk migration.
+2. **Dedicated Read-only Session Editor (`agentPlus.workSession`)**: Opening a session renders `SessionApp` showing session metadata, markdown instructions, and artifact cards organized into three zones: `Working`, `References`, and `Archived`. Clicking an artifact card opens it in the review editor via the shared `ArtifactReviewOpenCoordinator`.
+3. **Review App Sessions Navigation & Connect Dialog**:
+   - The Review App header provides a **Sessions** button (gated on MCP version >= 12) to reveal the artifact's session.
+   - Clicking **Connect** on MCP version >= 12 opens `ArtifactConnectDialog` to choose between **New Session** (instructs the agent to omit the existing session ID and establish a fresh session) and **Join Session** (links into an existing v2 session, with v1 conversations disabled and badged as requiring migration).
+4. **Single & Bulk Migration**: The coordinator (`src/extension/session-migration-command.ts`) provides single migration (migrates v1 to v2 with a backup `conversation.v1.backup.json` and opens the session) and bulk migration with native confirmation dialogs and VS Code progress notification reporting.
 
 ## Deployment and filesystem support
 
@@ -115,4 +128,4 @@ Skill reinstall snapshots the target before mutation, merges a valid non-officia
 
 ## Compatibility
 
-The current implementation uses numeric MCP version 12, numeric skill version 3, artifact schema v6, conversation registry schema v1, and optional connection schema v1. The schema-v6 transition remains a hard protocol cutoff: the MCP tool catalog contains exactly five tools with `resolve_artifact_window` replacing `resolve_artifact_workspace`, while schema-v3/v4/v5 and workspace-local lifecycles remain untouched on disk but are not parsed, opened, advanced, or migrated. Updating the extension does not mutate an already installed runtime or skill, but reinstall is required only when the bundled MCP or skill version differs from its verified receipt. After reinstalling, users restart the affected AI client and start a fresh chat. Rolling back across incompatible asset versions likewise requires reinstalling the matching runtime/skill. Optional connection files remain preserved user artifact data and may be ignored by older code; they are never deleted during rollback or uninstall.
+The current implementation uses numeric MCP version 12, numeric skill version 4, artifact schema v6, Work Session schema v2 (with automatic legacy v1 migration), and optional connection schema v1. The schema-v6 transition remains a hard protocol cutoff: the MCP tool catalog contains exactly five tools with `resolve_artifact_window` replacing `resolve_artifact_workspace`, while schema-v3/v4/v5 and workspace-local lifecycles remain untouched on disk but are not parsed, opened, advanced, or migrated. Updating the extension does not mutate an already installed runtime or skill, but reinstall is required only when the bundled MCP or skill version differs from its verified receipt. After reinstalling, users restart the affected AI client and start a fresh chat. Rolling back across incompatible asset versions likewise requires reinstalling the matching runtime/skill. Optional connection files remain preserved user artifact data and may be ignored by older code; they are never deleted during rollback or uninstall.

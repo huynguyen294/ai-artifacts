@@ -1,10 +1,45 @@
 import path from "node:path";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type {
-  ConversationArtifactsViewState,
+  ArtifactSessionTarget,
   ExtensionToWebviewMessage,
   ReviewState,
 } from "../src/shared/contracts";
+
+const {
+  executeCommandMock,
+  showInformationMessageMock,
+  showErrorMessageMock,
+  showQuickPickMock,
+  writeTextMock,
+  openExternalMock,
+  mockResolveWorkSessionSupport,
+  mockRunSingleMigration,
+} = vi.hoisted(() => ({
+  executeCommandMock: vi.fn(async () => undefined),
+  showInformationMessageMock: vi.fn(),
+  showErrorMessageMock: vi.fn(),
+  showQuickPickMock: vi.fn(),
+  writeTextMock: vi.fn(async () => undefined),
+  openExternalMock: vi.fn(async () => true),
+  mockResolveWorkSessionSupport: vi.fn<
+    () => Promise<{
+      supported: boolean;
+      requiredMcpVersion: number;
+      installedMcpVersion?: number;
+      reason?: string;
+    }>
+  >(async () => ({
+    supported: true,
+    requiredMcpVersion: 12,
+    installedMcpVersion: 12,
+  })),
+  mockRunSingleMigration: vi.fn(async (deps: any) => {
+    deps.onDidMigrate?.();
+    await deps.openWorkSession(deps.sessionId);
+    return true;
+  }),
+}));
 
 vi.mock("vscode", () => ({
   Uri: {
@@ -25,6 +60,14 @@ vi.mock("vscode", () => ({
       public readonly pattern: string,
     ) {}
   },
+  commands: {
+    executeCommand: executeCommandMock,
+  },
+  window: {
+    showInformationMessage: showInformationMessageMock,
+    showErrorMessage: showErrorMessageMock,
+    showQuickPick: showQuickPickMock,
+  },
   workspace: {
     onDidChangeTextDocument: () => ({ dispose: vi.fn() }),
     createFileSystemWatcher: () => ({
@@ -36,10 +79,19 @@ vi.mock("vscode", () => ({
   },
   env: {
     clipboard: {
-      writeText: vi.fn(async () => undefined),
+      writeText: writeTextMock,
     },
-    openExternal: vi.fn(async () => true),
+    openExternal: openExternalMock,
   },
+}));
+
+vi.mock("../src/extension/work-session-support", () => ({
+  WORK_SESSION_REQUIRED_MCP_VERSION: 12,
+  resolveWorkSessionSupport: () => mockResolveWorkSessionSupport(),
+}));
+
+vi.mock("../src/extension/session-migration-command", () => ({
+  runSingleMigration: (deps: any) => mockRunSingleMigration(deps),
 }));
 
 import {
@@ -139,17 +191,30 @@ function createFakeStore(artifactId = "artifact-current"): ArtifactStoreControll
   };
 }
 
-describe("ArtifactReviewProvider conversation transport (Phase 5)", () => {
-  it("posts central ReviewState before conversation loading finishes on ready", async () => {
-    const store = createFakeStore("artifact-current");
-    let resolveConvState: ((state: ConversationArtifactsViewState) => void) | undefined;
-    const convPromise = new Promise<ConversationArtifactsViewState>((resolve) => {
-      resolveConvState = resolve;
+describe("ArtifactReviewProvider sessions transport (Chặng 3)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockResolveWorkSessionSupport.mockResolvedValue({
+      supported: true,
+      requiredMcpVersion: 12,
+      installedMcpVersion: 12,
     });
+  });
+
+  it("posts central ReviewState and artifactSessionsState on ready", async () => {
+    const store = createFakeStore("artifact-current");
+    const sampleSessions: ArtifactSessionTarget[] = [
+      {
+        sessionId: "sess-1",
+        title: "Session 1",
+        version: 2,
+        typeId: "feature",
+        typeLabel: "Feature",
+      },
+    ];
 
     const conversationService: ConversationArtifactProviderController = {
-      getConversationsViewState: vi.fn(() => convPromise),
-      openConversationArtifact: vi.fn(),
+      getArtifactSessions: vi.fn(async () => sampleSessions),
       onDidChange: vi.fn(() => ({ dispose: vi.fn() })),
     };
 
@@ -170,59 +235,36 @@ describe("ArtifactReviewProvider conversation transport (Phase 5)", () => {
     await provider.resolveCustomTextEditor(document, panel);
     await sendMessage({ type: "ready" });
 
-    // Central document state is already posted while conversation state is still in loading
-    expect(postedMessages).toEqual([
-      {
-        type: "state",
-        state: expect.objectContaining({
-          artifact: expect.objectContaining({ artifactId: "artifact-current" }),
-        }),
-      },
-      {
-        type: "conversationArtifactsState",
-        state: { status: "loading" },
-      },
-    ]);
-
-    const readyConvState: ConversationArtifactsViewState = {
-      status: "ready",
-      skippedCount: 0,
-      groups: [
-        {
-          artifactConversationId: "11111111-1111-4111-8111-111111111111",
-          conversationName: "Thread 1",
-          currentArtifactRegisteredAt: "2026-10-18T10:00:00.000Z",
-          artifacts: [
-            {
-              artifactId: "artifact-current",
-              title: "Sample Plan",
-              kind: "implementation-plan",
-              registeredAt: "2026-10-18T10:00:00.000Z",
-              isCurrent: true,
-            },
-          ],
-        },
-      ],
-    };
-    resolveConvState?.(readyConvState);
     await vi.waitFor(() => {
-      expect(postedMessages).toHaveLength(3);
+      expect(postedMessages).toHaveLength(2);
     });
 
-    expect(postedMessages[2]).toEqual({
-      type: "conversationArtifactsState",
-      state: readyConvState,
+    expect(postedMessages[0]).toEqual({
+      type: "state",
+      state: expect.objectContaining({
+        artifact: expect.objectContaining({ artifactId: "artifact-current" }),
+      }),
+    });
+
+    expect(postedMessages[1]).toEqual({
+      type: "artifactSessionsState",
+      supported: true,
+      sessions: sampleSessions,
     });
     expect(store.loadMock).toHaveBeenCalledTimes(1);
   });
 
-  it("isolates conversation errors into conversationArtifactsState without breaking the main document", async () => {
+  it("posts artifactSessionsState with supported: false when MCP < 12", async () => {
+    mockResolveWorkSessionSupport.mockResolvedValueOnce({
+      supported: false,
+      requiredMcpVersion: 12,
+      installedMcpVersion: 11,
+      reason: "MCP version 11 < 12",
+    });
+
     const store = createFakeStore("artifact-current");
     const conversationService: ConversationArtifactProviderController = {
-      getConversationsViewState: vi.fn(async () => {
-        throw new Error("Simulated conversation registry failure");
-      }),
-      openConversationArtifact: vi.fn(),
+      getArtifactSessions: vi.fn(async () => []),
       onDidChange: vi.fn(() => ({ dispose: vi.fn() })),
     };
 
@@ -244,32 +286,23 @@ describe("ArtifactReviewProvider conversation transport (Phase 5)", () => {
     await sendMessage({ type: "ready" });
 
     await vi.waitFor(() => {
-      expect(postedMessages).toHaveLength(3);
+      expect(postedMessages).toHaveLength(2);
     });
 
-    expect(postedMessages[0]?.type).toBe("state");
-    expect(postedMessages[2]).toEqual({
-      type: "conversationArtifactsState",
-      state: {
-        status: "error",
-        message: "Simulated conversation registry failure",
-      },
+    expect(postedMessages[1]).toEqual({
+      type: "artifactSessionsState",
+      supported: false,
+      sessions: [],
     });
-    expect(postedMessages.some((m) => m.type === "error")).toBe(false);
   });
 
-  it("refreshes only conversationArtifactsState on conversationService.onDidChange without calling store.load() and cleans up on dispose", async () => {
+  it("refreshes only artifactSessionsState on conversationService.onDidChange without calling store.load() and cleans up on dispose", async () => {
     const store = createFakeStore("artifact-current");
     let changeHandler: (() => void | Promise<void>) | undefined;
     const disposeSubscription = vi.fn();
 
     const conversationService: ConversationArtifactProviderController = {
-      getConversationsViewState: vi.fn(async (): Promise<ConversationArtifactsViewState> => ({
-        status: "ready",
-        groups: [],
-        skippedCount: 0,
-      })),
-      openConversationArtifact: vi.fn(),
+      getArtifactSessions: vi.fn(async () => []),
       onDidChange: vi.fn((listener) => {
         changeHandler = listener;
         return { dispose: disposeSubscription };
@@ -292,62 +325,119 @@ describe("ArtifactReviewProvider conversation transport (Phase 5)", () => {
 
     await provider.resolveCustomTextEditor(document, panel);
     await sendMessage({ type: "ready" });
+    await vi.waitFor(() => expect(postedMessages).toHaveLength(2));
+
+    expect(store.loadMock).toHaveBeenCalledTimes(1);
+
+    // Trigger change event
+    await changeHandler?.();
     await vi.waitFor(() => expect(postedMessages).toHaveLength(3));
 
+    // Must NOT call store.load() again
     expect(store.loadMock).toHaveBeenCalledTimes(1);
-
-    // Trigger conversation registry change
-    await changeHandler?.();
-    await vi.waitFor(() => expect(postedMessages).toHaveLength(4));
-
-    // Must NOT have called store.load() again
-    expect(store.loadMock).toHaveBeenCalledTimes(1);
-    expect(postedMessages[3]).toEqual({
-      type: "conversationArtifactsState",
-      state: {
-        status: "ready",
-        groups: [],
-        skippedCount: 0,
-      },
+    expect(postedMessages[2]).toEqual({
+      type: "artifactSessionsState",
+      supported: true,
+      sessions: [],
     });
 
-    // Dispose panel -> subscription is disposed
     disposePanel();
     expect(disposeSubscription).toHaveBeenCalledTimes(1);
   });
 
-  it("handles openConversationArtifact and refreshes from the service change event when target artifact is missing on disk", async () => {
+  it("handles openArtifactSessions for single v2 session", async () => {
     const store = createFakeStore("artifact-current");
-    let changeHandler: (() => void | Promise<void>) | undefined;
-    const getConversationsViewState = vi.fn(async (): Promise<ConversationArtifactsViewState> => ({
-      status: "ready",
-      groups: [],
-      skippedCount: 1,
-    }));
-    const openConversationArtifact = vi
-      .fn()
-      .mockResolvedValueOnce({
-        status: "opened",
-        target: {} as any,
-        shouldRefresh: false,
-      })
-      .mockImplementationOnce(async () => {
-        await changeHandler?.();
-        return {
-          status: "missing",
-          artifactId: "artifact-deleted",
-          message: 'Artifact "artifact-deleted" is no longer available on disk.',
-          shouldRefresh: true,
-        };
-      });
+    const sampleSessions: ArtifactSessionTarget[] = [
+      {
+        sessionId: "sess-v2",
+        title: "Session v2",
+        version: 2,
+        typeId: "feature",
+        typeLabel: "Feature",
+      },
+    ];
 
     const conversationService: ConversationArtifactProviderController = {
-      getConversationsViewState,
-      openConversationArtifact,
-      onDidChange: vi.fn((listener) => {
-        changeHandler = listener;
-        return { dispose: vi.fn() };
+      getArtifactSessions: vi.fn(async () => sampleSessions),
+      onDidChange: vi.fn(() => ({ dispose: vi.fn() })),
+    };
+
+    const provider = new ArtifactReviewProvider(
+      { extensionUri: { fsPath: "/ext" } } as any,
+      conversationService,
+      () => store,
+    );
+
+    const { panel, sendMessage } = createFakePanel();
+    const document = {
+      uri: {
+        fsPath: "/home/.ai-artifacts/artifacts/artifact-current/artifact.md",
+        toString: () => "file:///home/.ai-artifacts/artifacts/artifact-current/artifact.md",
+      },
+    } as any;
+
+    await provider.resolveCustomTextEditor(document, panel);
+    await sendMessage({ type: "openArtifactSessions" });
+
+    expect(executeCommandMock).toHaveBeenCalledWith("agentPlus.openWorkSession", "sess-v2");
+  });
+
+  it("handles openArtifactSessions for single v1 session with migration confirmation", async () => {
+    const store = createFakeStore("artifact-current");
+    const sampleSessions: ArtifactSessionTarget[] = [
+      {
+        sessionId: "conv-v1",
+        title: "Legacy Conversation",
+        version: 1,
+      },
+    ];
+
+    showInformationMessageMock.mockResolvedValueOnce("Chuyển đổi");
+
+    const conversationService: ConversationArtifactProviderController = {
+      getArtifactSessions: vi.fn(async () => sampleSessions),
+      onDidChange: vi.fn(() => ({ dispose: vi.fn() })),
+    };
+
+    const provider = new ArtifactReviewProvider(
+      { extensionUri: { fsPath: "/ext" } } as any,
+      conversationService,
+      () => store,
+    );
+
+    const { panel, sendMessage } = createFakePanel();
+    const document = {
+      uri: {
+        fsPath: "/home/.ai-artifacts/artifacts/artifact-current/artifact.md",
+        toString: () => "file:///home/.ai-artifacts/artifacts/artifact-current/artifact.md",
+      },
+    } as any;
+
+    await provider.resolveCustomTextEditor(document, panel);
+    await sendMessage({ type: "openArtifactSessions" });
+
+    expect(showInformationMessageMock).toHaveBeenCalledWith(
+      expect.stringContaining('Legacy Conversation'),
+      "Chuyển đổi",
+      "Huỷ",
+    );
+    expect(mockRunSingleMigration).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionId: "conv-v1",
       }),
+    );
+  });
+
+  it("handles copyArtifactConnectPrompt with mode=join and mode=new", async () => {
+    const store = createFakeStore("artifact-current");
+    const validTargetSession: ArtifactSessionTarget = {
+      sessionId: "00000000-0000-4000-8000-000000000001",
+      title: "Target Session",
+      version: 2,
+    };
+    const conversationService: ConversationArtifactProviderController = {
+      getArtifactSessions: vi.fn(async () => [validTargetSession]),
+      onDidChange: vi.fn(() => ({ dispose: vi.fn() })),
     };
 
     const provider = new ArtifactReviewProvider(
@@ -366,25 +456,81 @@ describe("ArtifactReviewProvider conversation transport (Phase 5)", () => {
 
     await provider.resolveCustomTextEditor(document, panel);
 
-    // 1. Opening an existing artifact does not trigger an extra conversation refresh
-    await sendMessage({ type: "openConversationArtifact", artifactId: "artifact-other" });
-    expect(openConversationArtifact).toHaveBeenCalledWith("artifact-other");
-    expect(getConversationsViewState).not.toHaveBeenCalled();
+    // 1. Join mode with valid session
+    await sendMessage({
+      type: "copyArtifactConnectPrompt",
+      mode: "join",
+      sessionId: "00000000-0000-4000-8000-000000000001",
+    });
+    expect(writeTextMock).toHaveBeenLastCalledWith(
+      expect.stringContaining("00000000-0000-4000-8000-000000000001"),
+    );
+    expect(postedMessages).toContainEqual({ type: "artifactConnectPromptCopied" });
 
-    // 2. Opening a missing artifact triggers the service change event exactly once.
-    await sendMessage({ type: "openConversationArtifact", artifactId: "artifact-deleted" });
-    expect(openConversationArtifact).toHaveBeenCalledWith("artifact-deleted");
-    expect(getConversationsViewState).toHaveBeenCalledTimes(1);
-    expect(postedMessages).toEqual([
-      {
-        type: "conversationArtifactsState",
-        state: {
-          status: "ready",
-          groups: [],
-          skippedCount: 1,
-        },
+    // 2. Join mode with invalid session (not in artifact sessions) -> rejected by host
+    await sendMessage({
+      type: "copyArtifactConnectPrompt",
+      mode: "join",
+      sessionId: "00000000-0000-4000-8000-000000000099",
+    });
+    expect(showErrorMessageMock).toHaveBeenCalledWith(
+      expect.stringContaining("00000000-0000-4000-8000-000000000099"),
+    );
+
+    // 3. New mode
+    await sendMessage({
+      type: "copyArtifactConnectPrompt",
+      mode: "new",
+    });
+    expect(writeTextMock).toHaveBeenLastCalledWith(
+      expect.stringContaining("Do not pass any existing artifactConversationId"),
+    );
+  });
+
+  it("handles migrateSelectedConversation only when candidate is v1 and MCP >= 12", async () => {
+    const store = createFakeStore("artifact-current");
+    const candidateSession: ArtifactSessionTarget = {
+      sessionId: "00000000-0000-4000-8000-000000000002",
+      title: "Candidate Conv",
+      version: 1,
+    };
+    const conversationService: ConversationArtifactProviderController = {
+      getArtifactSessions: vi.fn(async () => [candidateSession]),
+      onDidChange: vi.fn(() => ({ dispose: vi.fn() })),
+    };
+
+    const provider = new ArtifactReviewProvider(
+      { extensionUri: { fsPath: "/ext" } } as any,
+      conversationService,
+      () => store,
+    );
+
+    const { panel, sendMessage } = createFakePanel();
+    const document = {
+      uri: {
+        fsPath: "/home/.ai-artifacts/artifacts/artifact-current/artifact.md",
+        toString: () => "file:///home/.ai-artifacts/artifacts/artifact-current/artifact.md",
       },
-    ]);
-    expect(store.loadMock).not.toHaveBeenCalled();
+    } as any;
+
+    await provider.resolveCustomTextEditor(document, panel);
+
+    // 1. Valid migration
+    await sendMessage({
+      type: "migrateSelectedConversation",
+      sessionId: "00000000-0000-4000-8000-000000000002",
+    });
+    expect(mockRunSingleMigration).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionId: "00000000-0000-4000-8000-000000000002" }),
+    );
+
+    // 2. Invalid migration (session not v1) -> rejected by host
+    await sendMessage({
+      type: "migrateSelectedConversation",
+      sessionId: "00000000-0000-4000-8000-000000000099",
+    });
+    expect(showErrorMessageMock).toHaveBeenCalledWith(
+      expect.stringContaining("00000000-0000-4000-8000-000000000099"),
+    );
   });
 });

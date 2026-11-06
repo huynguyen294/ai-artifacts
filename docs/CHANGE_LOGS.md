@@ -14,6 +14,52 @@ Minor typos, formatting fixes, or cosmetic wording adjustments that do not chang
 
 Each entry includes the date, category, summary of changes, rationale, and affected components or files.
 
+## 2026-11-07 — Work Session Phase 1+2 Implementation (Model v2, Sidebar Navigation, Connect Dialog & Migration)
+
+### Changes
+
+- **Work Session Schema v2 & Storage Architecture**:
+  - Upgraded conversation registry to schema v2 (`WORK_SESSION_SCHEMA_VERSION = 2`), recording `sessionId`, `title`, `instructions` (Markdown string), `typeId`, and `createdAt` in `conversation.json`.
+  - Separated layout into `layout.json` (`WORK_SESSION_LAYOUT_SCHEMA_VERSION = 1`) managing artifact ordering across three zones: `working`, `references`, and `archived`. Reconciled unassigned registered artifacts to the end of `working`.
+  - Eliminated `.conversation.lock` and all file locks in favor of atomic writes (`writeAtomicJsonFile`) with last-write-wins semantics.
+  - Dynamic `updatedAt`: computed on read from `max(createdAt, ...registeredAt)` across `registered-artifacts/<artifactId>.json`, preserving automatic recency sorting without metadata churn.
+  - Global Session Types: stored in `~/.ai-artifacts/session-types.json` (`SESSION_TYPES_SCHEMA_VERSION = 1`) with seed defaults (`conversation`, `project`, `feature`, `fix`). Supported CRUD operations with case-insensitive uniqueness and safe re-assignment to default when deleting custom types in use.
+  - Retention Cleanup: preserved empty v2 Work Sessions during periodic activation cleanup while pruning expired artifacts and legacy v1 entries.
+- **MCP v12 Server & Skill v4 Fail-Closed Contract**:
+  - Updated MCP server (`artifact-review-mcp-v4.ts`) to numeric `MCP_VERSION = 12` and skill to `SKILL_VERSION = 4`.
+  - Implemented fail-closed preflight for both `create_artifact` and `inspect_artifact_review`: calls specifying a legacy v1 conversation ID immediately throw `ConversationMigrationRequiredError` with code `CONVERSATION_MIGRATION_REQUIRED` before mutating state or granting tokens.
+  - Updated `create-review-artifact` skill to guide the AI to either advise the user to migrate the conversation or create a new Work Session.
+- **Activity Bar "AI Artifacts" Sidebar**:
+  - Contributed `agentPlus.artifacts` container to the Activity Bar with Codicons `layers` SVG icon (24×24, transparent background).
+  - Provided two tree views defaulting to visible (`visibility: "visible"`):
+    - `RecentArtifactsTreeDataProvider`: sorts artifacts by `updatedAt` desc, capped at 20 items, with a "View all..." item delegating to artifact search.
+    - `WorkSessionsTreeDataProvider`: gated on installed MCP version >= 12, lists all v2 sessions with type badges, item count, and dynamic recency. Displays a migration banner item when legacy v1 conversations exist.
+  - Contributed gear menu (`agentPlus.manageSessionTypes`) to the Sessions view header using a native VS Code QuickPick controller.
+- **Dedicated Read-only Session Editor (`agentPlus.workSession`)**:
+  - Implemented `WorkSessionProvider` (`CustomReadonlyEditorProvider`) opening `conversation.json`.
+  - Multi-app webview discriminator (`data-app="session" | "review"`) in `webview-html.ts` allowing a single Vite build bundle (`dist/webview/review.js`) to render either `ReviewApp` or `SessionApp`.
+  - `SessionApp` displays session metadata header, instructions rendered via Markdown, and artifact cards across `Working`, `References`, and `Archived` zones. Clicking cards safely opens the artifact review editor.
+- **Review App Navigation, Connect Dialog & Migration Coordinator**:
+  - Retired and deleted `ConversationArtifactsDrawer.tsx` and related CSS/tests.
+  - Added a **Sessions** header toggle in `ReviewApp` (gated on MCP version >= 12) that reveals or opens the artifact's session.
+  - Replaced direct copy on MCP version >= 12 with `ArtifactConnectDialog`, supporting **New Session** (omits previous session ID) and **Join Session** (selects an existing v2 session; legacy v1 targets are disabled with "Cần chuyển đổi v2" badge and tooltip).
+  - Created `session-migration-command.ts` coordinating single migration (migrates v1 to v2 with `conversation.v1.backup.json` and opens the session) and bulk migration (native confirmation dialog, progress notification, and comprehensive result summary).
+
+### Rationale
+
+- Decouples MCP artifact registration from UI organization without locking files.
+- Provides a centralized Activity Bar workspace navigation experience.
+- Guarantees backward-safe data migration from v1 to v2 without data loss or silent schema mutations.
+
+### Affected components or files
+
+- Contracts & Shared: `src/shared/contracts.ts`, `src/shared/artifact-files.ts`, `src/shared/session-type-registry.ts`, `src/shared/conversation-artifact-registry.ts`, `src/shared/artifact-connect-prompt.ts`.
+- MCP & Skill: `src/integration/artifact-review-mcp-v4.ts`, `skills/create-review-artifact/SKILL.md`, `skills/create-review-artifact/references/artifact-contract.md`.
+- Extension Host: `src/extension/work-session-support.ts`, `src/extension/work-session-sidebar.ts`, `src/extension/session-type-command.ts`, `src/extension/session-migration-command.ts`, `src/extension/work-session-provider.ts`, `src/extension/conversation-artifact-service.ts`, `src/extension/artifact-review-provider.ts`, `src/extension/extension.ts`, `package.json`, `media/layers.svg`.
+- Webview: `src/webview/SessionApp.tsx`, `src/webview/ArtifactConnectDialog.tsx`, `src/webview/ReviewApp.tsx`, `src/webview/main.tsx`, `src/webview/styles.css`, `dev/main.tsx`, `dev/mock-data.ts`.
+- Deleted: `src/webview/ConversationArtifactsDrawer.tsx`, `test/conversation-artifacts-drawer.test.tsx`.
+- Test Suites: `test/session-type-registry.test.ts`, `test/work-session-sidebar.test.ts`, `test/work-session-provider.test.ts`, `test/session-type-command.test.ts`, `test/session-migration-command.test.ts`, `test/artifact-connect-dialog.test.tsx`, `test/artifact-connect-prompt.test.ts`, `test/artifact-review-provider.test.ts`, `test/conversation-artifact-registry.test.ts`, `test/review-wait-mcp.test.ts`.
+
 ## 2026-11-06 — MCP Version 12 Preparation for Work Session Testing
 
 - Increased the bundled numeric `MCP_VERSION` from 11 to 12 at the owner's request, allowing installed-version freshness tests to distinguish the old and new runtime assets. Kept the extension package at 1.1.4, skill at 3, and conversation registry at schema v1.

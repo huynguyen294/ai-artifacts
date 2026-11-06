@@ -4,8 +4,11 @@ import { ArtifactReviewProvider } from "./artifact-review-provider";
 import { ArtifactReviewOpenCoordinator, setupGlobalArtifactConnectionWatcher } from "./artifact-review-open";
 import { discoverSearchableArtifacts } from "./artifact-search";
 import {
+  aiArtifactsRoot,
+  ARTIFACT_MANIFEST_FILE,
   CONVERSATION_METADATA_FILE,
   conversationDirectory,
+  SESSION_TYPES_FILE,
 } from "../shared/artifact-files";
 import {
   RecentArtifactsTreeDataProvider,
@@ -20,6 +23,8 @@ import {
   runArtifactSearchCommand,
   type ArtifactQuickPickItem,
 } from "./artifact-search-command";
+import { runBulkMigration } from "./session-migration-command";
+import { migrateConversationToSession } from "../shared/conversation-artifact-registry";
 import { ensureSafeGlobalArtifactsRoot } from "../shared/artifact-validation";
 import {
   checkAllIntegrations,
@@ -95,9 +100,16 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     context,
   );
 
+  const refreshViewsAndService = (): void => {
+    workSessionsProvider.refresh();
+    recentArtifactsProvider.refresh();
+    conversationArtifactService.notifyChanged();
+  };
+
   const installAllDetectedIntegrationsAndNotify = async (): Promise<void> => {
     try {
       await installAllDetectedIntegrations(context);
+      refreshViewsAndService();
       const verification = await checkAllIntegrations(context);
       const summary = summarizeIntegrationVerification(verification);
       if (summary.severity === "warning") {
@@ -176,9 +188,26 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       await vscode.commands.executeCommand("agentPlus.installAllIntegrations");
     }),
     vscode.commands.registerCommand("agentPlus.migrateConversations", async () => {
-      void vscode.window.showInformationMessage(
-        "Tính năng chuyển đổi hàng loạt (Bulk Migration) đang được chuẩn bị cho Chặng 3.",
-      );
+      await runBulkMigration({
+        listCandidates: () => conversationArtifactService.listCandidates(),
+        migrateCandidate: (sessionId) => migrateConversationToSession(sessionId),
+        showWarningMessage: (message, ...items) => vscode.window.showWarningMessage(message, ...items),
+        showInformationMessage: (message) => vscode.window.showInformationMessage(message),
+        withProgress: async (title, task) => {
+          await vscode.window.withProgress(
+            {
+              location: vscode.ProgressLocation.Notification,
+              title,
+              cancellable: false,
+            },
+            (progress) => task((update) => progress.report(update)),
+          );
+        },
+        onDidMigrate: () => {
+          workSessionsProvider.refresh();
+          conversationArtifactService.notifyChanged();
+        },
+      });
     }),
     vscode.commands.registerCommand("agentPlus.openArtifactReview", async (resource?: unknown) => {
       if (resource instanceof vscode.Uri) {
@@ -227,6 +256,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.commands.registerCommand("agentPlus.installCopilotIntegration", async () => {
       try {
         const result = await installCopilotIntegration(context);
+        refreshViewsAndService();
         void vscode.window.showInformationMessage(
           `AI Artifacts MCP installed for GitHub Copilot in VS Code User configuration (${result.userConfigPath}).`,
         );
@@ -239,6 +269,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.commands.registerCommand("agentPlus.installCodexIntegration", async () => {
       try {
         await installCodexIntegration(context);
+        refreshViewsAndService();
         void vscode.window.showInformationMessage(
           "AI Artifacts MCP installed for Codex (~/.codex/config.toml). Please restart Codex to activate.",
         );
@@ -251,6 +282,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.commands.registerCommand("agentPlus.installCursorIntegration", async () => {
       try {
         await installCursorIntegration(context);
+        refreshViewsAndService();
         void vscode.window.showInformationMessage(
           "AI Artifacts MCP installed for Cursor (~/.cursor/mcp.json). Please restart Cursor to activate.",
         );
@@ -263,6 +295,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.commands.registerCommand("agentPlus.installClaudeIntegration", async () => {
       try {
         await installClaudeIntegration(context);
+        refreshViewsAndService();
         void vscode.window.showInformationMessage(
           "AI Artifacts MCP installed for Claude (~/.claude.json). Please restart Claude to activate.",
         );
@@ -275,6 +308,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.commands.registerCommand("agentPlus.installWindsurfIntegration", async () => {
       try {
         await installWindsurfIntegration(context);
+        refreshViewsAndService();
         void vscode.window.showInformationMessage(
           "AI Artifacts MCP installed for Windsurf (~/.codeium/windsurf/mcp_config.json). Please restart Windsurf to activate.",
         );
@@ -287,6 +321,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.commands.registerCommand("agentPlus.installClineIntegration", async () => {
       try {
         await installClineIntegration(context);
+        refreshViewsAndService();
         void vscode.window.showInformationMessage(
           "AI Artifacts MCP installed for Cline (cline_mcp_settings.json). Please reload Cline or window to activate.",
         );
@@ -516,6 +551,46 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     context.subscriptions.push(conversationWatcher);
   } catch (error) {
     console.error("Starting the conversation registry watcher failed:", error);
+  }
+
+  try {
+    const globalRoot = await ensureSafeGlobalArtifactsRoot();
+    const manifestWatcher = vscode.workspace.createFileSystemWatcher(
+      new vscode.RelativePattern(vscode.Uri.file(globalRoot), `*/${ARTIFACT_MANIFEST_FILE}`),
+      false,
+      false,
+      false,
+    );
+    const onManifestChange = () => {
+      recentArtifactsProvider.refresh();
+      conversationArtifactService.notifyChanged();
+    };
+    manifestWatcher.onDidCreate(onManifestChange);
+    manifestWatcher.onDidChange(onManifestChange);
+    manifestWatcher.onDidDelete(onManifestChange);
+    context.subscriptions.push(manifestWatcher);
+  } catch (error) {
+    console.error("Starting manifest watcher failed:", error);
+  }
+
+  try {
+    const productRoot = aiArtifactsRoot();
+    const sessionTypesWatcher = vscode.workspace.createFileSystemWatcher(
+      new vscode.RelativePattern(vscode.Uri.file(productRoot), SESSION_TYPES_FILE),
+      false,
+      false,
+      false,
+    );
+    const onTypesChange = () => {
+      workSessionsProvider.refresh();
+      conversationArtifactService.notifyChanged();
+    };
+    sessionTypesWatcher.onDidCreate(onTypesChange);
+    sessionTypesWatcher.onDidChange(onTypesChange);
+    sessionTypesWatcher.onDidDelete(onTypesChange);
+    context.subscriptions.push(sessionTypesWatcher);
+  } catch (error) {
+    console.error("Starting session types watcher failed:", error);
   }
 
   // Best-effort asynchronous retention cleanup (does not block extension activation)

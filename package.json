@@ -174,8 +174,8 @@
       "activitybar": [
         {
           "id": "agentPlus.artifacts",
-          "title": "Artifacts",
-          "icon": "media/icon.png"
+          "title": "AI Artifacts",
+          "icon": "media/layers.svg"
         }
       ]
     },
@@ -183,11 +183,13 @@
       "agentPlus.artifacts": [
         {
           "id": "agentPlus.recentArtifacts",
-          "name": "Recent Artifacts"
+          "name": "Recent Artifacts",
+          "visibility": "visible"
         },
         {
           "id": "agentPlus.sessions",
-          "name": "Sessions"
+          "name": "Sessions",
+          "visibility": "visible"
         }
       ]
     },

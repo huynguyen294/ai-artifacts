@@ -53,12 +53,13 @@ The core responsibility split is:
 | Codex skill              | Agent-side lifecycle and chat policy           | Exact artifact handle, complete proposed Markdown, and current tool result    |
 | Artifact Review MCP      | Artifact persistence, routing, and waiters     | Artifact creation, connection commits, waiter registry, grants, transactions |
 | Workspace Registry       | Evidence of currently open VS Code workspaces | Short-lived, per-window workspace snapshots                                  |
-| Conversation Registry    | Conversation-scoped artifact grouping         | Schema-v1 conversation manifests and registered artifact indexes             |
+| Work Session Registry    | Work Session organization and zones           | Schema-v2 session manifests, layout.json zones, registered artifact indexes, and global session types |
 | Artifact file protocol   | Persistent lifecycle and routing communication | Manifest, Markdown, comments, decision, and optional connection state         |
-| Extension entry          | VS Code activation and composition            | Commands, watchers, and provider registration                                |
+| Extension entry          | VS Code activation and composition            | Commands, watchers, Activity Bar views, and provider registration            |
 | Artifact Review Provider | Webview/extension orchestration               | One custom-editor session, async message queue, and its subscriptions        |
+| Work Session Provider    | Read-only session inspection orchestration    | `agentPlus.workSession` custom readonly editor, three-zone layout data        |
 | Artifact Store           | Trusted artifact persistence adapter          | Validated review state, comments, and submission writes                      |
-| Review Webview           | Human review interaction                      | Ephemeral UI state, drawers, and typed user intent                           |
+| Review Webview & Session Tab | Human review and session inspection       | Ephemeral UI state, ReviewApp, SessionApp, ConnectDialog, and typed user intent |
 | Markdown review pipeline | Document rendering and comment anchoring      | Parsed blocks and rendered annotations                                       |
 | Shared contracts         | Cross-process protocol definition             | Schemas, types, filenames, and binding rules                                 |
 | Integration manager      | Installation and verification                 | Extension-managed MCP runtime, skill, and supported-client configuration     |
@@ -239,7 +240,7 @@ The protocol is the communication medium between the independently running MCP p
 
 `artifact.json` remains the source of truth for artifact identity. Optional `artifact-connection.json` is routing state only: revisions order successful create/reconnect commits, and open-request IDs deduplicate watcher events. Wait and advance preserve it unchanged.
 
-`conversation.json` is schema-v1 grouping metadata for the conversation artifacts drawer. Pruned during automatic retention cleanup.
+`conversation.json` is schema-v2 metadata (`sessionId`, `title`, `instructions`, `typeId`, `createdAt`) and `layout.json` is schema-v1 layout state (`working`, `references`, `archived`). Independent files in `registered-artifacts/<artifactId>.json` define membership. Empty v2 sessions are preserved during retention cleanup; legacy v1 entries are detected and support migration with `conversation.v1.backup.json`.
 
 ## 5. VS Code extension entry
 
@@ -251,8 +252,9 @@ The protocol is the communication medium between the independently running MCP p
 **Responsibilities**
 
 - Activate the extension.
-- Construct the review provider and workspace-registry publisher.
-- Register the `agentPlus.artifactReview` custom editor.
+- Construct the review provider, session provider, work session sidebar providers, and workspace-registry publisher.
+- Register the `agentPlus.artifactReview` custom editor and `agentPlus.workSession` custom readonly editor.
+- Register the Activity Bar container `agentPlus.artifacts` (Codicons `layers` icon) with `agentPlus.recentArtifacts` and `agentPlus.sessions` TreeDataProviders.
 - Ensure and validate the global collection root before registering direct-child `artifact-connection.json` create/change events.
 - Revalidate the connection path, manifest binding, and linked-path safety on each bounded read attempt; ignore events whose target instance ID does not match the current window.
 - Automatically open the corresponding `artifact.md` when configured and targeted, even if that window is unfocused. Disabling auto-open does not undo the MCP connection commit.
@@ -260,6 +262,9 @@ The protocol is the communication medium between the independently running MCP p
 - Register commands to:
   - Open an artifact review from a selected `artifact.md`, an active Markdown or Artifact Review editor, or the global-collection file-picker fallback. Expose **Open Artifact Review** in Explorer, Markdown editor, and editor-tab context menus for file-backed `artifact.md`, then use the shared safe open coordinator rather than bypassing artifact validation.
   - Search artifacts by title in the global collection (`agentPlus.searchArtifact`).
+  - Open a work session (`agentPlus.openWorkSession`).
+  - Manage global session types via native QuickPick (`agentPlus.manageSessionTypes`).
+  - Run single and bulk conversation migration (`agentPlus.migrateConversations`).
   - Install, verify, and uninstall all supported integrations or one specific client.
   - Copy the current MCP configuration or production skill.
 - Compare bundled numeric MCP/skill versions with `~/.ai-artifacts/managed/integration-version.json`, determine the exact stale assets, and show the existing installer action only for a new stale-state fingerprint.
@@ -292,8 +297,9 @@ This is the composition root for the extension host, not the business-logic laye
   - `addComment` to the store.
   - `removeComment` to the store.
   - `submitReview` to the store.
-  - `listConversationArtifacts` to `ConversationArtifactService` with monotonic request ID tracking.
-  - `openConversationArtifact` to `ArtifactReviewOpenCoordinator.open(..., { preview, preserveFocus })`.
+  - `openArtifactSessions` to reveal or open the artifact's session via VS Code commands.
+  - `migrateSelectedConversation` to run single migration and open the newly migrated session.
+  - `copyArtifactConnectPrompt` to copy the appropriate prompt mode (`new` or `join`).
   - Allowed external links to VS Code.
 - Maintain an asynchronous FIFO queue for state mutations (`addComment`, `removeComment`, `submitReview`) while running read queries concurrently.
 - Serialize submission attempts within the editor using the local `sending` guard.
@@ -346,35 +352,36 @@ The provider is the orchestration bridge between an untrusted webview and truste
 
 Only schema-v6 artifacts at exact validated global handles are loaded. Schemas v3/v4/v5 and workspace-local artifacts are rejected before review state is exposed.
 
-## 8. Review Webview
+## 8. Review Webview & Session Tab
 
 **Source**
 
-- Entry: [`src/webview/main.tsx`](../src/webview/main.tsx)
-- Application: [`src/webview/ReviewApp.tsx`](../src/webview/ReviewApp.tsx)
-- Conversation drawer: [`src/webview/ConversationArtifactsDrawer.tsx`](../src/webview/ConversationArtifactsDrawer.tsx)
+- Entry & discriminator: [`src/webview/main.tsx`](../src/webview/main.tsx)
+- Review Application: [`src/webview/ReviewApp.tsx`](../src/webview/ReviewApp.tsx)
+- Session Application: [`src/webview/SessionApp.tsx`](../src/webview/SessionApp.tsx)
+- Connect Dialog: [`src/webview/ArtifactConnectDialog.tsx`](../src/webview/ArtifactConnectDialog.tsx)
+- Comments drawer: [`src/webview/CommentsDrawer.tsx`](../src/webview/CommentsDrawer.tsx)
 - Focus management: [`src/webview/focus-trap.ts`](../src/webview/focus-trap.ts)
 - Action policy: [`src/webview/review-actions.ts`](../src/webview/review-actions.ts)
 - VS Code messaging adapter: [`src/webview/vscode-api.ts`](../src/webview/vscode-api.ts)
 
 **Responsibilities**
 
-- Request initial state from the provider.
-- Render the artifact title, kind, round, Markdown, comments, and lifecycle notices.
-- Provide top header buttons for Comments drawer and Conversation Artifacts drawer with mutual exclusion.
-- In `ConversationArtifactsDrawer.tsx`, render registered artifacts in the conversation with search filter, keyboard navigation, status badges (`Current`, `Waiting`, `Approved`, `Revised`, `Saved`), preview click, and new-tab click (`Ctrl/Cmd+Click` / middle-click).
-- Capture a text selection within one reviewable block.
-- Normalize the selection to the block's visible-text offsets.
-- Create comment drafts and send typed add/remove messages.
-- Open comment details and navigate from the comments drawer to highlighted text.
-- Submit `revise`, `approve`, or `save` intent.
-- Disable actions while submitting, after submission, for read-only artifacts, or while a comment draft is unsaved.
-- Reset transient selection/comment UI when the review round changes.
-- Copy Markdown to the clipboard without changing lifecycle state.
+- Request initial state from the provider upon ready.
+- In `ReviewApp`:
+  - Render artifact title, kind, round, Markdown, comments, and lifecycle notices.
+  - Provide header buttons for Comments drawer, Sessions toggle (gated on MCP version 12), and Connect button.
+  - Open `ArtifactConnectDialog` when Connect is clicked on MCP version 12+, presenting New Session vs Join Session modes.
+  - Capture text selections, draft inline comments, and submit review decisions (`revise`, `approve`, `save`).
+- In `SessionApp`:
+  - Render session title, type badge, markdown instructions, and artifact cards across `Working`, `References`, and `Archived` zones.
+  - Route artifact card clicks to host for safe opening.
+- Reset transient UI upon round or session state change.
+- Copy Markdown or Connect prompt to clipboard.
 
 **Owns**
 
-- Ephemeral React state: current draft, comment body, drawer/popover state, active drawer, sending status, active comment, and copy feedback.
+- Ephemeral React state: current draft, comment body, drawer/popover state, active dialogs, sending status, and active selection.
 
 **Does not own**
 

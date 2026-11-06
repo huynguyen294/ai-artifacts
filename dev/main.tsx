@@ -3,7 +3,7 @@ import { createRoot } from "react-dom/client";
 import { App } from "../src/webview/ReviewApp";
 import "../src/webview/styles.css";
 import "./vscode-theme.css";
-import { createInitialConversationState, createInitialReviewState } from "./mock-data";
+import { createInitialReviewState, createInitialSessionsState } from "./mock-data";
 import { DevToolbar } from "./DevToolbar";
 import {
   ARTIFACT_ROOT_BLOCK_ID,
@@ -43,7 +43,7 @@ export function DevHostApp(): ReactNode {
     switch (message.type) {
       case "ready": {
         postToWebview({ type: "state", state: current });
-        postToWebview({ type: "conversationArtifactsState", state: createInitialConversationState() });
+        postToWebview({ type: "artifactSessionsState", ...createInitialSessionsState() });
         break;
       }
 
@@ -178,7 +178,7 @@ export function DevHostApp(): ReactNode {
 
     // Proactively broadcast initial state on mount to guarantee immediate render
     broadcastState(reviewStateRef.current);
-    postToWebview({ type: "conversationArtifactsState", state: createInitialConversationState() });
+    postToWebview({ type: "artifactSessionsState", ...createInitialSessionsState() });
 
     return () => {
       if (typeof window.setDevVsCodeHandler === "function") {
@@ -192,7 +192,7 @@ export function DevHostApp(): ReactNode {
   const handleReset = useCallback(() => {
     const fresh = createInitialReviewState();
     broadcastState(fresh);
-    postToWebview({ type: "conversationArtifactsState", state: createInitialConversationState() });
+    postToWebview({ type: "artifactSessionsState", ...createInitialSessionsState() });
   }, [broadcastState]);
 
   return (

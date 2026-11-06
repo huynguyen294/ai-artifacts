@@ -15,12 +15,15 @@ import {
   type WorkSession,
   type WorkSessionArtifactRow,
   type WorkSessionViewData,
+  type ArtifactSessionTarget,
 } from "../shared/contracts";
 import {
   ensureSafeConversationRegistryRoot,
+  listCandidatesForArtifact,
   listConversationsForArtifact,
   listMigrationCandidates,
   listSessions,
+  listSessionsForArtifact,
   readSession,
   removeArtifactFromConversation,
   type MigrationCandidateEntry,
@@ -232,6 +235,41 @@ export class ConversationArtifactService<TUri extends ArtifactFileUri> {
   async countCandidates(): Promise<number> {
     const candidates = await this.listCandidates();
     return candidates.length;
+  }
+
+  async getArtifactSessions(artifactId: string): Promise<ArtifactSessionTarget[]> {
+    const [sessions, candidates, types] = await Promise.all([
+      listSessionsForArtifact(artifactId, this.rootOptions),
+      listCandidatesForArtifact(artifactId, this.rootOptions),
+      listSessionTypes(this.rootOptions),
+    ]);
+
+    const typeMap = new Map<string, string>();
+    for (const t of types) {
+      typeMap.set(t.id, t.label);
+    }
+
+    const targets: ArtifactSessionTarget[] = [];
+
+    for (const s of sessions) {
+      targets.push({
+        sessionId: s.sessionId,
+        title: s.title,
+        version: 2,
+        typeId: s.typeId,
+        typeLabel: typeMap.get(s.typeId) ?? s.typeId,
+      });
+    }
+
+    for (const c of candidates) {
+      targets.push({
+        sessionId: c.sessionId,
+        title: c.title,
+        version: 1,
+      });
+    }
+
+    return targets;
   }
 
   async resolveSessionViewData(sessionId: string): Promise<WorkSessionViewData> {

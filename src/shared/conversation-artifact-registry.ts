@@ -1166,6 +1166,38 @@ export async function listSessionsForArtifact(
   return matching;
 }
 
+export async function listCandidatesForArtifact(
+  currentArtifactId: string,
+  options: GlobalArtifactsRootOptions = {},
+): Promise<MigrationCandidateEntry[]> {
+  const validatedCurrentArtifactId = artifactIdSchema.parse(currentArtifactId);
+  const candidates = await listMigrationCandidates(options);
+  const matching: MigrationCandidateEntry[] = [];
+  const rootOptions = toRootOptions(options);
+
+  for (const candidate of candidates) {
+    try {
+      const { canonicalRegisteredArtifactsDir } = await ensureSafeConversationDirectory(
+        candidate.sessionId,
+        rootOptions,
+        false,
+      );
+      const membershipPath = path.join(
+        canonicalRegisteredArtifactsDir,
+        `${validatedCurrentArtifactId}.json`,
+      );
+      const exists = await assertSafeRegularFile(membershipPath, true);
+      if (exists) {
+        matching.push(candidate);
+      }
+    } catch {
+      // skip invalid or unreadable candidate
+    }
+  }
+
+  return matching;
+}
+
 export async function listMigrationCandidates(
   options: GlobalArtifactsRootOptions = {},
 ): Promise<MigrationCandidateEntry[]> {

@@ -436,13 +436,33 @@ export const conversationArtifactsViewStateSchema = z.discriminatedUnion("status
 
 export type ConversationArtifactsViewState = z.infer<typeof conversationArtifactsViewStateSchema>;
 
+export const artifactSessionTargetSchema = z
+  .object({
+    sessionId: artifactConversationIdSchema,
+    title: z.string().min(1),
+    version: z.union([z.literal(1), z.literal(2)]),
+    typeId: sessionTypeIdSchema.optional(),
+    typeLabel: z.string().optional(),
+  })
+  .strict();
+
+export type ArtifactSessionTarget = z.infer<typeof artifactSessionTargetSchema>;
+
 export const webviewToExtensionMessageSchema = z.discriminatedUnion("type", [
   commentDraftSchema.extend({ type: z.literal("addComment") }),
   z.object({ type: z.literal("removeComment"), commentId: z.string().uuid() }),
   z.object({ type: z.literal("submitReview"), decision: reviewDecisionSchema }),
-  z.object({ type: z.literal("copyArtifactConnectPrompt") }),
+  z
+    .object({
+      type: z.literal("copyArtifactConnectPrompt"),
+      mode: z.enum(["new", "join"]).optional(),
+      sessionId: artifactConversationIdSchema.optional(),
+    })
+    .strict(),
   z.object({ type: z.literal("openExternal"), url: z.string().url() }),
   z.object({ type: z.literal("openConversationArtifact"), artifactId: artifactIdSchema }).strict(),
+  z.object({ type: z.literal("openArtifactSessions") }).strict(),
+  z.object({ type: z.literal("migrateSelectedConversation"), sessionId: artifactConversationIdSchema }).strict(),
   z.object({ type: z.literal("ready") }),
 ]);
 
@@ -453,7 +473,11 @@ export type SendStatus = "idle" | "submitting" | "submitted" | "error";
 
 export type ExtensionToWebviewMessage =
   | { type: "state"; state: ReviewState }
-  | { type: "conversationArtifactsState"; state: ConversationArtifactsViewState }
+  | {
+      type: "artifactSessionsState";
+      supported: boolean;
+      sessions: ArtifactSessionTarget[];
+    }
   | { type: "sendState"; status: SendStatus; message?: string; retryable?: boolean }
   | { type: "artifactConnectPromptCopied" }
   | { type: "error"; message: string };

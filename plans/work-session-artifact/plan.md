@@ -1,25 +1,25 @@
 # Sessions — Implementation plan
 
-Trạng thái: **Đang triển khai đợt Phase 1+2. Chặng 1 & Chặng 2 ĐÃ HOÀN THÀNH. Sẵn sàng cho Chặng 3.**
+Trạng thái: **Đợt Phase 1+2 ĐÃ HOÀN THÀNH 100% (Cả 3 Chặng: Chặng 1, 2, 3). Sẵn sàng chuyển giao hoặc review.**
 
 > [!NOTE]
 > - **Tiến độ triển khai:**
 >   - ✅ **Chặng 1 (Bước 1 + 2 + 3):** Headless Session v2, Layout ba mảng, Session Types global, Migration v1→v2 kèm backup, Retention cleanup, Tích hợp MCP & Skill v4 fail-closed với lỗi `CONVERSATION_MIGRATION_REQUIRED`. Đã xong 100% tests (540/540 passed), tsc clean, build clean.
 >   - ✅ **Chặng 2 (Bước 4 + 5):** Sidebar Activity Bar (Recent Artifacts cap 20 + Xem tất cả, Sessions v2), MCP v12 gate, Quick Pick native ⚙ quản lý types, Custom readonly Editor cho Session tab (`agentPlus.workSession`), webview `SessionApp.tsx` ba vùng (Working/References/Archived), click routing mở artifact review. Đã xong 100% tests (550/550 passed, 36/36 files), tsc clean, build clean cả 5 targets.
->   - ⏳ **Chặng 3 (Bước 6 + 7):** PENDING - SẴN SÀNG TRIỂN KHAI: Thay drawer bằng nút Sessions, Connect dialog New/Join, Bulk migration UI, Kiểm chứng kết hợp và nghiệm thu.
+>   - ✅ **Chặng 3 (Bước 6 + 7):** ĐÃ HOÀN THÀNH: Gỡ bỏ hoàn toàn `ConversationArtifactsDrawer` cũ; thêm nút **Sessions** trên `ReviewApp.tsx` gated MCP v12; tạo dialog `ArtifactConnectDialog.tsx` (New vs Join, disabled v1 kèm tooltip & badge); mở rộng prompt connect với các mode; tạo coordinator migration `session-migration-command.ts` (single & bulk có progress/xác nhận); cập nhật icon container `layers.svg`, title `AI Artifacts`, views `visibility: "visible"`. Đã xong 100% tests (548/548 passed, 37/37 files), tsc clean, build clean cả 5 targets.
 
 Ngoại lệ chuẩn bị: theo yêu cầu Chú, numeric MCP_VERSION đã tăng **11 → 12** để test phân biệt bản cũ/mới; `SKILL_VERSION` đã được nâng lên **4** để hỗ trợ hợp đồng phục hồi lỗi v1; package giữ 1.1.4.
 
 Nguồn yêu cầu: [analyzed.md](analyzed.md) và các quyết định tiếp nối trong chat. Khi khác nhau, quyết định mới trong chat được ưu tiên: `rules` đổi thành `instructions` (một chuỗi Markdown); style/UI library để bàn sau; chọn dnd-kit cho kéo thả.
 
-**Đợt triển khai đầu gộp Phase 1 + 2 trong [plan-phase-1.md](plan-phase-1.md).**
+**Đợt triển khai đầu gộp Phase 1 + 2 trong [plan-phase-1-2.md](plan-phase-1-2.md).**
 
 ## Các phase
 
 | Phase | Kết quả | Trạng thái |
 | --- | --- | --- |
-| [1. Session model](plan-phase-1.md) | Metadata Session v2 (`title`, `instructions`, `typeId`, `createdAt`), giữ `registered-artifacts/` làm nguồn membership, tách `layout.json` ba mảng, tính `updatedAt` từ `createdAt`/`registeredAt`; auto-create/reuse; migration theo yêu cầu; registry session types và API quản lý | ✅ **Đã hoàn thành trong Chặng 1** |
-| [2. Sidebar và điều hướng](plan-phase-1.md#phase-2--sidebar-quản-lý-session-types-và-điều-hướng) | Recent Artifacts/Sessions v2; gate theo MCP đã cài; phát hiện và popup bulk migration; ⚙ quản lý types; tab session chỉ đọc; Sessions/migration đơn lẻ thay drawer cũ | ⏳ Đang tiến hành (Chặng 2 & 3) |
+| [1. Session model](plan-phase-1-2.md) | Metadata Session v2 (`title`, `instructions`, `typeId`, `createdAt`), giữ `registered-artifacts/` làm nguồn membership, tách `layout.json` ba mảng, tính `updatedAt` từ `createdAt`/`registeredAt`; auto-create/reuse; migration theo yêu cầu; registry session types và API quản lý | ✅ **Đã hoàn thành trong Chặng 1** |
+| [2. Sidebar và điều hướng](plan-phase-1-2.md#phase-2--sidebar-quản-lý-session-types-và-điều-hướng) | Recent Artifacts/Sessions v2; gate theo MCP đã cài; phát hiện và popup bulk migration; ⚙ quản lý types; tab session chỉ đọc; Sessions/migration đơn lẻ thay drawer cũ | ✅ **Đã hoàn thành trong Chặng 2 & Chặng 3** |
 | 3. Session Manager cơ bản | Mở rộng tab đã có: sửa `title`/`instructions`/`typeId` (ghi `conversation.json`); Working ở giữa; panel Type/Hướng dẫn/References/Archived; cache đóng/mở; chuyển vùng bằng menu (ghi `layout.json`), gỡ artifact (xoá trong `registered-artifacts/` và lọc khỏi `layout.json`) | Chưa triển khai |
 | 4. Agent và catalog | Hoàn thiện new/join sau popup inspect tối thiểu ở Phase 2; catalog title/description/type/directory và instructions; đọc file chọn lọc | Chưa triển khai |
 | 5. Tổ chức trực quan | Card masonry; filter/search; `dnd-kit` sắp xếp và chuyển vùng, chỉ ghi `layout.json` một lần sau khi thả thành công (tách biệt với `registered-artifacts/` của MCP, bản lưu sau cùng thắng) | Chưa triển khai |
@@ -42,11 +42,12 @@ Nguồn yêu cầu: [analyzed.md](analyzed.md) và các quyết định tiếp n
 - Skill hướng dẫn đúng hai lựa chọn: mở một artifact đã thuộc conversation cũ để migration rồi retry cùng ID, hoặc user chọn tạo/mở Session mới thì retry không truyền ID và giữ ID mới cho chat. Không tự đổi nhóm, nhập membership cũ, clone artifact hoặc xoá conversation cũ. Hướng dẫn lỗi tối thiểu này đã được triển khai trong Chặng 1 cùng với việc nâng `SKILL_VERSION` từ **3 → 4**.
 - Popup inspect: conversation v1 thì Join disabled, chỉ cho inspect New Session; Session v2 có thể Join. New không truyền ID cũ và yêu cầu skill bỏ active ID cho request, Join chỉ định đúng ID v2. Có nhiều membership thì chỉ disable các đích v1. Extension copy prompt cho AI, không tự gọi MCP/mutate; chi tiết và nhánh MCP cũ ở mục 12 plan chung. Nhãn nút điều hướng đã chốt là **Sessions**.
 - **Đã chốt:** MCP cũ giữ Connect như hiện tại, click copy prompt exact artifact handle trực tiếp; không mở popup New/Join hoặc yêu cầu tạo Session v2. Chỉ MCP mới đủ mốc Session mới dùng popup/luồng New/Join. Recent Artifacts dùng 20 mục + Xem tất cả; quản lý types dùng Quick Pick native.
+- **Đã chốt cho Chặng 3:** Activity Bar dùng icon `layers` từ Codicons, đóng gói dạng SVG một màu 24×24 trong `media/`; label/tiêu đề container là **AI Artifacts**, không thêm Manager/Management. Giữ hai section **Recent Artifacts** và **Sessions**.
 - Chưa thêm dependency UI/style trong giai đoạn lập plan.
 
 ## 7 bước nhỏ trong đợt Phase 1+2 (Tổ chức theo 3 Chặng)
 
-Hướng dẫn từng file/hàm, luồng xử lý, khả năng phải đạt và kiểm chứng ở mục 13 của [plan chi tiết](plan-phase-1.md).
+Hướng dẫn từng file/hàm, luồng xử lý, khả năng phải đạt và kiểm chứng ở mục 13 của [plan chi tiết](plan-phase-1-2.md).
 
 | Bước / Chặng | Trạng thái | Công việc |
 | --- | --- | --- |
@@ -55,8 +56,8 @@ Hướng dẫn từng file/hàm, luồng xử lý, khả năng phải đạt và
 | **Chặng 1: Bước 3** | ✅ **Đã hoàn thành** | Nối MCP create/reuse/rollback và skill; create/inspect có ID v1 cùng trả lỗi `CONVERSATION_MIGRATION_REQUIRED`, skill v4 hướng dẫn migration hoặc chủ động tạo Session mới. |
 | **Chặng 2: Bước 4** | ✅ **Đã hoàn thành** | Sidebar Recent/Sessions v2, gate MCP đã cài từ version 12, ⚙ quản lý types qua Quick Pick native, phát hiện/đếm số conversation có thể migration. |
 | **Chặng 2: Bước 5** | ✅ **Đã hoàn thành** | Tab Session chỉ đọc qua `agentPlus.workSession`, hiện ba vùng và mở artifact qua coordinator; discriminator webview `SessionApp.tsx`; auto-refresh dữ liệu. |
-| **Chặng 3: Bước 6** | ⏳ PENDING | Bỏ drawer cũ, Sessions và migration đơn lẻ tại Review App; popup inspect New/Join (disable Join v1), popup/bulk migration từ sidebar; nối điều hướng vào tab Session. |
-| **Chặng 3: Bước 7** | ⏳ PENDING | Kiểm chứng kết hợp bằng tests/check/build và Extension Host theo plan. |
+| **Chặng 3: Bước 6** | ✅ **Đã hoàn thành** | Bỏ drawer cũ, Sessions và migration đơn lẻ tại Review App; popup inspect New/Join (disable Join v1), popup/bulk migration từ sidebar; nối điều hướng vào tab Session. Bổ sung cấu hình Recent Artifacts và Sessions mặc định bung lần đầu (`visibility: "visible"`), sau đó giữ lựa chọn người dùng; không tự mở sidebar khi khởi động. |
+| **Chặng 3: Bước 7** | ✅ **Đã hoàn thành** | Kiểm chứng kết hợp bằng tests/check/build và Extension Host theo plan. |
 
 ---
 

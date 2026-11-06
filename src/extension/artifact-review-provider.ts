@@ -1,12 +1,17 @@
 import * as vscode from "vscode";
-import { buildArtifactConnectPrompt } from "../shared/artifact-connect-prompt";
+import {
+  buildArtifactConnectPrompt,
+  type ArtifactConnectPromptOptions,
+} from "../shared/artifact-connect-prompt";
+import type { GlobalArtifactsRootOptions } from "../shared/artifact-files";
 import {
   webviewToExtensionMessageSchema,
-  type ConversationArtifactsViewState,
+  type ArtifactSessionTarget,
   type ExtensionToWebviewMessage,
 } from "../shared/contracts";
 import { ArtifactStore } from "./artifact-store";
-import type { OpenConversationArtifactResult } from "./conversation-artifact-service";
+import { runSingleMigration } from "./session-migration-command";
+import { resolveWorkSessionSupport } from "./work-session-support";
 
 function nonce(): string {
   const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
@@ -14,8 +19,7 @@ function nonce(): string {
 }
 
 export type ConversationArtifactProviderController = {
-  getConversationsViewState: (currentArtifactId: string) => Promise<ConversationArtifactsViewState>;
-  openConversationArtifact: (artifactId: string) => Promise<OpenConversationArtifactResult>;
+  getArtifactSessions: (artifactId: string) => Promise<ArtifactSessionTarget[]>;
   onDidChange: (listener: () => void | Promise<void>) => { dispose: () => void };
 };
 
@@ -32,6 +36,7 @@ export class ArtifactReviewProvider implements vscode.CustomTextEditorProvider {
     private readonly conversationService?: ConversationArtifactProviderController,
     private readonly createStore: (artifactPath: string) => ArtifactStoreController = (artifactPath) =>
       new ArtifactStore(artifactPath),
+    private readonly rootOptions: GlobalArtifactsRootOptions = {},
   ) {}
 
   async resolveCustomTextEditor(document: vscode.TextDocument, panel: vscode.WebviewPanel): Promise<void> {
@@ -59,37 +64,34 @@ export class ArtifactReviewProvider implements vscode.CustomTextEditorProvider {
       }
     };
 
-    const refreshConversations = async (showLoading = false): Promise<void> => {
+    const refreshSessions = async (): Promise<void> => {
       if (disposed) return;
       const seq = ++conversationRefreshSeq;
-      if (!this.conversationService) {
-        await post({
-          type: "conversationArtifactsState",
-          state: { status: "ready", groups: [], skippedCount: 0 },
-        });
-        return;
-      }
-      if (showLoading) {
-        await post({
-          type: "conversationArtifactsState",
-          state: { status: "loading" },
-        });
-      }
       try {
-        const state = await this.conversationService.getConversationsViewState(store.artifactId);
+        const support = await resolveWorkSessionSupport(this.rootOptions, this.context);
+        if (!support.supported || !this.conversationService) {
+          if (disposed || seq !== conversationRefreshSeq) return;
+          await post({
+            type: "artifactSessionsState",
+            supported: false,
+            sessions: [],
+          });
+          return;
+        }
+
+        const sessions = await this.conversationService.getArtifactSessions(store.artifactId);
         if (disposed || seq !== conversationRefreshSeq) return;
         await post({
-          type: "conversationArtifactsState",
-          state,
+          type: "artifactSessionsState",
+          supported: true,
+          sessions,
         });
-      } catch (error) {
+      } catch {
         if (disposed || seq !== conversationRefreshSeq) return;
         await post({
-          type: "conversationArtifactsState",
-          state: {
-            status: "error",
-            message: error instanceof Error ? error.message : String(error),
-          },
+          type: "artifactSessionsState",
+          supported: false,
+          sessions: [],
         });
       }
     };
@@ -100,13 +102,10 @@ export class ArtifactReviewProvider implements vscode.CustomTextEditorProvider {
         switch (message.type) {
           case "ready":
             await refresh();
-            void refreshConversations(true);
+            void refreshSessions();
             return;
-          case "openConversationArtifact": {
-            if (!this.conversationService) return;
-            await this.conversationService.openConversationArtifact(message.artifactId);
+          case "openConversationArtifact":
             return;
-          }
           case "addComment":
             await store.addComment(message);
             await refresh();
@@ -115,10 +114,143 @@ export class ArtifactReviewProvider implements vscode.CustomTextEditorProvider {
             await store.removeComment(message.commentId);
             await refresh();
             return;
-          case "copyArtifactConnectPrompt":
-            await vscode.env.clipboard.writeText(buildArtifactConnectPrompt(store.artifactDirectory));
+          case "copyArtifactConnectPrompt": {
+            const support = await resolveWorkSessionSupport(this.rootOptions, this.context);
+            let promptOptions: ArtifactConnectPromptOptions | undefined;
+
+            if (!support.supported || !this.conversationService) {
+              promptOptions = undefined;
+            } else if (message.mode === "join") {
+              if (!message.sessionId) {
+                void vscode.window.showErrorMessage("Thiếu Session ID để tham gia.");
+                return;
+              }
+              const sessions = await this.conversationService.getArtifactSessions(store.artifactId);
+              const targetSession = sessions.find((s) => s.sessionId === message.sessionId);
+              if (!targetSession || targetSession.version !== 2) {
+                void vscode.window.showErrorMessage(
+                  `Session "${message.sessionId}" không hợp lệ hoặc cần chuyển đổi sang v2 trước khi tham gia.`,
+                );
+                void refreshSessions();
+                return;
+              }
+              promptOptions = { mode: "join", sessionId: message.sessionId };
+            } else if (message.mode === "new") {
+              promptOptions = { mode: "new" };
+            }
+
+            const prompt = buildArtifactConnectPrompt(store.artifactDirectory, promptOptions);
+            await vscode.env.clipboard.writeText(prompt);
             await post({ type: "artifactConnectPromptCopied" });
             return;
+          }
+          case "openArtifactSessions": {
+            const support = await resolveWorkSessionSupport(this.rootOptions, this.context);
+            if (!support.supported || !this.conversationService) {
+              void vscode.window.showInformationMessage("Sessions yêu cầu MCP server phiên bản 12 trở lên.");
+              return;
+            }
+
+            const sessions = await this.conversationService.getArtifactSessions(store.artifactId);
+            if (sessions.length === 0) {
+              void vscode.window.showInformationMessage("Artifact chưa thuộc Session nào.");
+              return;
+            }
+
+            if (sessions.length === 1) {
+              const target = sessions[0]!;
+              if (target.version === 2) {
+                await vscode.commands.executeCommand("agentPlus.openWorkSession", target.sessionId);
+              } else {
+                const choice = await vscode.window.showInformationMessage(
+                  `Artifact này thuộc conversation "${target.title}". Bạn có muốn chuyển đổi sang Session v2 để mở?`,
+                  "Chuyển đổi",
+                  "Huỷ",
+                );
+                if (choice === "Chuyển đổi") {
+                  await runSingleMigration({
+                    sessionId: target.sessionId,
+                    rootOptions: this.rootOptions,
+                    openWorkSession: async (id) => {
+                      await vscode.commands.executeCommand("agentPlus.openWorkSession", id);
+                    },
+                    showErrorMessage: (msg) => vscode.window.showErrorMessage(msg),
+                    onDidMigrate: () => {
+                      void refreshSessions();
+                    },
+                  });
+                }
+              }
+              return;
+            }
+
+            // Multiple sessions: show QuickPick
+            const items = sessions.map((s) => ({
+              label: s.title,
+              description: s.version === 2 ? `Session · ${s.typeLabel ?? "conversation"}` : "Conversation cũ · Cần chuyển đổi",
+              target: s,
+            }));
+
+            const selected = await vscode.window.showQuickPick(items, {
+              title: "Chọn Session của Artifact để mở",
+            });
+
+            if (!selected) return;
+
+            if (selected.target.version === 2) {
+              await vscode.commands.executeCommand("agentPlus.openWorkSession", selected.target.sessionId);
+            } else {
+              const choice = await vscode.window.showInformationMessage(
+                `Chuyển đổi conversation "${selected.target.title}" sang Session v2 để mở?`,
+                "Chuyển đổi",
+                "Huỷ",
+              );
+              if (choice === "Chuyển đổi") {
+                await runSingleMigration({
+                  sessionId: selected.target.sessionId,
+                  rootOptions: this.rootOptions,
+                  openWorkSession: async (id) => {
+                    await vscode.commands.executeCommand("agentPlus.openWorkSession", id);
+                  },
+                  showErrorMessage: (msg) => vscode.window.showErrorMessage(msg),
+                  onDidMigrate: () => {
+                    void refreshSessions();
+                  },
+                });
+              }
+            }
+            return;
+          }
+          case "migrateSelectedConversation": {
+            const support = await resolveWorkSessionSupport(this.rootOptions, this.context);
+            if (!support.supported || !this.conversationService) {
+              void vscode.window.showInformationMessage("Sessions yêu cầu MCP server phiên bản 12 trở lên.");
+              return;
+            }
+
+            const sessions = await this.conversationService.getArtifactSessions(store.artifactId);
+            const targetCandidate = sessions.find((s) => s.sessionId === message.sessionId);
+            if (!targetCandidate || targetCandidate.version !== 1) {
+              void vscode.window.showErrorMessage(
+                `Conversation "${message.sessionId}" không còn ở trạng thái cần chuyển đổi.`,
+              );
+              void refreshSessions();
+              return;
+            }
+
+            await runSingleMigration({
+              sessionId: message.sessionId,
+              rootOptions: this.rootOptions,
+              openWorkSession: async (id) => {
+                await vscode.commands.executeCommand("agentPlus.openWorkSession", id);
+              },
+              showErrorMessage: (msg) => vscode.window.showErrorMessage(msg),
+              onDidMigrate: () => {
+                void refreshSessions();
+              },
+            });
+            return;
+          }
           case "openExternal": {
             const uri = vscode.Uri.parse(message.url, true);
             if (!new Set(["http", "https", "mailto"]).has(uri.scheme.toLowerCase())) {
@@ -179,7 +311,7 @@ export class ArtifactReviewProvider implements vscode.CustomTextEditorProvider {
     fileWatcher.onDidDelete(() => void refresh());
 
     const conversationSubscription = this.conversationService?.onDidChange(() => {
-      void refreshConversations(false);
+      void refreshSessions();
     });
 
     panel.onDidDispose(() => {
