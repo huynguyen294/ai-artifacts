@@ -4,13 +4,25 @@ import path from "node:path";
 import { z } from "zod";
 import {
   ARTIFACT_CONVERSATION_SCHEMA_VERSION,
+  DEFAULT_SESSION_TYPE_ID,
+  WORK_SESSION_LAYOUT_SCHEMA_VERSION,
+  WORK_SESSION_SCHEMA_VERSION,
+  ConversationMigrationRequiredError,
   artifactConversationIdSchema,
   artifactConversationMembershipSchema,
   artifactConversationMetadataSchema,
   artifactIdSchema,
   conversationNameSchema,
+  sessionInstructionsSchema,
+  sessionTitleSchema,
+  sessionTypeIdSchema,
+  workSessionLayoutSchema,
+  workSessionMetadataSchema,
   type ArtifactConversationMembership,
   type ArtifactConversationMetadata,
+  type WorkSession,
+  type WorkSessionLayout,
+  type WorkSessionMetadata,
 } from "./contracts";
 import {
   ARTIFACTS_DIRECTORY,
@@ -18,14 +30,18 @@ import {
   ARTIFACT_MARKDOWN_FILE,
   CONVERSATION_METADATA_FILE,
   CONVERSATION_REGISTERED_ARTIFACTS_DIRECTORY,
+  CONVERSATION_V1_BACKUP_FILE,
   OWNER_ONLY_DIRECTORY_MODE,
   OWNER_ONLY_FILE_MODE,
+  WORK_SESSION_LAYOUT_FILE,
   conversationDirectory,
   conversationMetadataPath,
   conversationRegisteredArtifactPath,
   conversationRegisteredArtifactsDirectory,
   conversationRegistryRoot,
+  conversationV1BackupPath,
   globalArtifactsRoot,
+  workSessionLayoutPath,
   type GlobalArtifactsRootOptions,
 } from "./artifact-files";
 import {
@@ -53,6 +69,21 @@ export class ConversationRegistryError extends Error {
     this.name = "ConversationRegistryError";
   }
 }
+
+export type CreateSessionInput = GlobalArtifactsRootOptions & {
+  title: string;
+  sessionId?: string;
+  typeId?: string;
+  instructions?: string;
+  createdAt?: string;
+};
+
+export type MigrationCandidateEntry = {
+  sessionId: string;
+  title: string;
+  createdAt: string;
+  artifactCount: number;
+};
 
 export type CreateConversationAndRegisterInput = GlobalArtifactsRootOptions & {
   conversationName: string;
@@ -113,7 +144,7 @@ function isWindowsReplaceBlock(error: unknown): boolean {
   return code === "EPERM" || code === "EBUSY" || code === "EACCES";
 }
 
-function compareIsoTimestampsAsc(leftIso: string, rightIso: string): number {
+export function compareIsoTimestampsAsc(leftIso: string, rightIso: string): number {
   const diff = Date.parse(leftIso) - Date.parse(rightIso);
   if (diff !== 0 && !Number.isNaN(diff)) {
     return diff;
@@ -389,6 +420,112 @@ export function parseConversationMembership(
   return parsed;
 }
 
+export function parseWorkSessionMetadata(
+  raw: unknown,
+  expectedSessionId?: string,
+): WorkSessionMetadata {
+  if (
+    !raw
+    || typeof raw !== "object"
+    || !("schemaVersion" in raw)
+    || raw.schemaVersion !== WORK_SESSION_SCHEMA_VERSION
+  ) {
+    throw new ConversationRegistryError(
+      `Unsupported work session metadata schema version. Expected version ${WORK_SESSION_SCHEMA_VERSION}.`,
+    );
+  }
+  const parsed = workSessionMetadataSchema.parse(raw);
+  if (expectedSessionId && parsed.sessionId !== expectedSessionId) {
+    throw new ConversationRegistryError(
+      `conversation.json sessionId (${parsed.sessionId}) does not match directory (${expectedSessionId}).`,
+    );
+  }
+  return parsed;
+}
+
+export function parseWorkSessionLayout(raw: unknown): WorkSessionLayout {
+  if (
+    !raw
+    || typeof raw !== "object"
+    || !("schemaVersion" in raw)
+    || raw.schemaVersion !== WORK_SESSION_LAYOUT_SCHEMA_VERSION
+  ) {
+    throw new ConversationRegistryError(
+      `Unsupported work session layout schema version. Expected version ${WORK_SESSION_LAYOUT_SCHEMA_VERSION}.`,
+    );
+  }
+  return workSessionLayoutSchema.parse(raw);
+}
+
+export function reconcileSessionLayout(
+  registeredMemberships: ArtifactConversationMembership[],
+  layoutRaw: WorkSessionLayout | null | undefined,
+  createdAt: string,
+): {
+  working: string[];
+  references: string[];
+  archived: string[];
+  updatedAt: string;
+} {
+  const registeredMap = new Map<string, ArtifactConversationMembership>();
+  for (const m of registeredMemberships) {
+    registeredMap.set(m.artifactId, m);
+  }
+
+  const seen = new Set<string>();
+  const working: string[] = [];
+  const references: string[] = [];
+  const archived: string[] = [];
+
+  const filterZone = (zoneSource: string[] | undefined, target: string[]) => {
+    if (!Array.isArray(zoneSource)) return;
+    for (const id of zoneSource) {
+      if (typeof id === "string" && registeredMap.has(id) && !seen.has(id)) {
+        seen.add(id);
+        target.push(id);
+      }
+    }
+  };
+
+  if (layoutRaw) {
+    filterZone(layoutRaw.working, working);
+    filterZone(layoutRaw.references, references);
+    filterZone(layoutRaw.archived, archived);
+  }
+
+  const unplaced: ArtifactConversationMembership[] = [];
+  for (const [id, membership] of registeredMap.entries()) {
+    if (!seen.has(id)) {
+      unplaced.push(membership);
+    }
+  }
+
+  unplaced.sort((a, b) => {
+    const diff = compareIsoTimestampsAsc(a.registeredAt, b.registeredAt);
+    if (diff !== 0) return diff;
+    return a.artifactId.localeCompare(b.artifactId);
+  });
+
+  for (const m of unplaced) {
+    seen.add(m.artifactId);
+    working.push(m.artifactId);
+  }
+
+  let latestIso = createdAt;
+  for (const m of registeredMemberships) {
+    if (compareIsoTimestampsAsc(m.registeredAt, latestIso) > 0) {
+      latestIso = m.registeredAt;
+    }
+  }
+
+  return {
+    working,
+    references,
+    archived,
+    updatedAt: latestIso,
+  };
+}
+
 export async function readConversationMetadata(
   artifactConversationId: string,
   options: GlobalArtifactsRootOptions = {},
@@ -570,6 +707,617 @@ export async function removeConversation(
 
   await fs.rm(canonicalConversationDir, { recursive: true, force: true });
   return true;
+}
+
+export async function createSession(
+  input: CreateSessionInput,
+): Promise<WorkSession> {
+  const title = sessionTitleSchema.parse(input.title);
+  const sessionId = input.sessionId
+    ? artifactConversationIdSchema.parse(input.sessionId)
+    : randomUUID();
+  const typeId = input.typeId
+    ? sessionTypeIdSchema.parse(input.typeId)
+    : DEFAULT_SESSION_TYPE_ID;
+  const instructions = input.instructions ?? "";
+  const createdAt = input.createdAt
+    ? z.string().datetime().parse(input.createdAt)
+    : new Date().toISOString();
+
+  const rootOptions = toRootOptions(input);
+  await ensureSafeConversationRegistryRoot(rootOptions);
+  const targetConvDir = conversationDirectory(sessionId, rootOptions);
+
+  try {
+    await fs.mkdir(targetConvDir, { recursive: false, mode: OWNER_ONLY_DIRECTORY_MODE });
+  } catch (error) {
+    if (errorCode(error) === "EEXIST") {
+      throw new ConversationRegistryError(`Session ${sessionId} already exists.`);
+    }
+    throw error;
+  }
+
+  const metadata: WorkSessionMetadata = {
+    schemaVersion: WORK_SESSION_SCHEMA_VERSION,
+    sessionId,
+    title,
+    typeId,
+    instructions,
+    createdAt,
+  };
+
+  try {
+    const { canonicalConversationDir } = await ensureSafeConversationDirectory(
+      sessionId,
+      rootOptions,
+      true,
+    );
+    const metadataPath = path.join(canonicalConversationDir, CONVERSATION_METADATA_FILE);
+    await writeAtomicJsonFile(canonicalConversationDir, metadataPath, metadata, true);
+  } catch (error) {
+    await fs.rm(targetConvDir, { recursive: true, force: true }).catch(() => undefined);
+    throw error;
+  }
+
+  return {
+    ...metadata,
+    working: [],
+    references: [],
+    archived: [],
+    updatedAt: createdAt,
+  };
+}
+
+export async function readSession(
+  sessionId: string,
+  options: GlobalArtifactsRootOptions = {},
+): Promise<WorkSession> {
+  const validatedId = artifactConversationIdSchema.parse(sessionId);
+  const rootOptions = toRootOptions(options);
+  const { canonicalConversationDir, canonicalRegisteredArtifactsDir } =
+    await ensureSafeConversationDirectory(validatedId, rootOptions, false);
+
+  const metadataPath = path.join(canonicalConversationDir, CONVERSATION_METADATA_FILE);
+  let rawJson: unknown;
+  try {
+    await assertSafeRegularFile(metadataPath, false);
+    await enforceOwnerOnlyFile(metadataPath);
+    const rawText = await fs.readFile(metadataPath, "utf8");
+    rawJson = JSON.parse(rawText);
+  } catch (error) {
+    if (errorCode(error) === "ENOENT") {
+      throw new ConversationNotFoundError(`Session ${validatedId} does not exist.`);
+    }
+    throw error;
+  }
+
+  if (
+    rawJson
+    && typeof rawJson === "object"
+    && "schemaVersion" in rawJson
+    && rawJson.schemaVersion === ARTIFACT_CONVERSATION_SCHEMA_VERSION
+  ) {
+    throw new ConversationMigrationRequiredError(validatedId);
+  }
+
+  const metadata = parseWorkSessionMetadata(rawJson, validatedId);
+
+  const memberFiles = await fs.readdir(canonicalRegisteredArtifactsDir, { withFileTypes: true });
+  const memberships: ArtifactConversationMembership[] = [];
+  for (const entry of memberFiles) {
+    if (entry.name.startsWith(".") || !entry.name.endsWith(".json") || !entry.isFile()) continue;
+    const rawArtifactId = entry.name.slice(0, -".json".length);
+    if (!artifactIdSchema.safeParse(rawArtifactId).success) continue;
+    try {
+      const memberPath = path.join(canonicalRegisteredArtifactsDir, entry.name);
+      await assertSafeRegularFile(memberPath, false);
+      await enforceOwnerOnlyFile(memberPath);
+      const memberText = await fs.readFile(memberPath, "utf8");
+      const memberJson = JSON.parse(memberText);
+      memberships.push(parseConversationMembership(memberJson, validatedId, rawArtifactId));
+    } catch {
+      // skip invalid membership entry
+    }
+  }
+
+  const layoutFilePath = path.join(canonicalConversationDir, WORK_SESSION_LAYOUT_FILE);
+  let layout: WorkSessionLayout | null = null;
+  try {
+    const exists = await assertSafeRegularFile(layoutFilePath, true);
+    if (exists) {
+      const layoutText = await fs.readFile(layoutFilePath, "utf8");
+      layout = parseWorkSessionLayout(JSON.parse(layoutText));
+    }
+  } catch {
+    layout = null;
+  }
+
+  const reconciled = reconcileSessionLayout(memberships, layout, metadata.createdAt);
+
+  return {
+    ...metadata,
+    working: reconciled.working,
+    references: reconciled.references,
+    archived: reconciled.archived,
+    updatedAt: reconciled.updatedAt,
+  };
+}
+
+export async function listSessions(
+  options: GlobalArtifactsRootOptions = {},
+): Promise<WorkSession[]> {
+  const rootOptions = toRootOptions(options);
+  const registryRoot = conversationRegistryRoot(rootOptions);
+
+  try {
+    const rootStat = await fs.lstat(registryRoot);
+    if (!rootStat.isDirectory()) return [];
+  } catch (error) {
+    if (errorCode(error) === "ENOENT") return [];
+    throw error;
+  }
+
+  const canonicalRoot = await ensureSafeConversationRegistryRoot(rootOptions);
+  const entries = await fs.readdir(canonicalRoot, { withFileTypes: true });
+  const sessions: WorkSession[] = [];
+
+  for (const entry of entries) {
+    if (entry.name.startsWith(".") || !entry.isDirectory()) continue;
+    const parsedId = artifactConversationIdSchema.safeParse(entry.name);
+    if (!parsedId.success) continue;
+    const convId = parsedId.data;
+
+    try {
+      const metaPath = path.join(canonicalRoot, convId, CONVERSATION_METADATA_FILE);
+      const metaRaw = JSON.parse(await fs.readFile(metaPath, "utf8"));
+      if (metaRaw?.schemaVersion === WORK_SESSION_SCHEMA_VERSION) {
+        const session = await readSession(convId, rootOptions);
+        sessions.push(session);
+      }
+    } catch {
+      // skip invalid or v1 entries
+    }
+  }
+
+  sessions.sort((a, b) => {
+    const diff = compareIsoTimestampsAsc(b.updatedAt, a.updatedAt);
+    if (diff !== 0) return diff;
+    return a.sessionId.localeCompare(b.sessionId);
+  });
+
+  return sessions;
+}
+
+export async function updateSessionDetails(
+  sessionId: string,
+  details: { title?: string; instructions?: string },
+  options: GlobalArtifactsRootOptions = {},
+): Promise<WorkSession> {
+  const validatedId = artifactConversationIdSchema.parse(sessionId);
+  const rootOptions = toRootOptions(options);
+  const { canonicalConversationDir } = await ensureSafeConversationDirectory(
+    validatedId,
+    rootOptions,
+    false,
+  );
+
+  const current = await readSession(validatedId, rootOptions);
+  const newTitle = details.title !== undefined ? sessionTitleSchema.parse(details.title) : current.title;
+  const newInstructions =
+    details.instructions !== undefined
+      ? sessionInstructionsSchema.parse(details.instructions)
+      : current.instructions;
+
+  const updatedMeta: WorkSessionMetadata = {
+    schemaVersion: WORK_SESSION_SCHEMA_VERSION,
+    sessionId: validatedId,
+    title: newTitle,
+    typeId: current.typeId,
+    instructions: newInstructions,
+    createdAt: current.createdAt,
+  };
+
+  const metadataPath = path.join(canonicalConversationDir, CONVERSATION_METADATA_FILE);
+  await writeAtomicJsonFile(canonicalConversationDir, metadataPath, updatedMeta, false);
+
+  return {
+    ...current,
+    title: newTitle,
+    instructions: newInstructions,
+  };
+}
+
+export async function setSessionType(
+  sessionId: string,
+  rawTypeId: string,
+  options: GlobalArtifactsRootOptions = {},
+): Promise<WorkSession> {
+  const validatedId = artifactConversationIdSchema.parse(sessionId);
+  const typeId = sessionTypeIdSchema.parse(rawTypeId);
+  const rootOptions = toRootOptions(options);
+  const { canonicalConversationDir } = await ensureSafeConversationDirectory(
+    validatedId,
+    rootOptions,
+    false,
+  );
+
+  const current = await readSession(validatedId, rootOptions);
+
+  const updatedMeta: WorkSessionMetadata = {
+    schemaVersion: WORK_SESSION_SCHEMA_VERSION,
+    sessionId: validatedId,
+    title: current.title,
+    typeId,
+    instructions: current.instructions,
+    createdAt: current.createdAt,
+  };
+
+  const metadataPath = path.join(canonicalConversationDir, CONVERSATION_METADATA_FILE);
+  await writeAtomicJsonFile(canonicalConversationDir, metadataPath, updatedMeta, false);
+
+  return {
+    ...current,
+    typeId,
+  };
+}
+
+export async function registerArtifactInSession(
+  sessionId: string,
+  artifactId: string,
+  options: GlobalArtifactsRootOptions & { registeredAt?: string } = {},
+): Promise<{
+  session: WorkSession;
+  previousRegisteredAt?: string | undefined;
+  added: boolean;
+}> {
+  const validatedSessionId = artifactConversationIdSchema.parse(sessionId);
+  const validatedArtifactId = artifactIdSchema.parse(artifactId);
+  const rootOptions = toRootOptions(options);
+
+  const { canonicalConversationDir, canonicalRegisteredArtifactsDir } = await ensureSafeConversationDirectory(
+    validatedSessionId,
+    rootOptions,
+    false,
+  );
+
+  const metadataFilePath = path.join(canonicalConversationDir, CONVERSATION_METADATA_FILE);
+  await assertSafeRegularFile(metadataFilePath, false);
+  await enforceOwnerOnlyFile(metadataFilePath);
+  const rawMetaText = await fs.readFile(metadataFilePath, "utf8");
+  const rawMetaJson = JSON.parse(rawMetaText);
+  if (
+    rawMetaJson
+    && typeof rawMetaJson === "object"
+    && "schemaVersion" in rawMetaJson
+    && rawMetaJson.schemaVersion === ARTIFACT_CONVERSATION_SCHEMA_VERSION
+  ) {
+    throw new ConversationMigrationRequiredError(validatedSessionId);
+  }
+  parseWorkSessionMetadata(rawMetaJson, validatedSessionId);
+
+  const membershipPath = path.join(
+    canonicalRegisteredArtifactsDir,
+    `${validatedArtifactId}.json`,
+  );
+
+  let previousRegisteredAt: string | undefined;
+  let added = true;
+
+  try {
+    const exists = await assertSafeRegularFile(membershipPath, true);
+    if (exists) {
+      const rawText = await fs.readFile(membershipPath, "utf8");
+      const parsed = artifactConversationMembershipSchema.safeParse(JSON.parse(rawText));
+      if (parsed.success) {
+        previousRegisteredAt = parsed.data.registeredAt;
+        added = false;
+      }
+    }
+  } catch {
+    previousRegisteredAt = undefined;
+  }
+
+  const registeredAt = options.registeredAt
+    ? z.string().datetime().parse(options.registeredAt)
+    : new Date().toISOString();
+
+  const membership: ArtifactConversationMembership = {
+    schemaVersion: ARTIFACT_CONVERSATION_SCHEMA_VERSION,
+    artifactConversationId: validatedSessionId,
+    artifactId: validatedArtifactId,
+    registeredAt,
+  };
+
+  await writeAtomicJsonFile(canonicalRegisteredArtifactsDir, membershipPath, membership, false);
+
+  const session = await readSession(validatedSessionId, rootOptions);
+  return { session, previousRegisteredAt, added };
+}
+
+export async function moveArtifactInSession(
+  sessionId: string,
+  artifactId: string,
+  targetZone: "working" | "references" | "archived",
+  targetIndex: number,
+  options: GlobalArtifactsRootOptions = {},
+): Promise<WorkSession> {
+  const validatedSessionId = artifactConversationIdSchema.parse(sessionId);
+  const validatedArtifactId = artifactIdSchema.parse(artifactId);
+  const rootOptions = toRootOptions(options);
+
+  const session = await readSession(validatedSessionId, rootOptions);
+
+  const allIds = new Set([...session.working, ...session.references, ...session.archived]);
+  if (!allIds.has(validatedArtifactId)) {
+    throw new ConversationRegistryError(
+      `Artifact ${validatedArtifactId} does not belong to session ${validatedSessionId}.`,
+    );
+  }
+
+  const newWorking = session.working.filter((id) => id !== validatedArtifactId);
+  const newReferences = session.references.filter((id) => id !== validatedArtifactId);
+  const newArchived = session.archived.filter((id) => id !== validatedArtifactId);
+
+  const targetList =
+    targetZone === "working"
+      ? newWorking
+      : targetZone === "references"
+      ? newReferences
+      : newArchived;
+
+  const clampedIndex = Math.max(0, Math.min(targetIndex, targetList.length));
+  targetList.splice(clampedIndex, 0, validatedArtifactId);
+
+  const layout: WorkSessionLayout = {
+    schemaVersion: WORK_SESSION_LAYOUT_SCHEMA_VERSION,
+    working: newWorking,
+    references: newReferences,
+    archived: newArchived,
+  };
+
+  const { canonicalConversationDir } = await ensureSafeConversationDirectory(
+    validatedSessionId,
+    rootOptions,
+    false,
+  );
+  const layoutFilePath = path.join(canonicalConversationDir, WORK_SESSION_LAYOUT_FILE);
+  await writeAtomicJsonFile(canonicalConversationDir, layoutFilePath, layout, false);
+
+  return {
+    ...session,
+    working: newWorking,
+    references: newReferences,
+    archived: newArchived,
+  };
+}
+
+export async function removeArtifactFromSession(
+  sessionId: string,
+  artifactId: string,
+  options: GlobalArtifactsRootOptions = {},
+): Promise<boolean> {
+  const validatedSessionId = artifactConversationIdSchema.parse(sessionId);
+  const validatedArtifactId = artifactIdSchema.parse(artifactId);
+  const rootOptions = toRootOptions(options);
+
+  let canonicalConversationDir: string;
+  let canonicalRegisteredArtifactsDir: string;
+  try {
+    const safeDirs = await ensureSafeConversationDirectory(validatedSessionId, rootOptions, false);
+    canonicalConversationDir = safeDirs.canonicalConversationDir;
+    canonicalRegisteredArtifactsDir = safeDirs.canonicalRegisteredArtifactsDir;
+  } catch (error) {
+    if (error instanceof ConversationNotFoundError) return false;
+    throw error;
+  }
+
+  const membershipPath = path.join(
+    canonicalRegisteredArtifactsDir,
+    `${validatedArtifactId}.json`,
+  );
+
+  let removed = false;
+  try {
+    await fs.unlink(membershipPath);
+    removed = true;
+  } catch (error) {
+    if (errorCode(error) !== "ENOENT") throw error;
+  }
+
+  const layoutPath = path.join(canonicalConversationDir, WORK_SESSION_LAYOUT_FILE);
+  try {
+    const exists = await assertSafeRegularFile(layoutPath, true);
+    if (exists) {
+      const layoutText = await fs.readFile(layoutPath, "utf8");
+      const layout = parseWorkSessionLayout(JSON.parse(layoutText));
+      const hasInWorking = layout.working.includes(validatedArtifactId);
+      const hasInRef = layout.references.includes(validatedArtifactId);
+      const hasInArch = layout.archived.includes(validatedArtifactId);
+      if (hasInWorking || hasInRef || hasInArch) {
+        const updatedLayout: WorkSessionLayout = {
+          schemaVersion: WORK_SESSION_LAYOUT_SCHEMA_VERSION,
+          working: layout.working.filter((id) => id !== validatedArtifactId),
+          references: layout.references.filter((id) => id !== validatedArtifactId),
+          archived: layout.archived.filter((id) => id !== validatedArtifactId),
+        };
+        await writeAtomicJsonFile(canonicalConversationDir, layoutPath, updatedLayout, false);
+      }
+    }
+  } catch {
+    // ignore layout cleanup failure
+  }
+
+  return removed;
+}
+
+export async function listSessionsForArtifact(
+  currentArtifactId: string,
+  options: GlobalArtifactsRootOptions = {},
+): Promise<WorkSession[]> {
+  const validatedCurrentArtifactId = artifactIdSchema.parse(currentArtifactId);
+  const allSessions = await listSessions(options);
+  const matching: WorkSession[] = [];
+  for (const session of allSessions) {
+    const allIds = new Set([...session.working, ...session.references, ...session.archived]);
+    if (allIds.has(validatedCurrentArtifactId)) {
+      matching.push(session);
+    }
+  }
+  return matching;
+}
+
+export async function listMigrationCandidates(
+  options: GlobalArtifactsRootOptions = {},
+): Promise<MigrationCandidateEntry[]> {
+  const rootOptions = toRootOptions(options);
+  const registryRoot = conversationRegistryRoot(rootOptions);
+
+  try {
+    const rootStat = await fs.lstat(registryRoot);
+    if (!rootStat.isDirectory()) return [];
+  } catch (error) {
+    if (errorCode(error) === "ENOENT") return [];
+    throw error;
+  }
+
+  const canonicalRoot = await ensureSafeConversationRegistryRoot(rootOptions);
+  const entries = await fs.readdir(canonicalRoot, { withFileTypes: true });
+  const candidates: MigrationCandidateEntry[] = [];
+
+  for (const entry of entries) {
+    if (entry.name.startsWith(".") || !entry.isDirectory()) continue;
+    const parsedId = artifactConversationIdSchema.safeParse(entry.name);
+    if (!parsedId.success) continue;
+    const convId = parsedId.data;
+
+    try {
+      const { canonicalConversationDir, canonicalRegisteredArtifactsDir } =
+        await ensureSafeConversationDirectory(convId, rootOptions, false);
+      const metaPath = path.join(canonicalConversationDir, CONVERSATION_METADATA_FILE);
+      const metaRaw = JSON.parse(await fs.readFile(metaPath, "utf8"));
+      if (metaRaw?.schemaVersion === ARTIFACT_CONVERSATION_SCHEMA_VERSION) {
+        const v1Meta = parseConversationMetadata(metaRaw, convId);
+        const memberFiles = await fs.readdir(canonicalRegisteredArtifactsDir, { withFileTypes: true });
+        const validCount = memberFiles.filter(
+          (f) => f.isFile() && f.name.endsWith(".json") && !f.name.startsWith("."),
+        ).length;
+        candidates.push({
+          sessionId: convId,
+          title: v1Meta.conversationName,
+          createdAt: v1Meta.createdAt,
+          artifactCount: validCount,
+        });
+      }
+    } catch {
+      // skip invalid/corrupt candidate
+    }
+  }
+
+  return candidates;
+}
+
+export async function migrateConversationToSession(
+  conversationId: string,
+  options: GlobalArtifactsRootOptions = {},
+): Promise<{ status: "migrated" | "already-v2"; session: WorkSession }> {
+  const validatedId = artifactConversationIdSchema.parse(conversationId);
+  const rootOptions = toRootOptions(options);
+  const { canonicalConversationDir, canonicalRegisteredArtifactsDir } =
+    await ensureSafeConversationDirectory(validatedId, rootOptions, false);
+
+  const metadataPath = path.join(canonicalConversationDir, CONVERSATION_METADATA_FILE);
+  const rawText = await fs.readFile(metadataPath, "utf8");
+  const rawJson = JSON.parse(rawText);
+
+  if (
+    rawJson
+    && typeof rawJson === "object"
+    && "schemaVersion" in rawJson
+    && rawJson.schemaVersion === WORK_SESSION_SCHEMA_VERSION
+  ) {
+    const session = await readSession(validatedId, rootOptions);
+    return { status: "already-v2", session };
+  }
+
+  const v1Meta = parseConversationMetadata(rawJson, validatedId);
+
+  const memberFiles = await fs.readdir(canonicalRegisteredArtifactsDir, { withFileTypes: true });
+  const memberships: ArtifactConversationMembership[] = [];
+  for (const entry of memberFiles) {
+    if (entry.name.startsWith(".") || !entry.name.endsWith(".json") || !entry.isFile()) continue;
+    const rawArtifactId = entry.name.slice(0, -".json".length);
+    if (!artifactIdSchema.safeParse(rawArtifactId).success) continue;
+    try {
+      const memberPath = path.join(canonicalRegisteredArtifactsDir, entry.name);
+      await assertSafeRegularFile(memberPath, false);
+      await enforceOwnerOnlyFile(memberPath);
+      const memberText = await fs.readFile(memberPath, "utf8");
+      const parsed = parseConversationMembership(JSON.parse(memberText), validatedId, rawArtifactId);
+      memberships.push(parsed);
+    } catch {
+      // skip invalid or corrupt membership entry
+    }
+  }
+
+  const backupPath = path.join(canonicalConversationDir, CONVERSATION_V1_BACKUP_FILE);
+  await fs.writeFile(backupPath, rawText, {
+    encoding: "utf8",
+    mode: OWNER_ONLY_FILE_MODE,
+  });
+
+  memberships.sort((a, b) => {
+    const diff = compareIsoTimestampsAsc(a.registeredAt, b.registeredAt);
+    if (diff !== 0) return diff;
+    return a.artifactId.localeCompare(b.artifactId);
+  });
+
+  const initialLayout: WorkSessionLayout = {
+    schemaVersion: WORK_SESSION_LAYOUT_SCHEMA_VERSION,
+    working: memberships.map((m) => m.artifactId),
+    references: [],
+    archived: [],
+  };
+
+  const layoutPath = path.join(canonicalConversationDir, WORK_SESSION_LAYOUT_FILE);
+  await writeAtomicJsonFile(canonicalConversationDir, layoutPath, initialLayout, false);
+
+  const v2Meta: WorkSessionMetadata = {
+    schemaVersion: WORK_SESSION_SCHEMA_VERSION,
+    sessionId: validatedId,
+    title: v1Meta.conversationName,
+    typeId: DEFAULT_SESSION_TYPE_ID,
+    instructions: "",
+    createdAt: v1Meta.createdAt,
+  };
+
+  await writeAtomicJsonFile(canonicalConversationDir, metadataPath, v2Meta, false);
+
+  const session = await readSession(validatedId, rootOptions);
+  return { status: "migrated", session };
+}
+
+export async function reassignSessionType(
+  oldTypeId: string,
+  newTypeId: string,
+  options: GlobalArtifactsRootOptions = {},
+): Promise<number> {
+  const sessions = await listSessions(options);
+  let updatedCount = 0;
+  for (const session of sessions) {
+    if (session.typeId === oldTypeId) {
+      await setSessionType(session.sessionId, newTypeId, options);
+      updatedCount++;
+    }
+  }
+  return updatedCount;
+}
+
+export async function countSessionsByType(
+  typeId: string,
+  options: GlobalArtifactsRootOptions = {},
+): Promise<number> {
+  const sessions = await listSessions(options);
+  return sessions.filter((s) => s.typeId === typeId).length;
 }
 
 export async function listConversationsForArtifact(
@@ -912,21 +1660,63 @@ export async function cleanupStaleConversations(
       }
     }
 
-    if (remainingValidMemberships === 0 && !hadSkippedEntries) {
+    // Inspect conversation schema version
+    let isWorkSessionV2 = false;
+    try {
+      const metadataPath = path.join(canonicalConversationDir, CONVERSATION_METADATA_FILE);
+      const metaText = await fs.readFile(metadataPath, "utf8");
+      const metaJson = JSON.parse(metaText);
+      if (metaJson?.schemaVersion === WORK_SESSION_SCHEMA_VERSION) {
+        isWorkSessionV2 = true;
+      }
+    } catch {
+      isWorkSessionV2 = false;
+    }
+
+    if (isWorkSessionV2) {
+      // For Work Session v2, clean up stale artifact IDs from layout.json if layout exists
+      const layoutPath = path.join(canonicalConversationDir, WORK_SESSION_LAYOUT_FILE);
       try {
-        // Atomically remove registered-artifacts only if it is genuinely empty;
-        // if a concurrent registration added a membership or temp file after readdir, rmdir fails with ENOTEMPTY.
-        await fs.rmdir(canonicalRegisteredArtifactsDir);
-        const metadataPath = path.join(canonicalConversationDir, CONVERSATION_METADATA_FILE);
-        await fs.unlink(metadataPath).catch((error) => {
-          if (errorCode(error) !== "ENOENT") throw error;
-        });
-        await fs.rmdir(canonicalConversationDir);
-        result.removedConversations++;
-      } catch (error) {
-        const code = errorCode(error);
-        if (code !== "ENOTEMPTY" && code !== "EEXIST") {
-          logDiagnostic?.(`Failed to remove empty conversation directory ${canonicalConversationDir}`, error);
+        const exists = await assertSafeRegularFile(layoutPath, true);
+        if (exists) {
+          const layoutText = await fs.readFile(layoutPath, "utf8");
+          const layout = parseWorkSessionLayout(JSON.parse(layoutText));
+          const currentMemberFiles = await fs.readdir(canonicalRegisteredArtifactsDir);
+          const currentMemberIds = new Set(
+            currentMemberFiles
+              .filter((f) => f.endsWith(".json") && !f.startsWith("."))
+              .map((f) => f.slice(0, -".json".length)),
+          );
+          const updatedLayout: WorkSessionLayout = {
+            schemaVersion: WORK_SESSION_LAYOUT_SCHEMA_VERSION,
+            working: layout.working.filter((id) => currentMemberIds.has(id)),
+            references: layout.references.filter((id) => currentMemberIds.has(id)),
+            archived: layout.archived.filter((id) => currentMemberIds.has(id)),
+          };
+          await writeAtomicJsonFile(canonicalConversationDir, layoutPath, updatedLayout, false);
+        }
+      } catch {
+        // ignore layout prune failure during retention cleanup
+      }
+      // Critical: WorkSession v2 is PRESERVED even if it has 0 memberships!
+    } else {
+      // v1 cleanup: remove empty conversation directory
+      if (remainingValidMemberships === 0 && !hadSkippedEntries) {
+        try {
+          // Atomically remove registered-artifacts only if it is genuinely empty;
+          // if a concurrent registration added a membership or temp file after readdir, rmdir fails with ENOTEMPTY.
+          await fs.rmdir(canonicalRegisteredArtifactsDir);
+          const metadataPath = path.join(canonicalConversationDir, CONVERSATION_METADATA_FILE);
+          await fs.unlink(metadataPath).catch((error) => {
+            if (errorCode(error) !== "ENOENT") throw error;
+          });
+          await fs.rmdir(canonicalConversationDir);
+          result.removedConversations++;
+        } catch (error) {
+          const code = errorCode(error);
+          if (code !== "ENOTEMPTY" && code !== "EEXIST") {
+            logDiagnostic?.(`Failed to remove empty conversation directory ${canonicalConversationDir}`, error);
+          }
         }
       }
     }

@@ -198,7 +198,7 @@ describe("artifact schema v6 contract", () => {
 describe("integration version receipt schema v1 contract", () => {
   it("locks numeric bundled versions and accepts complete or partial receipts", () => {
     expect(MCP_VERSION).toBe(12);
-    expect(SKILL_VERSION).toBe(3);
+    expect(SKILL_VERSION).toBe(4);
     expect(INTEGRATION_VERSION_SCHEMA_VERSION).toBe(1);
 
     const completeReceipt = {
@@ -415,6 +415,48 @@ describe("artifact conversation schema v1 contract", () => {
     expect(() => contracts.artifactConversationMembershipSchema.parse({ ...validMembership, artifactConversationId: "../escape" })).toThrow();
     expect(() => contracts.artifactConversationMembershipSchema.parse({ ...validMembership, artifactId: "../escape" })).toThrow();
     expect(() => contracts.artifactConversationMembershipSchema.parse({ ...validMembership, title: "copied-title" })).toThrow();
+  });
+
+  it("locks work session schema version to 2 and validates session metadata", () => {
+    expect(contracts.WORK_SESSION_SCHEMA_VERSION).toBe(2);
+    const validMeta = {
+      schemaVersion: 2,
+      sessionId: artifactConversationId,
+      title: "Improve Artifact Viewer",
+      typeId: "conversation",
+      instructions: "## Instructions\nDo this first",
+      createdAt: timestamp,
+    };
+    expect(contracts.workSessionMetadataSchema.parse(validMeta)).toEqual(validMeta);
+    expect(() => contracts.workSessionMetadataSchema.parse({ ...validMeta, schemaVersion: 1 })).toThrow();
+    expect(() => contracts.workSessionMetadataSchema.parse({ ...validMeta, title: "   " })).toThrow();
+    expect(() => contracts.workSessionMetadataSchema.parse({ ...validMeta, typeId: "" })).toThrow();
+  });
+
+  it("locks work session layout schema version to 1 and validates zones", () => {
+    expect(contracts.WORK_SESSION_LAYOUT_SCHEMA_VERSION).toBe(1);
+    const validLayout = {
+      schemaVersion: 1,
+      working: ["artifact-1", "artifact-2"],
+      references: ["artifact-ref"],
+      archived: [],
+    };
+    expect(contracts.workSessionLayoutSchema.parse(validLayout)).toEqual(validLayout);
+    expect(() => contracts.workSessionLayoutSchema.parse({ ...validLayout, schemaVersion: 2 })).toThrow();
+    expect(() => contracts.workSessionLayoutSchema.parse({ ...validLayout, working: ["../invalid"] })).toThrow();
+  });
+
+  it("locks session types schema version to 1 and validates session types document", () => {
+    expect(contracts.SESSION_TYPES_SCHEMA_VERSION).toBe(1);
+    const validDoc = {
+      schemaVersion: 1,
+      types: [
+        { id: "conversation", label: "Conversation" },
+        { id: "project", label: "Project" },
+      ],
+    };
+    expect(contracts.sessionTypesDocumentSchema.parse(validDoc)).toEqual(validDoc);
+    expect(() => contracts.sessionTypesDocumentSchema.parse({ ...validDoc, types: [{ id: "c", label: "  " }] })).toThrow();
   });
 
   it("validates optional conversation input and view state schemas", () => {

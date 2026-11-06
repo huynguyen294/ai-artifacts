@@ -55,6 +55,11 @@
   "activationEvents": [
     "onStartupFinished",
     "onCustomEditor:agentPlus.artifactReview",
+    "onCustomEditor:agentPlus.workSession",
+    "onView:agentPlus.recentArtifacts",
+    "onView:agentPlus.sessions",
+    "onCommand:agentPlus.openWorkSession",
+    "onCommand:agentPlus.manageSessionTypes",
     "onCommand:agentPlus.openArtifactReview",
     "onCommand:agentPlus.searchArtifact",
     "onCommand:agentPlus.installAllIntegrations",
@@ -86,6 +91,15 @@
       {
         "command": "agentPlus.searchArtifact",
         "title": "AI Artifacts: Search Artifact"
+      },
+      {
+        "command": "agentPlus.openWorkSession",
+        "title": "AI Artifacts: Open Work Session"
+      },
+      {
+        "command": "agentPlus.manageSessionTypes",
+        "title": "AI Artifacts: Manage Session Types",
+        "icon": "$(gear)"
       },
       {
         "command": "agentPlus.installAllIntegrations",
@@ -156,6 +170,27 @@
         "title": "AI Artifacts: Uninstall Integration for Cline"
       }
     ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "agentPlus.artifacts",
+          "title": "Artifacts",
+          "icon": "media/icon.png"
+        }
+      ]
+    },
+    "views": {
+      "agentPlus.artifacts": [
+        {
+          "id": "agentPlus.recentArtifacts",
+          "name": "Recent Artifacts"
+        },
+        {
+          "id": "agentPlus.sessions",
+          "name": "Sessions"
+        }
+      ]
+    },
     "menus": {
       "explorer/context": [
         {
@@ -177,6 +212,13 @@
           "when": "resourceFilename == artifact.md && resourceScheme == file",
           "group": "navigation@0"
         }
+      ],
+      "view/title": [
+        {
+          "command": "agentPlus.manageSessionTypes",
+          "when": "view == agentPlus.sessions",
+          "group": "navigation"
+        }
       ]
     },
     "customEditors": [
@@ -189,6 +231,16 @@
           }
         ],
         "priority": "default"
+      },
+      {
+        "viewType": "agentPlus.workSession",
+        "displayName": "Work Session",
+        "selector": [
+          {
+            "filenamePattern": "**/.ai-artifacts/conversation-registry/*/conversation.json"
+          }
+        ],
+        "priority": "option"
       }
     ],
     "configuration": {

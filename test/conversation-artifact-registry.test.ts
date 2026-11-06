@@ -11,16 +11,27 @@ import {
   conversationRegistryRoot,
   globalArtifactsRoot,
 } from "../src/shared/artifact-files";
+import { ConversationMigrationRequiredError } from "../src/shared/contracts";
 import {
   ConversationNotFoundError,
   ConversationRegistryError,
   cleanupStaleConversations,
   createConversationAndRegisterArtifact,
+  createSession,
   listConversationsForArtifact,
+  listMigrationCandidates,
+  listSessions,
+  migrateConversationToSession,
+  moveArtifactInSession,
   readConversationMetadata,
+  readSession,
   registerArtifactInConversation,
+  registerArtifactInSession,
   removeArtifactFromConversation,
+  removeArtifactFromSession,
   removeConversation,
+  setSessionType,
+  updateSessionDetails,
 } from "../src/shared/conversation-artifact-registry";
 
 const temporaryDirectories: string[] = [];
@@ -66,9 +77,7 @@ beforeEach(async () => {
 
 afterEach(async () => {
   vi.restoreAllMocks();
-  await Promise.all(
-    temporaryDirectories.splice(0).map((dir) => fs.rm(dir, { recursive: true, force: true })),
-  );
+  await Promise.all(temporaryDirectories.splice(0).map((dir) => fs.rm(dir, { recursive: true, force: true })));
 });
 
 describe("ConversationArtifactRegistry", () => {
@@ -82,9 +91,7 @@ describe("ConversationArtifactRegistry", () => {
 
     expect(result.conversation).toEqual({
       schemaVersion: 1,
-      artifactConversationId: expect.stringMatching(
-        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
-      ),
+      artifactConversationId: expect.stringMatching(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i),
       conversationName: "Checkout redesign",
       createdAt: "2026-04-17T10:00:00.000Z",
     });
@@ -101,10 +108,7 @@ describe("ConversationArtifactRegistry", () => {
     expect(onDiskMeta).toEqual(result.conversation);
 
     const membershipRaw = JSON.parse(
-      await fs.readFile(
-        conversationRegisteredArtifactPath(convId, "plan-checkout-001", { userHome }),
-        "utf8",
-      ),
+      await fs.readFile(conversationRegisteredArtifactPath(convId, "plan-checkout-001", { userHome }), "utf8"),
     );
     expect(membershipRaw).toEqual(result.membership);
   });
@@ -188,10 +192,7 @@ describe("ConversationArtifactRegistry", () => {
     });
 
     // Conversation A's createdAt must remain unchanged, while shared-artifact's registeredAt updates
-    const updatedConvAMeta = await readConversationMetadata(
-      convA.conversation.artifactConversationId,
-      { userHome },
-    );
+    const updatedConvAMeta = await readConversationMetadata(convA.conversation.artifactConversationId, { userHome });
     expect(updatedConvAMeta.createdAt).toBe("2026-04-17T08:00:00.000Z");
 
     const updatedList = await listConversationsForArtifact("shared-artifact", { userHome });
@@ -199,9 +200,7 @@ describe("ConversationArtifactRegistry", () => {
       "Conversation A",
       "Conversation B",
     ]);
-    expect(updatedList.conversations[0]?.currentArtifactRegisteredAt).toBe(
-      "2026-04-17T11:00:00.000Z",
-    );
+    expect(updatedList.conversations[0]?.currentArtifactRegisteredAt).toBe("2026-04-17T11:00:00.000Z");
     // Inside Conversation A, second-artifact-in-a (08:05) is now before shared-artifact (11:00)
     expect(updatedList.conversations[0]?.memberships.map((m) => m.artifactId)).toEqual([
       "second-artifact-in-a",
@@ -219,9 +218,7 @@ describe("ConversationArtifactRegistry", () => {
     });
     const convId = conversation.artifactConversationId;
 
-    const artifactIds = Array.from({ length: 12 }, (_, idx) =>
-      `artifact-${String(idx + 1).padStart(2, "0")}`,
-    );
+    const artifactIds = Array.from({ length: 12 }, (_, idx) => `artifact-${String(idx + 1).padStart(2, "0")}`);
 
     await Promise.all(
       artifactIds.map((artifactId, idx) =>
@@ -237,10 +234,7 @@ describe("ConversationArtifactRegistry", () => {
     const listed = await listConversationsForArtifact("artifact-00", { userHome });
     expect(listed.skippedCount).toBe(0);
     expect(listed.conversations).toHaveLength(1);
-    expect(listed.conversations[0]?.memberships.map((m) => m.artifactId)).toEqual([
-      "artifact-00",
-      ...artifactIds,
-    ]);
+    expect(listed.conversations[0]?.memberships.map((m) => m.artifactId)).toEqual(["artifact-00", ...artifactIds]);
   });
 
   it("isolates corrupt conversations and memberships while ignoring temp files", async () => {
@@ -258,10 +252,9 @@ describe("ConversationArtifactRegistry", () => {
       registeredAt: "2026-04-17T10:05:00.000Z",
     });
 
-    const regDir = conversationRegisteredArtifactsDirectory(
-      validConv.conversation.artifactConversationId,
-      { userHome },
-    );
+    const regDir = conversationRegisteredArtifactsDirectory(validConv.conversation.artifactConversationId, {
+      userHome,
+    });
 
     // 1. Add a corrupt membership JSON in validConv
     await fs.writeFile(path.join(regDir, "corrupt-artifact.json"), "{ invalid json", "utf8");
@@ -279,11 +272,7 @@ describe("ConversationArtifactRegistry", () => {
     );
 
     // 3. Add a temporary transaction file (should be silently ignored, not counted as skipped)
-    await fs.writeFile(
-      path.join(regDir, "sibling-artifact.json..tmp-99999999"),
-      "partial write",
-      "utf8",
-    );
+    await fs.writeFile(path.join(regDir, "sibling-artifact.json..tmp-99999999"), "partial write", "utf8");
 
     // 4. Create a second conversation containing target-artifact but with corrupt conversation.json
     const corruptConv = await createConversationAndRegisterArtifact({
@@ -392,9 +381,7 @@ describe("ConversationArtifactRegistry", () => {
     // Conversation 1 still exists with only alive-artifact
     const listedAlive = await listConversationsForArtifact("alive-artifact", { userHome });
     expect(listedAlive.conversations).toHaveLength(1);
-    expect(listedAlive.conversations[0]?.memberships.map((m) => m.artifactId)).toEqual([
-      "alive-artifact",
-    ]);
+    expect(listedAlive.conversations[0]?.memberships.map((m) => m.artifactId)).toEqual(["alive-artifact"]);
 
     // Conversation 2 directory was removed completely
     await expect(
@@ -569,9 +556,230 @@ describe("ConversationArtifactRegistry", () => {
     const listed = await listConversationsForArtifact("fresh-concurrent-artifact", { userHome });
     expect(listed.conversations).toHaveLength(1);
     expect(listed.conversations[0]?.conversation.artifactConversationId).toBe(convId);
-    expect(listed.conversations[0]?.memberships.map((m) => m.artifactId)).toEqual([
-      "fresh-concurrent-artifact",
-    ]);
+    expect(listed.conversations[0]?.memberships.map((m) => m.artifactId)).toEqual(["fresh-concurrent-artifact"]);
+  });
+
+  describe("WorkSession v2 & Layout persistence", () => {
+    it("creates an empty Session v2 with defaults", async () => {
+      const session = await createSession({
+        title: "Sprint 42",
+        userHome,
+      });
+      expect(session.title).toBe("Sprint 42");
+      expect(session.typeId).toBe("conversation");
+      expect(session.instructions).toBe("");
+      expect(session.working).toEqual([]);
+      expect(session.references).toEqual([]);
+      expect(session.archived).toEqual([]);
+      expect(session.createdAt).toBe(session.updatedAt);
+
+      const readBack = await readSession(session.sessionId, { userHome });
+      expect(readBack).toEqual(session);
+    });
+
+    it("registers artifacts, updates Session.updatedAt dynamically, and places them into working zone", async () => {
+      const session = await createSession({
+        title: "Task Session",
+        createdAt: "2026-04-17T08:00:00.000Z",
+        userHome,
+      });
+
+      const reg1 = await registerArtifactInSession(session.sessionId, "artifact-a", {
+        registeredAt: "2026-04-17T09:00:00.000Z",
+        userHome,
+      });
+      expect(reg1.added).toBe(true);
+      expect(reg1.session.working).toEqual(["artifact-a"]);
+      expect(reg1.session.updatedAt).toBe("2026-04-17T09:00:00.000Z");
+
+      const reg2 = await registerArtifactInSession(session.sessionId, "artifact-b", {
+        registeredAt: "2026-04-17T10:00:00.000Z",
+        userHome,
+      });
+      expect(reg2.added).toBe(true);
+      expect(reg2.session.working).toEqual(["artifact-a", "artifact-b"]);
+      expect(reg2.session.updatedAt).toBe("2026-04-17T10:00:00.000Z");
+
+      // Re-registering existing artifact updates registeredAt and updatedAt without duplicating in working
+      const reg1Again = await registerArtifactInSession(session.sessionId, "artifact-a", {
+        registeredAt: "2026-04-17T11:00:00.000Z",
+        userHome,
+      });
+      expect(reg1Again.added).toBe(false);
+      expect(reg1Again.previousRegisteredAt).toBe("2026-04-17T09:00:00.000Z");
+      expect(reg1Again.session.working).toEqual(["artifact-b", "artifact-a"]);
+      expect(reg1Again.session.updatedAt).toBe("2026-04-17T11:00:00.000Z");
+    });
+
+    it("moves artifacts across zones and saves layout.json without changing Session.updatedAt", async () => {
+      const session = await createSession({
+        title: "Zone Test",
+        createdAt: "2026-04-17T08:00:00.000Z",
+        userHome,
+      });
+
+      await registerArtifactInSession(session.sessionId, "art-1", {
+        registeredAt: "2026-04-17T09:00:00.000Z",
+        userHome,
+      });
+      await registerArtifactInSession(session.sessionId, "art-2", {
+        registeredAt: "2026-04-17T09:30:00.000Z",
+        userHome,
+      });
+
+      // Move art-2 to references
+      const moved = await moveArtifactInSession(session.sessionId, "art-2", "references", 0, { userHome });
+      expect(moved.working).toEqual(["art-1"]);
+      expect(moved.references).toEqual(["art-2"]);
+      expect(moved.archived).toEqual([]);
+      expect(moved.updatedAt).toBe("2026-04-17T09:30:00.000Z");
+
+      // Read back preserves layout
+      const readBack = await readSession(session.sessionId, { userHome });
+      expect(readBack.working).toEqual(["art-1"]);
+      expect(readBack.references).toEqual(["art-2"]);
+
+      // If a new artifact is registered, it appends to working while art-2 stays in references
+      await registerArtifactInSession(session.sessionId, "art-3", {
+        registeredAt: "2026-04-17T10:00:00.000Z",
+        userHome,
+      });
+      const readWithNew = await readSession(session.sessionId, { userHome });
+      expect(readWithNew.working).toEqual(["art-1", "art-3"]);
+      expect(readWithNew.references).toEqual(["art-2"]);
+    });
+
+    it("updates session details and session type", async () => {
+      const session = await createSession({
+        title: "Old Title",
+        userHome,
+      });
+
+      const updated = await updateSessionDetails(
+        session.sessionId,
+        { title: "New Title", instructions: "# Guidelines\nRule 1" },
+        { userHome },
+      );
+      expect(updated.title).toBe("New Title");
+      expect(updated.instructions).toBe("# Guidelines\nRule 1");
+
+      const typed = await setSessionType(session.sessionId, "feature", { userHome });
+      expect(typed.typeId).toBe("feature");
+    });
+
+    it("removes artifact from registered-artifacts and layout without deleting session", async () => {
+      const session = await createSession({
+        title: "Remove Test",
+        userHome,
+      });
+      await registerArtifactInSession(session.sessionId, "art-del", { userHome });
+      await moveArtifactInSession(session.sessionId, "art-del", "references", 0, { userHome });
+
+      const removed = await removeArtifactFromSession(session.sessionId, "art-del", { userHome });
+      expect(removed).toBe(true);
+
+      const after = await readSession(session.sessionId, { userHome });
+      expect(after.references).toEqual([]);
+      expect(after.working).toEqual([]);
+    });
+
+    it("migrates conversation v1 to session v2 and backs up v1", async () => {
+      const convId = "77777777-7777-4777-8777-777777777777";
+      await createConversationAndRegisterArtifact({
+        userHome,
+        artifactConversationId: convId,
+        conversationName: "Legacy Conversation",
+        artifactId: "legacy-art-1",
+        registeredAt: "2026-04-17T08:00:00.000Z",
+      });
+      await registerArtifactInConversation({
+        userHome,
+        artifactConversationId: convId,
+        artifactId: "legacy-art-2",
+        registeredAt: "2026-04-17T09:00:00.000Z",
+      });
+
+      const candidates = await listMigrationCandidates({ userHome });
+      expect(candidates.some((c) => c.sessionId === convId)).toBe(true);
+
+      // Migrate
+      const migrationResult = await migrateConversationToSession(convId, { userHome });
+      expect(migrationResult.status).toBe("migrated");
+      expect(migrationResult.session.title).toBe("Legacy Conversation");
+      expect(migrationResult.session.typeId).toBe("conversation");
+      expect(migrationResult.session.working).toEqual(["legacy-art-1", "legacy-art-2"]);
+      expect(migrationResult.session.updatedAt).toBe("2026-04-17T09:00:00.000Z");
+
+      // Verify backup file was created
+      const convDir = conversationDirectory(convId, { userHome });
+      const backupRaw = await fs.readFile(path.join(convDir, "conversation.v1.backup.json"), "utf8");
+      expect(JSON.parse(backupRaw).schemaVersion).toBe(1);
+
+      // Re-running migration returns already-v2
+      const retryResult = await migrateConversationToSession(convId, { userHome });
+      expect(retryResult.status).toBe("already-v2");
+
+      // No longer listed as candidate
+      const candidatesAfter = await listMigrationCandidates({ userHome });
+      expect(candidatesAfter.some((c) => c.sessionId === convId)).toBe(false);
+    });
+
+    it("retains Session v2 directory and metadata during retention cleanup even when empty", async () => {
+      const session = await createSession({
+        title: "Retention Keeper",
+        userHome,
+      });
+
+      // Register an artifact that is not valid on disk (simulates expired/deleted artifact)
+      await registerArtifactInSession(session.sessionId, "expired-artifact", { userHome });
+
+      const cleanupResult = await cleanupStaleConversations({ userHome });
+      expect(cleanupResult.removedMemberships).toBe(1);
+      // Removed conversations must NOT count Session v2!
+      expect(cleanupResult.removedConversations).toBe(0);
+
+      // Session v2 still exists and is readable as an empty session
+      const remainingSession = await readSession(session.sessionId, { userHome });
+      expect(remainingSession.title).toBe("Retention Keeper");
+      expect(remainingSession.working).toEqual([]);
+    });
+
+    it("registerArtifactInSession fails closed with ConversationMigrationRequiredError on v1 conversation without polluting registered-artifacts", async () => {
+      const convId = "88888888-8888-4888-8888-888888888888";
+      await createConversationAndRegisterArtifact({
+        userHome,
+        artifactConversationId: convId,
+        conversationName: "Legacy Conversation",
+        artifactId: "legacy-art-1",
+        registeredAt: "2026-04-17T08:00:00.000Z",
+      });
+
+      await expect(registerArtifactInSession(convId, "new-attempted-art", { userHome })).rejects.toThrow(
+        ConversationMigrationRequiredError,
+      );
+
+      const convDir = conversationDirectory(convId, { userHome });
+      const attemptedFile = path.join(convDir, "registered-artifacts", "new-attempted-art.json");
+      await expect(fs.access(attemptedFile)).rejects.toThrow();
+    });
+
+    it("migrateConversationToSession ignores corrupted membership files and migrates surviving ones", async () => {
+      const convId = "99999999-9999-4999-8999-999999999999";
+      await createConversationAndRegisterArtifact({
+        userHome,
+        artifactConversationId: convId,
+        conversationName: "Partially Corrupt Conversation",
+        artifactId: "valid-art-1",
+        registeredAt: "2026-04-17T08:00:00.000Z",
+      });
+
+      // Write a corrupted membership file
+      const convDir = conversationDirectory(convId, { userHome });
+      await fs.writeFile(path.join(convDir, "registered-artifacts", "corrupted-art.json"), "{ not valid json", "utf8");
+
+      const migrationResult = await migrateConversationToSession(convId, { userHome });
+      expect(migrationResult.status).toBe("migrated");
+      expect(migrationResult.session.working).toEqual(["valid-art-1"]);
+    });
   });
 });
-

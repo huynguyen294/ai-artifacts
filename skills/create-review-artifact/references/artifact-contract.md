@@ -111,6 +111,7 @@ Recovery rules:
 - `ARTIFACT_CONNECTION_WRITE_FAILED`: failed to update the connection state atomically; retry `inspect_artifact_review` on exact handle with `intent: "reconnect"`.
 - `CONVERSATION_NOT_FOUND`: the provided `artifactConversationId` does not exist in the conversation registry. Retryable with `expectedNextTool` (`create_artifact` or `inspect_artifact_review`); clear cached conversation ID and retry with `conversationName` or without conversation ID to initialize a fresh conversation.
 - `CONVERSATION_REGISTRY_INVALID`: stored conversation registry files are invalid, corrupt, or violate path safety (`retryable: false`). Stop automated recovery, retain the exact handle, and notify the user.
+- `CONVERSATION_MIGRATION_REQUIRED`: the provided `artifactConversationId` references a conversation v1 record that must be migrated before use (`retryable: false`). Stop automated recovery and present the user with two choices: (1) Migrate the conversation from the Review App and retry with the same ID, or (2) Drop the v1 ID and retry without an ID to create a new Session v2.
 - `ARTIFACT_NOT_FOUND`: the exact artifact handle no longer exists (retention cleanup, manual deletion, or filesystem loss). Non-retryable with `useSameArtifactHandle: false`. Drop the stale handle mapping and inform the user. Do not retry, scan, or recreate.
 - Unless the error is explicitly non-retryable, if commit state is uncertain, inspect the same exact handle before retrying.
 

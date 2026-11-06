@@ -1,5 +1,7 @@
+import { promises as fs } from "node:fs";
 import path from "node:path";
 import {
+  ARTIFACT_MANIFEST_FILE,
   ARTIFACT_MARKDOWN_FILE,
   globalArtifactsRoot,
   type GlobalArtifactsRootOptions,
@@ -10,12 +12,21 @@ import {
   type ConversationArtifactGroup,
   type ConversationArtifactItem,
   type ConversationArtifactsViewState,
+  type WorkSession,
+  type WorkSessionArtifactRow,
+  type WorkSessionViewData,
 } from "../shared/contracts";
 import {
   ensureSafeConversationRegistryRoot,
   listConversationsForArtifact,
+  listMigrationCandidates,
+  listSessions,
+  readSession,
   removeArtifactFromConversation,
+  type MigrationCandidateEntry,
 } from "../shared/conversation-artifact-registry";
+import { listSessionTypes } from "../shared/session-type-registry";
+import { parseArtifactManifest } from "../shared/artifact-validation";
 import {
   validateArtifactReviewTarget,
   type ArtifactFileUri,
@@ -98,11 +109,7 @@ export class ConversationArtifactService<TUri extends ArtifactFileUri> {
       const validItems: ConversationArtifactItem[] = [];
 
       for (const membership of rawGroup.memberships) {
-        const candidateArtifactPath = path.join(
-          collectionRoot,
-          membership.artifactId,
-          ARTIFACT_MARKDOWN_FILE,
-        );
+        const candidateArtifactPath = path.join(collectionRoot, membership.artifactId, ARTIFACT_MARKDOWN_FILE);
 
         try {
           const validated = await validateArtifactReviewTarget(candidateArtifactPath, this.rootOptions);
@@ -210,6 +217,76 @@ export class ConversationArtifactService<TUri extends ArtifactFileUri> {
     }
   }
 
+  async listWorkSessions(): Promise<WorkSession[]> {
+    return listSessions(this.rootOptions);
+  }
+
+  async getWorkSession(sessionId: string): Promise<WorkSession> {
+    return readSession(sessionId, this.rootOptions);
+  }
+
+  async listCandidates(): Promise<MigrationCandidateEntry[]> {
+    return listMigrationCandidates(this.rootOptions);
+  }
+
+  async countCandidates(): Promise<number> {
+    const candidates = await this.listCandidates();
+    return candidates.length;
+  }
+
+  async resolveSessionViewData(sessionId: string): Promise<WorkSessionViewData> {
+    const session = await this.getWorkSession(sessionId);
+    const sessionTypes = await listSessionTypes(this.rootOptions);
+    const matchedType = sessionTypes.find((t) => t.id === session.typeId);
+    const typeLabel = matchedType ? matchedType.label : session.typeId;
+
+    const resolveZone = async (artifactIds: string[]): Promise<WorkSessionArtifactRow[]> => {
+      const rows: WorkSessionArtifactRow[] = [];
+      const collectionRoot = globalArtifactsRoot(this.rootOptions);
+      for (const id of artifactIds) {
+        try {
+          const manifestPath = path.join(collectionRoot, id, ARTIFACT_MANIFEST_FILE);
+          const rawText = await fs.readFile(manifestPath, "utf8");
+          const manifest = parseArtifactManifest(JSON.parse(rawText));
+          rows.push({
+            artifactId: id,
+            title: manifest.title,
+            kind: manifest.kind,
+            updatedAt: manifest.updatedAt,
+          });
+        } catch {
+          rows.push({
+            artifactId: id,
+            title: id,
+            kind: "spec",
+            updatedAt: session.updatedAt,
+            unavailable: true,
+          });
+        }
+      }
+      return rows;
+    };
+
+    const [working, references, archived] = await Promise.all([
+      resolveZone(session.working),
+      resolveZone(session.references),
+      resolveZone(session.archived),
+    ]);
+
+    return {
+      sessionId: session.sessionId,
+      title: session.title,
+      typeId: session.typeId,
+      typeLabel,
+      instructions: session.instructions,
+      createdAt: session.createdAt,
+      updatedAt: session.updatedAt,
+      working,
+      references,
+      archived,
+    };
+  }
+
   onDidChange(listener: () => void | Promise<void>): { dispose: () => void } {
     this.listeners.add(listener);
     return {
@@ -286,11 +363,9 @@ export type SetupConversationRegistryWatcherDependencies<
 export async function setupConversationRegistryWatcher<
   TUri extends ArtifactFileUri,
   TWatcher extends ConversationRegistryWatcher<TUri>,
->(
-  dependencies: SetupConversationRegistryWatcherDependencies<TUri, TWatcher>,
-): Promise<TWatcher> {
-  const ensureRoot = dependencies.ensureConversationRegistryRoot
-    ?? (() => ensureSafeConversationRegistryRoot(dependencies.rootOptions));
+>(dependencies: SetupConversationRegistryWatcherDependencies<TUri, TWatcher>): Promise<TWatcher> {
+  const ensureRoot =
+    dependencies.ensureConversationRegistryRoot ?? (() => ensureSafeConversationRegistryRoot(dependencies.rootOptions));
   const registryRoot = await ensureRoot();
   const watcher = dependencies.createWatcher(registryRoot, "**/*");
   dependencies.service.attachWatcher(watcher);

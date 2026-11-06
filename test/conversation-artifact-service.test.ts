@@ -20,7 +20,9 @@ import {
 } from "../src/shared/artifact-files";
 import {
   createConversationAndRegisterArtifact,
+  createSession,
   registerArtifactInConversation,
+  registerArtifactInSession,
 } from "../src/shared/conversation-artifact-registry";
 
 const temporaryDirectories: string[] = [];
@@ -137,11 +139,7 @@ async function writeSchemaV6Artifact(
 afterEach(async () => {
   vi.useRealTimers();
   vi.restoreAllMocks();
-  await Promise.all(
-    temporaryDirectories.splice(0).map((directory) =>
-      rm(directory, { recursive: true, force: true }),
-    ),
-  );
+  await Promise.all(temporaryDirectories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })));
 });
 
 describe("ConversationArtifactService", () => {
@@ -360,10 +358,7 @@ describe("ConversationArtifactService", () => {
     expect(opened.status).toBe("opened");
     expect(opened.shouldRefresh).toBe(false);
     expect(openWith).toHaveBeenCalledTimes(1);
-    expect(openWith).toHaveBeenCalledWith(
-      { fsPath: targetArtifact.artifactPath },
-      { preview: false },
-    );
+    expect(openWith).toHaveBeenCalledWith({ fsPath: targetArtifact.artifactPath }, { preview: false });
     expect(changeListener).not.toHaveBeenCalled();
 
     // 2. Malformed / path-traversal artifactId is rejected before openWith
@@ -382,9 +377,7 @@ describe("ConversationArtifactService", () => {
       message: 'Artifact "artifact-target" is no longer available on disk.',
       shouldRefresh: true,
     });
-    expect(reportError).toHaveBeenCalledWith(
-      'Artifact "artifact-target" is no longer available on disk.',
-    );
+    expect(reportError).toHaveBeenCalledWith('Artifact "artifact-target" is no longer available on disk.');
     expect(changeListener).toHaveBeenCalledTimes(1);
   });
 
@@ -432,5 +425,27 @@ describe("ConversationArtifactService", () => {
 
     service.dispose();
     expect(fakeWatcher.disposed).toBe(true);
+  });
+
+  it("resolves session view data with unavailable: true for missing artifacts", async () => {
+    const userHome = await makeUserHome();
+    const service = new ConversationArtifactService<TestUri>({
+      uriFromFilePath: (fsPath) => ({ fsPath }),
+      openArtifactReview: vi.fn(),
+      rootOptions: { userHome },
+    });
+
+    const session = await createSession({
+      title: "Unavailable Test Session",
+      userHome,
+    });
+    await registerArtifactInSession(session.sessionId, "ghost-artifact-id", { userHome });
+
+    const viewData = await service.resolveSessionViewData(session.sessionId);
+    expect(viewData.working).toHaveLength(1);
+    expect(viewData.working[0]?.artifactId).toBe("ghost-artifact-id");
+    expect(viewData.working[0]?.unavailable).toBe(true);
+
+    service.dispose();
   });
 });

@@ -197,6 +197,7 @@ describe("create-review-artifact skill contract", () => {
       "ARTIFACT_CONNECTION_WRITE_FAILED",
       "CONVERSATION_NOT_FOUND",
       "CONVERSATION_REGISTRY_INVALID",
+      "CONVERSATION_MIGRATION_REQUIRED",
       "ARTIFACT_NOT_FOUND",
     ]) expect(skill).toContain(code);
     expect(skill).not.toContain("WORKSPACE_NOT_REGISTERED");

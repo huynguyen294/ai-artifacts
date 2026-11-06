@@ -2684,9 +2684,10 @@ describe("artifact review MCP server v8", () => {
       await readFile(conversationMetadataPath(conversationId, { userHome: fixture.userHome }), "utf8"),
     );
     expect(metadataRaw).toMatchObject({
-      schemaVersion: 1,
-      artifactConversationId: conversationId,
-      conversationName: "Auth Refactor Thread",
+      schemaVersion: 2,
+      sessionId: conversationId,
+      title: "Auth Refactor Thread",
+      typeId: "conversation",
     });
 
     const firstMembership = JSON.parse(
@@ -3041,6 +3042,62 @@ describe("artifact review MCP server v8", () => {
     });
     expect(failedExistingMemberUpdate.isError).toBe(true);
     expect(JSON.parse(await readFile(firstMembershipPath, "utf8"))).toEqual(initialFirstMembership);
+  });
+
+  it("rejects conversation v1 with CONVERSATION_MIGRATION_REQUIRED on create_artifact and inspect_artifact_review before mutation", async () => {
+    const fixture = await workspaceFixture();
+    const client = startClient(fixture.registry);
+    await initialize(client);
+
+    const v1ConvId = randomUUID();
+    const v1Dir = path.join(conversationRegistryRoot({ userHome: fixture.userHome }), v1ConvId);
+    await mkdir(path.join(v1Dir, "registered-artifacts"), { recursive: true });
+    await writeFile(
+      path.join(v1Dir, "conversation.json"),
+      JSON.stringify({
+        schemaVersion: 1,
+        artifactConversationId: v1ConvId,
+        conversationName: "Legacy V1 Thread",
+        createdAt: "2026-04-10T10:00:00.000Z",
+      }, null, 2),
+      "utf8",
+    );
+
+    // 1. create_artifact with v1 conversation ID fails closed
+    const createResult = await callTool(client, "create_artifact", {
+      title: "Should Fail On V1",
+      kind: "plan",
+      markdown: "# Header\n",
+      artifactConversationId: v1ConvId,
+    });
+    expect(createResult.isError).toBe(true);
+    expect(createResult.content[0].text).toContain("CONVERSATION_MIGRATION_REQUIRED");
+    expect(createResult.structuredContent).toMatchObject({
+      code: "CONVERSATION_MIGRATION_REQUIRED",
+      artifactConversationId: v1ConvId,
+      retryable: false,
+    });
+
+    // Verify no artifacts created in workspace/home
+    const regArtifacts = await readdir(path.join(v1Dir, "registered-artifacts"));
+    expect(regArtifacts).toHaveLength(0);
+
+    // 2. inspect_artifact_review with v1 conversation ID fails closed
+    const validArtifact = await createArtifact(client, fixture.workspace, { title: "Valid Artifact" });
+    const inspectResult = await callTool(client, "inspect_artifact_review", {
+      artifactDirectory: validArtifact.artifactDirectory,
+      artifactConversationId: v1ConvId,
+    });
+    expect(inspectResult.isError).toBe(true);
+    expect(inspectResult.content[0].text).toContain("CONVERSATION_MIGRATION_REQUIRED");
+    expect(inspectResult.structuredContent).toMatchObject({
+      code: "CONVERSATION_MIGRATION_REQUIRED",
+      artifactConversationId: v1ConvId,
+      retryable: false,
+    });
+
+    // Verify v1 registered-artifacts was untouched
+    expect(await readdir(path.join(v1Dir, "registered-artifacts"))).toHaveLength(0);
   });
 });
 

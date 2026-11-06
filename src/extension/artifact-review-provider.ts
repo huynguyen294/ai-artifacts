@@ -215,7 +215,7 @@ export class ArtifactReviewProvider implements vscode.CustomTextEditorProvider {
     <title>Artifact Review</title>
   </head>
   <body>
-    <div id="root" data-style-nonce="${token}" data-shiki-uri="${shikiUri}" data-mermaid-uri="${mermaidUri}"></div>
+    <div id="root" data-app="review" data-style-nonce="${token}" data-shiki-uri="${shikiUri}" data-mermaid-uri="${mermaidUri}"></div>
     <script nonce="${token}" src="${scriptUri}"></script>
   </body>
 </html>`;

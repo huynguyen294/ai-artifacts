@@ -1,7 +1,10 @@
-import type { WebviewToExtensionMessage } from "../shared/contracts";
+import type {
+  SessionWebviewToExtensionMessage,
+  WebviewToExtensionMessage,
+} from "../shared/contracts";
 
 declare function acquireVsCodeApi<TState = unknown>(): {
-  postMessage(message: WebviewToExtensionMessage): void;
+  postMessage(message: WebviewToExtensionMessage | SessionWebviewToExtensionMessage): void;
   getState(): TState | undefined;
   setState(state: TState): void;
 };

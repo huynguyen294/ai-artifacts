@@ -65,6 +65,13 @@ describe("v1.1.4 release contract", () => {
           group: "navigation@0",
         },
       ],
+      "view/title": [
+        {
+          "command": "agentPlus.manageSessionTypes",
+          "when": "view == agentPlus.sessions",
+          "group": "navigation",
+        },
+      ],
     });
   });
 

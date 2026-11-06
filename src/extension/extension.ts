@@ -1,7 +1,21 @@
+import path from "node:path";
 import * as vscode from "vscode";
 import { ArtifactReviewProvider } from "./artifact-review-provider";
 import { ArtifactReviewOpenCoordinator, setupGlobalArtifactConnectionWatcher } from "./artifact-review-open";
 import { discoverSearchableArtifacts } from "./artifact-search";
+import {
+  CONVERSATION_METADATA_FILE,
+  conversationDirectory,
+} from "../shared/artifact-files";
+import {
+  RecentArtifactsTreeDataProvider,
+  WorkSessionsTreeDataProvider,
+} from "./work-session-sidebar";
+import { WorkSessionProvider } from "./work-session-provider";
+import {
+  runManageSessionTypesCommand,
+  type SessionTypeQuickPickItem,
+} from "./session-type-command";
 import {
   runArtifactSearchCommand,
   type ArtifactQuickPickItem,
@@ -70,6 +84,17 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     },
   });
   const provider = new ArtifactReviewProvider(context, conversationArtifactService);
+  const workSessionProvider = new WorkSessionProvider(
+    context,
+    conversationArtifactService,
+    artifactReviewOpenCoordinator,
+  );
+  const recentArtifactsProvider = new RecentArtifactsTreeDataProvider(conversationArtifactService);
+  const workSessionsProvider = new WorkSessionsTreeDataProvider(
+    conversationArtifactService,
+    context,
+  );
+
   const installAllDetectedIntegrationsAndNotify = async (): Promise<void> => {
     try {
       await installAllDetectedIntegrations(context);
@@ -90,9 +115,70 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   context.subscriptions.push(
     workspaceRegistryPublisher,
     conversationArtifactService,
+    recentArtifactsProvider,
+    workSessionsProvider,
+    vscode.window.registerTreeDataProvider("agentPlus.recentArtifacts", recentArtifactsProvider),
+    vscode.window.registerTreeDataProvider("agentPlus.sessions", workSessionsProvider),
     vscode.window.registerCustomEditorProvider(ArtifactReviewProvider.viewType, provider, {
       webviewOptions: { retainContextWhenHidden: true },
       supportsMultipleEditorsPerDocument: false,
+    }),
+    vscode.window.registerCustomEditorProvider(WorkSessionProvider.viewType, workSessionProvider, {
+      webviewOptions: { retainContextWhenHidden: true },
+      supportsMultipleEditorsPerDocument: false,
+    }),
+    vscode.commands.registerCommand("agentPlus.openWorkSession", async (sessionIdCandidate?: unknown) => {
+      try {
+        let sessionId: string | undefined;
+        if (typeof sessionIdCandidate === "string") {
+          sessionId = sessionIdCandidate;
+        } else {
+          const sessions = await conversationArtifactService.listWorkSessions();
+          if (sessions.length === 0) {
+            void vscode.window.showInformationMessage("Chưa có session nào.");
+            return;
+          }
+          const selected = await vscode.window.showQuickPick(
+            sessions.map((s) => ({ label: s.title, description: s.sessionId })),
+            { title: "Chọn Session để mở" },
+          );
+          if (!selected) return;
+          sessionId = selected.description;
+        }
+
+        const session = await conversationArtifactService.getWorkSession(sessionId);
+        const sessionDir = conversationDirectory(session.sessionId);
+        const metadataUri = vscode.Uri.file(path.join(sessionDir, CONVERSATION_METADATA_FILE));
+        await vscode.commands.executeCommand("vscode.openWith", metadataUri, WorkSessionProvider.viewType);
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        void vscode.window.showErrorMessage(`Không thể mở session: ${msg}`);
+      }
+    }),
+    vscode.commands.registerCommand("agentPlus.manageSessionTypes", async () => {
+      await runManageSessionTypesCommand({
+        createQuickPick: () => vscode.window.createQuickPick<SessionTypeQuickPickItem>(),
+        showInputBox: (options) => vscode.window.showInputBox(options),
+        showWarningMessage: (message, ...items) => vscode.window.showWarningMessage(message, ...items),
+        showErrorMessage: (message) => vscode.window.showErrorMessage(message),
+        onDidUpdate: () => {
+          workSessionsProvider.refresh();
+          conversationArtifactService.notifyChanged();
+        },
+      });
+    }),
+    vscode.commands.registerCommand("agentPlus.openArtifact", async (resource?: unknown) => {
+      if (resource instanceof vscode.Uri) {
+        await vscode.commands.executeCommand("agentPlus.openArtifactReview", resource);
+      }
+    }),
+    vscode.commands.registerCommand("agentPlus.reinstallIntegration", async () => {
+      await vscode.commands.executeCommand("agentPlus.installAllIntegrations");
+    }),
+    vscode.commands.registerCommand("agentPlus.migrateConversations", async () => {
+      void vscode.window.showInformationMessage(
+        "Tính năng chuyển đổi hàng loạt (Bulk Migration) đang được chuẩn bị cho Chặng 3.",
+      );
     }),
     vscode.commands.registerCommand("agentPlus.openArtifactReview", async (resource?: unknown) => {
       if (resource instanceof vscode.Uri) {

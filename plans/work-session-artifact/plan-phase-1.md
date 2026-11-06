@@ -1,6 +1,12 @@
 # Phase 1 + 2 — Session model, sidebar và điều hướng
 
-Trạng thái: **Plan để Chú review — chưa triển khai.**
+Trạng thái: **Chặng 2 (Bước 4 + Bước 5) ĐÃ HOÀN THÀNH. Sẵn sàng cho Chặng 3.**
+
+> [!NOTE]
+> - **Tiến độ tổng thể:**
+>   - ✅ **Chặng 1 (Headless Data Layer & MCP Contract — Bước 1, 2, 3):** ĐÃ HOÀN THÀNH.
+>   - ✅ **Chặng 2 (Sidebar TreeView & Session Tab Webview — Bước 4, 5):** ĐÃ HOÀN THÀNH.
+>   - ⏳ **Chặng 3 (ReviewApp Navigation, Connect Dialog & Bulk Migration — Bước 6, 7):** PENDING - SẴN SÀNG TRIỂN KHAI.
 
 Bản này là hướng dẫn triển khai Phase 1+2, đã đối chiếu source hiện tại ngày 2026-11-06. Mục 1–12 giữ contract/phạm vi; mục 13 mô tả từng bước theo file/hàm, luồng xử lý, khả năng phải đạt và kiểm chứng. Mọi tên file/API/command được đánh dấu **mới/đề xuất** chưa tồn tại trong source; không đọc chúng như API đã triển khai. Nhãn nút Review App đã chốt là **Sessions**.
 
@@ -382,94 +388,72 @@ Tên file/command mới dưới đây là đề xuất, cần điều chỉnh th
 
 **Refresh:** reuse registry watcher/service hiện có; bổ sung watch `session-types.json` và manifest create/update/delete cho Recent. Debounce theo pattern hiện tại; refresh lần đầu và khi view hiện lại. Sau installer kiểm tra lại MCP đã cài; sau migration refresh Session list/candidate count/Review App. Phát hiện v1 không đồng nghĩa chạy migration. Dispose subscriptions cùng extension/provider. Không polling hay thêm daemon.
 
-### 7 bước nhỏ trong đợt Phase 1+2
+### 7 bước nhỏ trong đợt Phase 1+2 (Tổ chức theo 3 Chặng triển khai)
 
-Đây là thứ tự triển khai các patch đã có ở mục 7 và 13, không thêm phạm vi hay đổi số các Phase 3–5. Phần chuẩn bị MCP_VERSION 11 → 12 đã hoàn thành, không tính là một bước còn phải làm.
+Thực hiện theo thỏa thuận gộp bước:
+- **Chặng 1 (ĐÃ HOÀN THÀNH):** Bước 1 + 2 + 3 (Nền dữ liệu Session v2, Session types global, Migration v1→v2 và Cleanup retention, Tích hợp MCP & Skill contract).
+- **Chặng 2 (ĐÃ HOÀN THÀNH):** Bước 4 + 5 (Sidebar Activity Bar, Quick Pick quản lý types, Custom readonly Editor cho Session tab).
+- **Chặng 3 (PENDING):** Bước 6 + 7 (Thay drawer bằng nút Sessions, Connect dialog New/Join, Bulk migration UI, Kiểm chứng kết hợp và nghiệm thu).
 
-| Bước | Patch liên quan | Công việc và kết quả |
+| Bước / Chặng | Trạng thái | Công việc và kết quả |
 | --- | --- | --- |
-| 1. Nền dữ liệu Session và types | 1A, phần persistence của 1B, 1E | Metadata Session v2; giữ `registered-artifacts/` làm nguồn membership; `layout.json` chứa ba mảng có thứ tự; tính `updatedAt` từ `createdAt`/`registeredAt`; registry types global và API quản lý/gán type. Chưa đổi UI. |
-| 2. Migration và cleanup | Phần migration của 1B, phần cleanup của 1D | Phát hiện/đếm v1 read-only; hàm chuyển từng conversation dùng chung, giữ ID/membership và gọi lại an toàn; cleanup theo schema, v2 giữ session rỗng. Không chạy migration tự động; UI bulk được nối ở bước 6. |
-| 3. Tích hợp MCP và skill | 1C | Create/reuse Session v2 và giữ rollback membership hiện có; create/inspect truyền ID v1 cùng trả lỗi trước mutation, skill đưa hai lựa chọn migration hoặc chủ động dùng Session mới; giữ adapter tên tham số MCP hiện tại. |
-| 4. Sidebar và popup types | 2A, phần tree/gate của 2B, 2C; phần service của 1D | Activity Bar, Recent Artifacts, Sessions chỉ v2; dùng kiểm tra MCP đã cài với mốc 12; ⚙ quản lý types; phát hiện và hiện số candidate migration. Không có + session; bulk action được nối ở bước 6. |
-| 5. Tab Session chỉ đọc | 2D | Provider/webview mở đúng Session ID, hiện title/type/instructions và ba vùng; mở artifact; refresh; reuse bundle hiện có. Hoàn thành điểm đến thật cho điều hướng Session. |
-| 6. Review App và thao tác migration | 2E, phần bulk của 2B | Bỏ drawer cũ; Sessions gated theo MCP, mở/chọn Session v2 hoặc migration một v1 rồi mở. Thêm popup inspect New/Join tối thiểu, Join v1 disabled. Sidebar có popup xác nhận bulk, chạy tuần tự cùng hàm bước 2, hiện tiến độ/kết quả và refresh. Nối các command điều hướng vào tab bước 5. |
-| 7. Kiểm chứng kết hợp | 2F và kiểm chứng mục 8, 14 | Hoàn tất regression/focused tests theo các bước; chạy check/test/build và kiểm tra Extension Host theo các luồng đã ghi; báo riêng automated và runtime. |
+| **Chặng 1: Bước 1** (Model/persistence Session & types) | ✅ **Đã hoàn thành** | Metadata Session v2; giữ `registered-artifacts/` làm nguồn membership; `layout.json` chứa ba mảng; tính dynamic `updatedAt`; registry session-types global. |
+| **Chặng 1: Bước 2** (Migration v1→v2 & Cleanup) | ✅ **Đã hoàn thành** | `listMigrationCandidates` và `migrateConversationToSession` có backup `conversation.v1.backup.json`; retention cleanup giữ Session v2 rỗng. |
+| **Chặng 1: Bước 3** (Tích hợp MCP & Skill) | ✅ **Đã hoàn thành** | MCP tạo/reuse Session v2; preflight fail-closed chặn conversation v1 với mã lỗi `CONVERSATION_MIGRATION_REQUIRED`; skill v4 hỗ trợ 2 hướng recovery. |
+| **Chặng 2: Bước 4** (Sidebar & popup types) | ✅ **Đã hoàn thành** | Activity Bar, Recent Artifacts (cap 20 + Xem tất cả), Sessions chỉ v2; gate MCP 12; Quick Pick ⚙ quản lý types. |
+| **Chặng 2: Bước 5** (Tab Session chỉ đọc) | ✅ **Đã hoàn thành** | Provider/webview mở đúng Session ID qua `agentPlus.workSession`, hiện title/type/instructions và 3 vùng; mở artifact; refresh. |
+| **Chặng 3: Bước 6** (Review App & Migration UI) | ⏳ PENDING | Bỏ drawer cũ; nút Sessions trên Review App; popup inspect New/Join (disable Join v1); popup bulk migration từ sidebar. |
+| **Chặng 3: Bước 7** (Kiểm chứng & Nghiệm thu) | ⏳ PENDING | Hoàn tất regression tests; chạy check/test/build; kiểm tra Extension Host; báo cáo nghiệm thu. |
 
-Mỗi bước dùng focused tests tương ứng khi triển khai; cuối đợt chạy validation kết hợp. Không phát hành patch trung gian chưa khớp producer/consumer; chưa triển khai manager editing, chọn type trong manager, agent catalog hoặc kéo thả.
+---
 
-### 13.1. Bước 1 — Model, persistence và session types
+### Chặng 1: Bước 1 + 2 + 3 — Headless Data Layer, Migration & MCP Contract (ĐÃ HOÀN THÀNH)
 
-**Đầu vào:** schema-v1 đang chạy; chưa có API Session v2, `layout.json` hoặc type registry. **Đầu ra:** API dữ liệu có thể dùng độc lập bằng fixture/userHome tạm, chưa chuyển consumer đang chạy sang v2.
+> [!NOTE]
+> - **Trạng thái:** ✅ **Đã hoàn thành** (Review Checkpoint 1 sẵn sàng)
+> - **Các file đã can thiệp & tạo mới:**
+>   - [`src/shared/contracts.ts`](file:///d:/workspace/my-projects/ai-artifacts/src/shared/contracts.ts): Định nghĩa `WORK_SESSION_SCHEMA_VERSION = 2`, `WORK_SESSION_LAYOUT_SCHEMA_VERSION = 1`, `SESSION_TYPES_SCHEMA_VERSION = 1`, `DEFAULT_SESSION_TYPE_ID = "conversation"`, tăng `SKILL_VERSION = 4`. Thêm Zod schemas: `workSessionMetadataSchema`, `workSessionLayoutSchema`, `workSessionSchema`, `sessionTypeSchema`, `sessionTypesDocumentSchema`, error class `ConversationMigrationRequiredError`.
+>   - [`src/shared/artifact-files.ts`](file:///d:/workspace/my-projects/ai-artifacts/src/shared/artifact-files.ts): Constants `WORK_SESSION_LAYOUT_FILE`, `CONVERSATION_V1_BACKUP_FILE`, `SESSION_TYPES_FILE`. Bổ sung path helpers: `workSessionLayoutPath`, `conversationV1BackupPath`, `sessionTypesFilePath`.
+>   - [`src/shared/session-type-registry.ts`](file:///d:/workspace/my-projects/ai-artifacts/src/shared/session-type-registry.ts) *(mới)*: Seed defaults 4 types (`conversation`, `project`, `feature`, `fix`), CRUD types global với case-insensitive uniqueness, cấm xoá type default, tự động chuyển session về `DEFAULT_SESSION_TYPE_ID` khi xoá custom type.
+>   - [`src/shared/conversation-artifact-registry.ts`](file:///d:/workspace/my-projects/ai-artifacts/src/shared/conversation-artifact-registry.ts): Parser metadata v2/layout; hàm `reconcileSessionLayout` (kết hợp `registered-artifacts/` với `layout.json`, unplaced append cuối `working`, tính `updatedAt = max(createdAt, ...registeredAt)`); CRUD Session v2; `migrateConversationToSession` sinh backup `conversation.v1.backup.json` và chuyển đổi an toàn; retention cleanup theo schema (v2 giữ thư mục/metadata dù rỗng).
+>   - [`src/integration/artifact-review-mcp-v4.ts`](file:///d:/workspace/my-projects/ai-artifacts/src/integration/artifact-review-mcp-v4.ts): Hàm `preflightConversationVersion` fail-closed chặn caller truyền ID conversation v1 với lỗi `CONVERSATION_MIGRATION_REQUIRED`; `createArtifact`/`persistArtifact`/`handleInspectTool` chuyển sang `createSession` và `registerArtifactInSession`; rollback khôi phục membership chính xác; `artifactHandle` map `sessionId`/`title` thành `artifactConversationId`/`conversationName`.
+>   - [`skills/create-review-artifact/SKILL.md`](file:///d:/workspace/my-projects/ai-artifacts/skills/create-review-artifact/SKILL.md) & [`artifact-contract.md`](file:///d:/workspace/my-projects/ai-artifacts/skills/create-review-artifact/references/artifact-contract.md): Bổ sung hướng dẫn phục hồi 2 lựa chọn khi gặp `CONVERSATION_MIGRATION_REQUIRED` (Option 1: migrate từ Review App rồi retry; Option 2: drop ID cũ và tạo session mới).
+>   - Tests: [`test/artifact-contracts.test.ts`](file:///d:/workspace/my-projects/ai-artifacts/test/artifact-contracts.test.ts), [`test/skill-contract.test.ts`](file:///d:/workspace/my-projects/ai-artifacts/test/skill-contract.test.ts), [`test/session-type-registry.test.ts`](file:///d:/workspace/my-projects/ai-artifacts/test/session-type-registry.test.ts) *(mới)*, [`test/conversation-artifact-registry.test.ts`](file:///d:/workspace/my-projects/ai-artifacts/test/conversation-artifact-registry.test.ts), [`test/review-wait-mcp.test.ts`](file:///d:/workspace/my-projects/ai-artifacts/test/review-wait-mcp.test.ts).
+> - **Kết quả đạt được (Phase Achievements):**
+>   - Toàn bộ tầng Headless Session v2, Layout ba mảng và Session Types global đã hoạt động bền vững, không dùng file lock, sử dụng atomic writes hoàn toàn.
+>   - MCP server và Skill contract v4 bảo đảm fail-closed tuyệt đối với conversation v1, ngăn chặn phân mảnh dữ liệu.
+>   - `npm run check` (tsc --noEmit) pass sạch 100%.
+>   - `npm test` pass toàn bộ **33 test files (540 tests passed, 0 failed)**.
+>   - `npm run build` build thành công cả 5 targets (extension, uninstall, webview, enhancements, integration MCP).
 
-| File/component | Sửa cụ thể |
-| --- | --- |
-| `src/shared/contracts.ts` | Giữ schema v1 cho metadata cũ và giữ nguyên `artifactConversationMembershipSchema` cho `registered-artifacts/`; thêm **mới** `WORK_SESSION_SCHEMA_VERSION = 2`, `workSessionMetadataSchema`, `workSessionLayoutSchema`, type `WorkSession` và schema types global. Không chỉ đổi `ARTIFACT_CONVERSATION_SCHEMA_VERSION` từ 1 thành 2 vì migration vẫn cần parse metadata v1. Giữ artifact v6, connection v1 và input UUID hiện có. |
-| `src/shared/artifact-files.ts` | Giữ root `conversation-registry`, tên `conversation.json` và thư mục `registered-artifacts/`. Bổ sung path helper cho `layout.json`, `session-types.json` và backup migration `conversation.v1.backup.json`. |
-| `src/shared/conversation-artifact-registry.ts` | Giữ filename và logic `ensureSafeConversationDirectory()` / đọc-ghi `registered-artifacts/`. Tách đọc version metadata khỏi parser v1/v2; giữ kiểm tra direct child, UUID-directory binding, linked path và owner modes hiện có. Thêm đọc/ghi `layout.json`, hợp nhất membership + layout, tính `updatedAt` và API Session ở mục 4; không thêm file lock cho session/layout. |
-| **Mới:** `src/shared/session-type-registry.ts` | Persistence cho types; list/seed/create/rename/delete và điều phối `setSessionType`. Module này dùng Session API để gán/chuyển type; tránh để Session registry import ngược coordinator types. Entry MCP/service khởi tạo defaults trước luồng tạo/migrate; tạo mới/migrate chỉ dùng type mặc định cố định. |
-| `test/artifact-contracts.test.ts`, `test/global-artifact-path.test.ts`, `test/conversation-artifact-registry.test.ts`; **mới:** `test/session-type-registry.test.ts` | Giữ fixtures v1 làm nguồn migration, thêm fixtures v2 + `layout.json` và tests cho persistence, hợp nhất membership/layout, tính `updatedAt`, types và mutation. Không chuyển tất cả fixtures v1 thành v2 rồi mất coverage nguồn cũ. |
+---
 
-**Quy tắc triển khai API:**
+### Chặng 2: Bước 4 + 5 — Sidebar, Session Types Popup & Tab Session (ĐÃ HOÀN THÀNH)
 
-1. `createSession` nhận title, sinh UUID, tạo `conversation.json` v2 và thư mục `registered-artifacts/` rỗng; tạo được session rỗng. Không thêm command/nút tạo thủ công. `readSession`/`listSessions` trả snapshot v2 (kết hợp `conversation.json` + `registered-artifacts/` + `layout.json`), gồm session rỗng; list bỏ qua v1 hợp lệ, vẫn đếm/báo dữ liệu hỏng riêng.
-2. Register nhận `sessionId`/`artifactId` và ghi `registered-artifacts/<artifactId>.json` với `registeredAt` mới (kể cả khi ID đã tồn tại, để cập nhật `Session.updatedAt` hiển thị), đồng thời trả `previousRegisteredAt` (nếu có) để caller rollback chính xác như hiện tại. Register không sửa `conversation.json` hay `layout.json`, nên artifact đã nằm ở References/Archived giữ nguyên vùng và thứ tự. Remove xoá file trong `registered-artifacts/` và bỏ ID khỏi `layout.json` nếu có; không tìm thấy ID là no-op. Không xoá artifact hoặc Session rỗng.
-3. Move nhận vùng đích và vị trí chèn, chỉ áp dụng ID đang tồn tại trong `registered-artifacts/`. Vị trí được tính trên mảng đích **sau khi bỏ ID khỏi vùng cũ**; kiểm tra phạm vi vị trí, giữ invariant không trùng ID và ghi `layout.json`. Details update chỉ sửa `conversation.json`, giữ nguyên membership/layout/type; gán type chỉ qua API validate danh sách types.
-4. Không tạo file lock cho session hay `layout.json`; dùng atomic write và chấp nhận quy tắc “bản lưu sau cùng thắng” khi có cập nhật đồng thời vào cùng một file.
-5. Metadata v2 và `layout.json` ghi qua staging/rename, giữ owner-only modes và lỗi đường dẫn hiện có; tách chế độ replace metadata migration khỏi fallback copy đè file của helper cũ. Windows chặn replace sau retry hữu hạn thì trả lỗi giữ file cũ. Đường Session read/write phải thống nhất để reader không đọc JSON dở. Không đổi writer/fallback của artifact lifecycle trong phase này.
-6. Type defaults chỉ seed khi thiếu file. Rename không đổi ID hoặc `updatedAt` của từng session. Delete type đang dùng đọc lại danh sách, chuyển từng session về default rồi mới xoá type; lỗi giữa chừng giữ type và báo kết quả chưa hoàn tất. Không rollback các session đã chuyển hợp lệ.
-
-**Khả năng phải đạt:** tạo/đọc/sửa Session độc lập; MCP thêm/inspect artifact chỉ ghi `registered-artifacts/` và tự cập nhật `updatedAt` hiển thị mà không đụng `layout.json` hay `conversation.json`; move/reorder/remove cập nhật đúng `layout.json`; custom types dùng chung và còn sau reload.
-
-**Kiểm chứng bước:** tests schema/path/registry/types trên userHome tạm; case MCP thêm artifact mới tự vào cuối `working` trong khi artifact cũ trong `layout.json` giữ nguyên vùng/order; lỗi replace không phá nguồn; type delete một phần vẫn giữ tham chiếu hợp lệ. Chưa coi bước này là migration hoặc UI đã hoạt động.
-
-### 13.2. Bước 2 — Phát hiện v1, migration dùng chung và cleanup
-
-**Phụ thuộc:** bước 1. **Đầu ra:** extension có thể gọi một hàm chuyển một ID, và bulk sau này chỉ điều phối hàm đó.
-
-| File/component | Sửa cụ thể |
-| --- | --- |
-| `src/shared/conversation-artifact-registry.ts` | Thêm `listMigrationCandidates` và `migrateConversationToSession` như mục 4. Discovery dùng schema/reader v1 để xác định nguồn đủ dữ liệu; migration đọc lại version và toàn bộ nguồn. Thêm lookup membership theo schema phục vụ Review App/popup, không gọi lookup v1 từ MCP inspect. |
-| `src/shared/artifact-files.ts` | Bổ sung backup metadata đề xuất `conversation.v1.backup.json` cạnh `conversation.json`; backup giữ bytes nguồn, không overwrite bằng v2 khi chạy lại. V2 mới tạo không bắt buộc có backup. |
-| `src/extension/artifact-retention.ts` | `executeArtifactRetentionCleanup` vẫn xoá artifact theo updatedAt và staging hiện có; phần registry cleanup gọi API phân nhánh theo schema, không gọi migration và không phụ thuộc UI có đang mở. |
-| `test/conversation-artifact-registry.test.ts`, `test/artifact-retention.test.ts` | Fixture v1/v2 lẫn nhau; giữ ID/title/order/timestamps khi chuyển; chạy lại bỏ qua v2; lỗi ghi giữ nguồn; cleanup giữ v2 rỗng và không tự chuyển v1. |
-
-**Luồng chuyển một ID:**
-
-1. Nhận ID đã validate từ thao tác user; kiểm tra hỗ trợ MCP ở extension handler trước khi gọi. Đọc lại metadata: đã v2 hợp lệ thì trả kết quả bỏ qua; version khác/hỏng thì báo lỗi, không ghi.
-2. Với v1, đọc đủ membership trong `registered-artifacts/` an toàn, validate binding ID/filename/schema. Lỗi ở entry cần chuyển làm conversation đó thất bại; không chuyển conversation có membership hỏng. Sắp xếp `registeredAt` tăng dần rồi `artifactId`; áp dụng mapping ở mục 5.
-3. Tạo backup `conversation.v1.backup.json` trước replace; ghi `layout.json` khởi tạo (`working` theo thứ tự đã sắp) và stage `conversation.json` v2 đã validate rồi rename vào metadata canonical. Windows chặn replace sau retry hữu hạn thì dừng mục này, giữ nguồn và backup. Không copy đè nguồn để đạt thành công giả và giữ nguyên toàn bộ `registered-artifacts/` làm nguồn membership của Session v2.
-4. Trả kết quả phân biệt **migrated / already-v2 / failed** hoặc lỗi tương ứng để single/bulk hiển thị đúng. Không scan toàn registry trong hàm chuyển một ID; không cập nhật timestamp artifact/review state.
-5. Cleanup v1/v2 đọc schema `conversation.json` trước mutation. V1 giữ semantics prune `registered-artifacts/` và xoá group rỗng hiện có. V2 prune file stale trong `registered-artifacts/`, đồng bộ bỏ các ID không còn membership khỏi `layout.json` (nếu có) và giữ `conversation.json` ngay cả khi không còn artifact nào.
-
-**Khả năng phải đạt:** phát hiện/đếm không đổi dữ liệu; chuyển một conversation giữ nguyên danh tính/membership và không sửa artifact; phần chưa chuyển vẫn là v1; cleanup không kích hoạt migration và không xoá v2 theo luật group v1 rỗng.
-
-**Kiểm chứng bước:** source v1 nguyên vẹn khi replace lỗi; v2 đã chỉnh không bị ghi đè khi retry; cleanup phân nhánh đúng v1/v2. Chỉ dùng fixtures, không chạy migration dữ liệu thật trong lúc phát triển.
-
-### 13.3. Bước 3 — MCP, lỗi ID v1 và skill
-
-**Phụ thuộc:** bước 1–2. **Đầu ra:** runtime tạo/reuse v2, từ chối ID v1 trước side effect và agent nhận được đúng hướng dẫn phục hồi.
-
-| File/component | Sửa cụ thể |
-| --- | --- |
-| `src/integration/artifact-review-mcp-v4.ts` — `createArtifact`, `persistArtifact` | Preflight ID được truyền bằng reader metadata/version mới trước allocate artifact directory hoặc consume routing selection. Không có ID thì tạo Session v2; có ID v2 thì register vào `registered-artifacts/`, giữ tên tham số MCP hiện tại. |
-| Cùng file — `handleInspectTool` | Giữ validate exact handle/expected round; kiểm tra ID/v1 trước `detachActiveArtifactWaiter`, `grantInspectedRound` và connection commit. Với Session v2, giữ nguyên cơ chế lưu `previousMembershipRegisteredAt` và restore/remove file trong `registered-artifacts/` khi rollback. |
-| Cùng file — `artifactHandle`, `ArtifactRecoveryCode`, `ArtifactRecoveryMetadata`, `asLifecycleRecoveryError`, `toolError`, tool descriptions/initialize instructions | Success adapter trả `artifactConversationId = session.sessionId`, `conversationName = session.title`; không giả lập DTO v1 hoặc thêm catalog. Thêm code `CONVERSATION_MIGRATION_REQUIRED` vào union và ID cũ `artifactConversationId` vào recovery metadata riêng. Guard tạo `ArtifactRecoveryError` qua `recoveryError` để mapper giữ đúng code, không đổi thành `CONVERSATION_REGISTRY_INVALID` chung. |
-| `skills/create-review-artifact/SKILL.md`, `references/artifact-contract.md` | Quy tắc hai lựa chọn khi gặp lỗi v1; giữ exact handle; không tự clear ID/retry nếu user chưa chọn. Thêm nhận biết prompt New/Join tường minh ở bước 6 để override active ID đúng ý user. Giữ feedback policy/Proceed/Just save và customization markers. |
-| `src/shared/contracts.ts`, version assertions liên quan | MCP giữ mốc 12 đã chuẩn bị; khi thay skill tăng `SKILL_VERSION` 3 → 4. Giữ package 1.1.4 nếu Chú chưa yêu cầu release khác. Không tự cài integration global. |
-| `test/review-wait-mcp.test.ts`, `test/skill-contract.test.ts`, `test/artifact-contracts.test.ts`, `test/release-contract.test.ts` | Chuyển producers/consumers/fixtures Session và success adapter; tests mã lỗi và skill recovery. Chỉ cập nhật assertions version/contract thực sự đổi; không làm lỏng regression để che lỗi. |
-
-**Luồng và error contract cần đạt:**
-
-1. Có ID v1: create/inspect đều trả tool error `isError: true`, mã trên ở `structuredContent.code` và trong text message; `structuredContent.artifactConversationId` là ID cũ, không phải error code hay một Session mới. `retryable: false` cho request hiện tại, `reuseRoundToken: false`; inspect giữ exact artifact handle cho bước user chọn, create chưa có artifact mới. Không tạo token, không huỷ waiter, không ghi connection/membership hoặc tạo directory artifact/session; init types mặc định cũng đặt sau preflight v1, không seed file từ request đã bị từ chối.
-2. Không truyền ID: tạo Session v2 mới, không tra grouping cũ của artifact. Có ID v2: ghi/cập nhật `registered-artifacts/<artifactId>.json` (cập nhật `registeredAt`); giữ nguyên `conversation.json` (`title`/`typeId`/`instructions`) và `layout.json` (vùng/order đã có).
-3. Rollback giữ nguyên cơ chế hiện tại trên `registered-artifacts/`: gỡ membership vừa thêm mới, hoặc restore `previousMembershipRegisteredAt` nếu membership đã tồn tại trước inspect; chỉ dọn Session mới thuộc lần tạo thất bại, không xoá Session reuse. Cơ chế review-round transaction/connection vẫn giữ contract hiện tại.
-4. Skill gặp lỗi chỉ đưa hai lựa chọn mục 4: migrate rồi retry cùng ID; hoặc user chọn Session mới rồi retry bỏ ID cũ và lưu ID mới sau thành công. “Bỏ conversation” là ngừng dùng trong chat; không xoá hoặc tự chuyển toàn bộ membership cũ. UI điều hướng mở Session bằng ID mới; không thêm tool MCP mở manager riêng.
-5. Prompt New do user chọn là chỉ thị đổi nhóm cho request đó: skill bỏ active ID cũ trước inspect, nhận ID mới rồi dùng cho các call sau. Prompt Join dùng exact ID v2 đã chọn thay cho ID chat đang giữ. Không thay nhóm nếu chỉ copy một exact-handle prompt legacy không có lựa chọn New/Join.
-
-**Khả năng phải đạt:** create/inspect không ID → v2 mới; reuse v2 đúng; ID v1 dừng sớm với hai lựa chọn; Review/question-only/Proceed/Just save/wait/advance vẫn theo artifact v6. Không thêm tool thứ sáu, heartbeat hoặc lifecycle ownership mới.
-
-**Kiểm chứng bước:** MCP tests hiện có chạy server process với fixture userHome, tập trung create/inspect v1 không side effect; success adapter; rollback giữ dữ liệu có trước; feedback lifecycle regression. Tests không thay thế việc test AI client thật sau cài/restart MCP/skill mới.
+> [!NOTE]
+> - **Trạng thái:** ✅ **Đã hoàn thành** (Review Checkpoint 2 sẵn sàng)
+> - **Các file đã can thiệp & tạo mới:**
+>   - [`package.json`](file:///d:/workspace/my-projects/ai-artifacts/package.json): Khai báo views container `agentPlus.artifacts` (Activity Bar icon), views `agentPlus.recentArtifacts` và `agentPlus.sessions`, `view/title` menu cho icon ⚙ (`agentPlus.manageSessionTypes`), custom editor `agentPlus.workSession` (selector `**/.ai-artifacts/conversation-registry/*/conversation.json`), commands (`agentPlus.openWorkSession`, `agentPlus.manageSessionTypes`, `agentPlus.openArtifact`, `agentPlus.reinstallIntegration`, `agentPlus.migrateConversations`).
+>   - [`src/shared/contracts.ts`](file:///d:/workspace/my-projects/ai-artifacts/src/shared/contracts.ts): Bổ sung `workSessionArtifactRowSchema`, `workSessionViewDataSchema`, `sessionWebviewToExtensionMessageSchema`, `SessionExtensionToWebviewMessage`.
+>   - [`src/extension/work-session-support.ts`](file:///d:/workspace/my-projects/ai-artifacts/src/extension/work-session-support.ts) *(mới)*: Service kiểm tra hỗ trợ MCP numeric version >= 12 và đối chiếu runtime bundle script.
+>   - [`src/extension/conversation-artifact-service.ts`](file:///d:/workspace/my-projects/ai-artifacts/src/extension/conversation-artifact-service.ts): Bổ sung các method `listWorkSessions`, `getWorkSession`, `listCandidates`, `countCandidates`, `resolveSessionViewData` (phân giải artifact manifests qua 3 vùng Working/References/Archived).
+>   - [`src/extension/session-type-command.ts`](file:///d:/workspace/my-projects/ai-artifacts/src/extension/session-type-command.ts) *(mới)*: Command quản lý types dùng QuickPick native chuẩn VS Code (thêm, đổi tên, xoá có xác nhận và tự động reassign về type `conversation`, cấm xoá type mặc định).
+>   - [`src/extension/work-session-sidebar.ts`](file:///d:/workspace/my-projects/ai-artifacts/src/extension/work-session-sidebar.ts) *(mới)*: `RecentArtifactsTreeDataProvider` (sort updatedAt desc, giới hạn 20 + Xem tất cả...), `WorkSessionsTreeDataProvider` (MCP v12 gate, item đếm candidate migration v1, render Session items v2).
+>   - [`src/extension/webview-html.ts`](file:///d:/workspace/my-projects/ai-artifacts/src/extension/webview-html.ts) *(mới)*: Tách shell HTML dùng chung với CSP, nonce, và discriminator `data-app="session" | "review"`.
+>   - [`src/webview/SessionApp.tsx`](file:///d:/workspace/my-projects/ai-artifacts/src/webview/SessionApp.tsx) *(mới)*: Component webview Session tab chỉ đọc hiển thị header (title, type badge), instructions Markdown, và 3 vùng (Working / References / Archived) với clickable artifact cards.
+>   - [`src/webview/main.tsx`](file:///d:/workspace/my-projects/ai-artifacts/src/webview/main.tsx): Gắn discriminator chọn `SessionApp` hay `ReviewApp` dựa trên `data-app` attribute của root container.
+>   - [`src/webview/vscode-api.ts`](file:///d:/workspace/my-projects/ai-artifacts/src/webview/vscode-api.ts): Mở rộng kiểu `postMessage` chấp nhận union của review messages và session messages.
+>   - [`src/webview/styles.css`](file:///d:/workspace/my-projects/ai-artifacts/src/webview/styles.css): Bổ sung styles cho Session tab (`.session-app-container`, header, instructions, zones, artifact cards).
+>   - [`src/extension/work-session-provider.ts`](file:///d:/workspace/my-projects/ai-artifacts/src/extension/work-session-provider.ts) *(mới)*: `WorkSessionProvider` triển khai `CustomReadonlyEditorProvider` cho `agentPlus.workSession`, validate document path, xử lý message `ready`, `openArtifact`, `openExternal`, auto-refresh khi service change.
+>   - [`src/extension/artifact-review-provider.ts`](file:///d:/workspace/my-projects/ai-artifacts/src/extension/artifact-review-provider.ts): Gắn `data-app="review"` vào webview root HTML.
+>   - [`src/extension/extension.ts`](file:///d:/workspace/my-projects/ai-artifacts/src/extension/extension.ts): Kết nối toàn bộ providers, views, commands, và wiring.
+>   - Tests: [`test/session-type-command.test.ts`](file:///d:/workspace/my-projects/ai-artifacts/test/session-type-command.test.ts) *(mới)*, [`test/work-session-sidebar.test.ts`](file:///d:/workspace/my-projects/ai-artifacts/test/work-session-sidebar.test.ts) *(mới)*, [`test/work-session-provider.test.ts`](file:///d:/workspace/my-projects/ai-artifacts/test/work-session-provider.test.ts) *(mới)*, [`test/artifact-review-open.test.ts`](file:///d:/workspace/my-projects/ai-artifacts/test/artifact-review-open.test.ts), [`test/release-contract.test.ts`](file:///d:/workspace/my-projects/ai-artifacts/test/release-contract.test.ts).
+> - **Kết quả đạt được (Phase Achievements):**
+>   - Đã đưa toàn bộ giao diện Sidebar (Recent Artifacts + Sessions v2) và tab Session chỉ đọc vào VS Code extension.
+>   - Phân luồng webview sạch sẽ giữa ReviewApp và SessionApp qua thuộc tính `data-app` mà không cần thay đổi pipeline build đơn tệp của Vite (`dist/webview/review.js`).
+>   - Toàn bộ 36 test files (550 tests passed, 0 failed, 3 skipped).
+>   - `npm run check` (tsc --noEmit) pass sạch 100%.
+>   - `npm run build` pass sạch cả 5 targets.
 
 ### 13.4. Bước 4 — Trạng thái hỗ trợ, service, sidebar và popup types
 
