@@ -67,7 +67,7 @@ If product intent, documentation, tests, and implementation disagree, call out t
 
 ## Ownership map
 
-- `src/integration/artifact-review-mcp-v4.ts`: historical filename for the current numeric MCP version 11/schema-v6 tools, window resolution, conversation grouping, connection commits, artifact creation, waiter ownership/takeover, complete review feedback results, round grants, inspection, and transactional round commits.
+- `src/integration/artifact-review-mcp-v4.ts`: historical filename for the current numeric MCP version 12/schema-v6 tools, window resolution, conversation grouping, connection commits, artifact creation, waiter ownership/takeover, complete review feedback results, round grants, inspection, and transactional round commits.
 - `src/shared/conversation-artifact-registry.ts`: schema-v1 conversation registry persistence, atomic lockfiles, and safe retention pruning.
 - `src/extension/conversation-artifact-service.ts`: extension-side conversation artifacts discovery and validation.
 - `src/extension/artifact-store.ts`: trusted artifact loading, comment writes, and submission writes.

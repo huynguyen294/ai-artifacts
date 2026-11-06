@@ -110,7 +110,7 @@ The skill must never create or edit `artifact.json`, `comments.json`, `review-su
 
 **Responsibilities**
 
-- Expose one window resolver plus four lifecycle tools (numeric MCP version 11):
+- Expose one window resolver plus four lifecycle tools (numeric MCP version 12):
   - `resolve_artifact_window`
   - `create_artifact`
   - `wait_for_artifact_review`

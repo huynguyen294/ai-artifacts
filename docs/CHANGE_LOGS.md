@@ -14,6 +14,18 @@ Minor typos, formatting fixes, or cosmetic wording adjustments that do not chang
 
 Each entry includes the date, category, summary of changes, rationale, and affected components or files.
 
+## 2026-11-06 — MCP Version 12 Preparation for Work Session Testing
+
+- Increased the bundled numeric `MCP_VERSION` from 11 to 12 at the owner's request, allowing installed-version freshness tests to distinguish the old and new runtime assets. Kept the extension package at 1.1.4, skill at 3, and conversation registry at schema v1.
+- Synchronized current-version references and existing contract assertions. This change only prepares the version marker; Session v2, UI gates, migration, and the proposed legacy-conversation inspect behavior are not implemented by this bump. No global integration assets are installed or replaced by this source change.
+- Updated the Work Session plans: create against a v1 conversation requires migration or an explicit choice to create/open a new Session; clarified the proposed inspect branch that preserves artifact feedback/reconnect without mutating v1 membership. Session type assignment UI remains in Phase 3.
+
+## 2026-11-06 — Work Session Phase 1+2 Planning (Not Implemented)
+
+- Combined the Session model and sidebar/navigation implementation plans in `plans/work-session-artifact/plan-phase-1.md`, with proposed storage/migration, affected components, and validation scope.
+- Documented global session types (`typeId` plus a user-level type list), management from the Sessions header settings action, and the explicit absence of a manual create-session button. Proposed a minimal read-only session editor as the navigation destination before the full manager phase.
+- Synchronized `plan.md` and added the latest decisions to `analyzed.md`. This is planning documentation only: no runtime, schema, dependency, installed data, or release version has changed.
+
 ## 2026-11-04 — Version 1.1.4 Release Preparation
 
 - Set the extension version to `1.1.4` in package and lock metadata, updated the README VSIX installation example, and synchronized the release-contract assertions with the existing `1.1.4` changelog entry.
