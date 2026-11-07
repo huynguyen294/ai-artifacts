@@ -7,6 +7,7 @@ export const USER_CUSTOM_RULES_END = "<!-- <<< USER CUSTOM RULES <<< -->";
 export const OFFICIAL_SKILL_DESCRIPTIONS: readonly string[] = [
   "Create or update a reviewable Markdown artifact and wait for the user's decision in the same Codex turn. Use only when the user explicitly asks to create or update an artifact.",
   "Create, update, inspect, or reconnect an explicitly requested reviewable Markdown artifact and coordinate its review rounds.",
+  "Create, update, inspect, or reconnect an explicitly requested reviewable Markdown artifact, join work sessions, and coordinate review rounds.",
 ];
 
 export const REVIEW_SKILL_ASSETS = [

@@ -35,12 +35,12 @@ describe("ArtifactConnectDialog", () => {
       />,
     );
 
-    expect(html).toContain("Kết nối AI với Artifact");
-    expect(html).toContain("Tạo Session mới (New Session)");
-    expect(html).toContain("Tham gia Session hiện có (Join Session)");
+    expect(html).toContain("Connect AI to Artifact");
+    expect(html).toContain("New Session");
+    expect(html).toContain("Join Session");
     // Join mode option should have disabled class because 0 v2 sessions
     expect(html).toContain("connect-mode-option  disabled");
-    expect(html).toContain("Sao chép Prompt");
+    expect(html).toContain("Copy Prompt");
   });
 
   it("renders v2 sessions and v1 sessions with badge Cần chuyển đổi v2 when available", () => {
@@ -70,10 +70,10 @@ describe("ArtifactConnectDialog", () => {
       />,
     );
 
-    expect(html).toContain("Kết nối AI với Artifact");
+    expect(html).toContain("Connect AI to Artifact");
     // New session is rendered by default
-    expect(html).toContain("Tạo Session mới (New Session)");
-    expect(html).toContain("Tham gia Session hiện có (Join Session)");
+    expect(html).toContain("New Session");
+    expect(html).toContain("Join Session");
     // Join is NOT disabled because sess-v2 exists
     expect(html).not.toContain("connect-mode-option  disabled");
   });

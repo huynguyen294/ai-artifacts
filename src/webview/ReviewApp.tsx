@@ -23,6 +23,7 @@ import type {
 } from "../shared/contracts";
 import { vscode } from "./vscode-api";
 import { MarkdownRenderer } from "./MarkdownRenderer";
+import { formatArtifactKindLabel } from "../shared/artifact-kinds";
 import { SelectionCommentPopover, type SelectionDraft } from "./SelectionCommentPopover";
 import { CommentDetailPopover } from "./CommentDetailPopover";
 import { CommentsDrawer } from "./CommentsDrawer";
@@ -342,7 +343,7 @@ export function App(): ReactNode {
       <header className="topbar">
         <div className="artifact-heading">
           <span className="eyebrow">
-            {state.artifact.kind.toUpperCase()} · ROUND {state.artifact.reviewRound}
+            {formatArtifactKindLabel(state.artifact.kind)} · ROUND {state.artifact.reviewRound}
           </span>
           <h1>{state.artifact.title}</h1>
         </div>
@@ -467,8 +468,8 @@ export function App(): ReactNode {
             disabled={!sessionSupport.supported}
             title={
               !sessionSupport.supported
-                ? "Sessions yêu cầu MCP server phiên bản 12 trở lên"
-                : `Mở Sessions của artifact này (${sessionSupport.sessions.length})`
+                ? "Sessions require MCP server version 12 or higher"
+                : `Open sessions for this artifact (${sessionSupport.sessions.length})`
             }
             onClick={() => {
               vscode.postMessage({ type: "openArtifactSessions" });

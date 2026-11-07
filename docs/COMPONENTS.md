@@ -81,7 +81,7 @@ The governing lifetime relationship is `artifact lifetime > waiter lifetime > ch
 - By default, call `create_artifact` directly; the MCP server automatically targets the currently focused live VS Code window (or sole live window).
 - When multiple windows exist and focus is ambiguous, handle `WINDOW_SELECTION_REQUIRED` and retry with `connection: { targetMode: "explicit-window", selectionToken }`.
 - Call `resolve_artifact_window` when proactive window discovery or candidate inspection is needed before creation.
-- Call `create_artifact` with `kind: "implementation-plan"`, retain an exact handle mapping, `artifactConversationId`, and returned connection metadata, then call `wait_for_artifact_review` for the default flow.
+- Call `create_artifact` with a chosen fixed or open `kind` (defaulting to plan kinds when applicable), retain an exact handle mapping, `artifactConversationId`, and returned connection metadata, then call `wait_for_artifact_review` for the default flow.
 - Interpret the returned decision.
 - Apply one feedback policy to submitted `revise` and chat-inspected comments: answer questions visibly, update Markdown only for requested changes, and advance unchanged Markdown for question-only rounds.
 - For chat escape, inspect the exact interrupted handle with takeover before applying that shared policy.
@@ -500,7 +500,7 @@ This layer is the protocol source of truth. A contract change must be propagated
 
 ### Default submission flow
 
-1. The skill writes one complete Markdown document and calls `create_artifact` with `kind: "implementation-plan"`, title, and markdown. By default, it omits connection parameters and the server routes directly to the currently focused VS Code window (or sole live window).
+1. The skill writes one complete Markdown document and calls `create_artifact` with a suitable `kind` (fixed set or open kind), title, and markdown. By default, it omits connection parameters and the server routes directly to the currently focused VS Code window (or sole live window).
 2. If multiple windows exist and none or multiple are focused, `create_artifact` returns `WINDOW_SELECTION_REQUIRED` with candidates and opaque tokens. The skill selects the best candidate or prompts the user, then retries with `connection: { targetMode: "explicit-window", selectionToken }`.
 3. The MCP creates the initial schema-v6 files plus schema-v1 connection state under `~/.ai-artifacts/artifacts/<artifactId>/`, and returns the exact global handle plus a regular file link.
 4. The skill calls `wait_for_artifact_review` with the exact handle. The MCP reserves waiter ownership.

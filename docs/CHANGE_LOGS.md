@@ -14,6 +14,25 @@ Minor typos, formatting fixes, or cosmetic wording adjustments that do not chang
 
 Each entry includes the date, category, summary of changes, rationale, and affected components or files.
 
+## 2026-11-07 — Phase 4 Stage 3 implementation & review hardening: Instructions UI, Connect manager, native kind filters, Skill v6 bump and docs
+
+- Implemented Instructions UI integration in Session Manager (`src/webview/SessionApp.tsx`): added "Open Markdown File" button to open `instructions.md` in external editor, scoped event synchronizer to handle instructions updates, and error banner dismiss.
+- Added session connect prompt generator (`src/shared/session-connect-prompt.ts`) and "Connect" button in Session header: styled with synchronized chain link SVG icon, copying a single-call `join_session(sessionId)` directive for AI assistants.
+- Added 8px left margin to the `＋` Add Artifact button next to `Working` in Session Manager.
+- Hardened `openSessionInstructionsFile` in `src/extension/work-session-provider.ts`: injected safe `openTextDocument` using VS Code `showTextDocument` directly instead of `ArtifactReviewOpenCoordinator.open` (which rejected non-artifact Markdown files), adding session verification, symlink check, and atomic file creation `{ flag: "wx", mode: 0o600 }`.
+- Decoupled session creation from document opening in `src/extension/session-create-command.ts`: failure to open the newly created session editor warns the user but returns the created `sessionId`.
+- Enhanced `agentPlus.addSessionArtifact` in `src/extension/session-artifact-add-command.ts`: formatted kind labels in quick pick item descriptions, enabled dynamic query filtering with `alwaysShow: true`, and added pre-addition validation with `validateArtifactReviewTarget`.
+- Hardened Recent Artifacts kind filtering in `src/extension/artifact-kind-filter-command.ts`: exported `ArtifactKindFilter` and type guard `isArtifactKindFilter` to validate filter inputs before propagation.
+- Updated Codex MCP config (`src/extension/mcp-config.ts`): registered `[mcp_servers.ai_artifacts.tools.join_session]` in tool definitions and added `join_session` to `requiredTools`.
+- Aligned `buildArtifactConnectPrompt` for new sessions (`src/shared/artifact-connect-prompt.ts`): prompts agent to call `inspect_artifact_review` with `takeover: true`, omits prior `artifactConversationId`, and instructs updating active session with returned `session.sessionId`.
+- Skill contract updates (`skills/create-review-artifact/SKILL.md` & `references/artifact-contract.md`): declared `CONVERSATION_NOT_FOUND` as non-retryable, specified response normalization across entry tools, distinguished fresh execution directives from historical saved submissions, removed deprecated `instructions` field from schema-v2 metadata docs, and restored explicit `` `kind: "implementation-plan"` `` while retaining flexible fixed/open kinds.
+- Unified artifact kind formatting: replaced raw slug display across `ReviewApp`, `SessionApp`, sidebar items, and search quick pick with `formatArtifactKindLabel`.
+- Added native kind filter to Recent Artifacts tree view (`agentPlus.filterRecentArtifacts` in `src/extension/artifact-kind-filter-command.ts`): provides All Types, 10 fixed kinds, and Other, applying filter before recency sort and 20 cap; propagated active filter to `agentPlus.searchArtifact`.
+- Switched Recent Artifacts view to `vscode.window.createTreeView` to dynamically render active filter indicator in view description (`Type: <Label>`).
+- Audited and updated all product-owned UI wording, titles, tooltips, and aria-labels to English across Review App, Session Manager, Connect dialog, Tree Views, and Quick Picks.
+- Incremented numeric `SKILL_VERSION` from 5 to 6 in `src/shared/contracts.ts` (keeping `MCP_VERSION = 12`); appended official Skill v6 description to `OFFICIAL_SKILL_DESCRIPTIONS` in `src/extension/mcp-clients/skill-helper.ts`.
+- Synchronized canonical documentation (`README.md`, `docs/INSTRUCTION.md`, `docs/PHILOSOPHY.md`, `docs/ARCHITECTURE.md`, `docs/COMPONENTS.md`) and updated release contract assertions in `test/release-contract.test.ts`.
+
 ## 2026-11-07 — Phase 4 Stage 2 implementation: join_session, inspect core, session context & proceed directives
 
 - Implemented MCP tool 6 `join_session` (`src/integration/artifact-review-mcp-v4.ts`): supports join-only (returning `{ session: SessionContext }` read-only without touching waiters or seeding `session-types.json`) and join+artifact (returning `{ session, inspection }` in a single tool call sharing `executeInspectCore`).

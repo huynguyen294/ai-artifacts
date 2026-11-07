@@ -21,6 +21,13 @@ import {
 } from "./session-type-command";
 import { runSessionFilterCommand } from "./session-filter-command";
 import { runSessionSearchCommand } from "./session-search-command";
+import { runCreateSessionCommand } from "./session-create-command";
+import {
+  isArtifactKindFilter,
+  runArtifactKindFilterCommand,
+  type ArtifactKindFilterQuickPickItem,
+} from "./artifact-kind-filter-command";
+import { formatArtifactKindLabel } from "../shared/artifact-kinds";
 import { listSessionTypes } from "../shared/session-type-registry";
 import { resolveWorkSessionSupport } from "./work-session-support";
 import {
@@ -132,6 +139,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     treeDataProvider: workSessionsProvider,
   });
 
+  const recentArtifactsTreeView = vscode.window.createTreeView("agentPlus.recentArtifacts", {
+    treeDataProvider: recentArtifactsProvider,
+  });
+
   const updateSessionsFilterDescription = async (): Promise<void> => {
     const filterId = workSessionsProvider.getTypeFilter();
     if (!filterId) {
@@ -152,16 +163,32 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     }
   };
 
+  const updateRecentFilterDescription = (): void => {
+    const filterKind = recentArtifactsProvider.getKindFilter();
+    if (!filterKind) {
+      recentArtifactsTreeView.description = "";
+      return;
+    }
+    if (filterKind === "other") {
+      recentArtifactsTreeView.description = "Type: Other";
+    } else {
+      recentArtifactsTreeView.description = `Type: ${formatArtifactKindLabel(filterKind)}`;
+    }
+  };
+
   context.subscriptions.push(
     workspaceRegistryPublisher,
     conversationArtifactService,
     recentArtifactsProvider,
     workSessionsProvider,
     sessionsTreeView,
+    recentArtifactsTreeView,
     workSessionsProvider.onDidChangeTreeData(() => {
       void updateSessionsFilterDescription();
     }),
-    vscode.window.registerTreeDataProvider("agentPlus.recentArtifacts", recentArtifactsProvider),
+    recentArtifactsProvider.onDidChangeTreeData(() => {
+      updateRecentFilterDescription();
+    }),
     vscode.window.registerCustomEditorProvider(ArtifactReviewProvider.viewType, provider, {
       webviewOptions: { retainContextWhenHidden: true },
       supportsMultipleEditorsPerDocument: false,
@@ -169,6 +196,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.window.registerCustomEditorProvider(WorkSessionProvider.viewType, workSessionProvider, {
       webviewOptions: { retainContextWhenHidden: true },
       supportsMultipleEditorsPerDocument: false,
+    }),
+    vscode.commands.registerCommand("agentPlus.createSession", async () => {
+      await runCreateSessionCommand({
+        service: conversationArtifactService,
+        context,
+      });
     }),
     vscode.commands.registerCommand("agentPlus.openWorkSession", async (sessionIdCandidate?: unknown) => {
       try {
@@ -298,17 +331,31 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
           )?.[0]);
       if (selected) await artifactReviewOpenCoordinator.open(selected);
     }),
-    vscode.commands.registerCommand("agentPlus.searchArtifact", async () => {
-      await runArtifactSearchCommand({
-        createQuickPick: () => vscode.window.createQuickPick<ArtifactQuickPickItem>(),
-        discoverArtifacts: () => discoverSearchableArtifacts(),
-        openArtifact: async (artifactPath) => {
-          await artifactReviewOpenCoordinator.open(vscode.Uri.file(artifactPath));
-        },
-        showErrorMessage: (message) => {
-          void vscode.window.showErrorMessage(message);
+    vscode.commands.registerCommand("agentPlus.filterRecentArtifacts", async () => {
+      await runArtifactKindFilterCommand({
+        createQuickPick: () => vscode.window.createQuickPick<ArtifactKindFilterQuickPickItem>(),
+        currentKindFilter: recentArtifactsProvider.getKindFilter(),
+        onFilterChanged: (selectedKind) => {
+          recentArtifactsProvider.setKindFilter(selectedKind);
         },
       });
+    }),
+    vscode.commands.registerCommand("agentPlus.searchArtifact", async (options?: { kindFilter?: string }) => {
+      await runArtifactSearchCommand(
+        {
+          createQuickPick: () => vscode.window.createQuickPick<ArtifactQuickPickItem>(),
+          discoverArtifacts: () => discoverSearchableArtifacts(),
+          openArtifact: async (artifactPath) => {
+            await artifactReviewOpenCoordinator.open(vscode.Uri.file(artifactPath));
+          },
+          showErrorMessage: (message) => {
+            void vscode.window.showErrorMessage(message);
+          },
+        },
+        typeof options === "object" && options !== null && isArtifactKindFilter(options.kindFilter)
+          ? { kindFilter: options.kindFilter }
+          : undefined,
+      );
     }),
 
     // 1. All Detected

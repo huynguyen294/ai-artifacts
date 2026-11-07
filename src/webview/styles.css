@@ -1143,6 +1143,71 @@ button:disabled {
   margin-top: 8px;
 }
 
+.session-instructions-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.session-open-instructions-btn {
+  padding: 3px 8px;
+  font-size: 0.75rem;
+  font-weight: 500;
+  border-radius: 4px;
+  border: 1px solid var(--vscode-button-secondaryBorder, var(--vscode-editorWidget-border, #454545));
+  background: var(--vscode-button-secondaryBackground, #3a3d41);
+  color: var(--vscode-button-secondaryForeground, #ffffff);
+  cursor: pointer;
+  line-height: 1.4;
+  transition: background-color 0.15s ease;
+}
+
+.session-open-instructions-btn:hover {
+  background: var(--vscode-button-secondaryHoverBackground, #45494e);
+}
+
+.session-connect-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  font-size: 0.75rem;
+  font-weight: 500;
+  border-radius: 4px;
+  border: 1px solid var(--vscode-button-secondaryBorder, var(--vscode-editorWidget-border, #454545));
+  background: var(--vscode-button-secondaryBackground, #3a3d41);
+  color: var(--vscode-button-secondaryForeground, #ffffff);
+  cursor: pointer;
+  line-height: 1.4;
+  transition:
+    background-color 0.15s ease,
+    color 0.15s ease;
+}
+
+.session-connect-btn.copied {
+  color: var(--vscode-testing-iconPassed, #73c991);
+}
+
+.session-connect-btn svg {
+  display: block;
+  flex-shrink: 0;
+}
+
+.session-connect-btn:hover {
+  background: var(--vscode-button-secondaryHoverBackground, #45494e);
+}
+
+.session-add-artifact-btn {
+  font-size: 1rem;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  margin-left: 8px;
+}
+
 .session-save-btn {
   padding: 3px 10px;
   font-size: 0.75rem;

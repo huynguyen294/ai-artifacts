@@ -9,7 +9,7 @@ export const SESSION_TYPES_SCHEMA_VERSION = 1 as const;
 export const DEFAULT_SESSION_TYPE_ID = "conversation" as const;
 export const INTEGRATION_VERSION_SCHEMA_VERSION = 1 as const;
 export const MCP_VERSION = 12 as const;
-export const SKILL_VERSION = 5 as const;
+export const SKILL_VERSION = 6 as const;
 export const ARTIFACT_ROOT_BLOCK_ID = "__artifact_root__" as const;
 export const ARTIFACT_ROOT_BLOCK_TYPE = "artifact" as const;
 export const ARTIFACT_ROOT_TEXT = "Applies to the entire artifact" as const;
@@ -566,6 +566,7 @@ export type WorkSessionViewData = z.infer<typeof workSessionViewDataSchema>;
 
 export type WorkSessionDataChange =
   | { kind: "metadata"; sessionId: string }
+  | { kind: "instructions"; sessionId: string }
   | { kind: "membership"; sessionId: string; artifactId: string }
   | { kind: "layout"; sessionId: string }
   | { kind: "artifact"; artifactId: string }
@@ -585,6 +586,9 @@ export const sessionWebviewToExtensionMessageSchema = z.discriminatedUnion("type
   z.object({ type: z.literal("openExternal"), url: z.string().url() }).strict(),
   z.object({ type: z.literal("renameSession") }).strict(),
   z.object({ type: z.literal("saveSessionInstructions"), instructions: sessionInstructionsSchema }).strict(),
+  z.object({ type: z.literal("openSessionInstructionsFile") }).strict(),
+  z.object({ type: z.literal("copySessionConnectPrompt") }).strict(),
+  z.object({ type: z.literal("addSessionArtifact") }).strict(),
   z.object({ type: z.literal("selectSessionType") }).strict(),
   z
     .object({
@@ -629,6 +633,9 @@ export type SessionExtensionToWebviewMessage =
   | {
       type: "sessionInstructionsSaved";
       instructions: string;
+    }
+  | {
+      type: "sessionConnectPromptCopied";
     }
   | {
       type: "sessionPanelExpanded";

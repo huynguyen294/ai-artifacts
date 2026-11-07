@@ -125,7 +125,7 @@ After installing the integration, reload your editor and restart your agent to l
 <details>
 <summary>Runtime version and expected tools</summary>
 
-The current source bundles numeric MCP version 12 and skill version 5. The MCP catalog contains exactly five tools: `resolve_artifact_window`, `create_artifact`, `wait_for_artifact_review`, `inspect_artifact_review`, and `advance_and_wait_for_artifact`. A client that reports a different MCP version or exposes an older catalog must be reinstalled and restarted.
+The current source bundles numeric MCP version 12 and skill version 6. The MCP catalog contains exactly six tools: `resolve_artifact_window`, `create_artifact`, `wait_for_artifact_review`, `inspect_artifact_review`, `advance_and_wait_for_artifact`, and `join_session`. A client that reports a different MCP version or exposes an older catalog must be reinstalled and restarted.
 
 MCP version 12 is reserved for the unreleased Work Session feature and remains its release version across implementation stages. The current runtime supports schema-v2 Sessions and explicit migration from legacy v1 conversations. Session instructions are read from `instructions.md`; existing v2 metadata may still contain an optional inline `instructions` string, which is accepted but not used as the instructions source. New metadata writes omit that field. Updating a test runtime bundle still requires reinstalling the changed runtime even when its numeric version remains 12.
 
@@ -284,7 +284,7 @@ The AI agent calls the MCP `create_artifact` tool, which generates an isolated s
 ## Compatibility and upgrades
 
 - Version 1.1.0 supports only schema v6 stored under `~/.ai-artifacts/artifacts/`.
-- The current integration uses numeric `MCP_VERSION = 12` and `SKILL_VERSION = 5`. These are independent monotonic asset versions, not SemVer and not the extension package version.
+- The current integration uses numeric `MCP_VERSION = 12` and `SKILL_VERSION = 6`. These are independent monotonic asset versions, not SemVer and not the extension package version.
 - Successful installation records the verified MCP runtime, shared `.agents` skill, and detected Claude skill independently in `~/.ai-artifacts/managed/integration-version.json`. A missing or invalid receipt is treated as stale.
 - Schema v3/v4/v5 and workspace-local `.ai-artifacts` or `.codex-artifacts` lifecycles are not opened, advanced, or migrated by v1.1.x. Existing files remain untouched on disk.
 - This is a hard compatibility cutoff. A rollback to a 0.9.x extension also requires reinstalling the matching older runtime and skill; do not use a 0.9.x runtime with v1.1.x artifacts.

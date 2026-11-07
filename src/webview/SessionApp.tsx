@@ -1,4 +1,5 @@
 import { useEffect, useReducer } from "react";
+import { formatArtifactKindLabel } from "../shared/artifact-kinds";
 import type {
   SessionExtensionToWebviewMessage,
   WorkSessionArtifactRow,
@@ -25,6 +26,7 @@ export interface SessionManagerState {
   instructionsError?: string | undefined;
   actionError?: string | undefined;
   activeCardMenuId?: string | undefined;
+  connectCopied: boolean;
 }
 
 export type SessionManagerAction =
@@ -33,7 +35,8 @@ export type SessionManagerAction =
   | { type: "startSaveInstructions" }
   | { type: "togglePanel" }
   | { type: "setActiveCardMenu"; menuId: string | undefined }
-  | { type: "dismissActionError" };
+  | { type: "dismissActionError" }
+  | { type: "setConnectCopied"; copied: boolean };
 
 export function createInitialSessionManagerState(
   initialState?: SessionAppState,
@@ -48,6 +51,7 @@ export function createInitialSessionManagerState(
     instructionsError: undefined,
     actionError: undefined,
     activeCardMenuId: undefined,
+    connectCopied: false,
   };
 }
 
@@ -86,6 +90,12 @@ export function sessionManagerReducer(
       return {
         ...current,
         actionError: undefined,
+      };
+
+    case "setConnectCopied":
+      return {
+        ...current,
+        connectCopied: action.copied,
       };
 
     case "message": {
@@ -183,6 +193,13 @@ export function sessionManagerReducer(
         };
       }
 
+      if (msg.type === "sessionConnectPromptCopied") {
+        return {
+          ...current,
+          connectCopied: true,
+        };
+      }
+
       if (msg.type === "sessionPanelExpanded") {
         return {
           ...current,
@@ -233,7 +250,17 @@ export function SessionApp({ initialState, initialPanelExpanded = true }: Sessio
     instructionsError,
     actionError,
     activeCardMenuId,
+    connectCopied,
   } = managerState;
+
+  useEffect(() => {
+    if (connectCopied) {
+      const timer = setTimeout(() => {
+        dispatch({ type: "setConnectCopied", copied: false });
+      }, 2000);
+      return () => clearTimeout(timer);
+    }
+  }, [connectCopied]);
 
   useEffect(() => {
     const handleMessage = (event: MessageEvent<SessionExtensionToWebviewMessage>) => {
@@ -296,6 +323,18 @@ export function SessionApp({ initialState, initialPanelExpanded = true }: Sessio
     vscode.postMessage({ type: "selectSessionType" });
   };
 
+  const handleCopyConnectPrompt = () => {
+    vscode.postMessage({ type: "copySessionConnectPrompt" });
+  };
+
+  const handleOpenInstructionsFile = () => {
+    vscode.postMessage({ type: "openSessionInstructionsFile" });
+  };
+
+  const handleAddArtifact = () => {
+    vscode.postMessage({ type: "addSessionArtifact" });
+  };
+
   const handleSaveInstructions = () => {
     dispatch({ type: "startSaveInstructions" });
     vscode.postMessage({
@@ -330,6 +369,17 @@ export function SessionApp({ initialState, initialPanelExpanded = true }: Sessio
           <h4>
             {title} <span className="session-zone-count">({items.length})</span>
           </h4>
+          {zoneKey === "working" && (
+            <button
+              type="button"
+              className="session-icon-button session-add-artifact-btn"
+              title="Add Artifact"
+              aria-label="Add Artifact"
+              onClick={handleAddArtifact}
+            >
+              ＋
+            </button>
+          )}
         </div>
         {items.length === 0 ? (
           <div className="session-zone-empty">No artifacts in this zone</div>
@@ -364,7 +414,7 @@ export function SessionApp({ initialState, initialPanelExpanded = true }: Sessio
                       {artifact.unavailable ? (
                         <span className="session-card-unavailable-badge">Unavailable</span>
                       ) : (
-                        <span className="session-card-kind-badge">{artifact.kind}</span>
+                        <span className="session-card-kind-badge">{formatArtifactKindLabel(artifact.kind)}</span>
                       )}
                     </div>
                     <div
@@ -482,6 +532,47 @@ export function SessionApp({ initialState, initialPanelExpanded = true }: Sessio
           <div className="session-header-actions">
             <button
               type="button"
+              className={`secondary session-header-btn session-connect-btn${connectCopied ? " copied" : ""}`}
+              onClick={handleCopyConnectPrompt}
+              title={connectCopied ? "Copied!" : "Copy session connect prompt for AI assistant"}
+              aria-label={connectCopied ? "Session connect prompt copied" : "Copy session connect prompt"}
+            >
+              {connectCopied ? (
+                <>
+                  <svg aria-hidden="true" width="14" height="14" viewBox="0 0 16 16" fill="none">
+                    <path
+                      d="m2.5 8 3.25 3.25 7.75-7.75"
+                      stroke="currentColor"
+                      strokeWidth="1.5"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  </svg>
+                  <span>Copied!</span>
+                </>
+              ) : (
+                <>
+                  <svg aria-hidden="true" width="14" height="14" viewBox="0 0 16 16" fill="none">
+                    <path
+                      d="m6.1 9.9-1.2 1.2a2.83 2.83 0 0 1-4-4l2.2-2.2a2.83 2.83 0 0 1 4 0"
+                      stroke="currentColor"
+                      strokeWidth="1.2"
+                      strokeLinecap="round"
+                    />
+                    <path
+                      d="m9.9 6.1 1.2-1.2a2.83 2.83 0 0 1 4 4l-2.2 2.2a2.83 2.83 0 0 1-4 0"
+                      stroke="currentColor"
+                      strokeWidth="1.2"
+                      strokeLinecap="round"
+                    />
+                    <path d="m5.6 10.4 4.8-4.8" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+                  </svg>
+                  <span>Connect</span>
+                </>
+              )}
+            </button>
+            <button
+              type="button"
               className="session-icon-button session-panel-toggle-btn"
               onClick={handleTogglePanel}
               title={panelExpanded ? "Collapse side panel" : "Expand side panel"}
@@ -549,14 +640,24 @@ export function SessionApp({ initialState, initialPanelExpanded = true }: Sessio
             <div className="session-side-section session-instructions-section">
               <div className="session-side-section-header">
                 <h4>Instructions</h4>
-                <button
-                  type="button"
-                  className="primary session-save-btn"
-                  onClick={handleSaveInstructions}
-                  disabled={savingInstructions || draftInstructions === data.instructions}
-                >
-                  {savingInstructions ? "Saving..." : "Save"}
-                </button>
+                <div className="session-instructions-actions">
+                  <button
+                    type="button"
+                    className="secondary session-open-instructions-btn"
+                    onClick={handleOpenInstructionsFile}
+                    title="Open instructions Markdown file in editor"
+                  >
+                    Open Markdown File
+                  </button>
+                  <button
+                    type="button"
+                    className="primary session-save-btn"
+                    onClick={handleSaveInstructions}
+                    disabled={savingInstructions || draftInstructions === data.instructions}
+                  >
+                    {savingInstructions ? "Saving..." : "Save"}
+                  </button>
+                </div>
               </div>
               <textarea
                 className="session-instructions-textarea"

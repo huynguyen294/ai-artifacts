@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -61,7 +61,7 @@ describe("WorkSession Sidebar Tree Data Providers", () => {
   let service: ConversationArtifactService<any>;
 
   beforeEach(async () => {
-    tempHome = await mkdtemp(path.join(tmpdir(), "ai-artifacts-sidebar-"));
+    tempHome = await realpath(await mkdtemp(path.join(tmpdir(), "ai-artifacts-sidebar-")));
     service = new ConversationArtifactService<any>({
       uriFromFilePath: (p) => ({ fsPath: p }),
       openArtifactReview: vi.fn(),
@@ -83,7 +83,7 @@ describe("WorkSession Sidebar Tree Data Providers", () => {
       expect(children[0]?.type).toBe("empty");
 
       const treeItem = provider.getTreeItem(children[0]!);
-      expect(treeItem.label).toBe("Chưa có artifact nào");
+      expect(treeItem.label).toBe("No artifacts yet");
     });
 
     it("sorts artifacts by updatedAt descending and caps at 20 with viewAll item", async () => {
@@ -127,6 +127,178 @@ describe("WorkSession Sidebar Tree Data Providers", () => {
         const treeItem = provider.getTreeItem(last);
         expect(treeItem.command?.command).toBe("agentPlus.searchArtifact");
       }
+    });
+
+    it("filters artifacts by kind before sorting and capping at 20", async () => {
+      const artifactsDir = globalArtifactsRoot({ userHome: tempHome });
+
+      // Create 20 specs (newer, times 6-25) and 5 plans (older, times 1-5)
+      for (let i = 1; i <= 5; i++) {
+        const artId = `plan-${String(i).padStart(2, "0")}`;
+        const dir = path.join(artifactsDir, artId);
+        await mkdir(dir, { recursive: true });
+        const time = new Date(Date.parse("2026-04-10T10:00:00.000Z") + i * 1000).toISOString();
+        await writeFile(
+          path.join(dir, "artifact.json"),
+          JSON.stringify({
+            schemaVersion: 6,
+            kind: "plan",
+            artifactId: artId,
+            title: `Plan ${i}`,
+            createdAt: time,
+            updatedAt: time,
+            reviewRound: 1,
+            reviewSessionId: "00000000-0000-4000-8000-000000000001",
+          }),
+        );
+        await writeFile(path.join(dir, "artifact.md"), "# Content\n");
+      }
+
+      for (let i = 6; i <= 25; i++) {
+        const artId = `spec-${String(i).padStart(2, "0")}`;
+        const dir = path.join(artifactsDir, artId);
+        await mkdir(dir, { recursive: true });
+        const time = new Date(Date.parse("2026-04-10T10:00:00.000Z") + i * 1000).toISOString();
+        await writeFile(
+          path.join(dir, "artifact.json"),
+          JSON.stringify({
+            schemaVersion: 6,
+            kind: "spec",
+            artifactId: artId,
+            title: `Spec ${i}`,
+            createdAt: time,
+            updatedAt: time,
+            reviewRound: 1,
+            reviewSessionId: "00000000-0000-4000-8000-000000000001",
+          }),
+        );
+        await writeFile(path.join(dir, "artifact.md"), "# Content\n");
+      }
+
+      const provider = new RecentArtifactsTreeDataProvider(service, { userHome: tempHome });
+
+      // With no filter, 20 newest are specs
+      const unfiltered = await provider.getChildren();
+      expect(unfiltered).toHaveLength(21);
+      expect((unfiltered[0] as any).artifact.kind).toBe("spec");
+
+      // Filter by "plan": even though the 5 plans are older, they must not be dropped by the cap
+      provider.setKindFilter("plan");
+      expect(provider.getKindFilter()).toBe("plan");
+
+      const filtered = await provider.getChildren();
+      expect(filtered).toHaveLength(5);
+      expect(filtered.every((item) => item.type === "artifact" && item.artifact.kind === "plan")).toBe(true);
+
+      // Verify label formatting
+      const item0 = provider.getTreeItem(filtered[0]!);
+      expect(item0.description).toBe("Plan");
+    });
+
+    it("filters by other for non-fixed custom kinds", async () => {
+      const artifactsDir = globalArtifactsRoot({ userHome: tempHome });
+
+      // Create 1 plan and 1 custom kind workaround
+      const items: [string, string][] = [["art-plan", "plan"], ["art-workaround", "workaround"]];
+      for (const [id, kind] of items) {
+        const dir = path.join(artifactsDir, id);
+        await mkdir(dir, { recursive: true });
+        await writeFile(
+          path.join(dir, "artifact.json"),
+          JSON.stringify({
+            schemaVersion: 6,
+            kind,
+            artifactId: id,
+            title: `Title ${id}`,
+            createdAt: "2026-04-10T10:00:00.000Z",
+            updatedAt: "2026-04-10T10:00:00.000Z",
+            reviewRound: 1,
+            reviewSessionId: "00000000-0000-4000-8000-000000000001",
+          }),
+        );
+        await writeFile(path.join(dir, "artifact.md"), "# Content\n");
+      }
+
+      const provider = new RecentArtifactsTreeDataProvider(service, { userHome: tempHome });
+      provider.setKindFilter("other");
+
+      const children = await provider.getChildren();
+      expect(children).toHaveLength(1);
+      expect((children[0] as any).artifact.kind).toBe("workaround");
+
+      const treeItem = provider.getTreeItem(children[0]!);
+      expect(treeItem.description).toBe("Workaround");
+    });
+
+    it("returns emptyFilter when kind filter matches 0 artifacts", async () => {
+      const artifactsDir = globalArtifactsRoot({ userHome: tempHome });
+      const dir = path.join(artifactsDir, "art-1");
+      await mkdir(dir, { recursive: true });
+      await writeFile(
+        path.join(dir, "artifact.json"),
+        JSON.stringify({
+          schemaVersion: 6,
+          kind: "spec",
+          artifactId: "art-1",
+          title: "Spec 1",
+          createdAt: "2026-04-10T10:00:00.000Z",
+          updatedAt: "2026-04-10T10:00:00.000Z",
+          reviewRound: 1,
+          reviewSessionId: "00000000-0000-4000-8000-000000000001",
+        }),
+      );
+      await writeFile(path.join(dir, "artifact.md"), "# Content\n");
+
+      const provider = new RecentArtifactsTreeDataProvider(service, { userHome: tempHome });
+      provider.setKindFilter("design");
+
+      const children = await provider.getChildren();
+      expect(children).toHaveLength(1);
+      expect(children[0]?.type).toBe("emptyFilter");
+
+      const treeItem = provider.getTreeItem(children[0]!);
+      expect(treeItem.label).toBe("No artifacts match this filter");
+    });
+
+    it("passes kindFilter in viewAll command arguments", async () => {
+      const artifactsDir = globalArtifactsRoot({ userHome: tempHome });
+
+      for (let i = 1; i <= 22; i++) {
+        const artId = `note-${String(i).padStart(2, "0")}`;
+        const dir = path.join(artifactsDir, artId);
+        await mkdir(dir, { recursive: true });
+        const time = new Date(Date.parse("2026-04-10T10:00:00.000Z") + i * 1000).toISOString();
+        await writeFile(
+          path.join(dir, "artifact.json"),
+          JSON.stringify({
+            schemaVersion: 6,
+            kind: "note",
+            artifactId: artId,
+            title: `Note ${i}`,
+            createdAt: time,
+            updatedAt: time,
+            reviewRound: 1,
+            reviewSessionId: "00000000-0000-4000-8000-000000000001",
+          }),
+        );
+        await writeFile(path.join(dir, "artifact.md"), "# Content\n");
+      }
+
+      const provider = new RecentArtifactsTreeDataProvider(service, { userHome: tempHome });
+      provider.setKindFilter("note");
+
+      const children = await provider.getChildren();
+      expect(children).toHaveLength(21); // 20 + viewAll
+
+      const viewAll = children[20]!;
+      expect(viewAll.type).toBe("viewAll");
+
+      const treeItem = provider.getTreeItem(viewAll);
+      expect(treeItem.command).toEqual({
+        command: "agentPlus.searchArtifact",
+        title: "Search Artifact",
+        arguments: [{ kindFilter: "note" }],
+      });
     });
   });
 

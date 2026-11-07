@@ -84,12 +84,12 @@ export function ArtifactConnectDialog({
         aria-labelledby="connect-dialog-title"
       >
         <div className="dialog-header">
-          <h3 id="connect-dialog-title">Kết nối AI với Artifact</h3>
+          <h3 id="connect-dialog-title">Connect AI to Artifact</h3>
           <button
             type="button"
             className="icon-button dialog-close-button"
             onClick={onClose}
-            aria-label="Đóng dialog"
+            aria-label="Close dialog"
           >
             ×
           </button>
@@ -108,9 +108,9 @@ export function ArtifactConnectDialog({
                 />
               </div>
               <div className="connect-mode-content">
-                <div className="connect-mode-title">Tạo Session mới (New Session)</div>
+                <div className="connect-mode-title">New Session</div>
                 <div className="connect-mode-description">
-                  AI sẽ tách biệt ngữ cảnh cho artifact này và bắt đầu phiên làm việc mới.
+                  Start a new work session from this artifact.
                 </div>
               </div>
             </label>
@@ -131,16 +131,16 @@ export function ArtifactConnectDialog({
                 />
               </div>
               <div className="connect-mode-content">
-                <div className="connect-mode-title">Tham gia Session hiện có (Join Session)</div>
+                <div className="connect-mode-title">Join Session</div>
                 <div className="connect-mode-description">
-                  AI sẽ liên kết artifact này vào một session đã có của nó.
+                  Inspect this artifact and join one of its existing sessions with its full session context.
                 </div>
 
                 {mode === "join" && (
                   <div className="connect-session-list">
                     {sessions.length === 0 ? (
                       <div className="connect-session-empty">
-                        Artifact này chưa thuộc session nào.
+                        This artifact does not belong to any session yet.
                       </div>
                     ) : (
                       sessions.map((s) => {
@@ -149,7 +149,7 @@ export function ArtifactConnectDialog({
                           <label
                             key={s.sessionId}
                             className={`connect-session-item ${isV1 ? "disabled" : ""}`}
-                            title={isV1 ? "Cần chuyển đổi sang Session v2 trước khi tham gia" : undefined}
+                            title={isV1 ? "Migrate this conversation to Session v2 before joining." : undefined}
                           >
                             <input
                               type="radio"
@@ -163,7 +163,7 @@ export function ArtifactConnectDialog({
                             />
                             <span className="connect-session-item-title">{s.title}</span>
                             {isV1 ? (
-                              <span className="connect-session-v1-badge">Cần chuyển đổi v2</span>
+                              <span className="connect-session-v1-badge">Migration required</span>
                             ) : (
                               <span className="connect-session-type-badge">{s.typeLabel ?? "Session"}</span>
                             )}
@@ -184,7 +184,7 @@ export function ArtifactConnectDialog({
             className="ghost"
             onClick={onClose}
           >
-            Huỷ
+            Cancel
           </button>
           <button
             ref={primaryButtonRef}
@@ -193,7 +193,7 @@ export function ArtifactConnectDialog({
             onClick={handleCopy}
             disabled={mode === "join" && (!selectedSessionId || isJoinDisabled)}
           >
-            Sao chép Prompt
+            Copy Prompt
           </button>
         </div>
       </div>

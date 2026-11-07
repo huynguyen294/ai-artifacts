@@ -508,6 +508,7 @@ describe("Workspace Integration Asset Verifiers", () => {
       "wait_for_artifact_review",
       "inspect_artifact_review",
       "advance_and_wait_for_artifact",
+      "join_session",
     ];
     expect(configuredTools).toEqual(expectedTools);
 

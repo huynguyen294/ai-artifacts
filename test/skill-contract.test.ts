@@ -15,6 +15,7 @@ describe("create-review-artifact skill contract", () => {
     const expectedOfficialDescriptions = [
       "Create or update a reviewable Markdown artifact and wait for the user's decision in the same Codex turn. Use only when the user explicitly asks to create or update an artifact.",
       "Create, update, inspect, or reconnect an explicitly requested reviewable Markdown artifact and coordinate its review rounds.",
+      "Create, update, inspect, or reconnect an explicitly requested reviewable Markdown artifact, join work sessions, and coordinate review rounds.",
     ];
 
     expect(OFFICIAL_SKILL_DESCRIPTIONS).toEqual(expectedOfficialDescriptions);
@@ -39,7 +40,7 @@ describe("create-review-artifact skill contract", () => {
     expect(skill).not.toContain("explicitly invokes this skill");
     expect(skill).not.toContain("Use automatically for substantive implementation plans");
     expect(skill).not.toContain("Create a plan artifact whenever");
-    expect(metadata).toContain("Create and reconnect review artifacts");
+    expect(metadata).toContain("Create, reconnect, or join review artifacts and work sessions");
   });
 
   it("documents focused-window routing and resolve_artifact_window discovery", async () => {
@@ -98,6 +99,7 @@ describe("create-review-artifact skill contract", () => {
       "`wait_for_artifact_review`",
       "`inspect_artifact_review`",
       "`advance_and_wait_for_artifact`",
+      "`join_session`",
     ]) expect(skill).toContain(tool);
     expect(skill).not.toContain("`resolve_artifact_workspace`");
     expect(contract).toContain("Never select “the latest artifact”");

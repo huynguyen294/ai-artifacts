@@ -39,6 +39,9 @@ vi.mock("vscode", () => ({
   },
   env: {
     openExternal: vi.fn(async () => true),
+    clipboard: {
+      writeText: vi.fn(async () => {}),
+    },
   },
   window: {
     showInputBox: mockShowInputBox,
@@ -474,6 +477,71 @@ describe("WorkSessionProvider", () => {
           instructions: "Instructions Changed By AI",
         }),
       );
+    });
+  });
+
+  it("handles openSessionInstructionsFile, copySessionConnectPrompt, and addSessionArtifact", async () => {
+    mockResolveWorkSessionSupport.mockResolvedValue({ supported: true });
+
+    const session = await createSession({
+      userHome: tempHome,
+      title: "Actions Test Session",
+    });
+
+    const openCoordinator = {
+      open: vi.fn(async () => {}),
+    };
+
+    const openTextDocument = vi.fn(async () => {});
+
+    const provider = new WorkSessionProvider(
+      mockContext,
+      service,
+      openCoordinator as any,
+      { userHome: tempHome },
+      openTextDocument,
+    );
+
+    const doc = new WorkSessionDocument(
+      vscode.Uri.file(`/sessions/${session.sessionId}/conversation.json`),
+      session.sessionId,
+    );
+
+    let messageListener: ((msg: any) => any) | undefined;
+    const postMessage = vi.fn();
+    const panel = {
+      webview: {
+        options: {},
+        html: "",
+        cspSource: "vscode-webview://test",
+        asWebviewUri: (uri: any) => uri.fsPath ?? String(uri),
+        onDidReceiveMessage: (listener: any) => {
+          messageListener = listener;
+          return { dispose: () => {} };
+        },
+        postMessage,
+      },
+      onDidDispose: () => ({ dispose: () => {} }),
+    };
+
+    await provider.resolveCustomEditor(doc, panel as any, {} as any);
+    await messageListener!({ type: "ready" });
+
+    // 1. openSessionInstructionsFile
+    await messageListener!({ type: "openSessionInstructionsFile" });
+    expect(openTextDocument).toHaveBeenCalledWith(
+      expect.objectContaining({
+        fsPath: expect.stringContaining("instructions.md"),
+      }),
+    );
+
+    // 2. copySessionConnectPrompt
+    await messageListener!({ type: "copySessionConnectPrompt" });
+    expect(vscode.env.clipboard.writeText).toHaveBeenCalledWith(
+      expect.stringContaining('sessionId: "' + session.sessionId + '"'),
+    );
+    expect(postMessage).toHaveBeenCalledWith({
+      type: "sessionConnectPromptCopied",
     });
   });
 });

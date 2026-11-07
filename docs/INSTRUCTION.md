@@ -33,7 +33,7 @@ If product intent, documentation, tests, and implementation disagree, call out t
 - Review replaces the same `artifact.md`, advances `reviewRound`, resets review state, and does not retain revision history.
 - Review submissions and chat-inspected comments use one feedback policy: answer questions visibly in chat, update Markdown only for requested changes, and preserve Markdown/SHA for question-only rounds.
 - Both waiting tools return the complete validated comments document at `comments` for every submitted decision, with feedback at `comments.comments`. A `revise` result includes `nextAction.type: "process-review-feedback"` and its state-bound token for every artifact kind; agents do not need an extra inspection just to fetch submitted feedback.
-- Proceed on `plan` or `implementation-plan` returns `execute-approved-plan` and authorizes immediate execution in the same turn; acknowledgement without execution is incorrect.
+- Proceed on `plan` or `implementation-plan` returns `execute-approved-plan` and authorizes immediate execution in the same turn; acknowledgement without execution is incorrect. For any other fixed or open kind, Proceed returns `approved`, concluding review without automatic code execution.
 - The MCP server creates schema-v6 artifacts only beneath the canonical global collection, owns the transient waiter registry and round tokens, and commits review-round transitions.
 - The extension host validates bindings and writes user comments and create-once submissions.
 - The skill must not create, edit, repair, or bypass lifecycle files directly.
@@ -43,7 +43,7 @@ If product intent, documentation, tests, and implementation disagree, call out t
 - Schema v6 is the only readable and writable lifecycle. Schema-v3/v4/v5 and workspace-local artifacts are rejected and are not live-migrated.
 - Artifacts are owned by review sessions, not repository paths; `artifact.json` contains no `location.workspaceRoot` field.
 - After creation, wait/inspect/advance/reconnect use the exact global artifact handle.
-- Window routing defaults to the currently focused live window (or sole live window). Generic reconnect prioritizes sole live window, validated advisory artifact-window affinity, and unique focused window. When multiple live windows exist and focus/affinity is ambiguous, `create_artifact` or `inspect_artifact_review` returns `WINDOW_SELECTION_REQUIRED` with candidate tokens. Focus is only a ranking hint; it is not routing identity.
+- Window routing defaults to the currently focused live window (or sole live window). Generic reconnect prioritizes sole live window, validated advisory artifact-window affinity, and unique focused window. When multiple live windows exist and focus/affinity is ambiguous, `create_artifact`, `inspect_artifact_review`, or `join_session` returns `WINDOW_SELECTION_REQUIRED` with candidate tokens. Focus is only a ranking hint; it is not routing identity.
 - `artifact.json` is the source of truth for artifact identity. Optional schema-v1 `artifact-connection.json` contains only UI-routing state (`windowInstanceId`, `connectionRevision`, `openRequestId`, `source`, `updatedAt`).
 - Create and explicit reconnect may commit connection state. Wait and advance preserve that state and must not rebind or emit another open request. Reconnect recovery always keeps the exact artifact handle and never calls a workspace resolver after creation.
 - Fail before filesystem mutation when window selection is required, ambiguous, stale, or unsafe.
@@ -71,6 +71,9 @@ If product intent, documentation, tests, and implementation disagree, call out t
 - `src/shared/conversation-artifact-registry.ts`: schema-v2 Work Session persistence, layout reconciliation, dynamic `updatedAt`, single migration with backup, and retention pruning.
 - `src/shared/session-type-registry.ts`: global session types registry (`~/.ai-artifacts/session-types.json`).
 - `src/extension/work-session-sidebar.ts`: Activity Bar `AI Artifacts` TreeDataProviders for Recent Artifacts (cap 20 + View all) and Work Sessions v2 (including window-local type filtering).
+- `src/extension/session-create-command.ts`: QuickPick native controller for creating a new Work Session v2 with optional session type selection.
+- `src/extension/session-artifact-add-command.ts`: QuickPick native controller with dynamic title/kind search for adding existing artifacts to a Work Session's Working zone.
+- `src/extension/artifact-kind-filter-command.ts`: QuickPick native controller for filtering Recent Artifacts tree view by artifact kind or All Kinds.
 - `src/extension/session-type-command.ts`: QuickPick native controllers for global session types management and session type selection/quick-create.
 - `src/extension/session-filter-command.ts`: QuickPick native controller for filtering the Sessions sidebar by session type or All Types.
 - `src/extension/session-search-command.ts`: QuickPick native controller for accent/case-insensitive title search across all v2 Work Sessions.
@@ -85,6 +88,7 @@ If product intent, documentation, tests, and implementation disagree, call out t
 - `src/extension/mcp-clients/`: dedicated configuration drivers for Codex, Cursor, Claude Code, Windsurf, GitHub Copilot (VS Code), and Cline.
 - `src/webview/`: review UI and typed messages to the extension host; includes `ReviewApp.tsx` (Sessions button and `ArtifactConnectDialog.tsx`) and `SessionApp.tsx` (two-column Session Manager with Working main column and collapsible Type / Instructions / References / Archived side panel); no direct filesystem or process access.
 - `src/shared/`: shared schemas, file contracts, artifact-connection safety/persistence, validation, and grouped workspace registry rules.
+- `src/shared/session-connect-prompt.ts`: builder for agent takeover/join prompts targeting a specific Work Session.
 - `skills/create-review-artifact/`: Codex trigger and lifecycle orchestration contract.
 - `test/`: executable regression coverage for contracts and failure behavior.
 

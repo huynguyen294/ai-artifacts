@@ -1,6 +1,6 @@
 # Phase 4 — Agent, catalog và Instructions Markdown: hướng dẫn triển khai
 
-Trạng thái: **Đang triển khai — Chặng 1 (Bước 1–2) và Chặng 2 (Bước 3–4) đã hoàn thành theo checkpoint; Chặng 3 còn lại.** Giữ 7 bước trong 3 chặng; Add Session/Add Artifact bổ sung tại Bước 5/Chặng 3, không mở lại Chặng 1. Hiện trạng baseline khi lập plan được đối chiếu ngày **2026-11-07**; số tests/build ghi trong các plan trước là bằng chứng của các đợt đó, không phải kết quả kiểm chứng phần còn lại của Phase 4.
+Trạng thái: **Đã hoàn thành toàn bộ Phase 4 (Chặng 1, 2, 3 hoàn tất 100%).** Giữ 7 bước trong 3 chặng; Add Session/Add Artifact bổ sung tại Bước 5/Chặng 3, không mở lại Chặng 1. Hiện trạng baseline khi lập plan được đối chiếu ngày **2026-11-07**; số tests/build ghi trong các plan trước là bằng chứng của các đợt đó, không phải kết quả kiểm chứng phần còn lại của Phase 4.
 
 Nguồn phạm vi: [plan tổng thể](plan.md), [Phase 3](plan-phase-3.md), [note](note.md), [phân tích ban đầu](analyzed.md) và các quyết định tiếp nối của Chú. Các quy tắc Instructions/Join/Kind dưới đây thay thế đề xuất cũ chưa chốt trong tài liệu trước; không coi mô tả code hiện tại là hành vi đích.
 
@@ -516,8 +516,8 @@ Ghi rõ môi trường/client và mục manual đã chạy hoặc chưa xác min
 
 - [x] Chặng 1: storage Instructions + shared context/description/kind helpers và focused tests.
 - [x] Chặng 2: inspect core + join tool/context entry + Proceed mapping và lifecycle regression.
-- [ ] Chặng 3: Instructions/Open/Connect + Add Session/Add Artifact + New/Join wording và English UI/Tree Views + Recent filter/labels + skill/versions/docs; không More/Export ZIP/Archive/Delete.
-- [ ] Check/test/build và diff checks; ghi bằng chứng manual hoặc phần chưa xác minh.
+- [x] Chặng 3: Instructions/Open/Connect + Add Session/Add Artifact + New/Join wording và English UI/Tree Views + Recent filter/labels + skill/versions/docs; không More/Export ZIP/Archive/Delete.
+- [x] Check/test/build và diff checks; ghi bằng chứng manual hoặc phần chưa xác minh.
 - [ ] Chú review kết quả từng chặng; chỉ đánh dấu hoàn thành theo công việc thực tế, không theo việc đã viết plan.
 
 ## 9. Kết quả rà soát hướng dẫn Chặng 2–3 — 2026-11-07

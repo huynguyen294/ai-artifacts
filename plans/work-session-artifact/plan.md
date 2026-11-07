@@ -16,7 +16,7 @@ Nguồn yêu cầu: [analyzed.md](analyzed.md) và các quyết định tiếp n
 
 **[Hướng dẫn Phase 3](plan-phase-3.md) gồm 7 bước / 3 chặng:** Bước 1–6 đã hoàn thành; Bước 7 là phần mở rộng sau Chặng 3 gốc. Phạm vi mới nhất thay các đề xuất cũ về header/session actions.
 
-**[Hướng dẫn Phase 4](plan-phase-4.md) gồm 7 bước / 3 chặng, Chặng 1 (Bước 1–2) đã hoàn thành theo checkpoint:** tiếp tục MCP Join/Proceed ở Chặng 2, UI Connect/Add Session/Add Artifact/filter, skill và nghiệm thu ở Chặng 3. Đính chính Chặng 1 giữ MCP **12** cho toàn bộ feature chưa release và nhận metadata có `instructions` optional; nội dung hiệu dụng chỉ từ Markdown. Skill hiện 5, mục tiêu 6. Không mở lại Chặng 1 cho phần UI Add bổ sung.
+**[Hướng dẫn Phase 4](plan-phase-4.md) gồm 7 bước / 3 chặng — Đã hoàn thành 100%:** Chặng 1 (storage & resolver), Chặng 2 (MCP Join & Proceed directives), và Chặng 3 (UI Connect/Add Session/Add Artifact/Recent kind filter, Skill v6 bump và docs canonical) đã hoàn tất và nghiệm thu toàn diện. Giữ MCP **12** cho toàn bộ feature chưa release và nhận metadata có `instructions` optional; nội dung hiệu dụng chỉ từ Markdown. Skill v6 với 6 tools. Không mở lại Chặng 1 cho phần UI Add bổ sung.
 
 Validation đính chính Chặng 1: check/build pass, toàn bộ **43 test files / 611 tests pass, 3 skipped** (2026-11-07). Chưa kiểm chứng lại sidebar với dữ liệu global trong Extension Host; checkpoint này không đánh dấu hoàn thành Chặng 2–3.
 

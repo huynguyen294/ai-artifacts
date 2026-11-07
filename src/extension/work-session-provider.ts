@@ -1,9 +1,12 @@
+import { promises as fs } from "node:fs";
 import path from "node:path";
 import * as vscode from "vscode";
 import {
   ARTIFACT_MARKDOWN_FILE,
   CONVERSATION_METADATA_FILE,
+  OWNER_ONLY_FILE_MODE,
   globalArtifactsRoot,
+  workSessionInstructionsPath,
   type GlobalArtifactsRootOptions,
 } from "../shared/artifact-files";
 import {
@@ -11,9 +14,11 @@ import {
   sessionWebviewToExtensionMessageSchema,
   type SessionExtensionToWebviewMessage,
 } from "../shared/contracts";
+import { buildSessionConnectPrompt } from "../shared/session-connect-prompt";
 import { listSessionTypes } from "../shared/session-type-registry";
 import type { ArtifactReviewOpenCoordinator } from "./artifact-review-open";
 import type { ConversationArtifactService } from "./conversation-artifact-service";
+import { runAddArtifactToSessionQuickPick } from "./session-artifact-add-command";
 import { runSelectSessionTypeQuickPick, type SessionTypeQuickPickItem } from "./session-type-command";
 import { getWebviewHtml } from "./webview-html";
 import { resolveWorkSessionSupport } from "./work-session-support";
@@ -35,6 +40,8 @@ export class WorkSessionProvider implements vscode.CustomReadonlyEditorProvider<
     private readonly service: ConversationArtifactService<any>,
     private readonly openCoordinator: ArtifactReviewOpenCoordinator<vscode.Uri>,
     private readonly rootOptions: GlobalArtifactsRootOptions = {},
+    private readonly openTextDocument: (uri: vscode.Uri) => Thenable<unknown> = (uri) =>
+      vscode.window.showTextDocument(uri, { preview: false }),
   ) {}
 
   async openCustomDocument(
@@ -136,27 +143,38 @@ export class WorkSessionProvider implements vscode.CustomReadonlyEditorProvider<
 
         const sessionArtifacts = new Set([...session.working, ...session.references, ...session.archived]);
 
-        const affectsThisSession = changes.some((c) => {
+        const sessionChanges = changes.filter((c) => {
           if (c.kind === "types" || c.kind === "support") return true;
           if ("sessionId" in c && c.sessionId === document.sessionId) return true;
           if (c.kind === "artifact" && sessionArtifacts.has(c.artifactId)) return true;
           return false;
         });
 
-        if (!affectsThisSession) return;
+        if (sessionChanges.length === 0) return;
 
-        const onlyMetadataOrTypes = changes.every(
-          (c) => (c.kind === "metadata" && c.sessionId === document.sessionId) || c.kind === "types",
+        const hasSupportOrGeneric = sessionChanges.some(
+          (c) => c.kind === "support" || !("kind" in c),
         );
 
-        const onlyArtifactsOrLayout = changes.every(
+        if (hasSupportOrGeneric) {
+          await refreshFull();
+          return;
+        }
+
+        const hasMetadataOrTypes = sessionChanges.some(
+          (c) => (c.kind === "metadata" && c.sessionId === document.sessionId) || c.kind === "types",
+        );
+        const hasInstructions = sessionChanges.some(
+          (c) => c.kind === "instructions" && c.sessionId === document.sessionId,
+        );
+        const hasArtifactsOrLayout = sessionChanges.some(
           (c) =>
             (c.kind === "layout" && c.sessionId === document.sessionId) ||
             (c.kind === "membership" && c.sessionId === document.sessionId) ||
             (c.kind === "artifact" && sessionArtifacts.has(c.artifactId)),
         );
 
-        if (onlyMetadataOrTypes) {
+        if (hasMetadataOrTypes) {
           try {
             const types = await listSessionTypes(this.rootOptions);
             const typeMap = new Map(types.map((t) => [t.id, t.label]));
@@ -180,7 +198,19 @@ export class WorkSessionProvider implements vscode.CustomReadonlyEditorProvider<
           } catch {
             await refreshFull();
           }
-        } else if (onlyArtifactsOrLayout) {
+        }
+
+        if (hasInstructions) {
+          if (lastPersistedInstructions !== undefined && session.instructions !== lastPersistedInstructions) {
+            lastPersistedInstructions = session.instructions;
+            void post({
+              type: "workSessionInstructionsPatch",
+              instructions: session.instructions,
+            });
+          }
+        }
+
+        if (hasArtifactsOrLayout) {
           try {
             const viewData = await this.service.resolveSessionViewData(document.sessionId);
             void post({
@@ -193,8 +223,6 @@ export class WorkSessionProvider implements vscode.CustomReadonlyEditorProvider<
           } catch {
             await refreshFull();
           }
-        } else {
-          await refreshFull();
         }
       }),
       webviewPanel.webview.onDidReceiveMessage(async (raw) => {
@@ -271,6 +299,69 @@ export class WorkSessionProvider implements vscode.CustomReadonlyEditorProvider<
           } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
             void post({ type: "actionError", action: "saveSessionInstructions", message });
+          }
+        } else if (msg.type === "openSessionInstructionsFile") {
+          try {
+            if (!(await ensureSupport("openSessionInstructionsFile"))) return;
+            await this.service.getWorkSession(document.sessionId);
+            const instructionsPath = workSessionInstructionsPath(document.sessionId, this.rootOptions);
+            try {
+              const stat = await fs.lstat(instructionsPath);
+              if (stat.isSymbolicLink()) {
+                throw new Error("Instructions file cannot be a symbolic link");
+              }
+            } catch (err: any) {
+              if (err && err.code === "ENOENT") {
+                await fs.mkdir(path.dirname(instructionsPath), { recursive: true });
+                try {
+                  await fs.writeFile(instructionsPath, "", {
+                    encoding: "utf8",
+                    mode: OWNER_ONLY_FILE_MODE,
+                    flag: "wx",
+                  });
+                } catch (writeErr: any) {
+                  if (!writeErr || writeErr.code !== "EEXIST") {
+                    throw writeErr;
+                  }
+                }
+              } else {
+                throw err;
+              }
+            }
+            await this.openTextDocument(vscode.Uri.file(instructionsPath));
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            void post({ type: "actionError", action: "openSessionInstructionsFile", message });
+          }
+        } else if (msg.type === "copySessionConnectPrompt") {
+          try {
+            if (!(await ensureSupport("copySessionConnectPrompt"))) return;
+            const session = await this.service.getWorkSession(document.sessionId);
+            const prompt = buildSessionConnectPrompt({
+              sessionId: session.sessionId,
+              title: session.title,
+            });
+            await vscode.env.clipboard.writeText(prompt);
+            void post({ type: "sessionConnectPromptCopied" });
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            void post({ type: "actionError", action: "copySessionConnectPrompt", message });
+          }
+        } else if (msg.type === "addSessionArtifact") {
+          try {
+            if (!(await ensureSupport("addSessionArtifact"))) return;
+            const session = await this.service.getWorkSession(document.sessionId);
+            const selectedArtifactId = await runAddArtifactToSessionQuickPick({
+              sessionId: document.sessionId,
+              sessionArtifacts: new Set([...session.working, ...session.references, ...session.archived]),
+              rootOptions: this.rootOptions,
+            });
+            if (selectedArtifactId) {
+              await this.service.registerArtifactInSession(document.sessionId, selectedArtifactId);
+            }
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            void post({ type: "actionError", action: "addSessionArtifact", message });
           }
         } else if (msg.type === "selectSessionType") {
           try {

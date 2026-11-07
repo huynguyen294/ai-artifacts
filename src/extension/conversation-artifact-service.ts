@@ -6,11 +6,13 @@ import {
   CONVERSATION_METADATA_FILE,
   CONVERSATION_REGISTERED_ARTIFACTS_DIRECTORY,
   CONVERSATION_V1_BACKUP_FILE,
+  WORK_SESSION_INSTRUCTIONS_FILE,
   WORK_SESSION_LAYOUT_FILE,
   globalArtifactsRoot,
   type GlobalArtifactsRootOptions,
 } from "../shared/artifact-files";
 import {
+  DEFAULT_SESSION_TYPE_ID,
   artifactConversationIdSchema,
   artifactIdSchema,
   conversationArtifactGroupSchema,
@@ -25,6 +27,7 @@ import {
   type ArtifactSessionTarget,
 } from "../shared/contracts";
 import {
+  createSession as createSessionRegistry,
   ensureSafeConversationRegistryRoot,
   listCandidatesForArtifact,
   listConversationsForArtifact,
@@ -33,6 +36,7 @@ import {
   listSessionsForArtifact,
   moveArtifactInSession as moveArtifactInSessionRegistry,
   readSession,
+  registerArtifactInSession as registerArtifactInSessionRegistry,
   removeArtifactFromConversation,
   removeArtifactFromSession as removeArtifactFromSessionRegistry,
   setSessionType as setSessionTypeRegistry,
@@ -338,12 +342,32 @@ export class ConversationArtifactService<TUri extends ArtifactFileUri> {
     };
   }
 
+  async createSession(input: { title: string; typeId?: string; instructions?: string }): Promise<WorkSession> {
+    const session = await createSessionRegistry({
+      ...(this.rootOptions.userHome ? { userHome: this.rootOptions.userHome } : {}),
+      title: input.title,
+      typeId: input.typeId ?? DEFAULT_SESSION_TYPE_ID,
+      ...(input.instructions !== undefined ? { instructions: input.instructions } : {}),
+    });
+    this.notifyChanged([{ kind: "metadata", sessionId: session.sessionId }]);
+    return session;
+  }
+
   async updateSessionDetails(
     sessionId: string,
     details: { title?: string; instructions?: string },
   ): Promise<WorkSession> {
     const session = await updateSessionDetailsRegistry(sessionId, details, this.rootOptions);
-    this.notifyChanged([{ kind: "metadata", sessionId: session.sessionId }]);
+    const changes: WorkSessionDataChange[] = [];
+    if (details.title !== undefined) {
+      changes.push({ kind: "metadata", sessionId: session.sessionId });
+    }
+    if (details.instructions !== undefined) {
+      changes.push({ kind: "instructions", sessionId: session.sessionId });
+    }
+    if (changes.length > 0) {
+      this.notifyChanged(changes);
+    }
     return session;
   }
 
@@ -373,6 +397,17 @@ export class ConversationArtifactService<TUri extends ArtifactFileUri> {
     );
     this.notifyChanged([{ kind: "layout", sessionId: session.sessionId }]);
     return session;
+  }
+
+  async registerArtifactInSession(
+    sessionId: string,
+    artifactId: string,
+  ): Promise<void> {
+    await registerArtifactInSessionRegistry(sessionId, artifactId, this.rootOptions);
+    this.notifyChanged([
+      { kind: "membership", sessionId, artifactId },
+      { kind: "artifact", artifactId },
+    ]);
   }
 
   async removeArtifactFromSession(sessionId: string, artifactId: string): Promise<boolean> {
@@ -508,6 +543,13 @@ export function classifyWatcherUri(filePath: string): WorkSessionDataChange | "u
     }
   }
 
+  if (filename === WORK_SESSION_INSTRUCTIONS_FILE) {
+    const sessionDirName = path.basename(path.dirname(normalized));
+    if (artifactConversationIdSchema.safeParse(sessionDirName).success) {
+      return { kind: "instructions", sessionId: sessionDirName };
+    }
+  }
+
   if (filename === WORK_SESSION_LAYOUT_FILE) {
     const sessionDirName = path.basename(path.dirname(normalized));
     if (artifactConversationIdSchema.safeParse(sessionDirName).success) {
@@ -535,6 +577,8 @@ export function changeKey(change: WorkSessionDataChange): string {
   switch (change.kind) {
     case "metadata":
       return `metadata:${change.sessionId}`;
+    case "instructions":
+      return `instructions:${change.sessionId}`;
     case "membership":
       return `membership:${change.sessionId}:${change.artifactId}`;
     case "layout":

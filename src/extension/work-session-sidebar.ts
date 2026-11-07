@@ -1,4 +1,5 @@
 import * as vscode from "vscode";
+import { formatArtifactKindLabel, isFixedArtifactKind } from "../shared/artifact-kinds";
 import type { GlobalArtifactsRootOptions } from "../shared/artifact-files";
 import { compareIsoTimestampsAsc } from "../shared/conversation-artifact-registry";
 import { listSessionTypes } from "../shared/session-type-registry";
@@ -10,13 +11,15 @@ export const MAX_RECENT_ARTIFACTS = 20;
 
 export type RecentTreeElement =
   | { type: "artifact"; artifact: SearchableArtifact }
-  | { type: "viewAll"; totalCount: number }
-  | { type: "empty" };
+  | { type: "viewAll"; totalCount: number; kindFilter?: string | undefined }
+  | { type: "empty" }
+  | { type: "emptyFilter" };
 
 export class RecentArtifactsTreeDataProvider implements vscode.TreeDataProvider<RecentTreeElement>, vscode.Disposable {
   private readonly _onDidChangeTreeData = new vscode.EventEmitter<RecentTreeElement | undefined | null | void>();
   readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
   private readonly disposables: vscode.Disposable[] = [];
+  private kindFilter: string | undefined = undefined;
 
   constructor(
     private readonly service: ConversationArtifactService<any>,
@@ -31,6 +34,15 @@ export class RecentArtifactsTreeDataProvider implements vscode.TreeDataProvider<
     );
   }
 
+  getKindFilter(): string | undefined {
+    return this.kindFilter;
+  }
+
+  setKindFilter(kind: string | undefined): void {
+    this.kindFilter = kind;
+    this.refresh();
+  }
+
   refresh(): void {
     this._onDidChangeTreeData.fire();
   }
@@ -42,26 +54,33 @@ export class RecentArtifactsTreeDataProvider implements vscode.TreeDataProvider<
 
   getTreeItem(element: RecentTreeElement): vscode.TreeItem {
     if (element.type === "empty") {
-      const item = new vscode.TreeItem("Chưa có artifact nào");
-      item.description = "Tạo artifact mới bằng Codex AI";
+      const item = new vscode.TreeItem("No artifacts yet");
+      item.description = "Create an artifact with your AI assistant";
       item.iconPath = new vscode.ThemeIcon("info");
       return item;
     }
 
+    if (element.type === "emptyFilter") {
+      const item = new vscode.TreeItem("No artifacts match this filter");
+      item.iconPath = new vscode.ThemeIcon("filter");
+      return item;
+    }
+
     if (element.type === "viewAll") {
-      const item = new vscode.TreeItem(`Xem tất cả (${element.totalCount.toLocaleString()} artifacts)...`);
+      const item = new vscode.TreeItem(`View all (${element.totalCount.toLocaleString()} artifacts)...`);
       item.iconPath = new vscode.ThemeIcon("search");
       item.command = {
         command: "agentPlus.searchArtifact",
         title: "Search Artifact",
+        arguments: element.kindFilter ? [{ kindFilter: element.kindFilter }] : [],
       };
       return item;
     }
 
     const { artifact } = element;
     const item = new vscode.TreeItem(artifact.title);
-    item.description = artifact.kind;
-    item.tooltip = `Cập nhật: ${artifact.updatedAt} · Tạo: ${artifact.createdAt} · ${artifact.artifactId}`;
+    item.description = formatArtifactKindLabel(artifact.kind);
+    item.tooltip = `Updated: ${artifact.updatedAt} · Created: ${artifact.createdAt} · ${artifact.artifactId}`;
     item.iconPath = new vscode.ThemeIcon("file-code");
     item.command = {
       command: "agentPlus.openArtifact",
@@ -82,7 +101,18 @@ export class RecentArtifactsTreeDataProvider implements vscode.TreeDataProvider<
         return [{ type: "empty" }];
       }
 
-      const sorted = [...all].sort((a, b) => {
+      let filtered = all;
+      if (this.kindFilter === "other") {
+        filtered = all.filter((a) => !isFixedArtifactKind(a.kind));
+      } else if (this.kindFilter) {
+        filtered = all.filter((a) => a.kind === this.kindFilter);
+      }
+
+      if (filtered.length === 0) {
+        return [{ type: "emptyFilter" }];
+      }
+
+      const sorted = [...filtered].sort((a, b) => {
         const diff = compareIsoTimestampsAsc(b.updatedAt, a.updatedAt);
         if (diff !== 0) return diff;
         return a.artifactId.localeCompare(b.artifactId);
@@ -92,7 +122,7 @@ export class RecentArtifactsTreeDataProvider implements vscode.TreeDataProvider<
       const result: RecentTreeElement[] = sliced.map((a) => ({ type: "artifact", artifact: a }));
 
       if (sorted.length > MAX_RECENT_ARTIFACTS) {
-        result.push({ type: "viewAll", totalCount: sorted.length });
+        result.push({ type: "viewAll", totalCount: sorted.length, kindFilter: this.kindFilter });
       }
 
       return result;

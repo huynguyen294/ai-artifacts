@@ -80,6 +80,7 @@ describe("SessionApp Webview Component (Phase 3)", () => {
       expect(html).toContain("Feature Implementation Session");
       expect(html).toContain('title="Rename session"');
       expect(html).toContain('title="Collapse side panel"');
+      expect(html).toContain("Connect");
 
       // Main column: Working zone
       expect(html).toContain("session-main-column");
@@ -87,6 +88,7 @@ describe("SessionApp Webview Component (Phase 3)", () => {
       expect(html).toContain("Main Implementation Plan");
       expect(html).toContain("artifact-working-01");
       expect(html).toContain('title="Artifact options"');
+      expect(html).toContain('title="Add Artifact"');
 
       // Side panel: Type -> Instructions -> References -> Archived
       expect(html).toContain("session-side-panel");
@@ -98,6 +100,7 @@ describe("SessionApp Webview Component (Phase 3)", () => {
       expect(html).toContain("session-instructions-textarea");
       expect(html).toContain("## Guidelines");
       expect(html).toContain("Save");
+      expect(html).toContain("Open Markdown File");
 
       // References and Archived zones in side panel
       expect(html).toContain("session-zone-references");
@@ -373,6 +376,23 @@ describe("SessionApp Webview Component (Phase 3)", () => {
         message: { type: "sessionPanelExpanded", expanded: true },
       });
       expect(fromMessage.panelExpanded).toBe(true);
+    });
+
+    it("handles setConnectCopied and sessionConnectPromptCopied messages", () => {
+      const initial = createInitialSessionManagerState({ status: "ready", data: sampleViewData });
+      expect(initial.connectCopied).toBe(false);
+
+      const copied = sessionManagerReducer(initial, {
+        type: "setConnectCopied",
+        copied: true,
+      });
+      expect(copied.connectCopied).toBe(true);
+
+      const fromMessage = sessionManagerReducer(initial, {
+        type: "message",
+        message: { type: "sessionConnectPromptCopied" },
+      });
+      expect(fromMessage.connectCopied).toBe(true);
     });
   });
 

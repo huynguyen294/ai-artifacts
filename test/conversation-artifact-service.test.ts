@@ -460,6 +460,11 @@ describe("ConversationArtifactService", () => {
       sessionId: validSessionId,
     });
 
+    expect(classifyWatcherUri(`/root/${validSessionId}/instructions.md`)).toEqual({
+      kind: "instructions",
+      sessionId: validSessionId,
+    });
+
     expect(classifyWatcherUri(`/root/${validSessionId}/layout.json`)).toEqual({
       kind: "layout",
       sessionId: validSessionId,

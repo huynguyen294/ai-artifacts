@@ -135,7 +135,7 @@ export class ArtifactReviewProvider implements vscode.CustomTextEditorProvider {
                 void refreshSessions();
                 return;
               }
-              promptOptions = { mode: "join", sessionId: message.sessionId };
+              promptOptions = { mode: "join", sessionId: message.sessionId, artifactId: store.artifactId };
             } else if (message.mode === "new") {
               promptOptions = { mode: "new" };
             }

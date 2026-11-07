@@ -58,6 +58,8 @@
     "onCustomEditor:agentPlus.workSession",
     "onView:agentPlus.recentArtifacts",
     "onView:agentPlus.sessions",
+    "onCommand:agentPlus.filterRecentArtifacts",
+    "onCommand:agentPlus.createSession",
     "onCommand:agentPlus.openWorkSession",
     "onCommand:agentPlus.manageSessionTypes",
     "onCommand:agentPlus.openArtifactReview",
@@ -91,6 +93,18 @@
       {
         "command": "agentPlus.searchArtifact",
         "title": "AI Artifacts: Search Artifact"
+      },
+      {
+        "command": "agentPlus.filterRecentArtifacts",
+        "title": "Filter Recent Artifacts",
+        "category": "AI Artifacts",
+        "icon": "$(filter)"
+      },
+      {
+        "command": "agentPlus.createSession",
+        "title": "Add Session",
+        "category": "AI Artifacts",
+        "icon": "$(plus)"
       },
       {
         "command": "agentPlus.openWorkSession",
@@ -228,6 +242,16 @@
         }
       ],
       "view/title": [
+        {
+          "command": "agentPlus.filterRecentArtifacts",
+          "when": "view == agentPlus.recentArtifacts",
+          "group": "navigation@0"
+        },
+        {
+          "command": "agentPlus.createSession",
+          "when": "view == agentPlus.sessions",
+          "group": "navigation@0"
+        },
         {
           "command": "agentPlus.filterSessions",
           "when": "view == agentPlus.sessions",
