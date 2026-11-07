@@ -131,7 +131,15 @@ describe("WorkSession Sidebar Tree Data Providers", () => {
   });
 
   describe("WorkSessionsTreeDataProvider", () => {
-    it("shows unsupported item when MCP manifest is missing or version < 12", async () => {
+    it.each([undefined, 11])("shows unsupported item for MCP version %s", async (mcpVersion) => {
+      if (mcpVersion !== undefined) {
+        const managedDir = path.join(tempHome, ".ai-artifacts", "managed");
+        await mkdir(managedDir, { recursive: true });
+        await writeFile(
+          path.join(managedDir, "integration-version.json"),
+          JSON.stringify({ schemaVersion: 1, mcpVersion, skills: {} }),
+        );
+      }
       const provider = new WorkSessionsTreeDataProvider(
         service,
         undefined,

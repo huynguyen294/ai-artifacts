@@ -324,7 +324,8 @@ export const workSessionMetadataSchema = z
     sessionId: artifactConversationIdSchema,
     title: sessionTitleSchema,
     typeId: sessionTypeIdSchema,
-    instructions: sessionInstructionsSchema,
+    // Accept existing v2 metadata; effective instructions come from instructions.md.
+    instructions: sessionInstructionsSchema.optional(),
     createdAt: z.string().datetime(),
   })
   .strict();
@@ -343,6 +344,7 @@ export const workSessionLayoutSchema = z
 export type WorkSessionLayout = z.infer<typeof workSessionLayoutSchema>;
 
 export type WorkSession = WorkSessionMetadata & {
+  instructions: string;
   working: string[];
   references: string[];
   archived: string[];
@@ -447,6 +449,59 @@ export const artifactSessionTargetSchema = z
   .strict();
 
 export type ArtifactSessionTarget = z.infer<typeof artifactSessionTargetSchema>;
+
+export const sessionCatalogAvailableItemSchema = z
+  .object({
+    artifactId: artifactIdSchema,
+    title: z.string().min(1).max(200),
+    kind: artifactKindSchema,
+    description: z.string(),
+    artifactDirectory: z.string().min(1),
+    artifactPath: z.string().min(1),
+    updatedAt: z.string().datetime(),
+    unavailable: z.literal(false).optional(),
+  })
+  .strict();
+
+export const sessionCatalogUnavailableItemSchema = z
+  .object({
+    artifactId: artifactIdSchema,
+    unavailable: z.literal(true),
+  })
+  .strict();
+
+export const sessionCatalogItemSchema = z.union([
+  sessionCatalogAvailableItemSchema,
+  sessionCatalogUnavailableItemSchema,
+]);
+
+export type SessionCatalogItem = z.infer<typeof sessionCatalogItemSchema>;
+
+export const sessionCatalogSchema = z
+  .object({
+    working: z.array(sessionCatalogItemSchema),
+    references: z.array(sessionCatalogItemSchema),
+    archived: z.array(sessionCatalogItemSchema),
+  })
+  .strict();
+
+export type SessionCatalog = z.infer<typeof sessionCatalogSchema>;
+
+export const sessionContextSchema = z
+  .object({
+    sessionId: artifactConversationIdSchema,
+    title: sessionTitleSchema,
+    typeId: sessionTypeIdSchema,
+    typeLabel: z.string().min(1),
+    createdAt: z.string().datetime(),
+    updatedAt: z.string().datetime(),
+    instructions: z.string(),
+    instructionsPath: z.string().min(1),
+    catalog: sessionCatalogSchema,
+  })
+  .strict();
+
+export type SessionContext = z.infer<typeof sessionContextSchema>;
 
 export const webviewToExtensionMessageSchema = z.discriminatedUnion("type", [
   commentDraftSchema.extend({ type: z.literal("addComment") }),

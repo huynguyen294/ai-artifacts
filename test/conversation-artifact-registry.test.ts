@@ -4,12 +4,14 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   ARTIFACT_MANIFEST_FILE,
+  WORK_SESSION_INSTRUCTIONS_FILE,
   conversationDirectory,
   conversationMetadataPath,
   conversationRegisteredArtifactPath,
   conversationRegisteredArtifactsDirectory,
   conversationRegistryRoot,
   globalArtifactsRoot,
+  workSessionInstructionsPath,
 } from "../src/shared/artifact-files";
 import { ConversationMigrationRequiredError } from "../src/shared/contracts";
 import {
@@ -25,6 +27,7 @@ import {
   moveArtifactInSession,
   readConversationMetadata,
   readSession,
+  readSessionInstructions,
   registerArtifactInConversation,
   registerArtifactInSession,
   removeArtifactFromConversation,
@@ -32,6 +35,7 @@ import {
   removeConversation,
   setSessionType,
   updateSessionDetails,
+  writeSessionInstructions,
 } from "../src/shared/conversation-artifact-registry";
 
 const temporaryDirectories: string[] = [];
@@ -560,6 +564,52 @@ describe("ConversationArtifactRegistry", () => {
   });
 
   describe("WorkSession v2 & Layout persistence", () => {
+    it.each(["", "Legacy instructions kept in metadata"])(
+      "lists existing v2 metadata with inline instructions %j without migrating it",
+      async (legacyInstructions) => {
+        const session = await createSession({ title: "Existing Session", userHome });
+        const metadataPath = conversationMetadataPath(session.sessionId, { userHome });
+        const instructionsPath = workSessionInstructionsPath(session.sessionId, { userHome });
+        const legacyMetadata = {
+          ...JSON.parse(await fs.readFile(metadataPath, "utf8")),
+          instructions: legacyInstructions,
+        };
+        const legacyJson = JSON.stringify(legacyMetadata);
+        await fs.writeFile(metadataPath, legacyJson, "utf8");
+        await fs.rm(instructionsPath);
+
+        const sessions = await listSessions({ userHome });
+        expect(sessions.map((item) => item.sessionId)).toEqual([session.sessionId]);
+        expect(sessions[0]?.instructions).toBe("");
+        expect(await fs.readFile(metadataPath, "utf8")).toBe(legacyJson);
+        await expect(fs.stat(instructionsPath)).rejects.toMatchObject({ code: "ENOENT" });
+
+        await writeSessionInstructions(session.sessionId, "# Markdown source", { userHome });
+        expect((await readSession(session.sessionId, { userHome })).instructions).toBe("# Markdown source");
+        expect(await fs.readFile(metadataPath, "utf8")).toBe(legacyJson);
+
+        await updateSessionDetails(session.sessionId, { title: "Renamed Session" }, { userHome });
+        const writtenMetadata = JSON.parse(await fs.readFile(metadataPath, "utf8"));
+        expect(writtenMetadata.title).toBe("Renamed Session");
+        expect(writtenMetadata).not.toHaveProperty("instructions");
+        expect(await fs.readFile(instructionsPath, "utf8")).toBe("# Markdown source");
+        expect((await readSession(session.sessionId, { userHome })).updatedAt).toBe(session.updatedAt);
+      },
+    );
+
+    it("omits legacy inline instructions when changing Session type", async () => {
+      const session = await createSession({ title: "Existing typed Session", instructions: "Markdown", userHome });
+      const metadataPath = conversationMetadataPath(session.sessionId, { userHome });
+      const metadata = JSON.parse(await fs.readFile(metadataPath, "utf8"));
+      await fs.writeFile(metadataPath, JSON.stringify({ ...metadata, instructions: "Legacy text" }), "utf8");
+
+      const updated = await setSessionType(session.sessionId, "project", { userHome });
+      expect(updated.instructions).toBe("Markdown");
+      expect(updated.typeId).toBe("project");
+      expect(JSON.parse(await fs.readFile(metadataPath, "utf8"))).not.toHaveProperty("instructions");
+      expect(updated.updatedAt).toBe(session.updatedAt);
+    });
+
     it("creates an empty Session v2 with defaults", async () => {
       const session = await createSession({
         title: "Sprint 42",
@@ -665,6 +715,114 @@ describe("ConversationArtifactRegistry", () => {
 
       const typed = await setSessionType(session.sessionId, "feature", { userHome });
       expect(typed.typeId).toBe("feature");
+    });
+
+    it("creates instructions.md and stores conversation.json without inline instructions", async () => {
+      const session = await createSession({
+        title: "Instructions Storage Test",
+        instructions: "# Project Directives\nAlways check tests.",
+        userHome,
+      });
+
+      const convDir = conversationDirectory(session.sessionId, { userHome });
+      const metaRaw = JSON.parse(await fs.readFile(path.join(convDir, "conversation.json"), "utf8"));
+      expect(metaRaw.schemaVersion).toBe(2);
+      expect(metaRaw.title).toBe("Instructions Storage Test");
+      expect(metaRaw.instructions).toBeUndefined();
+
+      const instructionsRaw = await fs.readFile(workSessionInstructionsPath(session.sessionId, { userHome }), "utf8");
+      expect(instructionsRaw).toBe("# Project Directives\nAlways check tests.");
+
+      const readBack = await readSession(session.sessionId, { userHome });
+      expect(readBack.instructions).toBe("# Project Directives\nAlways check tests.");
+    });
+
+    it("isolates instructions update to instructions.md without touching conversation.json", async () => {
+      const session = await createSession({
+        title: "Isolation Test",
+        instructions: "Initial",
+        userHome,
+      });
+
+      const convDir = conversationDirectory(session.sessionId, { userHome });
+      const metaPath = path.join(convDir, "conversation.json");
+      const statBefore = await fs.stat(metaPath);
+
+      // Wait 10ms so mtime can differ if touched
+      await new Promise((r) => setTimeout(r, 15));
+
+      const updated = await updateSessionDetails(
+        session.sessionId,
+        { instructions: "Updated markdown" },
+        { userHome },
+      );
+      expect(updated.instructions).toBe("Updated markdown");
+      expect(updated.title).toBe("Isolation Test");
+
+      const statAfter = await fs.stat(metaPath);
+      expect(statAfter.mtimeMs).toBe(statBefore.mtimeMs);
+
+      const diskInstructions = await readSessionInstructions(session.sessionId, { userHome });
+      expect(diskInstructions).toBe("Updated markdown");
+    });
+
+    it("isolates title update to conversation.json without touching instructions.md", async () => {
+      const session = await createSession({
+        title: "Title Only Test",
+        instructions: "Do not touch",
+        userHome,
+      });
+
+      const instPath = workSessionInstructionsPath(session.sessionId, { userHome });
+      const statBefore = await fs.stat(instPath);
+
+      await new Promise((r) => setTimeout(r, 15));
+
+      const updated = await updateSessionDetails(
+        session.sessionId,
+        { title: "New Title Only" },
+        { userHome },
+      );
+      expect(updated.title).toBe("New Title Only");
+      expect(updated.instructions).toBe("Do not touch");
+
+      const statAfter = await fs.stat(instPath);
+      expect(statAfter.mtimeMs).toBe(statBefore.mtimeMs);
+    });
+
+    it("returns empty string when instructions.md is missing without auto-creating the file", async () => {
+      const session = await createSession({
+        title: "Missing File Test",
+        userHome,
+      });
+
+      const instPath = workSessionInstructionsPath(session.sessionId, { userHome });
+      await fs.unlink(instPath);
+
+      const instructions = await readSessionInstructions(session.sessionId, { userHome });
+      expect(instructions).toBe("");
+
+      // Verify file was NOT automatically created
+      await expect(fs.access(instPath)).rejects.toThrow();
+
+      // readSession should also succeed with instructions: ""
+      const loaded = await readSession(session.sessionId, { userHome });
+      expect(loaded.instructions).toBe("");
+      await expect(fs.access(instPath)).rejects.toThrow();
+    });
+
+    it("writeSessionInstructions rejects unmigrated v1 conversation with ConversationMigrationRequiredError", async () => {
+      const convId = "77777777-7777-4777-8777-777777777777";
+      await createConversationAndRegisterArtifact({
+        userHome,
+        artifactConversationId: convId,
+        conversationName: "Legacy Conversation",
+        artifactId: "legacy-art",
+      });
+
+      await expect(writeSessionInstructions(convId, "# New Instructions", { userHome })).rejects.toThrow(
+        ConversationMigrationRequiredError,
+      );
     });
 
     it("removes artifact from registered-artifacts and layout without deleting session", async () => {

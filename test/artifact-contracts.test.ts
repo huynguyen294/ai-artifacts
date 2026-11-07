@@ -424,13 +424,20 @@ describe("artifact conversation schema v1 contract", () => {
       sessionId: artifactConversationId,
       title: "Improve Artifact Viewer",
       typeId: "conversation",
-      instructions: "## Instructions\nDo this first",
       createdAt: timestamp,
     };
     expect(contracts.workSessionMetadataSchema.parse(validMeta)).toEqual(validMeta);
     expect(() => contracts.workSessionMetadataSchema.parse({ ...validMeta, schemaVersion: 1 })).toThrow();
     expect(() => contracts.workSessionMetadataSchema.parse({ ...validMeta, title: "   " })).toThrow();
     expect(() => contracts.workSessionMetadataSchema.parse({ ...validMeta, typeId: "" })).toThrow();
+    for (const instructions of ["", "Existing inline instructions"]) {
+      expect(contracts.workSessionMetadataSchema.parse({ ...validMeta, instructions })).toEqual({
+        ...validMeta,
+        instructions,
+      });
+    }
+    expect(() => contracts.workSessionMetadataSchema.parse({ ...validMeta, instructions: null })).toThrow();
+    expect(() => contracts.workSessionMetadataSchema.parse({ ...validMeta, unknownField: true })).toThrow();
   });
 
   it("locks work session layout schema version to 1 and validates zones", () => {

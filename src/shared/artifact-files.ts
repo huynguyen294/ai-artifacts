@@ -8,6 +8,7 @@ export const CONVERSATION_REGISTRY_DIRECTORY = "conversation-registry";
 export const CONVERSATION_REGISTERED_ARTIFACTS_DIRECTORY = "registered-artifacts";
 export const CONVERSATION_METADATA_FILE = "conversation.json";
 export const WORK_SESSION_LAYOUT_FILE = "layout.json";
+export const WORK_SESSION_INSTRUCTIONS_FILE = "instructions.md";
 export const CONVERSATION_V1_BACKUP_FILE = "conversation.v1.backup.json";
 export const SESSION_TYPES_FILE = "session-types.json";
 export const MANAGED_ASSETS_DIRECTORY = "managed";
@@ -124,6 +125,16 @@ export function workSessionLayoutPath(
   options: GlobalArtifactsRootOptions = {},
 ): string {
   return path.join(conversationDirectory(sessionId, options), WORK_SESSION_LAYOUT_FILE);
+}
+
+/**
+ * Returns the instructions.md path for a specific work session.
+ */
+export function workSessionInstructionsPath(
+  sessionId: string,
+  options: GlobalArtifactsRootOptions = {},
+): string {
+  return path.join(conversationDirectory(sessionId, options), WORK_SESSION_INSTRUCTIONS_FILE);
 }
 
 /**

@@ -16,7 +16,9 @@ Nguồn yêu cầu: [analyzed.md](analyzed.md) và các quyết định tiếp n
 
 **[Hướng dẫn Phase 3](plan-phase-3.md) gồm 7 bước / 3 chặng:** Bước 1–6 đã hoàn thành; Bước 7 là phần mở rộng sau Chặng 3 gốc. Phạm vi mới nhất thay các đề xuất cũ về header/session actions.
 
-**[Hướng dẫn Phase 4](plan-phase-4.md) gồm 7 bước / 3 chặng, chưa triển khai:** dữ liệu Instructions/context/kind → MCP Join/Proceed → UI Connect/filter, skill và nghiệm thu. Phiên bản đích MCP 13 / Skill 6; số đang có trong source vẫn là MCP 12 / Skill 5 cho tới khi triển khai.
+**[Hướng dẫn Phase 4](plan-phase-4.md) gồm 7 bước / 3 chặng, Chặng 1 (Bước 1–2) đã hoàn thành theo checkpoint:** tiếp tục MCP Join/Proceed ở Chặng 2, UI Connect/Add Session/Add Artifact/filter, skill và nghiệm thu ở Chặng 3. Đính chính Chặng 1 giữ MCP **12** cho toàn bộ feature chưa release và nhận metadata có `instructions` optional; nội dung hiệu dụng chỉ từ Markdown. Skill hiện 5, mục tiêu 6. Không mở lại Chặng 1 cho phần UI Add bổ sung.
+
+Validation đính chính Chặng 1: check/build pass, toàn bộ **43 test files / 611 tests pass, 3 skipped** (2026-11-07). Chưa kiểm chứng lại sidebar với dữ liệu global trong Extension Host; checkpoint này không đánh dấu hoàn thành Chặng 2–3.
 
 ## Các phase
 
@@ -25,8 +27,8 @@ Nguồn yêu cầu: [analyzed.md](analyzed.md) và các quyết định tiếp n
 | [1. Session model](plan-phase-1-2.md) | Metadata Session v2 (`title`, `instructions`, `typeId`, `createdAt`), giữ `registered-artifacts/` làm nguồn membership, tách `layout.json` ba mảng, tính `updatedAt` từ `createdAt`/`registeredAt`; auto-create/reuse; migration theo yêu cầu; registry session types và API quản lý | ✅ **Đã hoàn thành trong Chặng 1** |
 | [2. Sidebar và điều hướng](plan-phase-1-2.md#phase-2--sidebar-quản-lý-session-types-và-điều-hướng) | Recent Artifacts/Sessions v2; gate theo MCP đã cài; phát hiện và popup bulk migration; ⚙ quản lý types; tab session chỉ đọc; Sessions/migration đơn lẻ thay drawer cũ | ✅ **Đã hoàn thành trong Chặng 2 & Chặng 3** |
 | [3. Session Manager cơ bản](plan-phase-3.md) | Manager editing, scoped refresh, menu move/reorder/remove, panel preference, filter/search và English Quick Input; bổ sung contract một active Session cho mỗi chat AI | ✅ **Đã hoàn thành toàn bộ (Bước 1–7)** |
-| [4. Agent và catalog](plan-phase-4.md) | Shared Session context/catalog; `join_session` có optional artifact ID dùng chung inspect; Instructions Markdown + Open Markdown File; fixed/open kinds, Proceed theo kind; Connect manager/Review App; rà soát toàn App UI/Tree Views sang tiếng Anh và sửa nghĩa New/Join; Recent kind filter; skill và MCP contract đồng bộ | Chưa triển khai — 7 bước / 3 chặng |
-| 5. Tổ chức trực quan và quản lý danh sách | Card masonry, metadata/description và filter/search artifact; helper text UI cho Working, References, Archived và Instructions; menu chuột phải Recent Artifacts/Sessions; Pin/Archive/Delete với file trạng thái UI riêng; cleanup Session sau 30 ngày Archive. Sắp xếp/chuyển vùng tiếp tục dùng menu hiện có, ghi `layout.json` độc lập membership của MCP | Chưa triển khai |
+| [4. Agent và catalog](plan-phase-4.md) | Add Session rỗng / Add Artifact qua Quick Pick ở Bước 5; Shared Session context/catalog; `join_session` có optional artifact ID dùng chung inspect; Instructions Markdown + Open Markdown File; fixed/open kinds, Proceed theo kind; Connect manager/Review App; rà soát toàn App UI/Tree Views sang tiếng Anh và sửa nghĩa New/Join; Recent kind filter; skill và MCP contract đồng bộ | Đang triển khai — Đã hoàn thành Chặng 1 (Bước 1–2) |
+| 5. Tổ chức trực quan và quản lý danh sách | Card masonry, metadata/description và filter/search artifact; helper text UI; menu chuột phải Recent Artifacts/Sessions; manager More → Export ZIP/Archive/Delete; Pin/Archive/Delete với file trạng thái UI riêng; cleanup Session sau 30 ngày Archive. Sắp xếp/chuyển vùng tiếp tục dùng menu hiện có, ghi `layout.json` độc lập membership của MCP | Chưa triển khai |
 
 ## Ranh giới chung
 
@@ -34,7 +36,7 @@ Nguồn yêu cầu: [analyzed.md](analyzed.md) và các quyết định tiếp n
 - Bỏ file lock riêng cho layout/session; dùng atomic write và chấp nhận quy tắc “bản lưu sau cùng thắng” khi nhiều cửa sổ cùng cập nhật bố cục/metadata.
 - `Session.updatedAt` hiển thị được tính khi đọc từ thời điểm lớn nhất giữa `createdAt` và các `registeredAt` trong `registered-artifacts/`. MCP tạo hoặc inspect lại artifact cập nhật `registeredAt` như hiện tại nên tự đẩy Session lên đầu mà không cần sửa `conversation.json`; move/reorder (`layout.json`) hoặc sửa metadata không làm thay đổi `updatedAt`.
 - Gỡ artifact khỏi session xoá file trong `registered-artifacts/` và bỏ ID khỏi `layout.json`. Không xoá artifact hoặc ảnh hưởng session khác; Session v2 rỗng vẫn được giữ, trừ khi user Delete hoặc Session đã Archive đủ hạn theo quy tắc Phase 5.
-- `instructions` là nội dung Markdown chứa rules, workflows và các hướng dẫn khác cho AI trong Session. Phase 3 hiện lưu trong `conversation.json`. Phase 4 chuyển sang `instructions.md` làm nguồn chính, textarea sửa Markdown thẳng + Save và Open Markdown File dùng cùng file; AI sửa exact `instructionsPath` bằng công cụ file khi được yêu cầu. Session v2/migration chưa publish nên sửa format v2 trực tiếp, bỏ inline field khỏi metadata, không fallback/dual-write hoặc tự chuyển khi read/list. DTO vẫn có chuỗi instructions đọc từ file. Attach file/folder và rich editor để sau.
+- `instructions` là nội dung Markdown chứa rules, workflows và các hướng dẫn khác cho AI trong Session. Phase 4 dùng `instructions.md` làm nguồn chính; textarea sửa Markdown thẳng + Save và Open Markdown File dùng cùng file. Schema metadata v2 strict chấp nhận `instructions` optional string cũ nhưng không dùng làm fallback; metadata writer mới omit field. Read/list không tự migrate hoặc rewrite. DTO vẫn có chuỗi instructions đọc từ file, thiếu file thì rỗng. Attach file/folder và rich editor để sau.
 - Helper text cho các zone và Instructions là công việc UI của Phase 5, không phải trường metadata mới. Wording Instructions: “Rules, workflows, and other guidance for AI in this session.” Description ngắn của artifact trong catalog vẫn thuộc Phase 4; đây là hai loại description khác nhau.
 - Giữ artifact schema v6 và cơ chế ownership/review hiện tại. Session ID không phải reviewSessionId.
 - Phase 4 thêm `join_session(sessionId, artifactId?)`: join-only trả context và không takeover/register; có artifact thì dùng chung core inspect và trả inspection trong một call. Create/inspect trả thêm context; đọc tài liệu tham khảo theo catalog exact path không cần readonly inspect. `artifactConversationId` ở API cũ và `sessionId` mới cùng là Work Session ID, không rename toàn bộ API trong đợt này.
@@ -43,10 +45,10 @@ Nguồn yêu cầu: [analyzed.md](analyzed.md) và các quyết định tiếp n
 - Contract bổ sung ở Phase 3/Bước 7: một Session có thể được nhiều chat dùng, mỗi chat giữ 0 hoặc 1 active Session. Default create/inspect gửi ID đang giữ; explicit New omit ID cũ và thay bằng ID trả về sau thành công; Join gửi exact ID đích và đổi active sau thành công. Chuyển active không chuyển/xoá membership cũ hoặc tạo mapping chat trong registry.
 - Các controls đã được chấp nhận là baseline cho các phase sau: Quick Pick chọn/tạo type, Input Box đổi title, textarea + Save cho instructions, menu Move to / Move Up / Move Down. Không có yêu cầu thay bằng inline editor, rich editor hoặc kéo thả.
 - Phase 1 nối model mới vào luồng hiện tại; popup inspect chọn New/Join tối thiểu thuộc đợt Phase 1+2, Phase 4 mới hoàn thiện contract agent/catalog và trải nghiệm new/join đầy đủ.
-- Header manager Phase 3 có title/đổi tên và toggle panel; Working ở giữa, panel phải Type → Hướng dẫn → References → Archived. Nhớ panel theo Session ID bằng extension `globalState`. Connect thuộc Phase 4; Pin/Archive/Delete artifact và Session thuộc Phase 5, không thuộc Phase 3 hoặc Phase 4.
-- Sidebar Sessions đã có ⚙ quản lý types; Phase 3 thêm phễu filter theo type và kính lúp Search Sessions, giữ Tree Views native. **Không có + session**. Session tạo qua luồng artifact/new-session; điều hướng/filter/search không tạo session.
+- Header manager Phase 3 có title/đổi tên và toggle panel; Working ở giữa, panel phải Type → Hướng dẫn → References → Archived. Nhớ panel theo Session ID bằng extension `globalState`. Connect và nút ＋ Add Artifact của Working thuộc Phase 4/Bước 5. Menu More → Export ZIP/Archive/Delete cùng Pin/Archive/Delete artifact/Session thuộc Phase 5.
+- Sidebar Sessions có ⚙ quản lý types, filter và Search Sessions. Quyết định bổ sung cho Phase 4/Bước 5: thêm **Add Session** trên header Tree View, nhập title rồi tạo phiên rỗng với type mặc định Conversation và mở manager. Quyết định này thay giới hạn cũ “không có + session”; điều hướng/filter/search vẫn không tự tạo Session. Add Artifact dùng Quick Pick chọn artifact có sẵn, loại member đã thuộc Session và đăng ký vào cuối Working; không inspect/takeover.
 - Phase 3 refresh theo loại thay đổi và ID: card/membership/layout hoặc title/type đổi không set lại ô Hướng dẫn. Nếu chính instructions trên đĩa đổi, gửi patch và nhận giá trị mới kể cả đang gõ; so với giá trị persisted trước đó, không so với ô nhập để phát hiện dirty. Không thêm `isDirty`, draft recovery, dirty dialog hoặc conflict handling AI–user/nhiều manager; chấp nhận bản ghi sau cùng thắng.
-- Session được mở theo kết quả kiểm tra MCP đã cài trên đĩa, hiện mốc numeric MCP_VERSION **12**; Phase 4 nâng mốc lên **13** theo format Instructions/tool mới, đồng bộ Skill **6**. Không kiểm tra process đang chạy. MCP chưa đủ version chặn section Sessions và nút Sessions trên Review App, giữ Recent/review/Connect legacy; chỉ runtime đủ mới dùng luồng Join/context mới.
+- Session được mở theo kết quả kiểm tra MCP đã cài trên đĩa, giữ numeric MCP_VERSION và gate **12** cho toàn bộ feature chưa release; không nâng 13 theo chặng. Skill lên **6** ở bước skill. Không kiểm tra process đang chạy. MCP chưa đủ version chặn section Sessions và nút Sessions trên Review App, giữ Recent/review/Connect legacy; runtime cài trên đĩa vẫn phải khớp bundle hiện tại để hỗ trợ luồng mới.
 - Sidebar chỉ list Session v2. Conversation v1 được phát hiện/đếm read-only; hiện dòng “Có N conversation có thể chuyển sang Sessions”, click mở popup xác nhận rồi mới chạy bulk tuần tự bằng cùng hàm migration đơn lẻ. Huỷ không ghi; kết thúc báo kết quả và refresh.
 - Bỏ drawer conversation cũ. Review App có Sessions cho v2, hành động migration từng conversation cho v1 khi MCP đã đủ version. Không tự migration khi activation, đọc/list, mở artifact hoặc cleanup. Không rollback cả batch nếu một mục lỗi.
 - Create và inspect **có truyền ID conversation v1** cùng trả lỗi trước mutation/takeover/cấp token, mã `CONVERSATION_MIGRATION_REQUIRED`; không giữ nhánh inspect thành công kèm cảnh báo. Artifact từng thuộc v1 không tự gây lỗi nếu caller không truyền ID v1; ID v2/không có ID vẫn dùng Session API mới và ghi `registered-artifacts/` như hiện tại.
@@ -180,6 +182,8 @@ Tooltip của item Recent Artifacts hiển thị đầy đủ **Name (title)** v
 
 Tận dụng handler hiện có và luồng Connect/Instructions của Phase 4, truyền đúng ID của item được nhấn chuột phải. Các thao tác mới về trạng thái UI và Delete thuộc Phase 5.
 
+Header Session Manager bổ sung nút **More (⋯)** trong Phase 5, menu gồm **Export**, **Archive**, **Delete**. Export tạo ZIP tài liệu theo cấu trúc bên dưới; Archive/Delete dùng cùng hành vi đã chốt cho menu sidebar. Không tạo More/Export ZIP trong Phase 4.
+
 ### Search và Restore trong custom editor
 
 - Search Artifacts và Search Sessions bao gồm cả mục đang hoạt động và mục Archived còn tồn tại, tiếp tục tìm theo title và độc lập với filter sidebar. Kết quả Archived có nhãn **Archived** ở description.
@@ -197,6 +201,27 @@ Tận dụng handler hiện có và luồng Connect/Instructions của Phase 4, 
 - Giữ nguyên retention artifact hiện tại theo `artifact.json.updatedAt` và setting `agentPlus.artifactRetentionDays`. Artifact không cần Archive mới đủ điều kiện retention; Pin/Archive không gia hạn hoặc miễn retention.
 - Chưa bổ sung quy tắc cleanup Session khác, không tự xoá Session chưa Archive chỉ vì rỗng hoặc lâu không dùng.
 
+## Export ZIP Session — cấu trúc tài liệu đã chốt
+
+Export thuộc **Phase 5**, entry là **More → Export** ở header Session Manager; không mở rộng vào Phase 4. Gói dành cho người đọc, không phải gói khôi phục dữ liệu máy. Cấu trúc ZIP:
+
+```text
+Tên Session/
+  Instructions.md
+  Working/
+    01 - Tên artifact.md
+    02 - Tên artifact.md
+  References/
+    01 - Tên tài liệu.md
+  Archived/
+    01 - Tên tài liệu.md
+```
+
+- Thư mục gốc dùng tên Session; artifact dùng title làm tên file, thêm số thứ tự theo layout trong từng vùng. Chuẩn hoá ký tự không hợp lệ để tạo filename hợp lệ; prefix thứ tự phân biệt các title trùng nhau.
+- Xuất toàn bộ artifact của cả ba vùng, giữ nguyên nội dung Markdown. `Instructions.md` chứa nội dung Instructions của Session.
+- Không xuất metadata JSON, artifact ID trong tên file, membership, manifest, comments, submission hoặc review state. Không thiết kế import/restore lifecycle từ ZIP trong phạm vi export tài liệu này.
+- Export chỉ đọc nội dung để đóng gói; không đổi trạng thái Pin/Archive, membership, layout hoặc recency của Session/artifact.
+
 ## Session types — phạm vi đã bổ sung
 
 - Mỗi session lưu một `typeId`, mặc định `conversation`; không phải mảng tags và không phải artifact kind/type.
@@ -208,4 +233,4 @@ Tận dụng handler hiện có và luồng Connect/Instructions của Phase 4, 
 
 ## Để sau bản đầu
 
-Handoff/workflow nâng cao; tìm artifact ngoài session để thêm; participant/role; ownership hardening. Mapping Proceed theo artifact kind đã thuộc Phase 4, không còn là mục hoãn. Không mở rộng required scope bằng các ý tưởng còn lại.
+Handoff/workflow nâng cao; participant/role; ownership hardening. Mapping Proceed theo artifact kind và Add artifact có sẵn qua Quick Pick đã thuộc Phase 4, không còn là mục hoãn. Không mở rộng required scope bằng các ý tưởng còn lại.

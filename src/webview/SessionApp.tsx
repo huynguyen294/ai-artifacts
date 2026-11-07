@@ -531,22 +531,18 @@ export function SessionApp({ initialState, initialPanelExpanded = true }: Sessio
         {panelExpanded && (
           <aside className="session-side-panel">
             {/* 1. Type Section */}
-            <div className="session-side-section session-type-section">
-              <div className="session-side-section-header">
-                <h4>Session Type</h4>
-                <button
-                  type="button"
-                  className="session-icon-button"
-                  title="Change session type"
-                  onClick={handleSelectType}
-                  aria-label="Change session type"
-                >
-                  ✎
-                </button>
-              </div>
-              <div className="session-type-display">
-                <span className="session-type-badge">{data.typeLabel}</span>
-              </div>
+            <div className="session-type-section">
+              <h4>Session Type</h4>
+              <button
+                type="button"
+                className="session-type-chip-btn"
+                title="Change session type"
+                onClick={handleSelectType}
+                aria-label="Change session type"
+              >
+                <span className="session-type-chip-label">{data.typeLabel}</span>
+                <span className="session-type-chip-icon" aria-hidden="true">✎</span>
+              </button>
             </div>
 
             {/* 2. Instructions Section */}

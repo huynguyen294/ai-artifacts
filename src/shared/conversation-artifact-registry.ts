@@ -33,6 +33,7 @@ import {
   CONVERSATION_V1_BACKUP_FILE,
   OWNER_ONLY_DIRECTORY_MODE,
   OWNER_ONLY_FILE_MODE,
+  WORK_SESSION_INSTRUCTIONS_FILE,
   WORK_SESSION_LAYOUT_FILE,
   conversationDirectory,
   conversationMetadataPath,
@@ -299,10 +300,10 @@ export async function ensureSafeConversationDirectory(
   };
 }
 
-async function writeAtomicJsonFile(
+async function writeAtomicTextFile(
   parentDirectory: string,
   targetFilePath: string,
-  payload: unknown,
+  content: string,
   exclusive = false,
 ): Promise<void> {
   if (!sameFilesystemPath(path.dirname(targetFilePath), parentDirectory)) {
@@ -311,11 +312,9 @@ async function writeAtomicJsonFile(
     );
   }
 
-  const serialized = `${JSON.stringify(payload, null, 2)}\n`;
-
   if (exclusive) {
     await assertSafeRegularFile(targetFilePath, true);
-    await fs.writeFile(targetFilePath, serialized, {
+    await fs.writeFile(targetFilePath, content, {
       encoding: "utf8",
       flag: "wx",
       mode: OWNER_ONLY_FILE_MODE,
@@ -331,7 +330,7 @@ async function writeAtomicJsonFile(
     `${path.basename(targetFilePath)}.${TEMP_FILE_PREFIX}${randomUUID()}`,
   );
 
-  await fs.writeFile(tempFilePath, serialized, {
+  await fs.writeFile(tempFilePath, content, {
     encoding: "utf8",
     flag: "wx",
     mode: OWNER_ONLY_FILE_MODE,
@@ -366,6 +365,16 @@ async function writeAtomicJsonFile(
     await fs.unlink(tempFilePath).catch(() => undefined);
     throw error;
   }
+}
+
+async function writeAtomicJsonFile(
+  parentDirectory: string,
+  targetFilePath: string,
+  payload: unknown,
+  exclusive = false,
+): Promise<void> {
+  const serialized = `${JSON.stringify(payload, null, 2)}\n`;
+  return writeAtomicTextFile(parentDirectory, targetFilePath, serialized, exclusive);
 }
 
 export function parseConversationMetadata(
@@ -709,6 +718,61 @@ export async function removeConversation(
   return true;
 }
 
+export async function readSessionInstructions(
+  sessionId: string,
+  options: GlobalArtifactsRootOptions = {},
+): Promise<string> {
+  const validatedId = artifactConversationIdSchema.parse(sessionId);
+  const rootOptions = toRootOptions(options);
+  const { canonicalConversationDir } = await ensureSafeConversationDirectory(
+    validatedId,
+    rootOptions,
+    false,
+  );
+  const instructionsPath = path.join(canonicalConversationDir, WORK_SESSION_INSTRUCTIONS_FILE);
+  try {
+    const exists = await assertSafeRegularFile(instructionsPath, true);
+    if (!exists) return "";
+    await enforceOwnerOnlyFile(instructionsPath);
+    return await fs.readFile(instructionsPath, "utf8");
+  } catch (error) {
+    if (errorCode(error) === "ENOENT") return "";
+    throw error;
+  }
+}
+
+export async function writeSessionInstructions(
+  sessionId: string,
+  instructions: string,
+  options: GlobalArtifactsRootOptions = {},
+): Promise<void> {
+  const validatedId = artifactConversationIdSchema.parse(sessionId);
+  const validatedInstructions = sessionInstructionsSchema.parse(instructions);
+  const rootOptions = toRootOptions(options);
+  const { canonicalConversationDir } = await ensureSafeConversationDirectory(
+    validatedId,
+    rootOptions,
+    false,
+  );
+
+  const metadataPath = path.join(canonicalConversationDir, CONVERSATION_METADATA_FILE);
+  await assertSafeRegularFile(metadataPath, false);
+  await enforceOwnerOnlyFile(metadataPath);
+  const rawMeta = JSON.parse(await fs.readFile(metadataPath, "utf8"));
+  if (
+    rawMeta &&
+    typeof rawMeta === "object" &&
+    "schemaVersion" in rawMeta &&
+    rawMeta.schemaVersion === ARTIFACT_CONVERSATION_SCHEMA_VERSION
+  ) {
+    throw new ConversationMigrationRequiredError(validatedId);
+  }
+  parseWorkSessionMetadata(rawMeta, validatedId);
+
+  const instructionsPath = path.join(canonicalConversationDir, WORK_SESSION_INSTRUCTIONS_FILE);
+  await writeAtomicTextFile(canonicalConversationDir, instructionsPath, validatedInstructions, false);
+}
+
 export async function createSession(
   input: CreateSessionInput,
 ): Promise<WorkSession> {
@@ -742,7 +806,6 @@ export async function createSession(
     sessionId,
     title,
     typeId,
-    instructions,
     createdAt,
   };
 
@@ -754,6 +817,8 @@ export async function createSession(
     );
     const metadataPath = path.join(canonicalConversationDir, CONVERSATION_METADATA_FILE);
     await writeAtomicJsonFile(canonicalConversationDir, metadataPath, metadata, true);
+    const instructionsPath = path.join(canonicalConversationDir, WORK_SESSION_INSTRUCTIONS_FILE);
+    await writeAtomicTextFile(canonicalConversationDir, instructionsPath, instructions, true);
   } catch (error) {
     await fs.rm(targetConvDir, { recursive: true, force: true }).catch(() => undefined);
     throw error;
@@ -761,6 +826,7 @@ export async function createSession(
 
   return {
     ...metadata,
+    instructions,
     working: [],
     references: [],
     archived: [],
@@ -833,9 +899,11 @@ export async function readSession(
   }
 
   const reconciled = reconcileSessionLayout(memberships, layout, metadata.createdAt);
+  const instructions = await readSessionInstructions(validatedId, rootOptions);
 
   return {
     ...metadata,
+    instructions,
     working: reconciled.working,
     references: reconciled.references,
     archived: reconciled.archived,
@@ -903,22 +971,25 @@ export async function updateSessionDetails(
 
   const current = await readSession(validatedId, rootOptions);
   const newTitle = details.title !== undefined ? sessionTitleSchema.parse(details.title) : current.title;
-  const newInstructions =
-    details.instructions !== undefined
-      ? sessionInstructionsSchema.parse(details.instructions)
-      : current.instructions;
+  let newInstructions = current.instructions;
 
-  const updatedMeta: WorkSessionMetadata = {
-    schemaVersion: WORK_SESSION_SCHEMA_VERSION,
-    sessionId: validatedId,
-    title: newTitle,
-    typeId: current.typeId,
-    instructions: newInstructions,
-    createdAt: current.createdAt,
-  };
+  if (details.instructions !== undefined) {
+    newInstructions = sessionInstructionsSchema.parse(details.instructions);
+    await writeSessionInstructions(validatedId, newInstructions, rootOptions);
+  }
 
-  const metadataPath = path.join(canonicalConversationDir, CONVERSATION_METADATA_FILE);
-  await writeAtomicJsonFile(canonicalConversationDir, metadataPath, updatedMeta, false);
+  if (details.title !== undefined) {
+    const updatedMeta: WorkSessionMetadata = {
+      schemaVersion: WORK_SESSION_SCHEMA_VERSION,
+      sessionId: validatedId,
+      title: newTitle,
+      typeId: current.typeId,
+      createdAt: current.createdAt,
+    };
+
+    const metadataPath = path.join(canonicalConversationDir, CONVERSATION_METADATA_FILE);
+    await writeAtomicJsonFile(canonicalConversationDir, metadataPath, updatedMeta, false);
+  }
 
   return {
     ...current,
@@ -948,7 +1019,6 @@ export async function setSessionType(
     sessionId: validatedId,
     title: current.title,
     typeId,
-    instructions: current.instructions,
     createdAt: current.createdAt,
   };
 
@@ -1313,12 +1383,14 @@ export async function migrateConversationToSession(
   const layoutPath = path.join(canonicalConversationDir, WORK_SESSION_LAYOUT_FILE);
   await writeAtomicJsonFile(canonicalConversationDir, layoutPath, initialLayout, false);
 
+  const instructionsPath = path.join(canonicalConversationDir, WORK_SESSION_INSTRUCTIONS_FILE);
+  await writeAtomicTextFile(canonicalConversationDir, instructionsPath, "", false);
+
   const v2Meta: WorkSessionMetadata = {
     schemaVersion: WORK_SESSION_SCHEMA_VERSION,
     sessionId: validatedId,
     title: v1Meta.conversationName,
     typeId: DEFAULT_SESSION_TYPE_ID,
-    instructions: "",
     createdAt: v1Meta.createdAt,
   };
 

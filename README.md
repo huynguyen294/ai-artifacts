@@ -127,7 +127,7 @@ After installing the integration, reload your editor and restart your agent to l
 
 The current source bundles numeric MCP version 12 and skill version 5. The MCP catalog contains exactly five tools: `resolve_artifact_window`, `create_artifact`, `wait_for_artifact_review`, `inspect_artifact_review`, and `advance_and_wait_for_artifact`. A client that reports a different MCP version or exposes an older catalog must be reinstalled and restarted.
 
-MCP version 12 currently prepares the installed-version distinction for Work Session testing. Session schema v2, its UI gates, and migration remain planned; the current runtime still uses conversation registry schema v1.
+MCP version 12 is reserved for the unreleased Work Session feature and remains its release version across implementation stages. The current runtime supports schema-v2 Sessions and explicit migration from legacy v1 conversations. Session instructions are read from `instructions.md`; existing v2 metadata may still contain an optional inline `instructions` string, which is accepted but not used as the instructions source. New metadata writes omit that field. Updating a test runtime bundle still requires reinstalling the changed runtime even when its numeric version remains 12.
 
 </details>
 

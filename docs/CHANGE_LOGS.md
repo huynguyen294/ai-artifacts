@@ -14,6 +14,28 @@ Minor typos, formatting fixes, or cosmetic wording adjustments that do not chang
 
 Each entry includes the date, category, summary of changes, rationale, and affected components or files.
 
+## 2026-11-07 — Phase 4 Stage 1 correction: MCP 12 and readable legacy Session metadata
+
+- Restored numeric MCP_VERSION and the installed Work Session gate from the internal development bump 13 to the reserved, unreleased feature version 12. Provider/sidebar messages, assertions and gate fixtures now use 12, with 11 as the unsupported version. Skill remains 5; its planned update is separate.
+- Kept strict Session v2 metadata validation while accepting an optional legacy `instructions` string, including empty and non-empty values. Existing Sessions are no longer rejected solely because that known field is present; unknown fields and invalid types remain invalid.
+- Effective Instructions still come only from `instructions.md` (empty if missing). Reads/listing neither migrate nor rewrite legacy metadata. New metadata writes omit inline instructions; Instructions-only saves leave metadata untouched. No fallback, dual-write or global user-data conversion was added.
+- Added isolated regression coverage for legacy metadata listing, absent Markdown, Markdown precedence, read-only behavior, and title/type writers omitting the old field while preserving Markdown and recency. Initial focused validation: 5 files / 93 tests passed. Final validation results are recorded in the Phase 4 correction checkpoint.
+- Final correction validation: typecheck and all build targets passed; full test suite passed (43 files, 611 tests passed, 3 skipped). The release-contract check remains intact; historical versioned release notes were not changed. No real installed runtime, global Session data or Extension Host UI was modified or validated by these checks.
+- Updated current README/architecture/project instructions/philosophy and roadmap/notes. The prior Stage 1 completion remains recorded; the correction does not implement Stage 2/3 or modify the user's separate review findings. Historical release notes and earlier planning records remain history; this entry supersedes their planned MCP 13 target and rejection of inline metadata.
+
+## 2026-11-07 — Place Session Add actions in Phase 4 and More/Export in Phase 5
+
+- Assigned manual empty Session creation from the Sessions view title and existing-artifact selection from Working to Phase 4 Step 5/Stage 3, reusing completed Stage 1 storage and membership APIs. This supersedes the earlier no-manual-Session restriction without reopening Stage 1.
+- Kept manager More → Export ZIP/Archive/Delete in Phase 5, following the original phase allocation. The agreed human-readable ZIP layout does not add export work to Phase 4.
+- Synchronized stale plan headers/notes with the recorded completion of Phase 4 Stage 1. MCP 13 exists in source; Skill remains 5 pending the planned bump to 6. No new tests or runtime validation are claimed by this documentation edit.
+- Updated `plans/work-session-artifact/plan-phase-4.md`, `plan.md`, and `note.md`; no application code or user-owned review notes were modified.
+
+## 2026-11-07 — Human-readable Session ZIP export format
+
+- Recorded the agreed export format: a Session-title root folder, `Instructions.md`, and Working/References/Archived folders containing all artifact Markdown files, numbered in each zone's layout order and named from artifact titles with valid filesystem characters.
+- Export preserves Markdown contents and excludes metadata JSON, memberships, lifecycle manifests, comments/submissions/review state and artifact IDs in filenames. This is a document package for human readers, with no lifecycle import/restore requirement or state/recency mutation.
+- Planning only; updated `plans/work-session-artifact/plan.md` and `plans/work-session-artifact/note.md`. No application code or in-progress implementation was modified by this update.
+
 ## 2026-11-07 — Detailed Phase 4 implementation guide
 
 - Extended planned Step 5 to audit all app, dialog, Tree View and native UI wording for remaining product-owned Vietnamese strings and convert them to English while preserving user-authored titles, types and content. Confirmed remaining strings in ArtifactConnectDialog, ReviewApp Session tooltips and Recent Artifacts sidebar states.

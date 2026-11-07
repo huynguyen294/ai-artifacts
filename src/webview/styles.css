@@ -674,7 +674,9 @@ button:disabled {
   border: 1px solid var(--vscode-editorWidget-border, rgba(128, 128, 128, 0.2));
   background: var(--vscode-input-background, rgba(128, 128, 128, 0.05));
   cursor: pointer;
-  transition: border-color 0.15s ease, background-color 0.15s ease;
+  transition:
+    border-color 0.15s ease,
+    background-color 0.15s ease;
 }
 
 .connect-mode-option:hover:not(.disabled) {
@@ -1032,7 +1034,7 @@ button:disabled {
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 12px;
 }
 
 .session-side-section {
@@ -1056,20 +1058,60 @@ button:disabled {
   color: var(--vscode-editor-foreground);
 }
 
-.session-type-display {
+.session-type-section {
+  height: 28px;
   display: flex;
   align-items: center;
+  gap: 10px;
+  box-sizing: border-box;
 }
 
-.session-type-badge {
-  display: inline-block;
-  padding: 2px 8px;
+.session-type-section h4 {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--vscode-editor-foreground);
+  line-height: 1;
+}
+
+.session-type-chip-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px;
+  height: 22px;
+  border-radius: 11px;
   font-size: 0.75rem;
   font-weight: 500;
-  border-radius: 12px;
-  background-color: var(--vscode-badge-background);
-  color: var(--vscode-badge-foreground);
+  cursor: pointer;
+  background-color: var(--vscode-editorWidget-background, rgba(128, 128, 128, 0.05));
+  border: 1px solid var(--vscode-editorWidget-border, rgba(128, 128, 128, 0.15));
+  color: var(--vscode-editor-foreground);
+  transition:
+    background-color 0.15s ease,
+    border-color 0.15s ease;
+  line-height: 1;
+  box-sizing: border-box;
+}
+
+.session-type-chip-btn:hover,
+.session-type-chip-btn:focus-visible {
+  background-color: var(--vscode-list-hoverBackground, rgba(128, 128, 128, 0.12));
+  border-color: var(--vscode-focusBorder, #007acc);
+  outline: none;
+}
+
+.session-type-chip-label {
   text-transform: capitalize;
+}
+
+.session-type-chip-icon {
+  font-size: 0.75rem;
+  opacity: 0.7;
+}
+
+.session-type-chip-btn:hover .session-type-chip-icon {
+  opacity: 1;
 }
 
 .session-instructions-textarea {
@@ -1169,11 +1211,22 @@ button:disabled {
   margin-bottom: 12px;
 }
 
+.session-zone-working .session-zone-header {
+  height: 28px;
+  display: flex;
+  align-items: center;
+  box-sizing: border-box;
+}
+
 .session-zone-header h4 {
   margin: 0;
   font-size: 1rem;
   font-weight: 600;
   color: var(--vscode-editor-foreground);
+}
+
+.session-zone-working .session-zone-header h4 {
+  line-height: 1;
 }
 
 .session-zone-count {
