@@ -3,17 +3,24 @@ import path from "node:path";
 import {
   ARTIFACT_MANIFEST_FILE,
   ARTIFACT_MARKDOWN_FILE,
+  CONVERSATION_METADATA_FILE,
+  CONVERSATION_REGISTERED_ARTIFACTS_DIRECTORY,
+  CONVERSATION_V1_BACKUP_FILE,
+  WORK_SESSION_LAYOUT_FILE,
   globalArtifactsRoot,
   type GlobalArtifactsRootOptions,
 } from "../shared/artifact-files";
 import {
+  artifactConversationIdSchema,
   artifactIdSchema,
   conversationArtifactGroupSchema,
+  sessionTypeIdSchema,
   type ConversationArtifactGroup,
   type ConversationArtifactItem,
   type ConversationArtifactsViewState,
   type WorkSession,
   type WorkSessionArtifactRow,
+  type WorkSessionDataChange,
   type WorkSessionViewData,
   type ArtifactSessionTarget,
 } from "../shared/contracts";
@@ -24,8 +31,12 @@ import {
   listMigrationCandidates,
   listSessions,
   listSessionsForArtifact,
+  moveArtifactInSession as moveArtifactInSessionRegistry,
   readSession,
   removeArtifactFromConversation,
+  removeArtifactFromSession as removeArtifactFromSessionRegistry,
+  setSessionType as setSessionTypeRegistry,
+  updateSessionDetails as updateSessionDetailsRegistry,
   type MigrationCandidateEntry,
 } from "../shared/conversation-artifact-registry";
 import { listSessionTypes } from "../shared/session-type-registry";
@@ -85,7 +96,9 @@ function isMissingArtifactError(error: unknown): boolean {
 }
 
 export class ConversationArtifactService<TUri extends ArtifactFileUri> {
-  private readonly listeners = new Set<() => void | Promise<void>>();
+  private readonly listeners = new Set<(changes: readonly WorkSessionDataChange[]) => void | Promise<void>>();
+  private readonly pendingChanges = new Map<string, WorkSessionDataChange>();
+  private pendingGenericChange = false;
   private readonly rootOptions: GlobalArtifactsRootOptions;
   private readonly debounceMs: number;
   private debounceTimer: ReturnType<typeof setTimeout> | undefined;
@@ -325,7 +338,55 @@ export class ConversationArtifactService<TUri extends ArtifactFileUri> {
     };
   }
 
-  onDidChange(listener: () => void | Promise<void>): { dispose: () => void } {
+  async updateSessionDetails(
+    sessionId: string,
+    details: { title?: string; instructions?: string },
+  ): Promise<WorkSession> {
+    const session = await updateSessionDetailsRegistry(sessionId, details, this.rootOptions);
+    this.notifyChanged([{ kind: "metadata", sessionId: session.sessionId }]);
+    return session;
+  }
+
+  async setSessionType(sessionId: string, rawTypeId: string): Promise<WorkSession> {
+    const typeId = sessionTypeIdSchema.parse(rawTypeId);
+    const types = await listSessionTypes(this.rootOptions);
+    if (!types.some((t) => t.id === typeId)) {
+      throw new Error(`Session type "${typeId}" does not exist in registry.`);
+    }
+    const session = await setSessionTypeRegistry(sessionId, typeId, this.rootOptions);
+    this.notifyChanged([{ kind: "metadata", sessionId: session.sessionId }]);
+    return session;
+  }
+
+  async moveArtifactInSession(
+    sessionId: string,
+    artifactId: string,
+    targetZone: "working" | "references" | "archived",
+    targetIndex: number,
+  ): Promise<WorkSession> {
+    const session = await moveArtifactInSessionRegistry(
+      sessionId,
+      artifactId,
+      targetZone,
+      targetIndex,
+      this.rootOptions,
+    );
+    this.notifyChanged([{ kind: "layout", sessionId: session.sessionId }]);
+    return session;
+  }
+
+  async removeArtifactFromSession(sessionId: string, artifactId: string): Promise<boolean> {
+    const removed = await removeArtifactFromSessionRegistry(sessionId, artifactId, this.rootOptions);
+    if (removed) {
+      this.notifyChanged([
+        { kind: "membership", sessionId, artifactId },
+        { kind: "layout", sessionId },
+      ]);
+    }
+    return removed;
+  }
+
+  onDidChange(listener: (changes: readonly WorkSessionDataChange[]) => void | Promise<void>): { dispose: () => void } {
     this.listeners.add(listener);
     return {
       dispose: () => {
@@ -334,8 +395,16 @@ export class ConversationArtifactService<TUri extends ArtifactFileUri> {
     };
   }
 
-  scheduleChangeNotification(): void {
+  scheduleChangeNotification(changes?: readonly WorkSessionDataChange[]): void {
     if (this.disposed) return;
+    if (changes && changes.length > 0) {
+      for (const change of changes) {
+        this.pendingChanges.set(changeKey(change), change);
+      }
+    } else {
+      this.pendingGenericChange = true;
+    }
+
     if (this.debounceTimer !== undefined) {
       clearTimeout(this.debounceTimer);
     }
@@ -345,8 +414,16 @@ export class ConversationArtifactService<TUri extends ArtifactFileUri> {
     }, this.debounceMs);
   }
 
-  notifyChanged(): void {
+  notifyChanged(changes?: readonly WorkSessionDataChange[]): void {
     if (this.disposed) return;
+    if (changes && changes.length > 0) {
+      for (const change of changes) {
+        this.pendingChanges.set(changeKey(change), change);
+      }
+    } else {
+      this.pendingGenericChange = true;
+    }
+
     if (this.debounceTimer !== undefined) {
       clearTimeout(this.debounceTimer);
       this.debounceTimer = undefined;
@@ -357,8 +434,15 @@ export class ConversationArtifactService<TUri extends ArtifactFileUri> {
   attachWatcher(watcher: ConversationRegistryWatcher<TUri>): void {
     this.watcher?.dispose?.();
     this.watcher = watcher;
-    const handler = () => {
-      this.scheduleChangeNotification();
+    const handler = (uri: TUri) => {
+      const fsPath = (uri as { fsPath?: string })?.fsPath ?? String(uri);
+      const classified = classifyWatcherUri(fsPath);
+      if (classified === "ignored") return;
+      if (classified === "unclassified") {
+        this.scheduleChangeNotification();
+      } else {
+        this.scheduleChangeNotification([classified]);
+      }
     };
     watcher.onDidCreate(handler);
     watcher.onDidChange(handler);
@@ -371,6 +455,8 @@ export class ConversationArtifactService<TUri extends ArtifactFileUri> {
       clearTimeout(this.debounceTimer);
       this.debounceTimer = undefined;
     }
+    this.pendingChanges.clear();
+    this.pendingGenericChange = false;
     this.watcher?.dispose?.();
     this.watcher = undefined;
     this.listeners.clear();
@@ -378,13 +464,87 @@ export class ConversationArtifactService<TUri extends ArtifactFileUri> {
 
   private emitChange(): void {
     if (this.disposed) return;
+    const isGeneric = this.pendingGenericChange;
+    const changes = isGeneric ? [] : Array.from(this.pendingChanges.values());
+    this.pendingChanges.clear();
+    this.pendingGenericChange = false;
+
     for (const listener of [...this.listeners]) {
       try {
-        void Promise.resolve(listener()).catch(() => undefined);
+        void Promise.resolve(listener(changes)).catch(() => undefined);
       } catch {
-        // Ignore listener errors so one panel never breaks others
+        // Ignore listener errors so one consumer never breaks others
       }
     }
+  }
+}
+
+export function isTemporaryOrBackupFile(filePath: string): boolean {
+  const base = path.basename(filePath);
+  if (
+    base === CONVERSATION_V1_BACKUP_FILE ||
+    base.endsWith(".backup.json") ||
+    base.endsWith(".tmp") ||
+    base.includes(".tmp.") ||
+    base.startsWith(".")
+  ) {
+    return true;
+  }
+  return false;
+}
+
+export function classifyWatcherUri(filePath: string): WorkSessionDataChange | "unclassified" | "ignored" {
+  if (isTemporaryOrBackupFile(filePath)) {
+    return "ignored";
+  }
+
+  const normalized = filePath.replace(/\\/g, "/");
+  const filename = path.basename(normalized);
+
+  if (filename === CONVERSATION_METADATA_FILE) {
+    const sessionDirName = path.basename(path.dirname(normalized));
+    if (artifactConversationIdSchema.safeParse(sessionDirName).success) {
+      return { kind: "metadata", sessionId: sessionDirName };
+    }
+  }
+
+  if (filename === WORK_SESSION_LAYOUT_FILE) {
+    const sessionDirName = path.basename(path.dirname(normalized));
+    if (artifactConversationIdSchema.safeParse(sessionDirName).success) {
+      return { kind: "layout", sessionId: sessionDirName };
+    }
+  }
+
+  if (normalized.includes("/" + CONVERSATION_REGISTERED_ARTIFACTS_DIRECTORY + "/")) {
+    const artifactIdCandidate = path.basename(normalized, ".json");
+    const parentDir = path.dirname(normalized);
+    const sessionDir = path.dirname(parentDir);
+    const sessionDirName = path.basename(sessionDir);
+    if (
+      artifactConversationIdSchema.safeParse(sessionDirName).success &&
+      artifactIdSchema.safeParse(artifactIdCandidate).success
+    ) {
+      return { kind: "membership", sessionId: sessionDirName, artifactId: artifactIdCandidate };
+    }
+  }
+
+  return "unclassified";
+}
+
+export function changeKey(change: WorkSessionDataChange): string {
+  switch (change.kind) {
+    case "metadata":
+      return `metadata:${change.sessionId}`;
+    case "membership":
+      return `membership:${change.sessionId}:${change.artifactId}`;
+    case "layout":
+      return `layout:${change.sessionId}`;
+    case "artifact":
+      return `artifact:${change.artifactId}`;
+    case "types":
+      return "types";
+    case "support":
+      return "support";
   }
 }
 

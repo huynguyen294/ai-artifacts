@@ -8,6 +8,7 @@ import {
   webviewToExtensionMessageSchema,
   type ArtifactSessionTarget,
   type ExtensionToWebviewMessage,
+  type WorkSessionDataChange,
 } from "../shared/contracts";
 import { ArtifactStore } from "./artifact-store";
 import { runSingleMigration } from "./session-migration-command";
@@ -20,7 +21,7 @@ function nonce(): string {
 
 export type ConversationArtifactProviderController = {
   getArtifactSessions: (artifactId: string) => Promise<ArtifactSessionTarget[]>;
-  onDidChange: (listener: () => void | Promise<void>) => { dispose: () => void };
+  onDidChange: (listener: (changes?: readonly WorkSessionDataChange[]) => void | Promise<void>) => { dispose: () => void };
 };
 
 export type ArtifactStoreController = Pick<
@@ -310,8 +311,20 @@ export class ArtifactReviewProvider implements vscode.CustomTextEditorProvider {
     fileWatcher.onDidChange(() => void refresh());
     fileWatcher.onDidDelete(() => void refresh());
 
-    const conversationSubscription = this.conversationService?.onDidChange(() => {
-      void refreshSessions();
+    const conversationSubscription = this.conversationService?.onDidChange((changes) => {
+      if (!changes || changes.length === 0) {
+        void refreshSessions();
+        return;
+      }
+      const relevant = changes.some((c) => {
+        if (c.kind === "types" || c.kind === "support") return true;
+        if (c.kind === "membership" && c.artifactId === store.artifactId) return true;
+        if (c.kind === "metadata") return true;
+        return false;
+      });
+      if (relevant) {
+        void refreshSessions();
+      }
     });
 
     panel.onDidDispose(() => {

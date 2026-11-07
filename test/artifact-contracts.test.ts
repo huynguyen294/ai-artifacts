@@ -527,4 +527,46 @@ describe("artifact conversation schema v1 contract", () => {
       }),
     ).toThrow();
   });
+
+  it("validates sessionWebviewToExtensionMessageSchema actions and rejects malformed payloads", () => {
+    const validActions = [
+      { type: "ready" },
+      { type: "openArtifact", artifactId: "artifact-001" },
+      { type: "openExternal", url: "https://example.com" },
+      { type: "renameSession" },
+      { type: "saveSessionInstructions", instructions: "## Updated guidelines" },
+      { type: "selectSessionType" },
+      { type: "moveArtifact", artifactId: "artifact-001", zone: "references" },
+      { type: "reorderArtifact", artifactId: "artifact-001", direction: "up" },
+      { type: "removeArtifact", artifactId: "artifact-001" },
+      { type: "setSessionPanelExpanded", expanded: false },
+    ];
+
+    for (const action of validActions) {
+      expect(contracts.sessionWebviewToExtensionMessageSchema.parse(action)).toEqual(action);
+    }
+
+    // Rejects invalid actions or malformed payloads
+    expect(() =>
+      contracts.sessionWebviewToExtensionMessageSchema.parse({
+        type: "moveArtifact",
+        artifactId: "artifact-001",
+        zone: "invalid-zone",
+      }),
+    ).toThrow();
+
+    expect(() =>
+      contracts.sessionWebviewToExtensionMessageSchema.parse({
+        type: "reorderArtifact",
+        artifactId: "artifact-001",
+        direction: "sideways",
+      }),
+    ).toThrow();
+
+    expect(() =>
+      contracts.sessionWebviewToExtensionMessageSchema.parse({
+        type: "unknownAction",
+      }),
+    ).toThrow();
+  });
 });

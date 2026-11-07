@@ -533,4 +533,62 @@ describe("ArtifactReviewProvider sessions transport (Chặng 3)", () => {
       expect.stringContaining("00000000-0000-4000-8000-000000000099"),
     );
   });
+
+  it("selectively refreshes session targets only on relevant changes", async () => {
+    const store = createFakeStore("artifact-current");
+    let changeListener: ((changes?: any[]) => void) | undefined;
+
+    const getArtifactSessionsMock = vi.fn(async () => []);
+    const conversationService: ConversationArtifactProviderController = {
+      getArtifactSessions: getArtifactSessionsMock,
+      onDidChange: vi.fn((listener) => {
+        changeListener = listener;
+        return { dispose: vi.fn() };
+      }),
+    };
+
+    const provider = new ArtifactReviewProvider(
+      { extensionUri: { fsPath: "/ext" } } as any,
+      conversationService,
+      () => store,
+    );
+
+    const { panel, sendMessage } = createFakePanel();
+    const document = {
+      uri: {
+        fsPath: "/home/.ai-artifacts/artifacts/artifact-current/artifact.md",
+        toString: () => "file:///home/.ai-artifacts/artifacts/artifact-current/artifact.md",
+      },
+    } as any;
+
+    await provider.resolveCustomTextEditor(document, panel);
+    await sendMessage({ type: "ready" });
+    expect(getArtifactSessionsMock).toHaveBeenCalledTimes(1);
+
+    expect(changeListener).toBeDefined();
+
+    // 1. Layout change -> should NOT trigger refreshSessions
+    changeListener!([{ kind: "layout", sessionId: "sess-1" }]);
+    expect(getArtifactSessionsMock).toHaveBeenCalledTimes(1);
+
+    // 2. Membership of a different artifact -> should NOT trigger refreshSessions
+    changeListener!([{ kind: "membership", sessionId: "sess-1", artifactId: "unrelated-artifact" }]);
+    expect(getArtifactSessionsMock).toHaveBeenCalledTimes(1);
+
+    // 3. Artifact manifest change -> should NOT trigger refreshSessions
+    changeListener!([{ kind: "artifact", artifactId: "artifact-current" }]);
+    expect(getArtifactSessionsMock).toHaveBeenCalledTimes(1);
+
+    // 4. Membership of current artifact -> SHOULD trigger refreshSessions
+    changeListener!([{ kind: "membership", sessionId: "sess-1", artifactId: "artifact-current" }]);
+    await vi.waitFor(() => {
+      expect(getArtifactSessionsMock).toHaveBeenCalledTimes(2);
+    });
+
+    // 5. Types change -> SHOULD trigger refreshSessions
+    changeListener!([{ kind: "types" }]);
+    await vi.waitFor(() => {
+      expect(getArtifactSessionsMock).toHaveBeenCalledTimes(3);
+    });
+  });
 });

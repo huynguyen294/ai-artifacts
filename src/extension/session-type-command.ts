@@ -194,3 +194,87 @@ export async function runManageSessionTypesCommand(deps: SessionTypeCommandDeps)
   quickPick.show();
   await loadItems();
 }
+
+export interface SelectSessionTypeDeps {
+  createQuickPick: () => vscode.QuickPick<SessionTypeQuickPickItem>;
+  currentTypeId?: string;
+  rootOptions?: GlobalArtifactsRootOptions;
+}
+
+export async function runSelectSessionTypeQuickPick(
+  deps: SelectSessionTypeDeps,
+): Promise<{ typeId: string; created?: boolean } | undefined> {
+  const types = await listSessionTypes(deps.rootOptions);
+  const quickPick = deps.createQuickPick();
+  quickPick.title = "Select Session Type";
+  quickPick.placeholder = "Search or create a type";
+  quickPick.matchOnDescription = true;
+
+  const buildItems = (filter = ""): SessionTypeQuickPickItem[] => {
+    const items: SessionTypeQuickPickItem[] = [];
+    const trimmed = filter.trim();
+
+    const matchesExisting = types.some((t) => t.label.toLowerCase() === trimmed.toLowerCase());
+    if (trimmed.length > 0 && !matchesExisting) {
+      items.push({
+        label: `$(plus) Create type "${trimmed}"`,
+        description: "Add new session type",
+        isCreateButton: true,
+        alwaysShow: true,
+      });
+    }
+
+    for (const t of types) {
+      const isCurrent = t.id === deps.currentTypeId;
+      const item: SessionTypeQuickPickItem = {
+        label: t.label,
+        typeId: t.id,
+      };
+      if (isCurrent) {
+        item.description = "[Current]";
+      }
+      items.push(item);
+    }
+
+    return items;
+  };
+
+  quickPick.items = buildItems();
+
+  return new Promise((resolve) => {
+    let accepted = false;
+
+    quickPick.onDidChangeValue((val) => {
+      quickPick.items = buildItems(val);
+    });
+
+    quickPick.onDidAccept(async () => {
+      const selected = quickPick.selectedItems[0];
+      if (!selected) return;
+
+      accepted = true;
+      quickPick.hide();
+
+      if (selected.isCreateButton) {
+        const rawLabel = quickPick.value.trim();
+        try {
+          const created = await createSessionType(rawLabel, deps.rootOptions);
+          resolve({ typeId: created.id, created: true });
+        } catch {
+          resolve(undefined);
+        }
+      } else if (selected.typeId) {
+        resolve({ typeId: selected.typeId });
+      } else {
+        resolve(undefined);
+      }
+    });
+
+    quickPick.onDidHide(() => {
+      quickPick.dispose();
+      if (!accepted) resolve(undefined);
+    });
+
+    quickPick.show();
+  });
+}

@@ -10,7 +10,7 @@ Mục tiêu: mở rộng tab Session hiện có thành manager chỉnh sửa đ�
 | --- | --- |
 | Tab Session | Giữ cùng URI, Session ID và provider `agentPlus.workSession`; sửa tên, Hướng dẫn và loại Session. Không tạo một manager/tab thứ hai. |
 | Bố cục | Working ở giữa; panel bên phải theo thứ tự **Type → Hướng dẫn → References → Archived**. Đóng panel thì Working mở rộng. |
-| Hướng dẫn | Một chuỗi Markdown; textarea số dòng/chiều cao cố định, cuộn bên trong, có **Save**. Giữ nội dung đang nhập khi card/membership/layout cập nhật. |
+| Hướng dẫn | Một chuỗi Markdown; textarea số dòng/chiều cao cố định, cuộn bên trong, có **Save**. User kiểm soát nội dung; AI có thể hỗ trợ sửa trường `instructions` trong `conversation.json` bằng công cụ ghi file của AI. Giữ ô nhập khi dữ liệu không liên quan đổi, nhận giá trị mới khi chính instructions trên đĩa đổi. |
 | Type trong manager | Nút ✎ mở Quick Pick để tìm/chọn hoặc tạo nhanh rồi gán type. Quản lý global vẫn ở ⚙ của sidebar. |
 | Artifact | Menu chuyển Working/References/Archived, lên/xuống trong vùng, gỡ khỏi Session. Dùng API registry đã có. |
 | Panel preference | Nhớ riêng từng Session bằng extension `globalState`; mặc định mở. Không ghi vào metadata/layout. |
@@ -42,6 +42,7 @@ Các điểm dưới đây đã đối chiếu source lúc lập hướng dẫn;
 
 - `conversation.json` schema v2 giữ `sessionId`, `title`, `instructions`, `typeId`, `createdAt`. Sửa một trường qua API đọc bản mới nhất rồi patch; không gửi lại toàn bộ snapshot cũ từ webview.
 - `registered-artifacts/<artifactId>.json` là nguồn membership duy nhất. MCP create/inspect cập nhật membership; khi reuse không sửa title/instructions/typeId hoặc layout.
+- Quy tắc MCP reuse trên không cấm AI sửa Hướng dẫn: đó là thao tác riêng bằng công cụ file của AI trên `conversation.json`, theo yêu cầu user; không phải side effect của create/inspect.
 - `layout.json` giữ ba mảng ID có thứ tự. Move/reorder chỉ ghi layout; remove xoá membership và lọc layout, không xoá artifact hoặc ảnh hưởng Session khác. Session v2 rỗng vẫn tồn tại.
 - Session `updatedAt` tính từ `max(createdAt, ...registeredAt)`. **Inspect làm mới `registeredAt` là hành vi hợp lệ đã chốt**. Sửa nội dung artifact thông thường không tự register lại; metadata/layout edits không đẩy Session lên đầu.
 - Giữ atomic write, chấp nhận bản lưu sau cùng thắng. Không thêm lock, CAS, revision check, merge hoặc chống nhiều manager ghi đồng thời.
@@ -56,18 +57,27 @@ Có thể giữ số lượng watcher hiện tại; yêu cầu là **phân loạ
 | Manifest artifact A | Recent Artifacts; card A trong manager đang chứa A. `artifact.updatedAt` của card có thể đổi. | Không gán lại, không remount textarea. |
 | Membership Session S | Sidebar S/count/recency; danh sách manager S; đích Sessions của Review App liên quan. | Không lấy `instructions` từ snapshot này để set input. |
 | Layout Session S | Vùng và thứ tự artifact của manager S. | Giữ nguyên. |
-| Metadata Session S | Tên/type và dữ liệu persisted của S; sidebar nếu cần. Own-save Hướng dẫn có acknowledgement riêng. | Không nối watcher thành effect reset input; đồng bộ cùng trường từ manager khác ngoài phạm vi. |
+| Metadata Session S, instructions không đổi | Tên/type và dữ liệu persisted của S; sidebar nếu cần. | Giữ nguyên; ghi lại metadata không đồng nghĩa instructions đã đổi. |
+| Chính instructions của S đổi trên đĩa | Gửi giá trị instructions mới tới manager S, kể cả AI sửa file trực tiếp; own-save vẫn có acknowledgement. | Nhận giá trị mới, kể cả đang gõ. Chấp nhận thay thế phần chưa Save, không thêm conflict handling. |
 | Global types | Type label/options, filter label và list liên quan. | Giữ nguyên. |
 | MCP đã cài | Các gate Session và actions mới. | Không reload webview/reset form. |
 
-Textarea khởi tạo khi mở Session, thay đổi do user nhập và xác nhận Save của chính ô đó. **Không cần `isDirty`** để ngăn thông báo không liên quan; không lưu draft vào `localStorage`/`globalState` hoặc thiết kế recovery. Đóng tab/reload khi chưa Save chưa được bảo vệ ở Phase 3.
+Textarea khởi tạo khi mở Session, thay đổi do user nhập, own-save hoặc khi chính giá trị instructions trên đĩa đổi. Khi đọc metadata, so instructions với **giá trị persisted đã đọc lần trước**, không so với nội dung user đang nhập: chỉ đổi title/type hoặc watcher báo lặp thì không gửi instructions patch. Đây là so sánh trường dữ liệu để refresh đúng phần, **không phải `isDirty` hay phát hiện conflict**. Không lưu draft vào `localStorage`/`globalState` hoặc thiết kế recovery; đóng/reload trước Save chưa được bảo vệ.
+
+### 3.3. AI hỗ trợ sửa Hướng dẫn
+
+- File đích là `~/.ai-artifacts/conversation-registry/<sessionId>/conversation.json` của đúng Session v2 đang làm việc. Không tạo thêm file instructions riêng trong đợt này.
+- AI dùng công cụ đọc/ghi file sẵn có: đọc JSON hiện tại, sửa đúng chuỗi `instructions`, giữ các trường khác và ghi JSON hợp lệ. Không cần tool MCP chuyên sửa Hướng dẫn; không đụng membership/layout hoặc artifact lifecycle.
+- AI sửa file và user Save cùng dùng quy tắc bản ghi thành công sau cùng thắng. Không thêm lock, merge, dirty guard/dialog hoặc tests hardening conflict AI–user.
+- **Phase 3:** hỗ trợ watcher/UI nhận instructions sửa trực tiếp từ bên ngoài. Đây là bổ sung cho bước 3/Chặng 2, gồm cả contracts/provider cần nối thêm sau Chặng 1.
+- **Phase 4:** khi hoàn thiện agent context/Connect/skill contract, cung cấp exact Session ID và đường dẫn metadata để AI biết nơi đọc/sửa Hướng dẫn, cùng quy tắc chỉ sửa trường được yêu cầu. Chưa tuyên bố MCP/skill hiện tại đã trả đường dẫn hoặc có hướng dẫn này.
 
 ## 4. Thứ tự triển khai và checkpoint
 
 | Chặng | Bước | Đầu ra để review | Trạng thái |
 | --- | --- | --- | --- |
-| 1 — Refresh và host actions | 1. Event có phạm vi | Watcher tới đúng consumer; giữ behavior Phase 1+2. | Chưa triển khai |
-| 1 — Refresh và host actions | 2. Contracts/actions | Manager ghi đúng file qua API hiện có; lỗi không xoá state. | Chưa triển khai |
+| 1 — Refresh và host actions | 1. Event có phạm vi | Watcher tới đúng consumer; giữ behavior Phase 1+2. | ✅ Đã hoàn thành |
+| 1 — Refresh và host actions | 2. Contracts/actions | Manager ghi đúng file qua API hiện có; lỗi không xoá state. | ✅ Đã hoàn thành |
 | 2 — Session Manager | 3. UI manager | Sửa tên/Hướng dẫn/type, panel preference, menu artifact. | Chưa triển khai |
 | 3 — Sidebar và nghiệm thu | 4. Filter/search | Lọc sidebar theo type; tìm toàn bộ v2 và mở đúng Session. | Chưa triển khai |
 | 3 — Sidebar và nghiệm thu | 5. English Quick Input | Wording nhất quán, CRUD types vẫn đúng. | Chưa triển khai |
@@ -150,6 +160,7 @@ Không nhận Session ID/path tuỳ ý trong action payload. `openArtifact` vẫ
 | File/component | Sửa cụ thể |
 | --- | --- |
 | `src/webview/SessionApp.tsx` | Header title + ✎ đổi tên, toggle panel. Working ở chính; panel Type → Hướng dẫn → References → Archived. Tách state ô nhập khỏi summary/artifacts, lỗi action khỏi lỗi load ban đầu. |
+| `src/shared/contracts.ts`, `work-session-provider.ts` | Bổ sung instructions patch cho metadata thay đổi bên ngoài. Provider so với instructions persisted đã đọc trước đó; chỉ gửi khi trường thực sự đổi, không gửi lại vì title/type đổi. App nhận patch này để cập nhật ô nhập, không kiểm tra dirty hoặc nguồn AI/user. |
 | `src/webview/styles.css` | CSS theo namespace Session; fixed rows/height textarea, cuộn bên trong; Working mở rộng khi panel đóng. Dùng theme variables, không redesign Review App/thêm UI library. |
 | `work-session-provider.ts`, extension context | `globalState` key theo Session ID, đề xuất `workSessions.panelExpanded.<sessionId>`; mặc định `true`, gửi khi ready. Nhớ cùng Session qua workspace; không dùng webview localStorage. |
 | Type control | Nút ✎ gọi picker chọn/tìm/tạo từ bước 2; hiển thị assignment/type label sau host xác nhận. ⚙ sidebar tiếp tục quản lý global. |
@@ -159,7 +170,7 @@ Không nhận Session ID/path tuỳ ý trong action payload. `openArtifact` vẫ
 
 1. Luôn hiện textarea, kể cả instructions rỗng. Khởi tạo từ initial load; giữ state ở cấp không bị unmount khi toggle panel hoặc thay danh sách artifact.
 2. Có **Save**, trạng thái đang lưu và lỗi tại khu vực này. Trong lúc lưu, chặn gửi lặp và sửa cùng ô để acknowledgement không thay lượt gõ mới. Thành công giữ nội dung đã lưu; thất bại giữ nội dung vừa nhập để thử lại.
-3. Không có effect “mỗi DTO mới thì set instructions”. Artifact/membership/layout/type patch và title rename không cập nhật textarea. Đây là xử lý nguồn refresh, không cần dirty/conflict subsystem.
+3. Không có effect “mỗi DTO mới thì set instructions”. Artifact/membership/layout/type patch và title rename không cập nhật textarea. Riêng instructions patch do giá trị trên đĩa thực sự đổi thì cập nhật ô nhập; không dùng dirty guard để chặn. Đây là xử lý nguồn refresh, không cần conflict subsystem.
 4. Không thêm rich text, file chip, description/catalog hoặc preview editor. Đóng tab/reload trước Save có thể mất phần nhập theo phạm vi đã chốt.
 
 **Menu artifact:**
@@ -169,9 +180,9 @@ Không nhận Session ID/path tuỳ ý trong action payload. `openArtifact` vẫ
 - Remove from Session: chỉ gỡ membership và dọn layout. Gỡ artifact cuối vẫn giữ manager rỗng; không xoá artifact hoặc archive/delete Session.
 - Menu là control riêng, không làm nổi bọt click thành mở artifact. Card vẫn mở qua routing hiện có; artifact unavailable vẫn tổ chức/gỡ được nhưng không mở review.
 
-**Khả năng phải đạt:** đổi tên qua Input Box; Markdown + Save; chọn/tạo type; panel nhớ riêng từng Session sau reopen/reload; chuyển/sắp xếp/gỡ artifact đúng file. Background updates giữ value và focus của textarea.
+**Khả năng phải đạt:** đổi tên qua Input Box; Markdown + Save; chọn/tạo type; panel nhớ riêng từng Session sau reopen/reload; chuyển/sắp xếp/gỡ artifact đúng file. Background updates không liên quan giữ value/focus; AI sửa chính instructions trên đĩa thì manager nhận nội dung mới.
 
-**Kiểm chứng:** interaction test message/state nếu hạ tầng hiện có hỗ trợ, cộng Extension Host: đang gõ thì đổi manifest, create/inspect thêm member và đổi layout; input/focus giữ nguyên, card/danh sách cập nhật. Thử Save thành công/lỗi; toggle panel giữ phần chưa Save trong tab đang mở. Không thêm matrix nhiều manager sửa cùng trường.
+**Kiểm chứng:** interaction test message/state nếu hạ tầng hiện có hỗ trợ, cộng Extension Host: đang gõ thì đổi manifest, create/inspect thêm member, đổi title/type hoặc layout; input/focus giữ nguyên, phần liên quan cập nhật. Sửa riêng instructions trong fixture `conversation.json` thì manager hiện nội dung mới. Thử Save thành công/lỗi; toggle panel giữ phần chưa Save trong tab đang mở. Không thêm matrix nhiều manager/AI–user sửa cùng trường.
 
 ### 5.4. Bước 4 — Sidebar filter và Search Sessions
 
@@ -243,17 +254,17 @@ Manual trong Extension Development Host với fixture Session v2/installed MCP �
 
 1. Mở cùng Session từ sidebar/search/Review App: cùng tab. Đổi tên, instructions rỗng/Markdown, Save/reopen: đúng dữ liệu; metadata edit không tăng recency.
 2. Đang gõ instructions: đổi manifest, create/inspect thêm membership, move/reorder artifact. Card/danh sách/thời gian tương ứng cập nhật; input/focus không bị background refresh thay thế. Inspect tăng recency, chỉ đổi manifest không tăng `registeredAt`.
-3. Save lỗi giữ nội dung nhập/manager; thử lại được. Gán/tạo type, cancel picker, rename/delete type global: assignment/labels đúng, instructions không reset.
+3. Save lỗi giữ nội dung nhập/manager; thử lại được. Gán/tạo type, cancel picker, rename/delete type global: assignment/labels đúng, instructions không reset. Sửa chính instructions trong file metadata bằng công cụ ngoài thì ô nhập nhận giá trị mới; chỉ sửa title/type không reset ô nhập.
 4. Toggle panel ở hai Session; reopen/reload nhớ preference riêng. Toggle trong tab đang mở giữ phần chưa Save; Working mở rộng khi panel đóng.
 5. Move ba vùng, lên/xuống, remove: đúng sau reopen; không xoá artifact/ảnh hưởng Session khác. Gỡ member cuối vẫn giữ Session rỗng.
 6. Filter type rồi refresh, rename/delete type: indicator/list đúng, migration notice còn. Search từ icon/Command Palette tìm toàn bộ v2 kể cả Session bị ẩn, chọn exact ID; cancel không ghi.
 7. Installed MCP cũ: gate chặn cả actions mới; Recent/review/Connect legacy vẫn dùng được. Filter/search không tự migration hoặc tạo Session.
 
-**Đạt Phase 3 khi:** manager editing/artifact actions hoạt động trên model hiện có; refresh đúng phần không đè input; panel preference riêng từng Session; sidebar filter/search và English Quick Input hoạt động; check/test/build pass, manual evidence hoặc phần chưa xác minh báo rõ. Không gộp các mục hoãn thành tiêu chí bắt buộc.
+**Đạt Phase 3 khi:** manager editing/artifact actions hoạt động trên model hiện có; dữ liệu không liên quan không đè input, instructions trên đĩa thực sự đổi thì manager nhận giá trị mới; panel preference riêng từng Session; sidebar filter/search và English Quick Input hoạt động; check/test/build pass, manual evidence hoặc phần chưa xác minh báo rõ. Không gộp các mục hoãn thành tiêu chí bắt buộc.
 
 ## 7. Rủi ro triển khai và giới hạn chấp nhận
 
 - **Còn đường refresh chung:** sửa watcher nhưng bỏ callback type CRUD/migration hoặc subscription sẽ còn gửi full state. Bước 1 đi hết producer → service → provider → UI; input cũng tách riêng khỏi snapshot refresh.
 - **Action ghi sai phạm vi:** Save cả DTO cũ có thể đè trường khác, remove có thể nhầm xoá artifact. Bước 2 giới hạn payload, bind Session từ document và tái dùng registry API.
-- **Giới hạn đã chấp nhận:** đóng/reload trước Save có thể mất phần nhập; nhiều manager sửa cùng trường dùng bản lưu sau cùng thắng. Không thêm dirty dialog/lock/conflict handling cho hai trường hợp này.
+- **Giới hạn đã chấp nhận:** đóng/reload trước Save có thể mất phần nhập; nhiều manager hoặc AI–user sửa cùng trường dùng bản lưu sau cùng thắng. Nếu instructions trên đĩa đổi, manager nhận bản mới kể cả đang có phần nhập chưa Save. Không thêm dirty dialog/lock/conflict handling.
 - **Độ khó dự kiến:** trung bình; refresh và bảo toàn input khó nhất. Persistence/types/navigation đã có từ Phase 1+2, phần còn lại chủ yếu nối controls/native pickers và kiểm chứng. Không còn quyết định sản phẩm bắt buộc phải chốt trước khi bắt đầu theo phạm vi này.

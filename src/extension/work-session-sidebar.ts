@@ -23,8 +23,10 @@ export class RecentArtifactsTreeDataProvider implements vscode.TreeDataProvider<
     private readonly rootOptions: GlobalArtifactsRootOptions = {},
   ) {
     this.disposables.push(
-      this.service.onDidChange(() => {
-        this.refresh();
+      this.service.onDidChange((changes) => {
+        if (!changes || changes.length === 0 || changes.some((c) => c.kind === "artifact")) {
+          this.refresh();
+        }
       }),
     );
   }
@@ -125,8 +127,20 @@ export class WorkSessionsTreeDataProvider implements vscode.TreeDataProvider<Ses
     private readonly rootOptions: GlobalArtifactsRootOptions = {},
   ) {
     this.disposables.push(
-      this.service.onDidChange(() => {
-        this.refresh();
+      this.service.onDidChange((changes) => {
+        if (
+          !changes ||
+          changes.length === 0 ||
+          changes.some(
+            (c) =>
+              c.kind === "metadata" ||
+              c.kind === "membership" ||
+              c.kind === "types" ||
+              c.kind === "support",
+          )
+        ) {
+          this.refresh();
+        }
       }),
     );
   }

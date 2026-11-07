@@ -21,6 +21,45 @@ export function SessionApp() {
         } else {
           setState({ status: "error", message: msg.state.message });
         }
+      } else if (msg.type === "workSessionSummaryPatch") {
+        setState((prev) => {
+          if (prev.status !== "ready") return prev;
+          return {
+            status: "ready",
+            data: {
+              ...prev.data,
+              title: msg.summary.title,
+              typeId: msg.summary.typeId,
+              typeLabel: msg.summary.typeLabel,
+              updatedAt: msg.summary.updatedAt,
+            },
+          };
+        });
+      } else if (msg.type === "workSessionArtifactsPatch") {
+        setState((prev) => {
+          if (prev.status !== "ready") return prev;
+          return {
+            status: "ready",
+            data: {
+              ...prev.data,
+              working: msg.working,
+              references: msg.references,
+              archived: msg.archived,
+              updatedAt: msg.updatedAt,
+            },
+          };
+        });
+      } else if (msg.type === "sessionInstructionsSaved") {
+        setState((prev) => {
+          if (prev.status !== "ready") return prev;
+          return {
+            status: "ready",
+            data: {
+              ...prev.data,
+              instructions: msg.instructions,
+            },
+          };
+        });
       } else if (msg.type === "error") {
         setState({ status: "error", message: msg.message });
       }

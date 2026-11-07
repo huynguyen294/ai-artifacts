@@ -509,10 +509,44 @@ export const workSessionViewDataSchema = z
   .strict();
 export type WorkSessionViewData = z.infer<typeof workSessionViewDataSchema>;
 
+export type WorkSessionDataChange =
+  | { kind: "metadata"; sessionId: string }
+  | { kind: "membership"; sessionId: string; artifactId: string }
+  | { kind: "layout"; sessionId: string }
+  | { kind: "artifact"; artifactId: string }
+  | { kind: "types" }
+  | { kind: "support" };
+
+export type WorkSessionSummary = {
+  title: string;
+  typeId: string;
+  typeLabel: string;
+  updatedAt: string;
+};
+
 export const sessionWebviewToExtensionMessageSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("ready") }),
   z.object({ type: z.literal("openArtifact"), artifactId: artifactIdSchema }).strict(),
   z.object({ type: z.literal("openExternal"), url: z.string().url() }).strict(),
+  z.object({ type: z.literal("renameSession") }).strict(),
+  z.object({ type: z.literal("saveSessionInstructions"), instructions: sessionInstructionsSchema }).strict(),
+  z.object({ type: z.literal("selectSessionType") }).strict(),
+  z
+    .object({
+      type: z.literal("moveArtifact"),
+      artifactId: artifactIdSchema,
+      zone: z.enum(["working", "references", "archived"]),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("reorderArtifact"),
+      artifactId: artifactIdSchema,
+      direction: z.enum(["up", "down"]),
+    })
+    .strict(),
+  z.object({ type: z.literal("removeArtifact"), artifactId: artifactIdSchema }).strict(),
+  z.object({ type: z.literal("setSessionPanelExpanded"), expanded: z.boolean() }).strict(),
 ]);
 export type SessionWebviewToExtensionMessage = z.infer<typeof sessionWebviewToExtensionMessageSchema>;
 
@@ -520,5 +554,30 @@ export type SessionExtensionToWebviewMessage =
   | {
       type: "workSessionState";
       state: { status: "ready"; data: WorkSessionViewData } | { status: "error"; message: string };
+      panelExpanded?: boolean;
+    }
+  | {
+      type: "workSessionSummaryPatch";
+      summary: WorkSessionSummary;
+    }
+  | {
+      type: "workSessionArtifactsPatch";
+      working: WorkSessionArtifactRow[];
+      references: WorkSessionArtifactRow[];
+      archived: WorkSessionArtifactRow[];
+      updatedAt: string;
+    }
+  | {
+      type: "sessionInstructionsSaved";
+      instructions: string;
+    }
+  | {
+      type: "sessionPanelExpanded";
+      expanded: boolean;
+    }
+  | {
+      type: "actionError";
+      action: string;
+      message: string;
     }
   | { type: "error"; message: string };

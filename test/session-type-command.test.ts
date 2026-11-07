@@ -11,6 +11,7 @@ vi.mock("vscode", () => ({
 
 import {
   runManageSessionTypesCommand,
+  runSelectSessionTypeQuickPick,
   type SessionTypeCommandDeps,
   type SessionTypeQuickPickItem,
 } from "../src/extension/session-type-command";
@@ -21,11 +22,14 @@ class FakeQuickPick {
   title: string | undefined;
   placeholder: string | undefined;
   busy = false;
+  value = "";
+  matchOnDescription = false;
   items: readonly SessionTypeQuickPickItem[] = [];
   selectedItems: readonly SessionTypeQuickPickItem[] = [];
   itemButtonListeners: ((e: { item: SessionTypeQuickPickItem; button: any }) => any)[] = [];
   acceptListeners: (() => any)[] = [];
   hideListeners: (() => any)[] = [];
+  changeValueListeners: ((val: string) => any)[] = [];
 
   show(): void {}
   hide(): void {
@@ -46,6 +50,16 @@ class FakeQuickPick {
   onDidHide(listener: () => any) {
     this.hideListeners.push(listener);
     return { dispose: () => {} };
+  }
+
+  onDidChangeValue(listener: (val: string) => any) {
+    this.changeValueListeners.push(listener);
+    return { dispose: () => {} };
+  }
+
+  setValue(val: string) {
+    this.value = val;
+    for (const l of this.changeValueListeners) l(val);
   }
 
   triggerButton(item: SessionTypeQuickPickItem, tooltip: string) {
@@ -183,5 +197,80 @@ describe("runManageSessionTypesCommand", () => {
 
     const types = await listSessionTypes({ userHome: tempHome });
     expect(types.some((t) => t.id === created.id)).toBe(false);
+  });
+});
+
+describe("runSelectSessionTypeQuickPick", () => {
+  let tempHome: string;
+
+  beforeEach(async () => {
+    tempHome = await mkdtemp(path.join(tmpdir(), "ai-artifacts-type-select-"));
+  });
+
+  afterEach(async () => {
+    await rm(tempHome, { recursive: true, force: true }).catch(() => {});
+  });
+
+  it("selects an existing session type", async () => {
+    const fakeQuickPick = new FakeQuickPick();
+    const selectPromise = runSelectSessionTypeQuickPick({
+      createQuickPick: () => fakeQuickPick as any,
+      currentTypeId: "feature",
+      rootOptions: { userHome: tempHome },
+    });
+
+    await vi.waitFor(() => {
+      expect(fakeQuickPick.items.length).toBeGreaterThan(0);
+    });
+
+    const conversationItem = fakeQuickPick.items.find((i) => i.typeId === "conversation");
+    expect(conversationItem).toBeDefined();
+
+    fakeQuickPick.accept(conversationItem!);
+
+    const result = await selectPromise;
+    expect(result).toEqual({ typeId: "conversation" });
+  });
+
+  it("creates a new session type when create button is selected", async () => {
+    const fakeQuickPick = new FakeQuickPick();
+    const selectPromise = runSelectSessionTypeQuickPick({
+      createQuickPick: () => fakeQuickPick as any,
+      rootOptions: { userHome: tempHome },
+    });
+
+    await vi.waitFor(() => {
+      expect(fakeQuickPick.items.length).toBeGreaterThan(0);
+    });
+
+    // Simulate user typing "Sprint Task"
+    fakeQuickPick.setValue("Sprint Task");
+    expect(fakeQuickPick.items[0]?.isCreateButton).toBe(true);
+
+    fakeQuickPick.accept(fakeQuickPick.items[0]!);
+
+    const result = await selectPromise;
+    expect(result?.created).toBe(true);
+    expect(result?.typeId).toBeDefined();
+
+    const types = await listSessionTypes({ userHome: tempHome });
+    expect(types.some((t) => t.id === result?.typeId && t.label === "Sprint Task")).toBe(true);
+  });
+
+  it("returns undefined when cancelled/hidden without selection", async () => {
+    const fakeQuickPick = new FakeQuickPick();
+    const selectPromise = runSelectSessionTypeQuickPick({
+      createQuickPick: () => fakeQuickPick as any,
+      rootOptions: { userHome: tempHome },
+    });
+
+    await vi.waitFor(() => {
+      expect(fakeQuickPick.items.length).toBeGreaterThan(0);
+    });
+
+    fakeQuickPick.hide();
+
+    const result = await selectPromise;
+    expect(result).toBeUndefined();
   });
 });

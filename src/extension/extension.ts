@@ -56,7 +56,7 @@ import {
   maybeShowUpgradeNotification,
   type IntegrationNotificationState,
 } from "./upgrade-notification";
-import { MCP_VERSION, SKILL_VERSION } from "../shared/contracts";
+import { artifactIdSchema, MCP_VERSION, SKILL_VERSION } from "../shared/contracts";
 import {
   ConversationArtifactService,
   setupConversationRegistryWatcher,
@@ -103,7 +103,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const refreshViewsAndService = (): void => {
     workSessionsProvider.refresh();
     recentArtifactsProvider.refresh();
-    conversationArtifactService.notifyChanged();
+    conversationArtifactService.notifyChanged([{ kind: "support" }]);
   };
 
   const installAllDetectedIntegrationsAndNotify = async (): Promise<void> => {
@@ -175,7 +175,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         showErrorMessage: (message) => vscode.window.showErrorMessage(message),
         onDidUpdate: () => {
           workSessionsProvider.refresh();
-          conversationArtifactService.notifyChanged();
+          conversationArtifactService.notifyChanged([{ kind: "types" }]);
         },
       });
     }),
@@ -561,9 +561,14 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       false,
       false,
     );
-    const onManifestChange = () => {
+    const onManifestChange = (uri: vscode.Uri) => {
       recentArtifactsProvider.refresh();
-      conversationArtifactService.notifyChanged();
+      const artifactId = path.basename(path.dirname(uri.fsPath));
+      if (artifactIdSchema.safeParse(artifactId).success) {
+        conversationArtifactService.notifyChanged([{ kind: "artifact", artifactId }]);
+      } else {
+        conversationArtifactService.notifyChanged();
+      }
     };
     manifestWatcher.onDidCreate(onManifestChange);
     manifestWatcher.onDidChange(onManifestChange);
@@ -583,7 +588,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     );
     const onTypesChange = () => {
       workSessionsProvider.refresh();
-      conversationArtifactService.notifyChanged();
+      conversationArtifactService.notifyChanged([{ kind: "types" }]);
     };
     sessionTypesWatcher.onDidCreate(onTypesChange);
     sessionTypesWatcher.onDidChange(onTypesChange);

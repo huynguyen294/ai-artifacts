@@ -208,5 +208,40 @@ describe("WorkSession Sidebar Tree Data Providers", () => {
         expect(treeItem.command?.arguments).toEqual([session.sessionId]);
       }
     });
+
+    it("selectively refreshes tree providers based on change kind", () => {
+      const recentProvider = new RecentArtifactsTreeDataProvider(service, { userHome: tempHome });
+      const sessionProvider = new WorkSessionsTreeDataProvider(service, undefined, { userHome: tempHome });
+
+      const refreshRecentSpy = vi.spyOn(recentProvider, "refresh");
+      const refreshSessionSpy = vi.spyOn(sessionProvider, "refresh");
+
+      // 1. Layout change -> neither Recent nor WorkSessions should refresh
+      service.notifyChanged([{ kind: "layout", sessionId: "00000000-0000-4000-8000-000000000001" }]);
+      expect(refreshRecentSpy).not.toHaveBeenCalled();
+      expect(refreshSessionSpy).not.toHaveBeenCalled();
+
+      // 2. Artifact change -> Recent refreshes, WorkSessions does NOT
+      service.notifyChanged([{ kind: "artifact", artifactId: "art-1" }]);
+      expect(refreshRecentSpy).toHaveBeenCalledTimes(1);
+      expect(refreshSessionSpy).not.toHaveBeenCalled();
+
+      // 3. Metadata change -> WorkSessions refreshes, Recent does NOT
+      service.notifyChanged([{ kind: "metadata", sessionId: "00000000-0000-4000-8000-000000000001" }]);
+      expect(refreshRecentSpy).toHaveBeenCalledTimes(1);
+      expect(refreshSessionSpy).toHaveBeenCalledTimes(1);
+
+      // 4. Types change -> WorkSessions refreshes
+      service.notifyChanged([{ kind: "types" }]);
+      expect(refreshSessionSpy).toHaveBeenCalledTimes(2);
+
+      // 5. Generic change (empty array) -> both refresh
+      service.notifyChanged([]);
+      expect(refreshRecentSpy).toHaveBeenCalledTimes(2);
+      expect(refreshSessionSpy).toHaveBeenCalledTimes(3);
+
+      recentProvider.dispose();
+      sessionProvider.dispose();
+    });
   });
 });

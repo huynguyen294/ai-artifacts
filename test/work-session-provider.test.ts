@@ -3,6 +3,17 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+const { mockResolveWorkSessionSupport, mockShowInputBox, mockCreateQuickPick } = vi.hoisted(() => ({
+  mockResolveWorkSessionSupport: vi.fn(),
+  mockShowInputBox: vi.fn(),
+  mockCreateQuickPick: vi.fn(),
+}));
+
+vi.mock("../src/extension/work-session-support", () => ({
+  resolveWorkSessionSupport: mockResolveWorkSessionSupport,
+  WORK_SESSION_REQUIRED_MCP_VERSION: 12,
+}));
+
 vi.mock("vscode", () => ({
   Uri: {
     file: (fsPath: string) => ({
@@ -25,6 +36,10 @@ vi.mock("vscode", () => ({
   },
   env: {
     openExternal: vi.fn(async () => true),
+  },
+  window: {
+    showInputBox: mockShowInputBox,
+    createQuickPick: mockCreateQuickPick,
   },
 }));
 
@@ -50,8 +65,21 @@ describe("WorkSessionProvider", () => {
     openCoordinator = {
       open: vi.fn(),
     };
+    mockResolveWorkSessionSupport.mockResolvedValue({
+      supported: true,
+      requiredMcpVersion: 12,
+      installedMcpVersion: 12,
+    });
+    const stateMap = new Map<string, any>();
     mockContext = {
       extensionUri: { fsPath: "/mock/extension" },
+      globalState: {
+        get: (key: string, defaultValue?: any) => (stateMap.has(key) ? stateMap.get(key) : defaultValue),
+        update: (key: string, value: any) => {
+          stateMap.set(key, value);
+          return Promise.resolve();
+        },
+      },
     };
   });
 
@@ -205,6 +233,163 @@ describe("WorkSessionProvider", () => {
       expect.objectContaining({
         type: "error",
         message: expect.stringContaining("not allowed in Work Session"),
+      }),
+    );
+  });
+
+  it("handles manager editing actions: instructions, rename, panel preference, move, reorder, remove", async () => {
+    const session = await createSession({
+      title: "Action Test Session",
+      instructions: "Original instructions",
+      userHome: tempHome,
+    });
+
+    // Create 2 artifacts
+    const art1 = "art-01";
+    const art2 = "art-02";
+    for (const artId of [art1, art2]) {
+      const artDir = path.join(globalArtifactsRoot({ userHome: tempHome }), artId);
+      await mkdir(artDir, { recursive: true });
+      await writeFile(
+        path.join(artDir, "artifact.json"),
+        JSON.stringify({
+          schemaVersion: 6,
+          kind: "implementation-plan",
+          artifactId: artId,
+          title: `Title ${artId}`,
+          createdAt: "2026-04-10T10:00:00.000Z",
+          updatedAt: "2026-04-10T11:00:00.000Z",
+          reviewRound: 1,
+          reviewSessionId: "00000000-0000-4000-8000-000000000001",
+        }),
+      );
+      await writeFile(path.join(artDir, "artifact.md"), "# Content\n");
+      await registerArtifactInSession(session.sessionId, artId, { userHome: tempHome });
+    }
+
+    const provider = new WorkSessionProvider(
+      mockContext,
+      service,
+      openCoordinator,
+      { userHome: tempHome },
+    );
+
+    const doc = new WorkSessionDocument(
+      { fsPath: path.join(conversationDirectory(session.sessionId, { userHome: tempHome }), "conversation.json") } as any,
+      session.sessionId,
+    );
+
+    let messageListener: ((msg: any) => any) | undefined;
+    const postMessage = vi.fn();
+    const panel = {
+      webview: {
+        options: {},
+        html: "",
+        cspSource: "vscode-webview://test",
+        asWebviewUri: (uri: any) => uri.fsPath ?? String(uri),
+        onDidReceiveMessage: (listener: any) => {
+          messageListener = listener;
+          return { dispose: () => {} };
+        },
+        postMessage,
+      },
+      onDidDispose: () => ({ dispose: () => {} }),
+    };
+
+    await provider.resolveCustomEditor(doc, panel as any, {} as any);
+
+    // 1. Panel expanded toggle
+    await messageListener!({ type: "setSessionPanelExpanded", expanded: false });
+    expect(mockContext.globalState.get(`workSessions.panelExpanded.${session.sessionId}`)).toBe(false);
+    expect(postMessage).toHaveBeenCalledWith({ type: "sessionPanelExpanded", expanded: false });
+
+    // 2. Save session instructions
+    await messageListener!({ type: "saveSessionInstructions", instructions: "Updated markdown instructions" });
+    expect(postMessage).toHaveBeenCalledWith({
+      type: "sessionInstructionsSaved",
+      instructions: "Updated markdown instructions",
+    });
+    const updated1 = await service.getWorkSession(session.sessionId);
+    expect(updated1.instructions).toBe("Updated markdown instructions");
+
+    // 3. Rename session
+    mockShowInputBox.mockResolvedValueOnce("New Renamed Title");
+    await messageListener!({ type: "renameSession" });
+    const updated2 = await service.getWorkSession(session.sessionId);
+    expect(updated2.title).toBe("New Renamed Title");
+
+    // 4. Move artifact to references
+    await messageListener!({ type: "moveArtifact", artifactId: art1, zone: "references" });
+    const updated3 = await service.getWorkSession(session.sessionId);
+    expect(updated3.working).toEqual([art2]);
+    expect(updated3.references).toEqual([art1]);
+
+    // 5. Reorder artifact in references (already single item, stays same)
+    await messageListener!({ type: "moveArtifact", artifactId: art2, zone: "references" });
+    const updated4 = await service.getWorkSession(session.sessionId);
+    expect(updated4.references).toEqual([art1, art2]);
+
+    // Reorder art2 up
+    await messageListener!({ type: "reorderArtifact", artifactId: art2, direction: "up" });
+    const updated5 = await service.getWorkSession(session.sessionId);
+    expect(updated5.references).toEqual([art2, art1]);
+
+    // 6. Remove artifact
+    await messageListener!({ type: "removeArtifact", artifactId: art1 });
+    const updated6 = await service.getWorkSession(session.sessionId);
+    expect(updated6.references).toEqual([art2]);
+  });
+
+  it("rejects mutating actions when MCP server version is unsupported", async () => {
+    mockResolveWorkSessionSupport.mockResolvedValueOnce({
+      supported: false,
+      requiredMcpVersion: 12,
+      installedMcpVersion: 11,
+      reason: "MCP server version 12 or higher is required",
+    });
+
+    const session = await createSession({
+      title: "Gate Test Session",
+      userHome: tempHome,
+    });
+
+    const provider = new WorkSessionProvider(
+      mockContext,
+      service,
+      openCoordinator,
+      { userHome: tempHome },
+    );
+
+    const doc = new WorkSessionDocument(
+      { fsPath: path.join(conversationDirectory(session.sessionId, { userHome: tempHome }), "conversation.json") } as any,
+      session.sessionId,
+    );
+
+    let messageListener: ((msg: any) => any) | undefined;
+    const postMessage = vi.fn();
+    const panel = {
+      webview: {
+        options: {},
+        html: "",
+        cspSource: "vscode-webview://test",
+        asWebviewUri: (uri: any) => uri.fsPath ?? String(uri),
+        onDidReceiveMessage: (listener: any) => {
+          messageListener = listener;
+          return { dispose: () => {} };
+        },
+        postMessage,
+      },
+      onDidDispose: () => ({ dispose: () => {} }),
+    };
+
+    await provider.resolveCustomEditor(doc, panel as any, {} as any);
+
+    await messageListener!({ type: "saveSessionInstructions", instructions: "Hacked" });
+    expect(postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "actionError",
+        action: "saveSessionInstructions",
+        message: expect.stringContaining("MCP server version 12 or higher is required"),
       }),
     );
   });
