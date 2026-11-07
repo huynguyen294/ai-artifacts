@@ -1,0 +1,61 @@
+{
+  "schemaVersion": 1,
+  "mcp": {
+    "initializeInstructions": [
+      "Use artifact review tools to review plans and artifacts in VS Code.",
+      "By default, create_artifact routes to the currently focused VS Code window (or the sole live window) without prior resolution.",
+      "When multiple windows exist and none or multiple are focused, create_artifact returns WINDOW_SELECTION_REQUIRED with candidates and single-use selection tokens.",
+      "To query windows or inspect active candidates, call resolve_artifact_window.",
+      "Pass connection: { targetMode: 'explicit-window', selectionToken } when targeting a specific candidate, or connection: { targetMode: 'artifact-window', windowInstanceId } to inspect_artifact_review (intent=reconnect) as an advisory affinity hint.",
+      "Create returns the exact artifactDirectory, reviewRound, and committed connection metadata; retain them and call wait_for_artifact_review. A non-null Work Session context is returned only when a Session is selected or explicitly created.",
+      "Create and inspect without artifactConversationId or conversationName are standalone and return session: null without creating or registering a Work Session. While a chat has an active Session, pass its ID unless the user explicitly requests standalone; a name without an ID explicitly creates a new Session.",
+      "Use the work-session skill to join or refresh an exact Session with join_session and sessionId; supply artifactId only when the request also calls for artifact inspection and registration in that Session.",
+      "A cancelled waiter never ends or deletes the artifact.",
+      "Both wait_for_artifact_review and advance_and_wait_for_artifact return the complete validated comments document for every submitted decision; read feedback from comments.comments. A revise result also returns nextAction.type=process-review-feedback and a one-time roundToken so feedback can be processed without an additional inspection just to fetch comments.",
+      "Treat comments returned by a Review submission and comments read through inspect_artifact_review with the same policy: answer questions visibly in chat before calling advance_and_wait_for_artifact, update Markdown only for requested changes, omit markdown for question-only feedback, and ask for clarification without consuming the token when needed.",
+      "Do not add Review responses to the artifact.",
+      "Pure reconnect uses inspect_artifact_review with intent=reconnect on the exact handle and same round; routing prioritizes sole live window, validated advisory artifact-window affinity, and unique focused window, or explicit candidate via selectionToken.",
+      "For chat escape, inspect the exact handle with takeover=true.",
+      "If inspection has no comments or submission, reattach with wait_for_artifact_review without advancing.",
+      "When updating an artifact directly from chat on an empty round, inspect with takeover=true, expectedReviewRound, and intent=explicit-chat-update, then advance with replacement markdown.",
+      "Follow structured recovery metadata on lifecycle errors, keep the same exact handle, and never replay when commit state is uncertain.",
+      "When Proceed returns approve for kind plan or implementation-plan, obey nextAction and execute the complete approved plan immediately in the same turn; do not stop at acknowledgement or ask for another confirmation.",
+      "When Proceed returns approve for any other kind, acknowledge the approval and conclude the review without automatically implementing code or starting another review round.",
+      "Proceed ends only the review round, not the authorized execution.",
+      "Just save ends the round without execution.",
+      "Reconnect later by explicitly inspecting, advancing without markdown, and waiting again; reconnect must not repeat an already executed action.",
+      "After creation, use only the exact returned artifactDirectory for wait, inspect, advance, and reconnect.",
+      "Never scan global artifact storage or a workspace to discover an artifact, and never infer an artifact handle from cwd."
+    ],
+    "createDescription": "Create a secure schema-v6 Markdown artifact in global AI Artifacts storage, optionally register it in an explicitly selected or newly requested Work Session, atomically commit its schema-v1 window-routing connection (routing to the focused VS Code window by default, or an explicit candidate via selectionToken), and return the exact persistent handle, nullable session context, and connection metadata without waiting.",
+    "inspectDescription": "Read the current manifest, Markdown, comments, optional submission, connection metadata, and validated hashes for an exact artifact. Session registration occurs only when artifactConversationId or conversationName is supplied; omission is standalone. With intent=reconnect, re-evaluate and atomically bind an active VS Code window (sole live window, validated artifact-window affinity, unique focused window, or explicit via connection.selectionToken). Takeover first cancels and drains its current waiter. Returns a one-time round token when saved feedback is present or when intent is explicit-chat-update.",
+    "artifactConversationIdDescription": "Optional exact Work Session UUID. Registers or refreshes the artifact in that Session. Omit this and conversationName for standalone behavior. If both are supplied, this ID takes precedence.",
+    "conversationNameDescription": "Explicit name for a new Work Session when artifactConversationId is omitted. Omit both Session arguments for standalone behavior; omission does not create a Session."
+  },
+  "prompts": {
+    "artifact": [
+      "Inspect this exact AI Artifact:",
+      "artifactDirectory: {{artifactDirectoryJson}}"
+    ],
+    "session": [
+      "Use the work-session skill to join this work session and apply its instructions:",
+      "tool: \"join_session\"",
+      "sessionId: {{sessionIdJson}}",
+      "sessionTitle: {{sessionTitleJson}}",
+      "Pass only sessionId to join_session; sessionTitle is a display hint. After the call succeeds, adopt the returned session.sessionId, instructions, instructionsPath, and catalog as your active session context for future related requests."
+    ]
+  },
+  "ui": {
+    "startLabel": "Start a work session",
+    "startHelper": "For ongoing work, keep related artifacts and shared instructions together across agents and chats.",
+    "nameTitle": "Start a work session",
+    "namePrompt": "Enter a name for the new work session",
+    "namePlaceholder": "Work session name",
+    "createdAndCopied": "Work session created. Connect prompt copied. Paste it into your AI chat to connect.",
+    "createdCopyFailed": "Work session created, but the Connect prompt could not be copied. Open the session and use Connect to try again.",
+    "createdOpenFailed": "Work session created and Connect prompt copied, but the session could not be opened. Paste the prompt into your AI chat to connect.",
+    "createdOpenAndCopyFailed": "Work session created, but it could not be opened and the Connect prompt could not be copied. Open it from Sessions to continue.",
+    "inspectLabel": "Inspect artifact",
+    "inspectCopied": "Inspect prompt copied"
+  }
+}

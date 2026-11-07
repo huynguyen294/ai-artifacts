@@ -4,6 +4,8 @@ Trạng thái: **Đã hoàn thành toàn bộ Phase 4 (Chặng 1, 2, 3 hoàn t�
 
 Nguồn phạm vi: [plan tổng thể](plan.md), [Phase 3](plan-phase-3.md), [note](note.md), [phân tích ban đầu](analyzed.md) và các quyết định tiếp nối của Chú. Các quy tắc Instructions/Join/Kind dưới đây thay thế đề xuất cũ chưa chốt trong tài liệu trước; không coi mô tả code hiện tại là hành vi đích.
 
+> Tiếp nối sau khi hoàn thành: [Phase 4.5](plan-phase-4.5.md) thay auto-create Session khi omit ID và bỏ popup artifact Inspect New/Join, thêm Start và hai skills/version độc lập. Các mô tả bên dưới là output/baseline Phase 4, không áp lại để ghi đè contract 4.5. Giữ progress và bằng chứng Phase 4 như lịch sử; Phase 5 triển khai trên baseline 4.5.
+
 ## 1. Phạm vi và ranh giới
 
 | Component | Kết quả Phase 4 |

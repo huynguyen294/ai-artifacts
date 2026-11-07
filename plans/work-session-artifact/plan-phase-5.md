@@ -2,7 +2,7 @@
 
 Trạng thái: **Chưa triển khai — 8 bước / 3 chặng.** Lập ngày **2026-11-07**, sau khi đối chiếu code hiện tại và các quyết định của Chú. Viết xong hướng dẫn không đồng nghĩa đã hoàn thành tính năng hoặc đã kiểm chứng Extension Host.
 
-Nguồn phạm vi: [plan tổng](plan.md), [Phase 4](plan-phase-4.md), [note](note.md) và các quyết định tiếp nối. **Grid thay masonry** trong phạm vi Phase 5; các đề xuất masonry trước đó không còn là yêu cầu. Không sửa implementation Phase 4 đang dở hoặc tự thay tiến độ của phase đó.
+Nguồn phạm vi: [plan tổng](plan.md), [Phase 4](plan-phase-4.md), [Phase 4.5](plan-phase-4.5.md), [note](note.md) và các quyết định tiếp nối. **Grid thay masonry** trong phạm vi Phase 5; các đề xuất masonry trước đó không còn là yêu cầu. Triển khai sau 4.5, dùng output standalone/Inspect trực tiếp/Start/hai skills của phase đó; không dựng lại popup New/Join hoặc auto-create cũ. Các source snapshot bên dưới được đọc trước 4.5 và phải refresh khi implementation bắt đầu; không đổi tiến độ lịch sử Phase 4.
 
 ## 1. Phạm vi theo component
 

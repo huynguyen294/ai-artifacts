@@ -14,6 +14,15 @@ Minor typos, formatting fixes, or cosmetic wording adjustments that do not chang
 
 Each entry includes the date, category, summary of changes, rationale, and affected components or files.
 
+## 2026-11-07 — Phase 4.5 implementation guide and frozen skill wording
+
+- Added `plans/work-session-artifact/plan-phase-4.5.md`: six steps in three stages for standalone artifacts, explicit Session creation/reuse, direct artifact Inspect, Start Session with open/copy, separate skills, independent version receipts, and validation. Phase 5 remains separate and follows the 4.5 baseline.
+- Added six complete proposed skill assets under `phase-4.5-wording/`, an exact embedded-agent/UI text payload, and a normalized SHA-256 manifest. Future implementation must copy this wording rather than paraphrase it; supported installed artifact customization remains the sole exception.
+- Scoped artifact editorial changes to the previously reviewed deduplication/reorganization. Session extraction and standalone semantics are listed separately from behavior-preserving editorial work. Review/feedback/token/Proceed/reconnect rules remain protected.
+- Planned artifact skill version 7 and Work Session skill version 1, with independent per-target receipts. Existing artifact customization is retained; Session skill uses official assets without customization or a generalized customization framework. MCP stays at the reserved unreleased version 12.
+- Updated the main roadmap, notes, the Phase 4 successor notice, and Phase 5 dependency. Documentation/wording proposals only; no application source, live integrations, runtime or global data was changed, and no implementation feature tests are claimed by this entry.
+- Planning validation: both skill audits passed with zero warnings; seven frozen-content hashes, three unchanged live skill baselines, sixty relative links and twenty-three verbatim protected artifact clauses passed local checks. The Python skill validator could not run because PyYAML is absent; equivalent structural checks passed, without claiming that validator passed. Diff/whitespace checks passed; runtime/AI client behavior remains unverified.
+
 ## 2026-11-07 — Phase 4 Stage 3 implementation & review hardening: Instructions UI, Connect manager, native kind filters, Skill v6 bump and docs
 
 - Implemented Instructions UI integration in Session Manager (`src/webview/SessionApp.tsx`): added "Open Markdown File" button to open `instructions.md` in external editor, scoped event synchronizer to handle instructions updates, and error banner dismiss.
