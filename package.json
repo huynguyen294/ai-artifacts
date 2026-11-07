@@ -173,14 +173,14 @@
     "viewsContainers": {
       "activitybar": [
         {
-          "id": "agentPlus.artifacts",
+          "id": "agentPlus-artifacts",
           "title": "AI Artifacts",
-          "icon": "media/layers.svg"
+          "icon": "$(library)"
         }
       ]
     },
     "views": {
-      "agentPlus.artifacts": [
+      "agentPlus-artifacts": [
         {
           "id": "agentPlus.recentArtifacts",
           "name": "Recent Artifacts",

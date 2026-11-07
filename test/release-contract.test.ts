@@ -32,6 +32,21 @@ describe("v1.1.4 release contract", () => {
     ]);
   });
 
+  it("registers both sidebar views in a valid Activity Bar container", async () => {
+    const packageJson = JSON.parse(await read("package.json"));
+    const containers = packageJson.contributes.viewsContainers.activitybar;
+    const container = containers.find((item: any) => item.title === "AI Artifacts");
+
+    expect(container).toBeDefined();
+    // VS Code rejects invalid container IDs and moves their views into Explorer.
+    expect(container.id).toMatch(/^[a-zA-Z0-9_-]+$/);
+    expect(packageJson.contributes.views[container.id].map((view: any) => view.id)).toEqual([
+      "agentPlus.recentArtifacts",
+      "agentPlus.sessions",
+    ]);
+    expect(container.icon).toBe("$(library)");
+  });
+
   it("contributes the safe-open command for artifact.md Explorer, editor, and editor-tab context menus", async () => {
     const packageJson = JSON.parse(await read("package.json"));
     const openCommand = packageJson.contributes.commands.find(

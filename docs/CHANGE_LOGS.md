@@ -14,6 +14,12 @@ Minor typos, formatting fixes, or cosmetic wording adjustments that do not chang
 
 Each entry includes the date, category, summary of changes, rationale, and affected components or files.
 
+## 2026-11-07 — Fix AI Artifacts Activity Bar registration
+
+- Changed the container ID and its `contributes.views` key to `agentPlus-artifacts`; VS Code rejects dots in container IDs and otherwise falls back to placing the views in Explorer.
+- Preserved the `AI Artifacts` title and the two existing Tree View IDs. Switched the Activity Bar icon from `layers` to the built-in `library` Codicon at the owner's request. Added a release-contract regression check for the container ID, view bindings, and icon selection.
+- Synchronized the container ID in component documentation and the Phase 1+2 plan.
+
 ## 2026-11-07 — Work Session Phase 1+2 Implementation (Model v2, Sidebar Navigation, Connect Dialog & Migration)
 
 ### Changes
@@ -30,7 +36,7 @@ Each entry includes the date, category, summary of changes, rationale, and affec
   - Implemented fail-closed preflight for both `create_artifact` and `inspect_artifact_review`: calls specifying a legacy v1 conversation ID immediately throw `ConversationMigrationRequiredError` with code `CONVERSATION_MIGRATION_REQUIRED` before mutating state or granting tokens.
   - Updated `create-review-artifact` skill to guide the AI to either advise the user to migrate the conversation or create a new Work Session.
 - **Activity Bar "AI Artifacts" Sidebar**:
-  - Contributed `agentPlus.artifacts` container to the Activity Bar with Codicons `layers` SVG icon (24×24, transparent background).
+  - Contributed `agentPlus-artifacts` container to the Activity Bar with Codicons `layers` SVG icon (24×24, transparent background).
   - Provided two tree views defaulting to visible (`visibility: "visible"`):
     - `RecentArtifactsTreeDataProvider`: sorts artifacts by `updatedAt` desc, capped at 20 items, with a "View all..." item delegating to artifact search.
     - `WorkSessionsTreeDataProvider`: gated on installed MCP version >= 12, lists all v2 sessions with type badges, item count, and dynamic recency. Displays a migration banner item when legacy v1 conversations exist.

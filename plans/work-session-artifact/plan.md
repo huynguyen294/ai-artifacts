@@ -42,7 +42,7 @@ Nguồn yêu cầu: [analyzed.md](analyzed.md) và các quyết định tiếp n
 - Skill hướng dẫn đúng hai lựa chọn: mở một artifact đã thuộc conversation cũ để migration rồi retry cùng ID, hoặc user chọn tạo/mở Session mới thì retry không truyền ID và giữ ID mới cho chat. Không tự đổi nhóm, nhập membership cũ, clone artifact hoặc xoá conversation cũ. Hướng dẫn lỗi tối thiểu này đã được triển khai trong Chặng 1 cùng với việc nâng `SKILL_VERSION` từ **3 → 4**.
 - Popup inspect: conversation v1 thì Join disabled, chỉ cho inspect New Session; Session v2 có thể Join. New không truyền ID cũ và yêu cầu skill bỏ active ID cho request, Join chỉ định đúng ID v2. Có nhiều membership thì chỉ disable các đích v1. Extension copy prompt cho AI, không tự gọi MCP/mutate; chi tiết và nhánh MCP cũ ở mục 12 plan chung. Nhãn nút điều hướng đã chốt là **Sessions**.
 - **Đã chốt:** MCP cũ giữ Connect như hiện tại, click copy prompt exact artifact handle trực tiếp; không mở popup New/Join hoặc yêu cầu tạo Session v2. Chỉ MCP mới đủ mốc Session mới dùng popup/luồng New/Join. Recent Artifacts dùng 20 mục + Xem tất cả; quản lý types dùng Quick Pick native.
-- **Đã chốt cho Chặng 3:** Activity Bar dùng icon `layers` từ Codicons, đóng gói dạng SVG một màu 24×24 trong `media/`; label/tiêu đề container là **AI Artifacts**, không thêm Manager/Management. Giữ hai section **Recent Artifacts** và **Sessions**.
+- **Lựa chọn icon mới nhất:** Activity Bar dùng Codicon `library` có sẵn qua `icon: "$(library)"`, thay lựa chọn `layers` trước đó; label/tiêu đề container là **AI Artifacts**, không thêm Manager/Management. Giữ hai section **Recent Artifacts** và **Sessions**.
 - Chưa thêm dependency UI/style trong giai đoạn lập plan.
 
 ## 7 bước nhỏ trong đợt Phase 1+2 (Tổ chức theo 3 Chặng)

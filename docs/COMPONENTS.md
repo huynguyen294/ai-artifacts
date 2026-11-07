@@ -254,7 +254,7 @@ The protocol is the communication medium between the independently running MCP p
 - Activate the extension.
 - Construct the review provider, session provider, work session sidebar providers, and workspace-registry publisher.
 - Register the `agentPlus.artifactReview` custom editor and `agentPlus.workSession` custom readonly editor.
-- Register the Activity Bar container `agentPlus.artifacts` (Codicons `layers` icon) with `agentPlus.recentArtifacts` and `agentPlus.sessions` TreeDataProviders.
+- Register the Activity Bar container `agentPlus-artifacts` (built-in Codicon `library`) with `agentPlus.recentArtifacts` and `agentPlus.sessions` TreeDataProviders.
 - Ensure and validate the global collection root before registering direct-child `artifact-connection.json` create/change events.
 - Revalidate the connection path, manifest binding, and linked-path safety on each bounded read attempt; ignore events whose target instance ID does not match the current window.
 - Automatically open the corresponding `artifact.md` when configured and targeted, even if that window is unfocused. Disabling auto-open does not undo the MCP connection commit.
