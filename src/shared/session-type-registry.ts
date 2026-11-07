@@ -15,10 +15,7 @@ import {
   sessionTypesFilePath,
   type GlobalArtifactsRootOptions,
 } from "./artifact-files";
-import {
-  enforceOwnerOnlyFile,
-  ensureManagedDirectory,
-} from "./artifact-validation";
+import { enforceOwnerOnlyFile, ensureManagedDirectory } from "./artifact-validation";
 import {
   countSessionsByType as countSessionsFromRegistry,
   reassignSessionType as reassignSessionsFromRegistry,
@@ -40,9 +37,7 @@ export const DEFAULT_SESSION_TYPES: readonly SessionType[] = [
 ] as const;
 
 function errorCode(error: unknown): string | undefined {
-  return error instanceof Error && "code" in error && typeof error.code === "string"
-    ? error.code
-    : undefined;
+  return error instanceof Error && "code" in error && typeof error.code === "string" ? error.code : undefined;
 }
 
 function isWindowsReplaceBlock(error: unknown): boolean {
@@ -50,10 +45,7 @@ function isWindowsReplaceBlock(error: unknown): boolean {
   return code === "EPERM" || code === "EBUSY" || code === "EACCES";
 }
 
-async function writeAtomicTypesDocument(
-  filePath: string,
-  doc: SessionTypesDocument,
-): Promise<void> {
+async function writeAtomicTypesDocument(filePath: string, doc: SessionTypesDocument): Promise<void> {
   const parentDir = path.dirname(filePath);
   await ensureManagedDirectory(parentDir);
 
@@ -93,6 +85,32 @@ async function writeAtomicTypesDocument(
   }
 }
 
+export type ListSessionTypesOptions = GlobalArtifactsRootOptions & {
+  seedIfMissing?: boolean;
+};
+
+/**
+ * Reads session-types.json without creating the file if it is missing.
+ * Returns null when the file does not exist.
+ */
+export async function readSessionTypesDocument(
+  options: GlobalArtifactsRootOptions = {},
+): Promise<SessionTypesDocument | null> {
+  const filePath = sessionTypesFilePath(options);
+  try {
+    const rawText = await fs.readFile(filePath, "utf8");
+    const rawJson = JSON.parse(rawText);
+    return sessionTypesDocumentSchema.parse(rawJson);
+  } catch (error) {
+    if (errorCode(error) === "ENOENT") {
+      return null;
+    }
+    throw new SessionTypeError(
+      `Failed to read session-types.json: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+}
+
 /**
  * Initializes session-types.json with default types if the file does not already exist.
  */
@@ -120,11 +138,16 @@ export async function ensureSessionTypesDocument(
 }
 
 /**
- * Lists all registered session types.
+ * Lists all registered session types. When seedIfMissing is false,
+ * returns in-memory DEFAULT_SESSION_TYPES if the file does not exist on disk.
  */
 export async function listSessionTypes(
-  options: GlobalArtifactsRootOptions = {},
+  options: ListSessionTypesOptions = {},
 ): Promise<SessionType[]> {
+  if (options.seedIfMissing === false) {
+    const doc = await readSessionTypesDocument(options);
+    return doc ? doc.types : [...DEFAULT_SESSION_TYPES];
+  }
   const doc = await ensureSessionTypesDocument(options);
   return doc.types;
 }
@@ -132,10 +155,7 @@ export async function listSessionTypes(
 /**
  * Validates whether a given typeId exists in the registered types.
  */
-export async function isValidSessionTypeId(
-  typeId: string,
-  options: GlobalArtifactsRootOptions = {},
-): Promise<boolean> {
+export async function isValidSessionTypeId(typeId: string, options: GlobalArtifactsRootOptions = {}): Promise<boolean> {
   const types = await listSessionTypes(options);
   return types.some((t) => t.id === typeId);
 }
@@ -201,9 +221,7 @@ export async function renameSessionType(
   }
 
   const normalizedLabel = label.toLowerCase();
-  const duplicate = doc.types.some(
-    (t, idx) => idx !== targetIndex && t.label.trim().toLowerCase() === normalizedLabel,
-  );
+  const duplicate = doc.types.some((t, idx) => idx !== targetIndex && t.label.trim().toLowerCase() === normalizedLabel);
   if (duplicate) {
     throw new SessionTypeError(`Session type with label "${label}" already exists.`);
   }
@@ -232,20 +250,13 @@ export async function renameSessionType(
  */
 export type SessionTypeReassigner = {
   countSessionsByType: (typeId: string, options?: GlobalArtifactsRootOptions) => Promise<number>;
-  reassignSessionType: (
-    oldTypeId: string,
-    newTypeId: string,
-    options?: GlobalArtifactsRootOptions,
-  ) => Promise<number>;
+  reassignSessionType: (oldTypeId: string, newTypeId: string, options?: GlobalArtifactsRootOptions) => Promise<number>;
 };
 
 /**
  * Counts how many sessions are currently using the specified session type.
  */
-export async function countSessionsByType(
-  typeId: string,
-  options: GlobalArtifactsRootOptions = {},
-): Promise<number> {
+export async function countSessionsByType(typeId: string, options: GlobalArtifactsRootOptions = {}): Promise<number> {
   return countSessionsFromRegistry(typeId, options);
 }
 
@@ -271,17 +282,9 @@ export async function deleteSessionType(
 
   let affectedSessionsCount = 0;
   if (reassigner) {
-    affectedSessionsCount = await reassigner.reassignSessionType(
-      id,
-      DEFAULT_SESSION_TYPE_ID,
-      options,
-    );
+    affectedSessionsCount = await reassigner.reassignSessionType(id, DEFAULT_SESSION_TYPE_ID, options);
   } else {
-    affectedSessionsCount = await reassignSessionsFromRegistry(
-      id,
-      DEFAULT_SESSION_TYPE_ID,
-      options,
-    );
+    affectedSessionsCount = await reassignSessionsFromRegistry(id, DEFAULT_SESSION_TYPE_ID, options);
   }
 
   const newTypes = doc.types.filter((t) => t.id !== id);

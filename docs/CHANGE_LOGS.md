@@ -14,6 +14,34 @@ Minor typos, formatting fixes, or cosmetic wording adjustments that do not chang
 
 Each entry includes the date, category, summary of changes, rationale, and affected components or files.
 
+## 2026-11-07 — Phase 4 Stage 2 implementation: join_session, inspect core, session context & proceed directives
+
+- Implemented MCP tool 6 `join_session` (`src/integration/artifact-review-mcp-v4.ts`): supports join-only (returning `{ session: SessionContext }` read-only without touching waiters or seeding `session-types.json`) and join+artifact (returning `{ session, inspection }` in a single tool call sharing `executeInspectCore`).
+- Extracted shared `executeInspectCore`: unified entry orchestration for `inspect_artifact_review` and `join_session`, including exact artifact handles, preflights, window routing, and selective takeover.
+- Wrapped `readArtifactConnection` and session context resolution in the session/membership rollback boundary before connection commit, ensuring atomic cleanup on failure.
+- Deferred in-memory token grants (`grantInspectedRound`) to after successful session commit, context resolution, and connection read, preventing token leaks on mid-flight failures.
+- Enforced strict `join_session` input parsing: `takeover` must be a boolean; rejected `connection` when `intent !== "reconnect"` with `INVALID_ARTIFACT_INPUT`.
+- Standardized review proceed directives: `isPlanProceedKind` emits `{ type: "execute-approved-plan", instruction: "Execute the approved plan immediately in this same turn..." }` for `plan` and `implementation-plan`; emits `{ type: "approved", instruction: "The user has approved this artifact. Acknowledge the approval and conclude the review. Do not automatically implement code or start another review round." }` for all non-plan kinds (`idea`, `checklist`, `spec`, `workaround`, etc.).
+- Kept numeric `MCP_VERSION = 12` and deferred client driver/installer updates to Stage 3.
+- Added comprehensive regression tests in `test/mcp-join-session.test.ts` (14/14 tests passed) and `test/session-type-registry.test.ts` (7/7 tests passed).
+- Validation: full test suite passed (44 files, 626 passed, 3 skipped), `npm run check` clean, and all build bundles cleanly generated.
+
+## 2026-11-07 — Detailed Phase 5 guide and confirmed UI/cleanup decisions
+
+- Added `plans/work-session-artifact/plan-phase-5.md`: eight implementation steps in three reviewable stages covering separate UI state, shared deletion primitives, sidebar menus/search, Archived/Restore headers, archived Session cleanup, grid/cards/filter/helper text, human-readable ZIP export, and validation.
+- Replaced the masonry proposal with ordered row-flow grid: Working uses 3/2/1 columns with the panel closed and 2/1/1 with it open; References/Archived remain two columns. Recorded modest equal side-panel padding and reuse of existing array-based menu ordering.
+- Confirmed Archived editors hide other header actions and show a primary Restore button; Module is added only to the fresh types seed, without backfilling existing files or changing Conversation as the default assignment.
+- Verified retention already calls `cleanupStaleConversations` to prune stale memberships/layout while preserving empty v2 Sessions. Planned reuse of that scanner and extraction of single-target deletion, keeping expiry selection in retention and reference cleanup best-effort.
+- Synchronized the main roadmap, notes and the Phase 4 out-of-scope reference. Documentation only: no implementation, installed runtime, global data or Phase 4 progress was changed. No automated feature tests or Extension Host validation were run for this planning update.
+
+## 2026-11-07 — Refined Phase 4 Stage 2–3 guide after source review
+
+- Reviewed current MCP entry/commit/recovery paths, shared context/type lookup, provider events, existing prompt/skill assumptions and recent manager UI edits without changing application code.
+- Added review checkpoints within the existing seven steps: mechanical inspect extraction before Join, frozen flat/nested response shapes, context resolution inside existing rollback boundaries before connection commits, entry-aware recovery and read-only context type lookup. These are pending implementation guidance, not claims that Join now exists.
+- Detailed mixed Instructions event handling, typed host actions, prompt routing, manual Session/artifact Add flows, kind filter propagation from View all to Search, and skill normalization/fresh-decision handling while preserving user-owned chip/layout changes.
+- Kept MCP 12, Stage 1 progress and all Phase 5 work separate. No ownership/transaction framework, locks, conflict handling or new migration was added to scope.
+- Baseline verification: 8 existing test suites passed (145 tests passed, 1 skipped); no new runtime, Extension Host or AI client validation. Updated only `plans/work-session-artifact/plan-phase-4.md`, `plan.md`, `note.md`, and this documentation log; the user's separate Stage 1 review remains unchanged.
+
 ## 2026-11-07 — Phase 4 Stage 1 correction: MCP 12 and readable legacy Session metadata
 
 - Restored numeric MCP_VERSION and the installed Work Session gate from the internal development bump 13 to the reserved, unreleased feature version 12. Provider/sidebar messages, assertions and gate fixtures now use 12, with 11 as the unsupported version. Skill remains 5; its planned update is separate.

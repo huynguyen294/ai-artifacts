@@ -40,7 +40,7 @@ export async function resolveWorkSessionContext(
 ): Promise<SessionContext> {
   const validatedSessionId = artifactConversationIdSchema.parse(sessionId);
   const session = await readSession(validatedSessionId, options);
-  const types = await listSessionTypes(options);
+  const types = await listSessionTypes({ ...options, seedIfMissing: false });
   const matchedType = types.find((t) => t.id === session.typeId);
   const typeLabel =
     matchedType?.label ?? (session.typeId === DEFAULT_SESSION_TYPE_ID ? "Conversation" : session.typeId);
@@ -123,4 +123,3 @@ export async function resolveWorkSessionContext(
 
   return sessionContextSchema.parse(context);
 }
-

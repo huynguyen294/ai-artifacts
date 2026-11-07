@@ -20,6 +20,10 @@ Nguồn yêu cầu: [analyzed.md](analyzed.md) và các quyết định tiếp n
 
 Validation đính chính Chặng 1: check/build pass, toàn bộ **43 test files / 611 tests pass, 3 skipped** (2026-11-07). Chưa kiểm chứng lại sidebar với dữ liệu global trong Extension Host; checkpoint này không đánh dấu hoàn thành Chặng 2–3.
 
+Hướng dẫn phần còn lại đã được rà lại với code hiện tại: [mục 3.7](plan-phase-4.md#37-shape-entry-result-và-ranh-giới-commit-của-chặng-2) chốt response/commit, Bước 3 có checkpoints tách core → context/recovery → Join, Bước 5 có checkpoints events/actions → prompt/UI → Add, Bước 6 nối filter hai đầu, Bước 7 chốt skill/asset contract. Giữ chip type/layout UI Chú đang chỉnh, MCP 12 và phạm vi Phase 5. Baseline review riêng: 8 suites / 145 tests pass, 1 skipped; không phải bằng chứng đã triển khai Chặng 2–3.
+
+**[Hướng dẫn Phase 5](plan-phase-5.md) gồm 8 bước / 3 chặng, chưa triển khai:** nền UI state/deletion và Module seed-only → sidebar menus/Search/Restore/cleanup → grid/card/filter/helper text/Export ZIP và nghiệm thu. Các quyết định mới thay masonry bằng grid, header Archived chỉ Restore primary và dùng lại retention/prune cho Delete được chốt tại hướng dẫn này; không thay tiến độ Phase 4 đang triển khai.
+
 ## Các phase
 
 | Phase | Kết quả | Trạng thái |
@@ -27,8 +31,8 @@ Validation đính chính Chặng 1: check/build pass, toàn bộ **43 test files
 | [1. Session model](plan-phase-1-2.md) | Metadata Session v2 (`title`, `instructions`, `typeId`, `createdAt`), giữ `registered-artifacts/` làm nguồn membership, tách `layout.json` ba mảng, tính `updatedAt` từ `createdAt`/`registeredAt`; auto-create/reuse; migration theo yêu cầu; registry session types và API quản lý | ✅ **Đã hoàn thành trong Chặng 1** |
 | [2. Sidebar và điều hướng](plan-phase-1-2.md#phase-2--sidebar-quản-lý-session-types-và-điều-hướng) | Recent Artifacts/Sessions v2; gate theo MCP đã cài; phát hiện và popup bulk migration; ⚙ quản lý types; tab session chỉ đọc; Sessions/migration đơn lẻ thay drawer cũ | ✅ **Đã hoàn thành trong Chặng 2 & Chặng 3** |
 | [3. Session Manager cơ bản](plan-phase-3.md) | Manager editing, scoped refresh, menu move/reorder/remove, panel preference, filter/search và English Quick Input; bổ sung contract một active Session cho mỗi chat AI | ✅ **Đã hoàn thành toàn bộ (Bước 1–7)** |
-| [4. Agent và catalog](plan-phase-4.md) | Add Session rỗng / Add Artifact qua Quick Pick ở Bước 5; Shared Session context/catalog; `join_session` có optional artifact ID dùng chung inspect; Instructions Markdown + Open Markdown File; fixed/open kinds, Proceed theo kind; Connect manager/Review App; rà soát toàn App UI/Tree Views sang tiếng Anh và sửa nghĩa New/Join; Recent kind filter; skill và MCP contract đồng bộ | Đang triển khai — Đã hoàn thành Chặng 1 (Bước 1–2) |
-| 5. Tổ chức trực quan và quản lý danh sách | Card masonry, metadata/description và filter/search artifact; helper text UI; menu chuột phải Recent Artifacts/Sessions; manager More → Export ZIP/Archive/Delete; Pin/Archive/Delete với file trạng thái UI riêng; cleanup Session sau 30 ngày Archive. Sắp xếp/chuyển vùng tiếp tục dùng menu hiện có, ghi `layout.json` độc lập membership của MCP | Chưa triển khai |
+| [4. Agent và catalog](plan-phase-4.md) | Add Session rỗng / Add Artifact qua Quick Pick ở Bước 5; Shared Session context/catalog; `join_session` có optional artifact ID dùng chung inspect; Instructions Markdown + Open Markdown File; fixed/open kinds, Proceed theo kind; Connect manager/Review App; rà soát toàn App UI/Tree Views sang tiếng Anh và sửa nghĩa New/Join; Recent kind filter; skill và MCP contract đồng bộ | Đang triển khai — Đã hoàn thành Chặng 1 (Bước 1–2) & Chặng 2 (Bước 3–4) |
+| [5. Tổ chức trực quan và quản lý danh sách](plan-phase-5.md) | Card grid theo thứ tự array, description và filter/search artifact; helper text/padding side panel; menu chuột phải/tooltip; manager More → Export ZIP/Archive/Delete, header Archived chỉ Restore; Pin/Archive với UI state riêng; Delete dùng lại retention/prune, cleanup Session sau 30 ngày Archive; seed type Module khi chưa có file types. Sắp xếp/chuyển vùng dùng menu hiện có, ghi `layout.json` độc lập membership MCP | Chưa triển khai — Đã có hướng dẫn 8 bước / 3 chặng |
 
 ## Ranh giới chung
 
@@ -145,7 +149,15 @@ Plan Phase 2 đã chốt Recent Artifacts 20 mục + Xem tất cả, Sessions hi
 
 ## Phase 5 — Menu chuột phải, Pin và Archive
 
-Đây là phạm vi đã chốt cho Phase 5, chưa triển khai; thực hiện cùng đợt UI helper text và tổ chức trực quan. Không bổ sung vào required scope của Phase 4.
+Đây là phạm vi đã chốt cho Phase 5, chưa triển khai; hướng dẫn theo component, file cần sửa, checkpoints và validation tại [plan-phase-5.md](plan-phase-5.md). Không bổ sung vào required scope của Phase 4.
+
+### Grid, card và helper text trong manager
+
+- **Grid thay masonry:** render trái sang phải rồi xuống hàng theo array của từng zone; Move Up/Down đổi index array và giao diện tự áp lại. Không drag/drop, column layout/dense packing hoặc lưu vị trí card riêng.
+- Breakpoint tính theo content container **toàn manager**: Small dưới 800px, Medium 800–1099px, Large từ 1100px là ngưỡng triển khai ban đầu. Panel đóng: Large 3 / Medium 2 / Small 1 cột Working. Panel mở: Large 2 / Medium 1 / Small 1; không trừ thêm cột sau khi đo container Working.
+- References và Archived luôn hai cột trong side panel rộng khoảng 360px; Small xếp panel dưới Working để tránh tràn. Padding các block Type/Instructions/References/Archived giảm nhẹ, bằng nhau từ 14px 16px xuống 12px 14px; giữ chip Type/header alignment/textarea đã chấp nhận.
+- Card có title/kind label/description ngắn từ Markdown bằng helper Phase 4; search theo title và filter kind thực có trong Session (gồm kind mở) chỉ tạo visible arrays. Không ghi array đã lọc vào layout hoặc làm đổi recency; menu reorder dùng thứ tự gốc.
+- Helper text cố định cho Working/References/Archived/Instructions, không thêm zone description vào metadata. Giữ câu Instructions: “Rules, workflows, and other guidance for AI in this session.”
 
 ### Trạng thái UI tách khỏi metadata của MCP
 
@@ -188,15 +200,16 @@ Header Session Manager bổ sung nút **More (⋯)** trong Phase 5, menu gồm *
 
 - Search Artifacts và Search Sessions bao gồm cả mục đang hoạt động và mục Archived còn tồn tại, tiếp tục tìm theo title và độc lập với filter sidebar. Kết quả Archived có nhãn **Archived** ở description.
 - Chọn kết quả chỉ mở đúng artifact hoặc Session, không tự Restore, không thay `archivedAt` hoặc trạng thái Pin và không gia hạn cleanup/retention. Mục đã xoá/cleanup không còn trong kết quả.
-- **Review App** hiển thị nhãn **Archived** và nút **Restore** khi artifact có trạng thái Archive toàn cục. Không suy ra trạng thái này từ vùng `archived` trong layout của Session.
-- **Session Manager** hiển thị nhãn **Archived** và nút **Restore** khi chính Session đang Archive. Mục chưa Archive không hiện nút Restore.
+- **Review App** hiển thị nhãn **Archived** khi artifact có trạng thái Archive toàn cục; giữ tên nhưng ẩn các action buttons bình thường trên header, chỉ hiện nút **Restore** màu primary. Không suy ra trạng thái này từ vùng `archived` trong layout của Session.
+- **Session Manager** áp dụng cùng header Restore-only khi chính Session đang Archive; ẩn Rename/Connect/More/panel toggle trên header. Mục chưa Archive không hiện Restore. Không suy ra chính sách read-only toàn bộ nội dung hoặc thay review lifecycle từ quyết định header này.
 - Nhấn Restore xoá `archivedAt` trong file trạng thái UI tương ứng, giữ nguyên `pinned`, và cập nhật sidebar để mục xuất hiện lại nếu phù hợp filter hiện tại. Restore Session đồng thời loại bỏ điều kiện cleanup theo mốc Archive 30 ngày; artifact vẫn theo retention hiện có.
 - Search chỉ tìm/mở; không thêm nút Restore trong Quick Pick hoặc menu chuột phải của danh sách mặc định. Không cần một trang quản lý Archived riêng cho luồng này.
 
 ### Delete và cleanup
 
 - Delete Session xoá thư mục Session, bao gồm metadata, instructions, layout, membership và file trạng thái UI; không xoá artifact hoặc Session khác.
-- Delete artifact xoá artifact toàn cục và dọn membership/layout tham chiếu ở các Session. Đây là thao tác khác với Remove artifact khỏi một Session; xác nhận Delete phải nêu rõ phạm vi ảnh hưởng.
+- Delete artifact xoá artifact toàn cục và dọn membership/layout tham chiếu ở các Session. Tách phần xác thực/staging/xoá một target từ retention để dùng chung, rồi gọi `cleanupStaleConversations` đã có để prune membership và ba mảng layout; không gọi nguyên sweep theo tuổi hoặc viết lại scanner. Cleanup tham chiếu vẫn best-effort, giữ Session v2 rỗng và báo đúng nếu artifact đã xoá nhưng dọn tham chiếu chưa hoàn tất. Đây là thao tác khác với Remove khỏi một Session; xác nhận Delete phải nêu rõ phạm vi ảnh hưởng.
+- Mở Session hiện không tự prune artifact đã mất: reconciliation chỉ đối chiếu layout với membership, manager hiện `unavailable` nếu nguồn artifact lỗi/mất. Không thêm watcher tự dọn mọi thao tác xoá ngoài extension; các mục này có thể được dọn ở lượt cleanup tiếp theo.
 - Session đã Archive đủ 30 ngày tính từ `archivedAt` được xoá trong lần activation cleanup tiếp theo, cùng phạm vi xoá như Delete Session. Không dùng `Session.updatedAt` làm mốc này; Pin không miễn cleanup và hoạt động MCP không tự reset `archivedAt`.
 - Giữ nguyên retention artifact hiện tại theo `artifact.json.updatedAt` và setting `agentPlus.artifactRetentionDays`. Artifact không cần Archive mới đủ điều kiện retention; Pin/Archive không gia hạn hoặc miễn retention.
 - Chưa bổ sung quy tắc cleanup Session khác, không tự xoá Session chưa Archive chỉ vì rỗng hoặc lâu không dùng.
@@ -225,7 +238,7 @@ Tên Session/
 ## Session types — phạm vi đã bổ sung
 
 - Mỗi session lưu một `typeId`, mặc định `conversation`; không phải mảng tags và không phải artifact kind/type.
-- Danh sách global `~/.ai-artifacts/session-types.json` gồm schemaVersion và các `{ id, label }`; seed Conversation, Project, Feature, Fix khi chưa có file. Type tự tạo dùng chung giữa workspace/session và tồn tại dù chưa sử dụng.
+- Danh sách global `~/.ai-artifacts/session-types.json` gồm schemaVersion và các `{ id, label }`; Phase 5 thêm **Module** (`module`) vào seed theo thứ tự Conversation, Project, Module, Feature, Fix khi chưa có file. Không backfill/merge/migrate file types đã tồn tại vì feature chưa release; không tự xoá file global để test. Conversation vẫn là type được gán mặc định khi tạo Session. Type tự tạo dùng chung giữa workspace/session và tồn tại dù chưa sử dụng.
 - ID ổn định, label sửa được. Trim/so tên không phân biệt hoa thường để tránh trùng. `conversation` đổi label được nhưng không xoá; xoá type khác đang dùng cần xác nhận chuyển các session về mặc định.
 - **Phase 1:** schema/persistence và API types + assignment. **Phase 2:** popup thêm/sửa/xoá từ ⚙ trên Sessions. **Phase 3:** Type ✎ ở trên Hướng dẫn để chọn/tìm/tạo nhanh rồi gán cho Session; filter sidebar theo `typeId`; wording Session Quick Input tiếng Anh.
 - Popup quản lý ghi rõ áp dụng cho tất cả phiên. Không có ⚙ quản lý types tại manager, Recent Artifacts hoặc header chung sidebar.

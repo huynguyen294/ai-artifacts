@@ -547,7 +547,14 @@ describe("Workspace Integration Asset Verifiers", () => {
     expect(initialized.instructions).toContain("resolve_artifact_window");
     client.notify("notifications/initialized");
     const catalog = await client.request("tools/list");
-    expect(catalog.tools.map((tool: any) => tool.name)).toEqual(expectedTools);
+    expect(catalog.tools.map((tool: any) => tool.name)).toEqual([
+      "resolve_artifact_window",
+      "create_artifact",
+      "wait_for_artifact_review",
+      "inspect_artifact_review",
+      "join_session",
+      "advance_and_wait_for_artifact",
+    ]);
 
     const installedSkill = await fs.readFile(path.join(installedPaths.targetSkill, "SKILL.md"), "utf8");
     const installedContract = await fs.readFile(

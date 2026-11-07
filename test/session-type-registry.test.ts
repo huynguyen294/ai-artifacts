@@ -13,6 +13,7 @@ import {
   renameSessionType,
 } from "../src/shared/session-type-registry";
 import { createSession } from "../src/shared/conversation-artifact-registry";
+import { sessionTypesFilePath } from "../src/shared/artifact-files";
 
 const temporaryDirectories: string[] = [];
 let userHome: string;
@@ -113,6 +114,15 @@ describe("session-type-registry", () => {
 
     const convCount = await countSessionsByType("conversation", { userHome });
     expect(convCount).toBe(1);
+  });
+
+  it("throws SessionTypeError when session-types.json contains invalid JSON, even with seedIfMissing: false", async () => {
+    const filePath = sessionTypesFilePath({ userHome });
+    await fs.mkdir(path.dirname(filePath), { recursive: true });
+    await fs.writeFile(filePath, "{ invalid json", "utf8");
+
+    await expect(listSessionTypes({ userHome, seedIfMissing: false })).rejects.toThrow(SessionTypeError);
+    await expect(listSessionTypes({ userHome, seedIfMissing: true })).rejects.toThrow(SessionTypeError);
   });
 });
 

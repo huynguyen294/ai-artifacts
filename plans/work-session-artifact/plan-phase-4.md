@@ -1,6 +1,6 @@
 # Phase 4 — Agent, catalog và Instructions Markdown: hướng dẫn triển khai
 
-Trạng thái: **Đang triển khai — Chặng 1 (Bước 1–2) đã hoàn thành theo checkpoint; Chặng 2–3 còn lại.** Giữ 7 bước trong 3 chặng; Add Session/Add Artifact bổ sung tại Bước 5/Chặng 3, không mở lại Chặng 1. Hiện trạng baseline khi lập plan được đối chiếu ngày **2026-11-07**; số tests/build ghi trong các plan trước là bằng chứng của các đợt đó, không phải kết quả kiểm chứng phần còn lại của Phase 4.
+Trạng thái: **Đang triển khai — Chặng 1 (Bước 1–2) và Chặng 2 (Bước 3–4) đã hoàn thành theo checkpoint; Chặng 3 còn lại.** Giữ 7 bước trong 3 chặng; Add Session/Add Artifact bổ sung tại Bước 5/Chặng 3, không mở lại Chặng 1. Hiện trạng baseline khi lập plan được đối chiếu ngày **2026-11-07**; số tests/build ghi trong các plan trước là bằng chứng của các đợt đó, không phải kết quả kiểm chứng phần còn lại của Phase 4.
 
 Nguồn phạm vi: [plan tổng thể](plan.md), [Phase 3](plan-phase-3.md), [note](note.md), [phân tích ban đầu](analyzed.md) và các quyết định tiếp nối của Chú. Các quy tắc Instructions/Join/Kind dưới đây thay thế đề xuất cũ chưa chốt trong tài liệu trước; không coi mô tả code hiện tại là hành vi đích.
 
@@ -20,7 +20,7 @@ Nguồn phạm vi: [plan tổng thể](plan.md), [Phase 3](plan-phase-3.md), [no
 | Recent Artifacts | Filter native Quick Pick: All Types, từng kind cố định, Other; áp filter trước cap 20, có indicator. |
 | Skill/integration | Thêm join/context/reference-read/instructions/kind/approved; đồng bộ descriptions, metadata, versions và docs liên quan. |
 
-**Ngoài phạm vi:** menu **More → Export ZIP / Archive / Delete** của manager, toàn bộ Pin/Archive/Restore/Delete, file trạng thái UI, menu chuột phải và tooltip đầy đủ của sidebar (Phase 5); helper descriptions UI của các zone/Instructions, masonry, description/filter/search artifact trong manager (Phase 5); attach/import file/folder, rich editor, Markdown preview mới; tool readonly inspect hoặc tool đọc toàn bộ artifact; workflow engine/handoff; dirty dialog/recovery, lock/CAS/merge, ownership hardening xuyên process. Không thay các controls/menu sắp xếp đã được chấp nhận, không drag/drop.
+**Ngoài phạm vi:** menu **More → Export ZIP / Archive / Delete** của manager, toàn bộ Pin/Archive/Restore/Delete, file trạng thái UI, menu chuột phải và tooltip đầy đủ của sidebar (Phase 5); helper descriptions UI của các zone/Instructions, card grid (thay đề xuất masonry cũ), description/filter/search artifact trong manager (Phase 5; xem [hướng dẫn](plan-phase-5.md)); attach/import file/folder, rich editor, Markdown preview mới; tool readonly inspect hoặc tool đọc toàn bộ artifact; workflow engine/handoff; dirty dialog/recovery, lock/CAS/merge, ownership hardening xuyên process. Không thay các controls/menu sắp xếp đã được chấp nhận, không drag/drop.
 
 Description **trong catalog AI** thuộc Phase 4. Description/helper text **trong UI manager** thuộc Phase 5. Session type vẫn độc lập với artifact kind.
 
@@ -43,7 +43,21 @@ Description **trong catalog AI** thuộc Phase 4. Description/helper text **tron
 | `src/extension/work-session-support.ts` | Kiểm tra receipt MCP >= 12 và đối chiếu file runtime với bundle khi có context; không kiểm tra process đang chạy. |
 | `skills/create-review-artifact/`, `src/extension/mcp-clients/skill-helper.ts` | Skill còn ép mọi artifact thành implementation-plan, assume approve luôn execute; danh mục 5 tools và description artifact-only. Có append-only official descriptions và bảo toàn user customization. |
 
-Các điểm này là baseline source, không phải lỗi yêu cầu sửa ngoài phạm vi Phase 4.
+Các điểm trong bảng là baseline lúc bắt đầu Phase 4, không phải trạng thái sau khi Chặng 1 hoàn thành hoặc lỗi yêu cầu sửa ngoài phạm vi. Khi triển khai Chặng 2–3 dùng đối chiếu cập nhật dưới đây và source thực tế, không xây lại helpers đã có.
+
+### 2.1. Đối chiếu bổ sung trước Chặng 2–3 — 2026-11-07
+
+| Component hiện tại | Điểm nối cần giữ rõ trong phần còn lại |
+| --- | --- |
+| Chặng 1 đã có | `sessionContextSchema`/catalog schemas trong contracts; `resolveWorkSessionContext`, `extractMarkdownDescription`, `FIXED_ARTIFACT_KINDS`, `isFixedArtifactKind`, `isPlanProceedKind`, `formatArtifactKindLabel`; Instructions Markdown và metadata optional legacy. Tái sử dụng, không định nghĩa một bộ schema/kind/context khác. |
+| MCP create/inspect | `persistArtifact` có rollback trong thân hàm, còn `handleCreateTool` hiện chỉ serialize kết quả sau khi hàm đó trả về. `handleInspectTool` vẫn tự respond và tự quản lý register/connection rollback. Context mới phải nằm trong ranh giới thao tác tương ứng, không chỉ gắn một `await resolve...` vào wrapper sau commit. |
+| MCP recovery | `RecoveryContext` đang chỉ có `isCreate`; `McpWindowSelectionRequiredError` chỉ nhận create/inspect. Thêm Join phải sửa cả typed hints lẫn nơi tạo lỗi; đổi mỗi tool dispatcher không đủ. |
+| Feedback/skill | Wait/advance trả comments đầy đủ; inspect không phát lại nextAction từ submission cũ. Skill còn assume approve luôn execute và Join chưa có nested inspection. Nối UI/skill sau khi chốt một shape chung ở mục 3.7. |
+| Instructions event | Classifier chưa nhận Markdown; provider dùng `changes.every(...)` để chọn summary/artifact/full refresh. Bước 5 phải xử lý cả batch trộn instructions/metadata và batch chứa Session khác, không chỉ thêm một `case`. |
+| Manager UI đang được Chú chỉnh | Giữ chip Session Type có nút edit tích hợp, bố cục/spacing hiện tại trong `SessionApp.tsx`/`styles.css`. Thêm controls vào đúng header/section; không đưa markup về snapshot Phase 3 cũ. |
+| Picker/filter | Search command hiện có callback Open; không gọi nguyên command đó cho Add Artifact. Recent View all hiện không truyền arguments, handler Search Artifact cũng chưa nhận kind filter. Hai đầu phải đổi cùng nhau. |
+
+Baseline kiểm chứng lần rà soát: **8 suites / 145 tests passed, 1 skipped** (`review-wait-mcp`, connect prompt, Session provider/service/app, skill contract, artifact search command và Session context). Đây là regression của code hiện có, không chứng minh Join/controls mới đã triển khai hoặc AI/Extension Host runtime đã được kiểm chứng.
 
 ## 3. Contract đích
 
@@ -108,7 +122,7 @@ type SessionCatalogItem =
   | { artifactId: string; unavailable: true };
 ```
 
-- Các type/schema này là **đầu ra cần bổ sung**, chưa tồn tại. Một resolver shared đọc registry + types + artifact files, dùng được từ Node MCP; không import VS Code/extension service vào MCP.
+- Type/schema context/catalog và resolver shared đã có trong Chặng 1; dùng các exports hiện tại trong contracts và `work-session-context.ts`. Mục này mô tả shape phải giữ khi nối entry results, không yêu cầu viết lại hoặc nhân bản các schema. Không import VS Code/extension service vào MCP.
 - Giữ thứ tự reconcile/layout của mỗi vùng. Ba vùng là tổ chức tài liệu, không phải trạng thái approval/quyền. References vẫn có thể review qua lifecycle khi user yêu cầu.
 - Mỗi artifact khả dụng phải qua canonical artifact path, schema-v6 manifest và kiểm tra ID đúng directory trước khi đưa handle/path vào catalog. ID là identity, **không phải đường dẫn**. Không lấy title/ID để đoán vị trí ngoài collection.
 - Description: parse Markdown AST → lấy visible text → chuẩn hoá whitespace → rút ngắn. Dùng một hằng giới hạn chung, đề xuất triển khai **200 ký tự**, chỉ thêm `…` khi thực sự cắt. Không trả raw Markdown/HTML như description, không gọi AI, không lưu thêm field description vào manifest. Chuỗi rỗng hợp lệ.
@@ -187,19 +201,50 @@ Rà soát tất cả đường UI trong `src/webview/`, Tree Views và UI string
 
 Chỉ chuyển text sản phẩm do extension định nghĩa. Giữ nguyên title, nội dung artifact/Instructions, Session type labels và dữ liệu user nhập, kể cả tiếng Việt. Không dịch tài liệu/comment/test fixture chỉ để làm sạch tìm kiếm, không thêm i18n framework hoặc thay bố cục. Dịch wording tooltip hiện có thuộc Phase 4; mở rộng tooltip thành đầy đủ Name/Kind/Type vẫn thuộc Phase 5.
 
+### 3.7. Shape entry result và ranh giới commit của Chặng 2
+
+Chốt shape trước khi sửa tool descriptions, prompts và skill. Tên type dưới đây là hướng dẫn cho phần bổ sung, không phải các exports đã có:
+
+```ts
+// ArtifactInspection: flat handle + manifest/markdown/comments/submission/hashes,
+// optional roundToken/roundTokenSource/connection; không có nextAction mới.
+type InspectOperationResult = {
+  inspection: ArtifactInspection;
+  session: SessionContext;
+};
+
+// Wire results:
+// create_artifact           -> { ...existingHandle, session }
+// inspect_artifact_review   -> { ...inspection, session }
+// join_session(Session)     -> { session }
+// join_session(+artifactId) -> { session, inspection }
+```
+
+- Không lồng thêm `session` lần nữa vào `inspection`, không chuyển flat fields của inspect cũ thành nested fields. `artifactConversationId` ở flat handle phải bằng `session.sessionId`. Join-only không có inspection/token giả hoặc nhánh tự wait.
+- Với Join+artifact, agent lấy feedback tại `result.inspection.comments.comments`, token/round/handle tại `result.inspection.*`; lấy active Session tại `result.session.sessionId`. Inspect cũ vẫn đọc flat fields. Prompts/skill phải hướng dẫn chuẩn hoá entry trước khi dùng unified feedback, không đoán token từ nhầm cấp.
+- Core dùng chung **trả value hoặc throw**, không gọi `respond`/`toolResult` hoặc gọi một handler MCP khác. Mỗi wrapper chỉ respond một lần; tool success/error vẫn có cùng text JSON và structuredContent như hiện tại.
+- Parser Join validate UUID Session, artifact ID và kiểu flags; chỉ derive artifact directory từ canonical collection. Flags inspect chỉ được có khi có artifact; Join chỉ truyền `connection` khi intent reconnect. Không thêm alias ID hoặc readonly intent để né validation; không đổi semantics của inspect cũ trong lần tách core đầu tiên.
+- Chọn window/v1/round preflight trước takeover/register. Với explicit-chat-update giữ yêu cầu round rỗng và expectedReviewRound. Join-only không đi vào nhánh window/connection, kể cả chat đang giữ một artifact handle khác.
+- **Create:** resolve/validate Session context sau khi artifact/membership đã tồn tại nhưng **bên trong try/rollback của `persistArtifact`, trước connection commit/open request**. Trả context đã resolve cùng result; `handleCreateTool` không đọc thêm dữ liệu có thể fail chỉ để trang trí response sau commit.
+- **Inspect/Join+artifact:** register → resolve context → connection commit nằm trong cùng ranh giới rollback membership/new Session hiện có. Nếu context fail, restore `previousRegisteredAt` hoặc gỡ membership mới/xoá Session vừa tạo; không xoá artifact gốc hay membership ở Session khác. Chỉ cấp token để trả ra sau các bước có thể fail mới này; không để response lỗi đồng thời hướng dẫn retry như thể mọi side effect đều chưa xảy ra.
+- Không thêm transaction framework hoặc phục hồi waiter xuyên process. Việc takeover vẫn theo cơ chế hiện tại; ranh giới này chỉ giữ rollback đã có khi bổ sung một bước resolve có thể thất bại.
+- `resolveWorkSessionContext` hiện dùng `listSessionTypes`, mà API đó seed `session-types.json` khi thiếu. Để Join-only thực sự chỉ đọc, thêm đường lookup type **không seed** khi dùng resolver (thiếu file dùng default types/label fallback hiện có; JSON hỏng trả lỗi). Không đổi hành vi khởi tạo registry của UI quản lý types. Đây là điểm nối cần hoàn thiện trong Chặng 2, không phải schema/migration mới.
+
 ## 4. Thứ tự triển khai và checkpoint
 
 | Chặng | Bước | Đầu ra để review | Trạng thái |
 | --- | --- | --- | --- |
 | 1 — Dữ liệu dùng chung | 1. Instructions storage | Metadata v2 cuối cùng + Markdown file + create/migrate/read/save + version/gate tương ứng. | ✅ Đã hoàn thành (Bước 1) |
 | 1 — Dữ liệu dùng chung | 2. Context, snippet và kind | Shared catalog/context resolver, description utility và fixed/open kind helpers. | ✅ Đã hoàn thành (Bước 2) |
-| 2 — MCP contract | 3. Inspect core và Join | Tool thứ 6, join-only/join+inspect, entry responses có context, recovery giữ intent. | Chưa triển khai |
-| 2 — MCP contract | 4. Proceed | Approved directive cho non-plan, giữ feedback/comments/token contract. | Chưa triển khai |
+| 2 — MCP contract | 3. Inspect core và Join | Tool thứ 6, join-only/join+inspect, entry responses có context, recovery giữ intent. | ✅ Đã hoàn thành (Bước 3) |
+| 2 — MCP contract | 4. Proceed | Approved directive cho non-plan, giữ feedback/comments/token contract. | ✅ Đã hoàn thành (Bước 4) |
 | 3 — UI, agent và nghiệm thu | 5. Instructions UI, Connect, Add và English UI | Open file/scoped sync, Connect manager, Review New/Join prompt/wording, Add Session rỗng từ Tree View, Add Artifact qua Quick Pick, rà soát toàn App UI/Tree Views. | Chưa triển khai |
 | 3 — UI, agent và nghiệm thu | 6. Kind filter và labels | Recent fixed/Other filter, View all đúng filter, labels thống nhất. | Chưa triển khai |
 | 3 — UI, agent và nghiệm thu | 7. Skill, docs và validation | Skill v6/installer, tài liệu canonical, checks và bằng chứng manual riêng. | Chưa triển khai |
 
 Mỗi chặng hoàn thành bằng diff có thể review và kiểm chứng phần mình thay đổi. Không đánh dấu UI/AI runtime pass chỉ từ source assertions, server-render markup, typecheck hoặc build.
+
+Các checkpoint dưới đây là thứ tự review bên trong bước đã có, **không tạo phase/chặng mới**. Chặng 1 và đính chính MCP 12/metadata optional giữ nguyên trạng thái; không rollback layout/types/storage để chuẩn bị Chặng 2.
 
 ## 5. Hướng dẫn theo bước
 
@@ -251,7 +296,7 @@ Mỗi chặng hoàn thành bằng diff có thể review và kiểm chứng phầ
 
 | File/component | Sửa cụ thể |
 | --- | --- |
-| `src/integration/artifact-review-mcp-v4.ts` — inspect | Tách core trả inspection value khỏi `handleInspectTool` đang respond trực tiếp. Giữ thứ tự validate handle/round/session/routing → takeover khi yêu cầu → snapshot/token → register/new → connection/rollback. Wrapper inspect chỉ parse/call/serialize error/result. |
+| `src/integration/artifact-review-mcp-v4.ts` — inspect | Tách core trả operation result khỏi `handleInspectTool` đang respond trực tiếp. Checkpoint đầu chỉ tách cơ học, giữ observable behavior; sau đó nối context với thứ tự cuối cùng validate handle/round/session/routing → takeover khi yêu cầu → snapshot → register/new + context + connection trong rollback → token/result. Wrapper inspect chỉ parse/call/serialize error/result. |
 | Cùng MCP — join | Thêm `JOIN_SESSION_TOOL_NAME`, input parser/allowed keys, handler, `tools/list`, `tools/call`, initialize instructions. Session-only resolve context read-only; artifact branch resolve ID thành canonical handle rồi gọi core với exact Session ID. |
 | Cùng MCP — entry responses | Create/inspect thêm `session`; join+artifact trả `session` cùng `inspection` từ core. Giữ flat legacy handle fields của create/inspect để consumers hiện tại không mất round/connection. Context phản ánh membership sau register. |
 | Cùng MCP — recovery | Mở rộng expectedNextTool union/window error context cho join. Chỉ sửa hints phù hợp entry; recovery round/token vẫn dùng exact handle và flow hiện có. Giữ New/Join intent khi chọn lại window. |
@@ -260,6 +305,30 @@ Mỗi chặng hoàn thành bằng diff có thể review và kiểm chứng phầ
 **Khả năng phải đạt:** Join manager không chạm waiter; Join artifact chỉ tác động target được yêu cầu; context không khiến client phải gọi inspect lần hai. Reference reads hoàn toàn tách khỏi takeover. Không replay approval từ submission cũ và không tự wait/advance chỉ vì join-only thành công.
 
 **Kiểm chứng:** mở rộng `test/review-wait-mcp.test.ts` hoặc tách suite join dùng cùng harness spawn MCP. Cover tools/list (6 tools), text JSON = structuredContent, join-only không ghi/cấp token, join+artifact tương đương inspect feedback/token/connection, create/inspect có context, New giữ membership cũ. Giữ regressions v1 preflight, window selection trước mutation, takeover, reconnect rollback và exact-handle rejection; không thêm framework cross-process ownership.
+
+#### Checkpoint 3a — Tách core, chưa thêm Join hoặc context
+
+1. Trích phần xử lý inspect thành một hàm nhận input/entry context đã chuẩn hoá và trả flat inspection + Work Session nội bộ. Wrapper giữ nguyên shape thành công/lỗi của inspect cũ.
+2. Giữ `loadArtifactContext`, `readArtifactInspection`, `detachActiveArtifactWaiter`, `registerArtifactInSession`, `grantInspectedRound`, connection/rollback helpers; không viết lại các cơ chế này. Không thay wait/advance hoặc thuật toán round commit.
+3. Chạy regression inspect/reconnect trước khi thêm tool thứ 6: saved comments/submission, empty round, explicit-chat-update, v1 preflight, window selection không detach waiter, reconnect rollback. Đạt checkpoint khi diff chỉ tổ chức lại và response/state effects không đổi.
+
+#### Checkpoint 3b — Gắn context và lỗi theo entry
+
+1. Nối resolver Chặng 1 theo vị trí commit mục 3.7, gồm lookup types không seed. Trong create phải trả context từ `persistArtifact` thay vì resolve ở `handleCreateTool` sau khi commit.
+2. Với inspect, gom bước resolve mới vào cùng khối rollback đang ghi nhận Session mới/member mới/previousRegisteredAt. Dùng các API rollback đã có; không mở rộng sang xoá artifact cũ hoặc rollback việc user đã làm ở Session khác.
+3. Recovery phân biệt **entry tool + có artifact handle hay không**, thay cho một boolean `isCreate` làm nguồn duy nhất. Mở rộng cả `McpWindowSelectionRequiredError`, metadata union và chỗ map các lỗi window/connection/Session. Giữ các typed round/token errors vốn đã có next-tool hint cụ thể.
+4. Create vẫn retry create; Join+artifact retry Join với cùng Session/artifact/intent/options; Join-only lỗi Session không được gợi ý inspect một handle không tồn tại. `CONVERSATION_NOT_FOUND`/v1 không tự tạo Session thay thế.
+   - Phân loại lỗi khi preflight Session ngay ở bước đọc Session; Session directory/metadata thiếu phải thành `CONVERSATION_NOT_FOUND`, không đi qua nhánh ENOENT chung hiện đang map thành `ARTIFACT_NOT_FOUND`. Artifact handle thiếu vẫn giữ lỗi artifact hiện có. Không map mọi lỗi của Join theo một resource duy nhất chỉ vì request có artifact ID.
+5. Kiểm tra một đường lỗi context thật bằng fixture `session-types.json` sai schema trong isolated home: create rollback artifact/Session vừa tạo; inspect vào Session có sẵn giữ membership/registeredAt trước đó; inspect New không để lại Session mồ côi. Không cần thêm hệ thống fault injection chung.
+
+#### Checkpoint 3c — Expose `join_session` và khoá wire contract
+
+1. Join-only: validate exact Session ID → preflight/read context → `{ session }`. Không resolve window, register, takeover, token hoặc auto wait. Test cả khi types file chưa có để không seed file ngoài ý muốn.
+2. Join+artifact: validate flags → derive exact global handle → gọi core với Session đích → `{ session, inspection }`. Khi `takeover:true`, chỉ target artifact bị detach; giữ cùng token source/round/hash/connection semantics như inspect cũ.
+3. Đồng bộ `tools/list`, dispatcher, initialize instructions, allowed keys/types và recovery. Giữ MCP **12**; tool count mới là **6** sau checkpoint này. Chưa dùng số version để suy rằng một MCP process cũ cùng số 12 đã có Join.
+4. Test text JSON bằng structuredContent và shape cả 4 entry tại mục 3.7. Round mismatch, saved approval và errors không được sinh execution directive mới từ snapshot. Dùng harness MCP đang có với `CODEX_ARTIFACTS_TEST_USER_HOME`/registry tạm; không kiểm tra trên global artifacts của user.
+
+**Đạt Bước 3:** cả inspect cũ và Join mới cùng dùng một core; lỗi context không biến create/inspect đã mutate thành một lỗi generic ngoài rollback; recovery giữ đúng entry; Join-only không ghi; chưa đánh dấu Chặng 2 hoàn thành trước khi Bước 4 cũng đạt.
 
 ### 5.4. Bước 4 — Chuẩn hoá Proceed và feedback
 
@@ -272,6 +341,8 @@ Mỗi chặng hoàn thành bằng diff có thể review và kiểm chứng phầ
 | Inspect/join-inspection | Giữ snapshot/token contract; không dùng mapping decision hiện tại để phát lại action của một submission đã đọc. |
 
 **Kiểm chứng:** `test/review-wait-mcp.test.ts`, `test/review-actions.test.ts` nếu liên quan UI submission. Hai kind plan đều execute; fixed `idea`/`checklist` và open `workaround` đều approved; revise mọi loại vẫn comments/token/process-review-feedback; save không nextAction. Chạy cả đường existing submission và advance-and-wait, giữ tests reconnect không replay terminal action.
+
+**Thứ tự sửa Bước 4:** mở rộng union `ReviewWaitResult.nextAction` → dùng `isPlanProceedKind`/mapping chung → cập nhật prose tools/initialize → sửa assertions cũ đang expect non-plan approve không có nextAction. Không bỏ assertions về full comments, exact hashes hay token state để làm tests pass. Chỉ wait/advance phát action của quyết định vừa nhận; inspect/Join-inspection chỉ cung cấp snapshot và token phục hồi theo contract. Test plan/implementation-plan riêng, một fixed non-plan và một open kind; không cần nhân toàn bộ ma trận kind/window/lifecycle.
 
 ### 5.5. Bước 5 — Instructions UI, scoped watcher, Connect, Add và English UI
 
@@ -297,7 +368,38 @@ Mỗi chặng hoàn thành bằng diff có thể review và kiểm chứng phầ
 
 **Kiểm chứng:** `test/conversation-artifact-service.test.ts`, `test/work-session-provider.test.ts`, `test/session-app.test.tsx`, `test/artifact-connect-prompt.test.ts`, `test/artifact-review-provider.test.ts`; thêm test builder Session prompt nếu tách module. Test exact file action, gate cũ/mới, patch đúng Session và không đổi input khi unrelated event. Với wording, cập nhật assertions của dialog/sidebar/review có sẵn, kiểm tra New/Join labels/descriptions và giữ title/type/content tiếng Việt do user nhập; không thêm suite chỉ quét cấm mọi ký tự tiếng Việt. Manual UI mới là bằng chứng Open/clipboard/focus hoạt động.
 
-#### Bổ sung Bước 5 — Add Session và Add Artifact
+#### Checkpoint 5a — Instructions event và host actions trước khi thêm controls
+
+1. Thêm `instructions` vào event union và `changeKey`; classifier nhận `WORK_SESSION_INSTRUCTIONS_FILE` trong đúng thư mục Session. Watcher `**/*` đang có đủ khả năng theo dõi file; giữ ignore tmp/backup.
+2. `updateSessionDetails` service phát metadata event nếu có title, instructions event nếu có Instructions; nếu cả hai thì phát cả hai trong một batch. Không đổi cách registry ghi metadata/Markdown đã hoàn thành ở Chặng 1.
+3. Provider lọc các thay đổi liên quan tới document trước, rồi xác định các phần cần patch độc lập. Không dùng duy nhất `changes.every(...)` để phân nhánh: batch `metadata(S) + instructions(S)` phải gửi đúng hai phần, batch có Session khác không được ép refresh toàn app.
+
+| Event liên quan | Kết quả ở manager S | Các consumer khác |
+| --- | --- | --- |
+| `instructions(S)` | Đọc nội dung persisted; khác `lastPersistedInstructions` mới gửi instructions patch, cập nhật mốc so sánh. Không phát summary/card patch chỉ vì Markdown đổi. | Sessions sidebar/Review Session targets/Recent bỏ qua nếu không có event khác liên quan. |
+| `metadata(S)` / `types` | Summary/type label; không lấy snapshot này gán lại ô nhập. | Refresh danh sách/label phù hợp như hiện tại. |
+| `membership(S)` / `layout(S)` / artifact là member | Artifact sections + updatedAt phù hợp; giữ draft input. | Membership/manifest refresh đúng consumer; layout không đổi recency. |
+| Generic hoặc batch hỗn hợp | Có thể resolve DTO một lần rồi chọn patches; nếu gửi full state vẫn giữ reducer không reset draft và chỉ gửi instructions patch khi persisted value thực sự đổi. | Giữ cơ chế invalidation hiện có, không dựng cache/index framework. |
+
+4. Save thành công giữ `sessionInstructionsSaved`; own-save echo không phát patch lặp vô cớ. Lỗi Save/Open/Copy/Add dùng `actionError`, không dùng full-page `error` khi document vẫn đọc được. Không thêm isDirty/conflict/recovery.
+5. Host actions mới cần kiểm tra MCP/gate 12 trước thao tác; `openSessionInstructionsFile`, `copySessionConnectPrompt`, `addSessionArtifact` không nhận đường dẫn hoặc Session ID từ webview. Open lấy exact path từ document/root options, chỉ tạo rỗng khi file thật sự chưa có sau explicit action; không ghi đè file tồn tại.
+
+**Đạt checkpoint:** test reducer/provider giữ phần user đang gõ khi title/type/membership/layout đổi; nhận giá trị mới khi chính Markdown đổi, kể cả đang gõ; batch hai loại event không rơi sang đường reset state. Giữ markup chip type và spacing đang được Chú chỉnh.
+
+#### Checkpoint 5b — UI và prompt theo đúng entry
+
+| Entry | Tool/options trong prompt | Sau thành công |
+| --- | --- | --- |
+| Manager Connect | `join_session({ sessionId })`, không artifact/intent/takeover. | Đọc context, đặt active ID; không tự wait. |
+| Review New | `inspect_artifact_review` với exact directory, `takeover: true`, **omit** ID đang giữ; không tạo artifact khác. | Nhận flat inspection + `session`, thay active bằng ID mới. |
+| Review Join | `join_session({ sessionId, artifactId, takeover: true })`; không tự thêm reconnect intent nếu user chỉ yêu cầu inspect/join. | Nhận `session` + nested `inspection`; chỉ target artifact bị takeover. |
+| Legacy support chưa đủ | Giữ prompt inspect exact handle cũ; không gửi `join_session` hoặc yêu cầu Session controls mới. | Theo contract runtime cũ; không giả định tool Join đã có vì cùng numeric version. |
+
+- Refine builder signature để host truyền **artifact ID từ store đã validate**, không lấy basename/title chưa kiểm chứng từ webview. Giữ unit tests legacy exact handle và success-only New/Join đã có; thêm assertions tên tool/ID/payload đúng từng entry.
+- Thêm Connect ở header/Open Markdown File cạnh Instructions, giữ các controls đang có và panel preference. Copy chỉ ghi clipboard + acknowledgement UI, không mở Session khác hoặc gọi MCP tại extension.
+- Áp wording New/Join/English ở mục 3.6 cùng đợt này; labels và prompt phải cùng ngữ nghĩa. Không thêm tooltip đầy đủ/More/ZIP của Phase 5.
+
+#### Checkpoint 5c — Add Session và Add Artifact
 
 Các phần dưới đây triển khai trong **Chặng 3**, không thay đổi checkpoint Bước 1–2 đã xong. Quyết định mới cho phép user tạo Session rỗng thay thế giới hạn cũ “không có + session”.
 
@@ -313,6 +415,8 @@ Các phần dưới đây triển khai trong **Chặng 3**, không thay đổi c
 - `registeredAt` của membership mới làm tăng recency theo công thức đã có. Add Session/Add Artifact ở extension không tự đổi active Session ID trong chat AI; Connect vẫn là thao tác riêng.
 - **Kiểm chứng:** bổ sung command/provider/sidebar/service tests cho nhập title/cancel/tạo rỗng/type mặc định/mở đúng ID, picker loại member có sẵn, thêm đúng Working và không ảnh hưởng Session khác/input Instructions. Giữ gate cũ/mới; không viết lại tests storage Chặng 1 ngoài phần interface thực sự bị tác động.
 - **Manual:** Add Session → mở manager rỗng → Add Artifact → chọn mục → card/count xuất hiện, reopen còn membership; đang gõ Instructions vẫn giữ phần nhập. Menu More và Export ZIP không thuộc bước này, thực hiện Phase 5.
+- Trước khi register, host revalidate target đã chọn bằng validator artifact hiện có vì artifact có thể không còn tồn tại khi picker đang mở. Picker chỉ trả lựa chọn; callback mutation thuộc service/host, không tái dùng callback Open của Search Artifact.
+- Nếu create Session đã thành công nhưng mở editor lỗi thì báo rõ lỗi mở, giữ Session vừa tạo và ID; không tự create lần hai. Filter Sessions có thể đang ẩn type mặc định, vì vậy create command mở theo ID trả về thay vì tìm Session mới trong danh sách đã filter.
 
 ### 5.6. Bước 6 — Recent kind filter và labels
 
@@ -330,6 +434,14 @@ Các phần dưới đây triển khai trong **Chặng 3**, không thay đổi c
 
 **Kiểm chứng:** `test/work-session-sidebar.test.ts`, `test/artifact-search.test.ts`, `test/artifact-search-command.test.ts`, helper/picker tests và `test/release-contract.test.ts` cho command/menu. Dùng hơn 20 artifact với kind cần tìm nằm ngoài top20 để chứng minh thứ tự filter trước cap; test Other, cancel/refresh/reload và View all filter độc lập Command Palette search.
 
+**Thứ tự nối Bước 6:**
+
+1. Dùng một typed filter value (All / Fixed kind ID / Other), không suy từ label UI hoặc `isPlanProceedKind`. Danh sách fixed lấy từ `FIXED_ARTIFACT_KINDS`, formatter chỉ làm display. Kind mở vẫn có label riêng trong card/search và được gom vào Other của Recent.
+2. Provider Recent áp `discovery → kind filter → sort recency → cap 20 → View all count`. Không lấy top20 rồi mới filter. Giữ state trong instance provider, không ghi `globalState` hoặc manifest.
+3. Khi đổi sang `createTreeView` cho Recent, bỏ registration cũ `registerTreeDataProvider` của cùng view; dispose một handle duy nhất. Đăng ký command phễu + cập nhật indicator cùng handler filter, không tác động provider Sessions.
+4. View all truyền object option filter hiện tại vào command Search Artifact. Handler trong `extension.ts` phải nhận/validate option rồi truyền xuống search controller; trong controller lọc kind **trước** title matching/cap1000. Command Palette/no arguments mặc định All Types, không đọc ngầm filter sidebar.
+5. Dùng fixture 25 artifact, trong đó kind cần tìm chỉ xuất hiện ngoài top20 trước filter; kiểm tra row/count/View all và Search không argument riêng. Đây là regression cho đường thực tế, không xây query language hoặc bộ filter mới cho manager.
+
 ### 5.7. Bước 7 — Skill, installer, docs và nghiệm thu
 
 **Phụ thuộc:** bước 1–6. **Đầu ra:** AI dùng đúng entry/decision và installed assets phản ánh contract mới.
@@ -346,6 +458,21 @@ Các phần dưới đây triển khai trong **Chặng 3**, không thay đổi c
 | Plans | Ghi progress/checkpoint thực tế vào file này và `plan.md`; Phase 5 giữ nguyên chưa triển khai. Không đổi lịch sử kết quả của Phase 3 thành bằng chứng Phase 4. |
 
 **Kiểm chứng:** `test/skill-contract.test.ts`, `test/workspace-integration.test.ts`, `test/mcp-client-drivers.test.ts`, `test/integration-verification.test.ts`, `test/global-integration-status.test.ts`, `test/release-contract.test.ts`. Cập nhật exact description/tool count/version assertions theo contract mới, giữ tests customization-preserving installer. Chỉ sửa test bị ảnh hưởng, không xoá assertion bảo vệ lifecycle để làm pass.
+
+**Checkpoint 7a — Skill hiểu đúng response và quyết định**
+
+- Bắt đầu bằng phân biệt `join-only` và artifact entry. Join-only dùng `session` rồi kết thúc thao tác entry/tiếp tục yêu cầu của user; không gọi wait/advance vì không có target artifact. Với Join+artifact, normalize `result.inspection`; inspect cũ vẫn dùng flat response, theo đúng mục 3.7.
+- Chỉ sau tool success mới thay activeSessionId bằng `result.session.sessionId`; giữ các handle/round/window mappings khác. Lỗi v1/missing Session đưa lựa chọn cho user, không clear ID rồi tự tạo Session như recovery prose cũ đang ghi.
+- Phân biệt **fresh decision từ wait/advance** với **saved submission snapshot từ inspect/Join**. Fresh plan approval execute; fresh non-plan approval obey `approved`/ghi nhận. Snapshot approve/save cũ không phải lệnh mới, không chạy lại hành động đã duyệt.
+- Giữ `comments.comments` đầy đủ sau normalize; không gọi inspect lần hai chỉ vì đang nhìn sai cấp của Join result. Empty feedback chỉ có ý nghĩa khi đang ở artifact flow, không áp dụng cho join-only.
+- Test skill/contract prose phải mô tả cùng wire shape/tool names/actions; bỏ assertion ép mọi create thành implementation-plan, thay bằng kiểm tra fixed/open selection và hai nhánh Proceed. Không xoá các kiểm tra feedback/recovery/state binding.
+
+**Checkpoint 7b — Assets/docs và handoff**
+
+- Append official description mới có Join trigger vào lịch sử descriptions trước khi cập nhật packaged frontmatter; giữ entry cũ và custom description/rules markers. Đồng bộ `agents/openai.yaml` với cùng entry intent.
+- Giữ **MCP 12**, Skill hiện 5 cho tới khi sửa skill và bump 6 cùng nhau. Installer/verification vẫn dùng per-asset receipts và bundled-file comparison; không tăng MCP vì các chặng, không kiểm tra process đang chạy.
+- Sau Chặng 2, catalog mới có 6 tools; một process test cũ cũng mang version 12 nhưng còn 5 tools cần reinstall/restart qua luồng hiện có. Availability check của skill dùng catalog thật, không suy khả năng Join từ version number.
+- Chạy tập tests bị ảnh hưởng mỗi checkpoint, rồi check/full tests/build ở cuối. Ghi riêng kết quả Extension Host/AI client và phần chưa xác minh. Chặng 3 không được đóng chỉ vì các tests assert chuỗi hoặc server-render markup pass.
 
 ## 6. Validation và nghiệm thu
 
@@ -388,7 +515,21 @@ Ghi rõ môi trường/client và mục manual đã chạy hoặc chưa xác min
 ## 8. Checklist tiến độ
 
 - [x] Chặng 1: storage Instructions + shared context/description/kind helpers và focused tests.
-- [ ] Chặng 2: inspect core + join tool/context entry + Proceed mapping và lifecycle regression.
+- [x] Chặng 2: inspect core + join tool/context entry + Proceed mapping và lifecycle regression.
 - [ ] Chặng 3: Instructions/Open/Connect + Add Session/Add Artifact + New/Join wording và English UI/Tree Views + Recent filter/labels + skill/versions/docs; không More/Export ZIP/Archive/Delete.
 - [ ] Check/test/build và diff checks; ghi bằng chứng manual hoặc phần chưa xác minh.
 - [ ] Chú review kết quả từng chặng; chỉ đánh dấu hoàn thành theo công việc thực tế, không theo việc đã viết plan.
+
+## 9. Kết quả rà soát hướng dẫn Chặng 2–3 — 2026-11-07
+
+Các mục dưới đây là **Thông tin tham khảo / điểm cần làm rõ khi triển khai**, mức **P2**; không có kết luận lỗi nghiêm trọng mới trong runtime Join vì tool đó chưa được triển khai. Cột nguồn chỉ snapshot code lúc review, các tên hàm bền hơn số dòng khi refactor.
+
+| Điểm/nguồn hiện có | Đường kích hoạt và hướng xử lý đã đưa vào plan |
+| --- | --- |
+| **P2 — Context sau commit:** `src/integration/artifact-review-mcp-v4.ts:638` (`persistArtifact`) và `:1520` (`handleCreateTool`). | Nếu chỉ resolve context ở wrapper sau create, lỗi types/context sẽ trả error khi artifact/Session đã tạo xong; retry có thể tạo thêm Session. Mục 3.7/3b đưa resolve vào try/rollback trước connection commit, không tạo một tầng transaction mới. Đây là rủi ro của cách nối mới, không phải khẳng định create hiện tại đã có bước resolve đó. |
+| **P2 — Recovery chưa biết Join:** cùng file `:202`/`:246`. | Lỗi window/Session của tool mới có thể bị hint về inspect/create hoặc bị phân loại thành missing artifact. Checkpoint 3b yêu cầu entry-aware hints và phân loại Session preflight đúng resource; giữ exact ID qua retry. |
+| **P2 — Response/decision chưa thống nhất:** `skills/create-review-artifact/SKILL.md:35`, `:76`, `:87`. | Skill hiện chỉ có flat inspect và assume approve execute; sau khi thêm nested Join sẽ có nguy cơ đọc sai comments/token hoặc replay saved approval. Mục 3.7/7a chốt normalize shape, active success-only và fresh decision vs snapshot. |
+| **P2 — Batch Instructions chưa có nhánh:** `src/extension/conversation-artifact-service.ts:496`, `work-session-provider.ts:148`. | Markdown hiện rơi vào generic event; thêm một case mà giữ `every` trên cả batch vẫn có thể chạy full refresh. Checkpoint 5a xử lý theo phần liên quan và giữ reducer hiện có; chưa có bằng chứng rằng generic refresh hiện tại tự làm mất draft. |
+| **P2 — Join-only và types bootstrap:** `src/shared/session-type-registry.ts:99`/`:125`, `work-session-context.ts` gọi `listSessionTypes`. | Khi file types chưa có, resolver hiện có thể tạo file qua API seed. Mục 3.7/3b bổ sung lookup không seed cho context và test trường hợp đó, giữ luồng init UI types như cũ. |
+
+**Ranh giới review:** chỉ đọc source/diff, chạy 8 nhóm regression hiện có (145 pass, 1 skipped) và cập nhật tài liệu. Không sửa implementation, không cài runtime thật, không thay review Chặng 1 của user và không xác nhận các controls/Join mới hoạt động trong Extension Host. Các checkpoint mới ở Chặng 2–3 vẫn là công việc chưa triển khai.

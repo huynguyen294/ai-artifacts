@@ -43,6 +43,7 @@ import {
   type ExplicitWindowConnectionInput,
   type ReconnectConnectionInput,
   type ReviewDecision,
+  type SessionContext,
   type WorkSession,
 } from "../shared/contracts";
 import {
@@ -53,6 +54,7 @@ import {
   REVIEW_SUBMISSION_FILE,
   conversationMetadataPath,
   conversationRegisteredArtifactPath,
+  globalArtifactsRoot,
   type GlobalArtifactsRootOptions,
 } from "../shared/artifact-files";
 import {
@@ -78,6 +80,8 @@ import {
   type WindowCandidate,
 } from "../shared/window-routing";
 import { commitArtifactConnectionRequest, readArtifactConnection } from "../shared/artifact-connection";
+import { resolveWorkSessionContext } from "../shared/work-session-context";
+import { isPlanProceedKind } from "../shared/artifact-kinds";
 
 const SERVER_NAME = "codex-artifacts";
 const SERVER_VERSION = String(MCP_VERSION);
@@ -85,6 +89,7 @@ const RESOLVE_WINDOW_TOOL_NAME = "resolve_artifact_window";
 const CREATE_TOOL_NAME = "create_artifact";
 const WAIT_TOOL_NAME = "wait_for_artifact_review";
 const INSPECT_TOOL_NAME = "inspect_artifact_review";
+const JOIN_SESSION_TOOL_NAME = "join_session";
 const ADVANCE_AND_WAIT_TOOL_NAME = "advance_and_wait_for_artifact";
 const ROUND_TOKEN_TTL_MS = 60 * 60 * 1000;
 const MAX_MARKDOWN_BYTES = 2 * 1024 * 1024;
@@ -127,7 +132,7 @@ type ReviewWaitResult = {
   artifactUrl?: string;
   artifactLink?: string;
   nextAction?: {
-    type: "process-review-feedback" | "execute-approved-plan";
+    type: "process-review-feedback" | "execute-approved-plan" | "approved";
     instruction: string;
   };
 };
@@ -182,7 +187,8 @@ type ArtifactRecoveryMetadata = {
     | typeof WAIT_TOOL_NAME
     | typeof ADVANCE_AND_WAIT_TOOL_NAME
     | typeof RESOLVE_WINDOW_TOOL_NAME
-    | typeof CREATE_TOOL_NAME;
+    | typeof CREATE_TOOL_NAME
+    | typeof JOIN_SESSION_TOOL_NAME;
   reuseRoundToken: boolean;
   useSameArtifactHandle: boolean;
   currentReviewRound?: number;
@@ -205,7 +211,7 @@ class McpWindowSelectionRequiredError extends Error {
   readonly retryable = true as const;
   readonly lifecycleMutated = false as const;
   readonly takeoverOccurred = false as const;
-  readonly expectedNextTool: typeof CREATE_TOOL_NAME | typeof INSPECT_TOOL_NAME;
+  readonly expectedNextTool: typeof CREATE_TOOL_NAME | typeof INSPECT_TOOL_NAME | typeof JOIN_SESSION_TOOL_NAME;
   readonly useSameArtifactHandle: boolean;
   readonly candidates: WindowCandidate[];
 
@@ -213,7 +219,7 @@ class McpWindowSelectionRequiredError extends Error {
     message: string,
     candidates: WindowCandidate[],
     context: {
-      expectedNextTool: typeof CREATE_TOOL_NAME | typeof INSPECT_TOOL_NAME;
+      expectedNextTool: typeof CREATE_TOOL_NAME | typeof INSPECT_TOOL_NAME | typeof JOIN_SESSION_TOOL_NAME;
       useSameArtifactHandle: boolean;
     },
   ) {
@@ -241,12 +247,17 @@ function recoveryError(
 
 type RecoveryContext = {
   isCreate?: boolean;
+  entryTool?: typeof CREATE_TOOL_NAME | typeof INSPECT_TOOL_NAME | typeof JOIN_SESSION_TOOL_NAME;
+  hasArtifactHandle?: boolean;
 };
 
 function asLifecycleRecoveryError(error: unknown, context: RecoveryContext = {}): unknown {
   if (error instanceof McpWindowSelectionRequiredError || error instanceof WindowSelectionRequiredError) return error;
   if (error instanceof ArtifactRecoveryError) return error;
   const message = error instanceof Error ? error.message : String(error);
+  const defaultNextTool = context.entryTool ?? (context.isCreate ? CREATE_TOOL_NAME : INSPECT_TOOL_NAME);
+  const useSameHandle = context.hasArtifactHandle ?? !context.isCreate;
+
   if (error instanceof ConversationMigrationRequiredError || message.startsWith("CONVERSATION_MIGRATION_REQUIRED:")) {
     const text = message.startsWith("CONVERSATION_MIGRATION_REQUIRED:")
       ? message.slice("CONVERSATION_MIGRATION_REQUIRED:".length).trim()
@@ -257,9 +268,9 @@ function asLifecycleRecoveryError(error: unknown, context: RecoveryContext = {})
         : (message.split("Conversation ")[1]?.split(" ")[0] ?? "");
     return recoveryError("CONVERSATION_MIGRATION_REQUIRED", text, {
       retryable: false,
-      expectedNextTool: context.isCreate ? CREATE_TOOL_NAME : INSPECT_TOOL_NAME,
+      expectedNextTool: defaultNextTool,
       reuseRoundToken: false,
-      useSameArtifactHandle: !context.isCreate,
+      useSameArtifactHandle: useSameHandle,
       artifactConversationId: convId,
     });
   }
@@ -269,9 +280,9 @@ function asLifecycleRecoveryError(error: unknown, context: RecoveryContext = {})
       : message;
     return recoveryError("CONVERSATION_NOT_FOUND", text, {
       retryable: false,
-      expectedNextTool: context.isCreate ? CREATE_TOOL_NAME : INSPECT_TOOL_NAME,
+      expectedNextTool: defaultNextTool,
       reuseRoundToken: false,
-      useSameArtifactHandle: !context.isCreate,
+      useSameArtifactHandle: useSameHandle,
     });
   }
   if (error instanceof ConversationRegistryError || message.startsWith("CONVERSATION_REGISTRY_INVALID:")) {
@@ -280,9 +291,9 @@ function asLifecycleRecoveryError(error: unknown, context: RecoveryContext = {})
       : message;
     return recoveryError("CONVERSATION_REGISTRY_INVALID", text, {
       retryable: false,
-      expectedNextTool: context.isCreate ? CREATE_TOOL_NAME : INSPECT_TOOL_NAME,
+      expectedNextTool: defaultNextTool,
       reuseRoundToken: false,
-      useSameArtifactHandle: !context.isCreate,
+      useSameArtifactHandle: useSameHandle,
     });
   }
   if (errorCode(error) === "ENOENT" || message.startsWith("ARTIFACT_NOT_FOUND:")) {
@@ -305,7 +316,7 @@ function asLifecycleRecoveryError(error: unknown, context: RecoveryContext = {})
         : String(error);
     return recoveryError("WINDOW_NOT_FOUND", text, {
       retryable: true,
-      expectedNextTool: context.isCreate ? CREATE_TOOL_NAME : INSPECT_TOOL_NAME,
+      expectedNextTool: defaultNextTool,
       reuseRoundToken: false,
     });
   }
@@ -317,7 +328,7 @@ function asLifecycleRecoveryError(error: unknown, context: RecoveryContext = {})
         : String(error);
     return recoveryError("WINDOW_SELECTION_EXPIRED", text, {
       retryable: true,
-      expectedNextTool: context.isCreate ? CREATE_TOOL_NAME : INSPECT_TOOL_NAME,
+      expectedNextTool: defaultNextTool,
       reuseRoundToken: false,
     });
   }
@@ -325,16 +336,15 @@ function asLifecycleRecoveryError(error: unknown, context: RecoveryContext = {})
     const text = message.slice("WINDOW_CONNECTION_MISMATCH:".length).trim();
     return recoveryError("WINDOW_CONNECTION_MISMATCH", text, {
       retryable: false,
-      expectedNextTool: context.isCreate ? CREATE_TOOL_NAME : INSPECT_TOOL_NAME,
+      expectedNextTool: defaultNextTool,
       reuseRoundToken: false,
     });
   }
   if (error instanceof WindowConnectionStaleError) {
     const text = message.slice("WINDOW_CONNECTION_STALE:".length).trim();
-    const expectedNextTool = context.isCreate ? CREATE_TOOL_NAME : INSPECT_TOOL_NAME;
     return recoveryError("WINDOW_CONNECTION_STALE", text, {
       retryable: true,
-      expectedNextTool,
+      expectedNextTool: defaultNextTool,
       reuseRoundToken: false,
     });
   }
@@ -350,7 +360,7 @@ function asLifecycleRecoveryError(error: unknown, context: RecoveryContext = {})
       message.slice("ARTIFACT_CONNECTION_WRITE_FAILED:".length).trim(),
       {
         retryable: true,
-        expectedNextTool: INSPECT_TOOL_NAME,
+        expectedNextTool: defaultNextTool,
         reuseRoundToken: false,
       },
     );
@@ -374,11 +384,18 @@ function reviewDecisionAction(kind: string, decision: ReviewDecision): ReviewWai
         "Process every comment in comments.comments. Answer all questions visibly in chat and include artifactLink before starting the next wait. For requested changes, supply complete replacement markdown; for question-only feedback, omit markdown to preserve the artifact bytes and SHA. If feedback needs clarification, ask the user and do not consume the round token or advance until clarified. Otherwise call advance_and_wait_for_artifact immediately in this same turn using the retained exact artifactDirectory, the returned reviewRound as expectedReviewRound, and the returned roundToken, then continue waiting for the next review. Never directly edit managed lifecycle files, including artifact.md, and never put conversational answers into the artifact Markdown.",
     };
   }
-  if (decision !== "approve" || (kind !== "plan" && kind !== "implementation-plan")) return undefined;
+  if (decision !== "approve") return undefined;
+  if (isPlanProceedKind(kind)) {
+    return {
+      type: "execute-approved-plan",
+      instruction:
+        "Execute the approved plan immediately in this same turn. Perform all in-scope code, file, workspace, and command actions described by the plan. Do not stop after acknowledging approval and do not ask for another confirmation. Pause only for a genuine blocker or authority outside the approved scope.",
+    };
+  }
   return {
-    type: "execute-approved-plan",
+    type: "approved",
     instruction:
-      "Execute the approved plan immediately in this same turn. Perform all in-scope code, file, workspace, and command actions described by the plan. Do not stop after acknowledging approval and do not ask for another confirmation. Pause only for a genuine blocker or authority outside the approved scope.",
+      "The user has approved this artifact. Acknowledge the approval and conclude the review. Do not automatically implement code or start another review round.",
   };
 }
 
@@ -642,6 +659,7 @@ async function persistArtifact(
   context: ArtifactContext;
   connection: ArtifactConnection;
   conversation: WorkSession;
+  session: SessionContext;
 }> {
   const rootOptions = globalRootOptions();
   const collectionRoot = await ensureSafeGlobalArtifactsRoot(rootOptions);
@@ -718,6 +736,8 @@ async function persistArtifact(
         conversation = reg.session;
       }
 
+      const session = await resolveWorkSessionContext(conversation.sessionId, rootOptions);
+
       if (process.env.NODE_ENV === "test" && process.env.CODEX_ARTIFACTS_TEST_FAIL_CREATE === "at-connection") {
         throw new Error("Injected connection write failure.");
       }
@@ -726,7 +746,7 @@ async function persistArtifact(
         source: "create",
       });
       const context = await loadArtifactContext(safeArtifactDirectory);
-      return { context, connection, conversation };
+      return { context, connection, conversation, session };
     } catch (error) {
       if (createdConversationId) {
         await removeConversation(createdConversationId, rootOptions).catch(() => undefined);
@@ -780,11 +800,19 @@ async function createArtifact(args: JsonObject | undefined): Promise<{
   context: ArtifactContext;
   connection: ArtifactConnection;
   conversation: WorkSession;
+  session: SessionContext;
 }> {
   const input = parseCreateArguments(args);
   if (input.artifactConversationId) {
-    await preflightConversationVersion(input.artifactConversationId, globalRootOptions());
-    await readSession(input.artifactConversationId, globalRootOptions());
+    try {
+      await preflightConversationVersion(input.artifactConversationId, globalRootOptions());
+      await readSession(input.artifactConversationId, globalRootOptions());
+    } catch (error) {
+      if (errorCode(error) === "ENOENT") {
+        throw new ConversationNotFoundError(`conversation ${input.artifactConversationId} not found`);
+      }
+      throw error;
+    }
   }
   const target = await resolveCreateTarget(input);
   return persistArtifact(input, target);
@@ -1519,10 +1547,19 @@ async function handleResolveWindowTool(id: unknown, args: JsonObject | undefined
 
 async function handleCreateTool(id: unknown, args: JsonObject | undefined): Promise<void> {
   try {
-    const { context, connection, conversation } = await createArtifact(args);
-    respond(id, toolResult(artifactHandle(context, connection, conversation)));
+    const { context, connection, conversation, session } = await createArtifact(args);
+    respond(id, toolResult({ ...artifactHandle(context, connection, conversation), session }));
   } catch (error) {
-    respond(id, toolError(asLifecycleRecoveryError(error, { isCreate: true })));
+    respond(
+      id,
+      toolError(
+        asLifecycleRecoveryError(error, {
+          isCreate: true,
+          entryTool: CREATE_TOOL_NAME,
+          hasArtifactHandle: false,
+        }),
+      ),
+    );
   }
 }
 
@@ -1549,6 +1586,15 @@ const ADVANCE_ALLOWED_KEYS: ReadonlySet<string> = new Set([
   "roundToken",
   "markdown",
   "artifactConversationId",
+]);
+
+const JOIN_ALLOWED_KEYS: ReadonlySet<string> = new Set([
+  "sessionId",
+  "artifactId",
+  "takeover",
+  "expectedReviewRound",
+  "intent",
+  "connection",
 ]);
 
 function assertAllowedToolKeys(toolName: string, args: JsonObject | undefined, allowedKeys: ReadonlySet<string>): void {
@@ -1595,6 +1641,203 @@ async function handleWaitTool(id: unknown, args: JsonObject | undefined): Promis
   }
 }
 
+type ArtifactInspectionRaw = Awaited<ReturnType<typeof readArtifactInspection>>;
+
+type InspectCoreInput = {
+  artifactDirectory: string;
+  expectedReviewRound?: number | undefined;
+  takeover?: boolean | undefined;
+  intent?: "explicit-chat-update" | "reconnect" | undefined;
+  connection?: ReconnectConnectionInput | undefined;
+  artifactConversationId?: string | undefined;
+  conversationName?: string | undefined;
+  expectedNextTool?: typeof CREATE_TOOL_NAME | typeof INSPECT_TOOL_NAME | typeof JOIN_SESSION_TOOL_NAME | undefined;
+};
+
+type InspectCoreResult = {
+  context: ArtifactContext;
+  inspection: ArtifactInspectionRaw;
+  session: WorkSession;
+  sessionContext: SessionContext;
+  connection: ArtifactConnection | null;
+  roundToken?: string | undefined;
+  roundTokenSource?: "chat-inspection" | "chat-update" | "submitted-review" | undefined;
+};
+
+async function executeInspectCore(input: InspectCoreInput): Promise<InspectCoreResult> {
+  const { artifactDirectory, intent, expectedReviewRound, takeover, connection: reconnectConnectionInput } = input;
+  let context = await loadArtifactContext(artifactDirectory);
+  if (expectedReviewRound !== undefined && context.reviewRound !== expectedReviewRound) {
+    throw roundMismatchError(context.reviewRound, expectedReviewRound);
+  }
+
+  const rootOptions = globalRootOptions();
+  if (input.artifactConversationId) {
+    try {
+      await preflightConversationVersion(input.artifactConversationId, rootOptions);
+      await readSession(input.artifactConversationId, rootOptions);
+    } catch (error) {
+      if (errorCode(error) === "ENOENT") {
+        throw new ConversationNotFoundError(`conversation ${input.artifactConversationId} not found`);
+      }
+      throw error;
+    }
+  }
+
+  let targetReconnectWindow: { windowInstanceId: string } | undefined;
+
+  // Routing preflight happens BEFORE takeover and BEFORE conversation registration when intent is reconnect
+  if (intent === "reconnect") {
+    const snapshotsDir = workspaceSnapshotsDir();
+    const now = Date.now();
+    const snapshots = await readFreshWorkspaceSnapshots(snapshotsDir);
+    const currentConnection = await readArtifactConnection(context.artifactDirectory, { allowMissing: true });
+
+    if (reconnectConnectionInput?.targetMode === "explicit-window") {
+      const grant = windowTokenStore.claim(reconnectConnectionInput.selectionToken, now);
+      const targetSnapshot = snapshots.find((s) => s.instanceId === grant.windowInstanceId);
+      if (!targetSnapshot) {
+        windowTokenStore.release(reconnectConnectionInput.selectionToken);
+        throw new WindowSelectionExpiredError("target window is no longer open; resolve active windows again.");
+      }
+      windowTokenStore.consume(reconnectConnectionInput.selectionToken);
+      targetReconnectWindow = {
+        windowInstanceId: targetSnapshot.instanceId,
+      };
+    } else {
+      const aiAffinityId =
+        reconnectConnectionInput?.targetMode === "artifact-window"
+          ? reconnectConnectionInput.windowInstanceId
+          : undefined;
+      const persistedAffinityId = currentConnection?.windowInstanceId;
+      const selection = selectReconnectWindowTarget(snapshots, aiAffinityId, persistedAffinityId);
+      if (selection.status === "matched") {
+        targetReconnectWindow = {
+          windowInstanceId: selection.targetWindow.instanceId,
+        };
+      } else if (selection.status === "selection-required") {
+        const candidates = buildWindowCandidates(selection.candidates, windowTokenStore, now);
+        throw new McpWindowSelectionRequiredError(
+          "WINDOW_SELECTION_REQUIRED: multiple candidate VS Code windows found. Select a target window.",
+          candidates,
+          {
+            expectedNextTool: input.expectedNextTool ?? INSPECT_TOOL_NAME,
+            useSameArtifactHandle: true,
+          },
+        );
+      } else {
+        throw new WindowNotFoundError("no active VS Code window was found.");
+      }
+    }
+  }
+
+  if (intent === "explicit-chat-update") {
+    const preCheckInspection = await readArtifactInspection(context);
+    if (preCheckInspection.comments.comments.length > 0 || preCheckInspection.submission) {
+      throw new Error("explicit-chat-update requires an empty review round without saved comments or a submission.");
+    }
+  }
+
+  if (takeover === true) {
+    await detachActiveArtifactWaiter(artifactDirectory);
+    context = await loadArtifactContext(artifactDirectory);
+    if (expectedReviewRound !== undefined && context.reviewRound !== expectedReviewRound) {
+      throw roundMismatchError(context.reviewRound, expectedReviewRound);
+    }
+  }
+
+  const inspection = await readArtifactInspection(context);
+
+  let createdInspectConversationId: string | undefined;
+  let existingInspectConversationId: string | undefined;
+  let previousMembershipRegisteredAt: string | undefined;
+  let session: WorkSession;
+  if (input.artifactConversationId) {
+    existingInspectConversationId = input.artifactConversationId;
+    const reg = await registerArtifactInSession(
+      input.artifactConversationId,
+      context.artifactId,
+      rootOptions,
+    );
+    previousMembershipRegisteredAt = reg.previousRegisteredAt;
+    session = reg.session;
+  } else {
+    const created = await createSession({
+      ...rootOptions,
+      title: input.conversationName ?? context.manifest.title,
+    });
+    createdInspectConversationId = created.sessionId;
+    try {
+      const reg = await registerArtifactInSession(created.sessionId, context.artifactId, rootOptions);
+      session = reg.session;
+    } catch (error) {
+      await removeConversation(created.sessionId, rootOptions).catch(() => undefined);
+      throw error;
+    }
+  }
+
+  let sessionContext: SessionContext;
+  let connection: ArtifactConnection | null = null;
+  try {
+    sessionContext = await resolveWorkSessionContext(session.sessionId, rootOptions);
+
+    if (intent === "reconnect" && targetReconnectWindow) {
+      if (
+        process.env.NODE_ENV === "test" &&
+        process.env.CODEX_ARTIFACTS_TEST_FAIL_RECONNECT === "invalid-state-at-connection"
+      ) {
+        throw new ArtifactConnectionInvalidError("Injected invalid connection state during commit.");
+      }
+      try {
+        connection = await commitArtifactConnectionRequest(context.artifactDirectory, {
+          windowInstanceId: targetReconnectWindow.windowInstanceId,
+          source: "inspect",
+        });
+      } catch (err) {
+        if (err instanceof ArtifactConnectionInvalidError || err instanceof ArtifactConnectionWriteError) {
+          throw err;
+        }
+        const detail = err instanceof Error ? err.message : String(err);
+        throw new ArtifactConnectionWriteError(`failed to update connection state: ${detail}`);
+      }
+    } else {
+      connection = await readArtifactConnection(context.artifactDirectory, { allowMissing: true });
+    }
+  } catch (error) {
+    if (createdInspectConversationId) {
+      await removeConversation(createdInspectConversationId, rootOptions).catch(() => undefined);
+    } else if (existingInspectConversationId) {
+      if (previousMembershipRegisteredAt !== undefined) {
+        await registerArtifactInSession(existingInspectConversationId, context.artifactId, {
+          ...rootOptions,
+          registeredAt: previousMembershipRegisteredAt,
+        }).catch(() => undefined);
+      } else {
+        await removeArtifactFromSession(existingInspectConversationId, context.artifactId, rootOptions).catch(
+          () => undefined,
+        );
+      }
+    }
+    throw error;
+  }
+
+  const { roundToken, roundTokenSource } = grantInspectedRound(
+    context,
+    inspection,
+    intent === "explicit-chat-update" ? intent : undefined,
+  );
+
+  return {
+    context,
+    inspection,
+    session,
+    sessionContext,
+    connection,
+    roundToken,
+    roundTokenSource,
+  };
+}
+
 async function handleInspectTool(id: unknown, args: JsonObject | undefined): Promise<void> {
   try {
     assertAllowedToolKeys(INSPECT_TOOL_NAME, args, INSPECT_ALLOWED_KEYS);
@@ -1611,11 +1854,6 @@ async function handleInspectTool(id: unknown, args: JsonObject | undefined): Pro
     }
     const expectedReviewRound = args?.expectedReviewRound !== undefined ? parseExpectedReviewRound(args) : undefined;
     const conversationArgs = parseOptionalConversationArguments(args);
-
-    let context = await loadArtifactContext(artifactDirectory);
-    if (expectedReviewRound !== undefined && context.reviewRound !== expectedReviewRound) {
-      throw roundMismatchError(context.reviewRound, expectedReviewRound);
-    }
 
     const connectionRaw = args?.connection;
     let reconnectConnectionInput: ReconnectConnectionInput | undefined;
@@ -1645,146 +1883,17 @@ async function handleInspectTool(id: unknown, args: JsonObject | undefined): Pro
       }
     }
 
-    const rootOptions = globalRootOptions();
-    if (conversationArgs.artifactConversationId) {
-      await preflightConversationVersion(conversationArgs.artifactConversationId, rootOptions);
-      await readSession(conversationArgs.artifactConversationId, rootOptions);
-    }
-
-    let targetReconnectWindow: { windowInstanceId: string } | undefined;
-
-    // Routing preflight happens BEFORE takeover and BEFORE conversation registration when intent is reconnect
-    if (intent === "reconnect") {
-      const snapshotsDir = workspaceSnapshotsDir();
-      const now = Date.now();
-      const snapshots = await readFreshWorkspaceSnapshots(snapshotsDir);
-      const currentConnection = await readArtifactConnection(context.artifactDirectory, { allowMissing: true });
-
-      if (reconnectConnectionInput?.targetMode === "explicit-window") {
-        const grant = windowTokenStore.claim(reconnectConnectionInput.selectionToken, now);
-        const targetSnapshot = snapshots.find((s) => s.instanceId === grant.windowInstanceId);
-        if (!targetSnapshot) {
-          windowTokenStore.release(reconnectConnectionInput.selectionToken);
-          throw new WindowSelectionExpiredError("target window is no longer open; resolve active windows again.");
-        }
-        windowTokenStore.consume(reconnectConnectionInput.selectionToken);
-        targetReconnectWindow = {
-          windowInstanceId: targetSnapshot.instanceId,
-        };
-      } else {
-        const aiAffinityId =
-          reconnectConnectionInput?.targetMode === "artifact-window"
-            ? reconnectConnectionInput.windowInstanceId
-            : undefined;
-        const persistedAffinityId = currentConnection?.windowInstanceId;
-        const selection = selectReconnectWindowTarget(snapshots, aiAffinityId, persistedAffinityId);
-        if (selection.status === "matched") {
-          targetReconnectWindow = {
-            windowInstanceId: selection.targetWindow.instanceId,
-          };
-        } else if (selection.status === "selection-required") {
-          const candidates = buildWindowCandidates(selection.candidates, windowTokenStore, now);
-          throw new McpWindowSelectionRequiredError(
-            "WINDOW_SELECTION_REQUIRED: multiple candidate VS Code windows found. Select a target window.",
-            candidates,
-            {
-              expectedNextTool: INSPECT_TOOL_NAME,
-              useSameArtifactHandle: true,
-            },
-          );
-        } else {
-          throw new WindowNotFoundError("no active VS Code window was found.");
-        }
-      }
-    }
-
-    if (intent === "explicit-chat-update" && args?.takeover === true) {
-      const preTakeoverInspection = await readArtifactInspection(context);
-      if (preTakeoverInspection.comments.comments.length > 0 || preTakeoverInspection.submission) {
-        throw new Error("explicit-chat-update requires an empty review round without saved comments or a submission.");
-      }
-    }
-
-    if (args?.takeover === true) {
-      await detachActiveArtifactWaiter(artifactDirectory);
-      context = await loadArtifactContext(artifactDirectory);
-      if (expectedReviewRound !== undefined && context.reviewRound !== expectedReviewRound) {
-        throw roundMismatchError(context.reviewRound, expectedReviewRound);
-      }
-    }
-
-    const inspection = await readArtifactInspection(context);
-    const { roundToken, roundTokenSource } = grantInspectedRound(
-      context,
-      inspection,
-      intent === "explicit-chat-update" ? intent : undefined,
-    );
-
-    let createdInspectConversationId: string | undefined;
-    let existingInspectConversationId: string | undefined;
-    let previousMembershipRegisteredAt: string | undefined;
-    let session: WorkSession;
-    if (conversationArgs.artifactConversationId) {
-      existingInspectConversationId = conversationArgs.artifactConversationId;
-      const reg = await registerArtifactInSession(
-        conversationArgs.artifactConversationId,
-        context.artifactId,
-        rootOptions,
-      );
-      previousMembershipRegisteredAt = reg.previousRegisteredAt;
-      session = reg.session;
-    } else {
-      const created = await createSession({
-        ...rootOptions,
-        title: conversationArgs.conversationName ?? context.manifest.title,
+    const { context, inspection, session, sessionContext, connection, roundToken, roundTokenSource } =
+      await executeInspectCore({
+        artifactDirectory,
+        expectedReviewRound,
+        takeover: args?.takeover,
+        intent,
+        connection: reconnectConnectionInput,
+        artifactConversationId: conversationArgs.artifactConversationId,
+        conversationName: conversationArgs.conversationName,
+        expectedNextTool: INSPECT_TOOL_NAME,
       });
-      createdInspectConversationId = created.sessionId;
-      try {
-        const reg = await registerArtifactInSession(created.sessionId, context.artifactId, rootOptions);
-        session = reg.session;
-      } catch (error) {
-        await removeConversation(created.sessionId, rootOptions).catch(() => undefined);
-        throw error;
-      }
-    }
-
-    let connection: ArtifactConnection | null = null;
-    if (intent === "reconnect" && targetReconnectWindow) {
-      try {
-        if (
-          process.env.NODE_ENV === "test" &&
-          process.env.CODEX_ARTIFACTS_TEST_FAIL_RECONNECT === "invalid-state-at-connection"
-        ) {
-          throw new ArtifactConnectionInvalidError("Injected invalid connection state during commit.");
-        }
-        connection = await commitArtifactConnectionRequest(context.artifactDirectory, {
-          windowInstanceId: targetReconnectWindow.windowInstanceId,
-          source: "inspect",
-        });
-      } catch (error) {
-        if (createdInspectConversationId) {
-          await removeConversation(createdInspectConversationId, rootOptions).catch(() => undefined);
-        } else if (existingInspectConversationId) {
-          if (previousMembershipRegisteredAt !== undefined) {
-            await registerArtifactInSession(existingInspectConversationId, context.artifactId, {
-              ...rootOptions,
-              registeredAt: previousMembershipRegisteredAt,
-            }).catch(() => undefined);
-          } else {
-            await removeArtifactFromSession(existingInspectConversationId, context.artifactId, rootOptions).catch(
-              () => undefined,
-            );
-          }
-        }
-        if (error instanceof ArtifactConnectionInvalidError || error instanceof ArtifactConnectionWriteError) {
-          throw error;
-        }
-        const detail = error instanceof Error ? error.message : String(error);
-        throw new ArtifactConnectionWriteError(`failed to update connection state: ${detail}`);
-      }
-    } else {
-      connection = await readArtifactConnection(context.artifactDirectory, { allowMissing: true });
-    }
 
     respond(
       id,
@@ -1798,10 +1907,129 @@ async function handleInspectTool(id: unknown, args: JsonObject | undefined): Pro
         submissionSha256: inspection.submissionSha256,
         roundToken,
         ...(roundTokenSource ? { roundTokenSource } : {}),
+        session: sessionContext,
       }),
     );
   } catch (error) {
-    respond(id, toolError(asLifecycleRecoveryError(error)));
+    respond(id, toolError(asLifecycleRecoveryError(error, { entryTool: INSPECT_TOOL_NAME, hasArtifactHandle: true })));
+  }
+}
+
+async function handleJoinSessionTool(id: unknown, args: JsonObject | undefined): Promise<void> {
+  try {
+    assertAllowedToolKeys(JOIN_SESSION_TOOL_NAME, args, JOIN_ALLOWED_KEYS);
+    const sessionId = args?.sessionId;
+    if (typeof sessionId !== "string" || !artifactConversationIdSchema.safeParse(sessionId).success) {
+      throw new Error("sessionId must be a valid UUID.");
+    }
+
+    const rootOptions = globalRootOptions();
+
+    if (args?.artifactId === undefined) {
+      if (
+        args?.takeover !== undefined ||
+        args?.expectedReviewRound !== undefined ||
+        args?.intent !== undefined ||
+        args?.connection !== undefined
+      ) {
+        throw new Error("Inspect options (takeover, expectedReviewRound, intent, connection) require artifactId.");
+      }
+      try {
+        await preflightConversationVersion(sessionId, rootOptions);
+        await readSession(sessionId, rootOptions);
+      } catch (error) {
+        if (errorCode(error) === "ENOENT") {
+          throw new ConversationNotFoundError(`conversation ${sessionId} not found`);
+        }
+        throw error;
+      }
+      const sessionContext = await resolveWorkSessionContext(sessionId, rootOptions);
+      respond(
+        id,
+        toolResult({
+          session: sessionContext,
+        }),
+      );
+      return;
+    }
+
+    const artifactIdRaw = args.artifactId;
+    if (typeof artifactIdRaw !== "string" || !artifactIdSchema.safeParse(artifactIdRaw).success) {
+      throw new Error("INVALID_ARTIFACT_INPUT: artifactId must be a valid artifact ID.");
+    }
+    const artifactId = artifactIdRaw;
+    const canonicalDir = path.join(globalArtifactsRoot(rootOptions), artifactId);
+
+    const intent = args?.intent;
+    if (intent !== undefined && intent !== "explicit-chat-update" && intent !== "reconnect") {
+      throw new Error(`Invalid intent: ${String(intent)}.`);
+    }
+    if (intent === "explicit-chat-update" && args?.expectedReviewRound === undefined) {
+      throw new Error("expectedReviewRound is required when intent is explicit-chat-update.");
+    }
+    const expectedReviewRound = args?.expectedReviewRound !== undefined ? parseExpectedReviewRound(args) : undefined;
+
+    if (args?.takeover !== undefined && typeof args.takeover !== "boolean") {
+      throw new Error("INVALID_ARTIFACT_INPUT: takeover must be a boolean.");
+    }
+
+    const connectionRaw = args?.connection;
+    let reconnectConnectionInput: ReconnectConnectionInput | undefined;
+
+    if (intent === "reconnect") {
+      if (connectionRaw !== undefined) {
+        const parsed = reconnectConnectionInputSchema.safeParse(connectionRaw);
+        if (!parsed.success) {
+          throw new Error(
+            "INVALID_ARTIFACT_INPUT: connection must be an object with targetMode: 'explicit-window' and a valid UUID selectionToken, or targetMode: 'artifact-window' and a valid UUID windowInstanceId.",
+          );
+        }
+        reconnectConnectionInput = parsed.data;
+      }
+    } else {
+      if (connectionRaw !== undefined) {
+        throw new Error("INVALID_ARTIFACT_INPUT: connection is only supported when intent is reconnect.");
+      }
+    }
+
+    const { context, inspection, session, sessionContext, connection, roundToken, roundTokenSource } =
+      await executeInspectCore({
+        artifactDirectory: canonicalDir,
+        expectedReviewRound,
+        takeover: args?.takeover,
+        intent,
+        connection: reconnectConnectionInput,
+        artifactConversationId: sessionId,
+        expectedNextTool: JOIN_SESSION_TOOL_NAME,
+      });
+
+    respond(
+      id,
+      toolResult({
+        session: sessionContext,
+        inspection: {
+          ...artifactHandle(context, connection ?? undefined, session),
+          manifest: context.manifest,
+          markdown: inspection.markdown,
+          comments: inspection.comments,
+          commentsSha256: inspection.commentsSha256,
+          submission: inspection.submission,
+          submissionSha256: inspection.submissionSha256,
+          roundToken,
+          ...(roundTokenSource ? { roundTokenSource } : {}),
+        },
+      }),
+    );
+  } catch (error) {
+    respond(
+      id,
+      toolError(
+        asLifecycleRecoveryError(error, {
+          entryTool: JOIN_SESSION_TOOL_NAME,
+          hasArtifactHandle: args?.artifactId !== undefined,
+        }),
+      ),
+    );
   }
 }
 
@@ -2018,6 +2246,7 @@ async function handleRequest(message: JsonObject): Promise<void> {
         "Pass connection: { targetMode: 'explicit-window', selectionToken } when targeting a specific candidate, or connection: { targetMode: 'artifact-window', windowInstanceId } to inspect_artifact_review (intent=reconnect) as an advisory affinity hint.",
         "Create returns the exact artifactDirectory, artifactConversationId, and committed connection metadata; retain them and pass artifactConversationId to subsequent create_artifact and inspect_artifact_review calls in the same chat session, then call wait_for_artifact_review.",
         "When inspecting an artifact from a new chat session without an active artifactConversationId, omit artifactConversationId so inspect_artifact_review creates a new conversation and registers the artifact.",
+        "To join an existing work session, call join_session with sessionId; supply artifactId to inspect and attach an artifact to that session.",
         "A cancelled waiter never ends or deletes the artifact.",
         "Both wait_for_artifact_review and advance_and_wait_for_artifact return the complete validated comments document for every submitted decision; read feedback from comments.comments. A revise result also returns nextAction.type=process-review-feedback and a one-time roundToken so feedback can be processed without an additional inspection just to fetch comments.",
         "Treat comments returned by a Review submission and comments read through inspect_artifact_review with the same policy: answer questions visibly in chat before calling advance_and_wait_for_artifact, update Markdown only for requested changes, omit markdown for question-only feedback, and ask for clarification without consuming the token when needed.",
@@ -2028,6 +2257,7 @@ async function handleRequest(message: JsonObject): Promise<void> {
         "When updating an artifact directly from chat on an empty round, inspect with takeover=true, expectedReviewRound, and intent=explicit-chat-update, then advance with replacement markdown.",
         "Follow structured recovery metadata on lifecycle errors, keep the same exact handle, and never replay when commit state is uncertain.",
         "When Proceed returns approve for kind plan or implementation-plan, obey nextAction and execute the complete approved plan immediately in the same turn; do not stop at acknowledgement or ask for another confirmation.",
+        "When Proceed returns approve for any other kind, acknowledge the approval and conclude the review without automatically implementing code or starting another review round.",
         "Proceed ends only the review round, not the authorized execution.",
         "Just save ends the round without execution.",
         "Reconnect later by explicitly inspecting, advancing without markdown, and waiting again; reconnect must not repeat an already executed action.",
@@ -2112,7 +2342,7 @@ async function handleRequest(message: JsonObject): Promise<void> {
           name: WAIT_TOOL_NAME,
           title: "Wait for artifact review",
           description:
-            "Attach one transient waiter to an exact artifact round. Return an existing submission immediately, or wait for Review, Proceed, or Just save. Every decision returns the complete validated comments document; read comments.comments. Review returns a process-review-feedback next action and round token. An approved plan returns an execute-approved-plan next action. Takeover safely detaches the previous waiter.",
+            "Attach one transient waiter to an exact artifact round. Return an existing submission immediately, or wait for Review, Proceed, or Just save. Every decision returns the complete validated comments document; read comments.comments. Review returns a process-review-feedback next action and round token. An approved plan returns an execute-approved-plan next action. An approved non-plan returns an approved next action. Takeover safely detaches the previous waiter.",
           inputSchema: {
             type: "object",
             properties: {
@@ -2206,10 +2436,83 @@ async function handleRequest(message: JsonObject): Promise<void> {
           annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
         },
         {
+          name: JOIN_SESSION_TOOL_NAME,
+          title: "Join work session",
+          description:
+            "Join an existing work session. Provide only sessionId to read its full session context (metadata, instructions, and categorized artifacts catalog) without opening, takeover, or token generation. Provide both sessionId and artifactId to inspect the target artifact and join the session, updating membership and window connection as appropriate.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              sessionId: {
+                type: "string",
+                format: "uuid",
+                description: "Active work session UUID to join.",
+              },
+              artifactId: {
+                type: "string",
+                description: "Optional artifact ID to inspect and link to the session.",
+              },
+              takeover: {
+                type: "boolean",
+                default: false,
+                description: "Safely detach any existing waiter on the target artifact before inspecting.",
+              },
+              expectedReviewRound: {
+                type: "integer",
+                minimum: 1,
+                description: "Expected current review round. Required when intent is explicit-chat-update.",
+              },
+              intent: {
+                type: "string",
+                enum: ["explicit-chat-update", "reconnect"],
+                description:
+                  "Specify reconnect to bind the artifact to an active VS Code window, or explicit-chat-update when requesting changes on an empty round.",
+              },
+              connection: {
+                description: "Optional window targeting connection parameters for reconnect.",
+                oneOf: [
+                  {
+                    type: "object",
+                    description: "Advisory affinity hint targeting a previously bound VS Code window.",
+                    properties: {
+                      targetMode: { const: "artifact-window" },
+                      windowInstanceId: {
+                        type: "string",
+                        format: "uuid",
+                        description: "Previously committed windowInstanceId for this artifact.",
+                      },
+                    },
+                    required: ["targetMode", "windowInstanceId"],
+                    additionalProperties: false,
+                  },
+                  {
+                    type: "object",
+                    description: "Explicit window targeting with selection token.",
+                    properties: {
+                      targetMode: { const: "explicit-window" },
+                      selectionToken: {
+                        type: "string",
+                        format: "uuid",
+                        description:
+                          "Window selection token returned by resolve_artifact_window or an earlier WINDOW_SELECTION_REQUIRED response.",
+                      },
+                    },
+                    required: ["targetMode", "selectionToken"],
+                    additionalProperties: false,
+                  },
+                ],
+              },
+            },
+            required: ["sessionId"],
+            additionalProperties: false,
+          },
+          annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+        },
+        {
           name: ADVANCE_AND_WAIT_TOOL_NAME,
           title: "Advance and wait for artifact review",
           description:
-            "Consume a validated one-time round token, optionally replace the complete Markdown, advance and reset the artifact round transactionally, then wait for the next review. Omitting markdown preserves the artifact bytes and SHA. Return the next round's complete validated comments document at comments, with a process-review-feedback next action and new token for revise, or an execute-approved-plan next action for an approved plan.",
+            "Consume a validated one-time round token, optionally replace the complete Markdown, advance and reset the artifact round transactionally, then wait for the next review. Omitting markdown preserves the artifact bytes and SHA. Return the next round's complete validated comments document at comments, with a process-review-feedback next action and new token for revise, an execute-approved-plan next action for an approved plan, or an approved next action for an approved non-plan.",
           inputSchema: {
             type: "object",
             properties: {
@@ -2247,6 +2550,10 @@ async function handleRequest(message: JsonObject): Promise<void> {
     }
     if (params?.name === INSPECT_TOOL_NAME) {
       await handleInspectTool(id, params?.arguments);
+      return;
+    }
+    if (params?.name === JOIN_SESSION_TOOL_NAME) {
+      await handleJoinSessionTool(id, params?.arguments);
       return;
     }
     if (params?.name === ADVANCE_AND_WAIT_TOOL_NAME) {

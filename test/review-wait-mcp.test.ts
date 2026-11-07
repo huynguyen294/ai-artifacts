@@ -316,6 +316,7 @@ describe("artifact review MCP server v8", () => {
       "create_artifact",
       "wait_for_artifact_review",
       "inspect_artifact_review",
+      "join_session",
       "advance_and_wait_for_artifact",
     ]);
     const createTool = tools.tools.find((tool: any) => tool.name === "create_artifact");
@@ -667,6 +668,13 @@ describe("artifact review MCP server v8", () => {
       });
       expect(result.structuredContent.roundToken).toEqual(expect.any(String));
       expect(result.structuredContent.roundTokenSource).toBe("submitted-review");
+    } else if (decision === "approve") {
+      expect(result.structuredContent.nextAction).toMatchObject({
+        type: "approved",
+        instruction: expect.stringContaining("Acknowledge the approval and conclude the review"),
+      });
+      expect(result.structuredContent.roundToken).toBeUndefined();
+      expect(result.structuredContent.roundTokenSource).toBeUndefined();
     } else {
       expect(result.structuredContent.nextAction).toBeUndefined();
       expect(result.structuredContent.roundToken).toBeUndefined();
