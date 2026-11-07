@@ -1,6 +1,6 @@
 # Sessions — Implementation plan
 
-Trạng thái: **Phase 1+2 và phạm vi ban đầu của Phase 3 (Bước 1–6) đã hoàn thành theo các plan chi tiết. Chặng 3 của Phase 3 được mở rộng thêm Bước 7 — active Session contract, chưa triển khai.**
+Trạng thái: **Phase 1+2 và toàn bộ Phase 3 (gồm cả Bước 7 mở rộng) đã hoàn thành theo các plan chi tiết.**
 
 > [!NOTE]
 > - **Tiến độ triển khai:**
@@ -22,7 +22,7 @@ Nguồn yêu cầu: [analyzed.md](analyzed.md) và các quyết định tiếp n
 | --- | --- | --- |
 | [1. Session model](plan-phase-1-2.md) | Metadata Session v2 (`title`, `instructions`, `typeId`, `createdAt`), giữ `registered-artifacts/` làm nguồn membership, tách `layout.json` ba mảng, tính `updatedAt` từ `createdAt`/`registeredAt`; auto-create/reuse; migration theo yêu cầu; registry session types và API quản lý | ✅ **Đã hoàn thành trong Chặng 1** |
 | [2. Sidebar và điều hướng](plan-phase-1-2.md#phase-2--sidebar-quản-lý-session-types-và-điều-hướng) | Recent Artifacts/Sessions v2; gate theo MCP đã cài; phát hiện và popup bulk migration; ⚙ quản lý types; tab session chỉ đọc; Sessions/migration đơn lẻ thay drawer cũ | ✅ **Đã hoàn thành trong Chặng 2 & Chặng 3** |
-| [3. Session Manager cơ bản](plan-phase-3.md) | Manager editing, scoped refresh, menu move/reorder/remove, panel preference, filter/search và English Quick Input; bổ sung contract một active Session cho mỗi chat AI | Bước 1–6 hoàn thành; Bước 7 mở rộng chưa triển khai |
+| [3. Session Manager cơ bản](plan-phase-3.md) | Manager editing, scoped refresh, menu move/reorder/remove, panel preference, filter/search và English Quick Input; bổ sung contract một active Session cho mỗi chat AI | ✅ **Đã hoàn thành toàn bộ (Bước 1–7)** |
 | 4. Agent và catalog | Connect từ manager; hoàn thiện new/join sau popup inspect tối thiểu ở Phase 2; catalog title/description/type/directory và instructions; cung cấp exact Session ID/metadata path và hướng dẫn AI sửa instructions bằng công cụ file; đọc file chọn lọc | Chưa triển khai |
 | 5. Tổ chức trực quan | Card masonry, hiển thị metadata/description theo catalog đã chốt; filter/search artifact. Sắp xếp/chuyển vùng tiếp tục dùng menu hiện có, ghi `layout.json` độc lập membership của MCP | Chưa triển khai |
 
@@ -60,7 +60,7 @@ Chi tiết file, luồng xử lý, khả năng phải đạt và kiểm chứng 
 | 2 | 3 | UI sửa tên/Hướng dẫn/type; bố cục Working + panel, preference riêng từng Session; menu move/reorder/remove artifact. |
 | 3 | 4 + 5 + 6 + 7 | Filter/search, English Quick Input và nghiệm thu ban đầu đã xong; mở rộng thêm active Session contract trong skill/prompt và kiểm chứng tương ứng. |
 
-Bước 1–6 đã hoàn thành theo [plan Phase 3](plan-phase-3.md); Bước 7 **chưa triển khai**. Không có migration/schema mới, dirty dialog, conflict handling, Pin/Archive/Delete Session hoặc Connect manager trong đợt mở rộng.
+Toàn bộ Bước 1–7 đã hoàn thành theo [plan Phase 3](plan-phase-3.md). Không có migration/schema mới, dirty dialog, conflict handling, Pin/Archive/Delete Session hoặc Connect manager trong đợt mở rộng.
 
 ## 7 bước nhỏ trong đợt Phase 1+2 (Tổ chức theo 3 Chặng)
 

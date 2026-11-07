@@ -50,7 +50,8 @@ The artifact is per-user data whose lifetime is bounded by configured retention 
   artifact-connection.json  # optional window-routing state
 
 ~/.ai-artifacts/conversation-registry/<artifactConversationId>/
-  conversation.json         # schema-v1 conversation metadata
+  conversation.json         # schema-v2 session metadata
+  layout.json               # working, references, archived zone arrays
   registered-artifacts/     # per-artifact index
     <server-generated-id>.json
 ```
@@ -59,7 +60,26 @@ All lifecycle files are server- or extension-owned. Agents must not create, upda
 
 `artifact.json` is schema-v6 and does not store workspace location: `{ schemaVersion: 6, kind, artifactId, title, createdAt, updatedAt, reviewRound, reviewSessionId }`. Optional `artifact-connection.json` is schema-v1 UI-routing state only: `{ schemaVersion, windowInstanceId, connectionRevision, openRequestId, source, updatedAt }`. `connectionRevision` orders successful commits and `openRequestId` deduplicates filesystem events. Create and reconnect may commit this file; wait and advance preserve it unchanged.
 
-`conversation.json` is schema-v1 grouping state for the **Artifacts in Conversation** drawer: `{ schemaVersion: 1, artifactConversationId, conversationName, createdAt, updatedAt }`. Individual entries under `registered-artifacts/<artifact-id>.json` record registered artifacts. Expired or deleted artifacts and empty conversation entries are pruned during automatic retention cleanup.
+`conversation.json` is schema-v2 session metadata for the Work Session: `{ schemaVersion: 2, sessionId, title, instructions, typeId, createdAt }`. `layout.json` manages ordered artifact placement in Working, References, and Archived zones. Individual entries under `registered-artifacts/<artifact-id>.json` record registered artifact memberships. Expired or deleted artifacts and empty conversation entries are pruned during automatic retention cleanup.
+
+## Chat and Work Session active context
+
+A Work Session may be shared across multiple AI chat conversations concurrently. Each chat conversation maintains at most one active session ID (`activeSessionId`) in memory at any given time. The MCP parameter `artifactConversationId` carries this Work Session ID (not a chat conversation ID or reviewSessionId).
+
+| User / caller intent | ID sent to create/inspect | Context after success |
+|---|---|---|
+| Initial (no active session yet) | Omit `artifactConversationId` | Retain returned session ID as active context |
+| Default turn (holding active session S) | Send S | Continue using S for future turns |
+| Create artifact with explicit New Session request | Omit ID (even if holding S) | Replace active context with newly returned ID |
+| Inspect artifact with explicit New Session request | Omit ID (even if holding S) | Replace active context with newly returned ID; keep exact artifact handle |
+| Join specific Session T | Send exact ID T | Set active context to T upon success |
+
+Rules:
+- Only commit the new active session ID after the lifecycle tool call succeeds. If a tool fails, do not automatically retry against the old session.
+- Replacing the active session ID does not delete the old session, migrate its artifacts, or affect artifact memberships.
+- Window-selection retry preserves the caller's intent and target session; it does not inject old session IDs into a New Session request.
+- Changing the active session ID preserves all existing `artifactDirectory -> { reviewRound, windowInstanceId }` mappings; an artifact may belong to multiple Work Sessions concurrently.
+- Never infer an active session from artifact membership, session title, newest session, PID, or AI client identity. Lifecycle responses from `wait_for_artifact_review` and `advance_and_wait_for_artifact` echo round context and do not alter the chat's active session.
 
 ## Handle ownership
 

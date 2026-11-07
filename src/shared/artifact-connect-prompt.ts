@@ -15,7 +15,7 @@ export function buildArtifactConnectPrompt(
     return [
       "Inspect this exact AI Artifact and create a new session:",
       `artifactDirectory: ${JSON.stringify(artifactDirectory)}`,
-      "Do not pass any existing artifactConversationId for this request. Omit artifactConversationId when inspecting and retain the newly returned artifactConversationId for future turns.",
+      "Do not pass any existing artifactConversationId for this request. Omit artifactConversationId when inspecting and, after the inspect call succeeds, replace your active session context with the newly returned artifactConversationId for future turns.",
     ].join("\n");
   }
 
@@ -24,7 +24,7 @@ export function buildArtifactConnectPrompt(
       "Inspect this exact AI Artifact and join the session:",
       `artifactDirectory: ${JSON.stringify(artifactDirectory)}`,
       `artifactConversationId: ${JSON.stringify(options.sessionId)}`,
-      "Use this artifactConversationId when inspecting and set it as your active session context.",
+      "Use this exact artifactConversationId when inspecting and, only after the inspect call succeeds, set it as your active session context for future turns.",
     ].join("\n");
   }
 

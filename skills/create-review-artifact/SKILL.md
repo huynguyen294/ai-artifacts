@@ -18,7 +18,12 @@ Coordinate one reviewable Markdown artifact for one explicit user request.
    - Compare candidate labels, open folders, and active files against user context. Select a candidate without asking when exactly one clearly matches. Ask the user only when candidates remain tied or ambiguous.
    - When retrying after `WINDOW_SELECTION_REQUIRED`, pass `connection: { targetMode: "explicit-window", selectionToken }`.
    - If you need to proactively discover active windows or check candidate labels before creating, call `resolve_artifact_window({ query })`.
-4. Track `artifactConversationId` at the conversation level across the chat session. On the first artifact creation in a conversation, pass `conversationName` (or omit for an auto-generated conversation ID). On subsequent creations or inspections within the same chat, pass `artifactConversationId` to group them into the same conversation drawer. `create_artifact` and `inspect_artifact_review` return `artifactConversationId`, while `wait_for_artifact_review` and `advance_and_wait_for_artifact` echo `artifactConversationId` when provided.
+4. Maintain at most one active Work Session (`artifactConversationId`) per chat conversation. Pass `conversationName` on the first creation (or omit for an auto-generated Session ID). On subsequent creations or inspections within the same chat, pass the active `artifactConversationId` by default to group artifacts into that Work Session. Follow explicit session context rules:
+   - **Default reuse**: If the chat holds an active Session `S`, pass `artifactConversationId: S` to continue working in `S`.
+   - **Explicit New Session**: If the user explicitly asks for a new session (e.g. "new session", "tạo session mới"), omit `artifactConversationId` on `create_artifact` or `inspect_artifact_review` even if the chat currently holds `S`. Upon tool success, replace the active session with the newly returned ID. Merely changing `conversationName` while passing `S` does not create a new session.
+   - **Explicit Join Session**: If the user requests to join or connect to a specific Session `T`, pass exact `artifactConversationId: T`. Upon tool success, set `T` as the chat's active session.
+   - **Success-only replacement**: Only update your active session context after the lifecycle tool call succeeds. If a tool fails, do not automatically retry against the old session or guess another session. Window-selection retry retains the original target session intent.
+   - Multiple chat conversations can share the same Work Session, but each chat conversation tracks at most one active session at a time.
 
 ## Create and review
 

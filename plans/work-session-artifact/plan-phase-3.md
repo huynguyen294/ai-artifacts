@@ -1,6 +1,6 @@
 # Phase 3 — Session Manager: hướng dẫn triển khai
 
-Trạng thái: **Phạm vi ban đầu của Phase 3 (Bước 1–6 và fix 3 findings) đã hoàn thành**, với kết quả đã ghi nhận: 40 test files, 585 tests passed, typecheck và build pass. **Chặng 3 được mở rộng thêm Bước 7 — contract active Session, chưa triển khai**; kết quả kiểm chứng cũ không bao gồm bước bổ sung này. Phase 1+2 đã hoàn thành theo [plan tổng thể](plan.md) và [hướng dẫn Phase 1+2](plan-phase-1-2.md).
+Trạng thái: **Đã hoàn thành toàn bộ Phase 3 bao gồm cả Bước 7 mở rộng (Active Session contract)**: 40 test files, 587 tests passed, typecheck và build pass. Phase 1+2 đã hoàn thành theo [plan tổng thể](plan.md) và [hướng dẫn Phase 1+2](plan-phase-1-2.md).
 
 Mục tiêu ban đầu: manager editing, filter/search Sessions và English Quick Input. Phạm vi hiện tại gồm **7 bước trong 3 chặng**: giữ kết quả bước 1–6, bổ sung quy tắc active Session cho chat AI ở bước 7 sau khi Chặng 3 gốc hoàn thành.
 
@@ -85,7 +85,7 @@ Textarea khởi tạo khi mở Session, thay đổi do user nhập, own-save ho�
 | 3 — Sidebar và nghiệm thu | 4. Filter/search | Lọc sidebar theo type; tìm toàn bộ v2 và mở đúng Session. | ✅ Đã hoàn thành |
 | 3 — Sidebar và nghiệm thu | 5. English Quick Input | Wording nhất quán, CRUD types vẫn đúng. | ✅ Đã hoàn thành |
 | 3 — Sidebar và nghiệm thu | 6. Validation/bàn giao | Tests/check/build và bằng chứng Extension Host tách riêng. | ✅ Đã hoàn thành |
-| 3 — Mở rộng sau nghiệm thu ban đầu | 7. Active Session contract | Chuẩn hoá default/New/Join cho chat AI; skill/prompt/tests/version đồng bộ. | Chưa triển khai |
+| 3 — Mở rộng sau nghiệm thu ban đầu | 7. Active Session contract | Chuẩn hoá default/New/Join cho chat AI; skill/prompt/tests/version đồng bộ. | ✅ Đã hoàn thành |
 
 Mỗi chặng kết thúc ở phần diff review được và cập nhật tiến độ bằng kết quả thực tế. Không đánh dấu runtime hoàn thành chỉ từ build/render markup pass.
 
@@ -254,7 +254,7 @@ Không nhận Session ID/path tuỳ ý trong action payload. `openArtifact` vẫ
 
 ### 5.7. Bước 7 — Mở rộng Chặng 3: contract active Session của chat AI
 
-**Phụ thuộc:** bước 1–6 đã hoàn thành. **Trạng thái:** chưa triển khai; đây là hướng dẫn cho lượt tiếp theo, không thay kết quả đã ghi nhận của Chặng 3 gốc.
+**Phụ thuộc:** bước 1–6 đã hoàn thành. **Trạng thái:** ✅ Đã hoàn thành toàn bộ (mở rộng Chặng 3).
 
 **Quan hệ:** một Session có thể được nhiều conversation chat AI cùng sử dụng. Mỗi chat giữ **0 hoặc 1 `activeSessionId`** tại một thời điểm; chat có thể chuyển Session theo yêu cầu user. Đây là ngữ cảnh của chat do AI giữ, không thêm bảng/list chat vào registry. Tham số MCP hiện tại `artifactConversationId` mang Session ID, không phải ID của conversation chat hoặc `reviewSessionId`.
 
@@ -280,7 +280,7 @@ Không nhận Session ID/path tuỳ ý trong action payload. `openArtifact` vẫ
 
 **Khả năng phải đạt:** chat đang giữ S vẫn tạo/inspect được vào Session mới theo yêu cầu rồi dùng ID mới cho request mặc định tiếp theo; nhiều chat có thể dùng cùng S. Các thao tác manager, membership và review lifecycle giữ contract đã có.
 
-**Kiểm chứng:** focused suites của skill/prompt; check/test/build sau thay đổi thực. Manual với AI client: default S → create-new N → create/inspect mặc định dùng N; inspect-new → mặc định dùng ID mới; Join T → mặc định dùng T. Ghi kết quả AI runtime riêng; chưa chạy trong lượt cập nhật plan này.
+**Kiểm chứng:** focused suites của skill/prompt; check/test/build sau thay đổi thực đã pass 100%. Manual runtime với AI client (default S → create-new N → create/inspect mặc định dùng N; inspect-new → mặc định dùng ID mới; Join T → mặc định dùng T) ghi nhận riêng.
 
 ## 6. Nghiệm thu Phase 3
 

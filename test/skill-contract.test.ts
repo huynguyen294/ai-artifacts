@@ -265,5 +265,18 @@ describe("create-review-artifact skill contract", () => {
     expect(contract).toContain("artifactConversationId");
     expect(contract).toContain("CONVERSATION_NOT_FOUND");
     expect(contract).toContain("CONVERSATION_REGISTRY_INVALID");
+
+    // Phase 3 Step 7 active Session contract assertions
+    expect(skill).toContain("Maintain at most one active Work Session (`artifactConversationId`) per chat conversation");
+    expect(skill).toContain("Default reuse");
+    expect(skill).toContain("Explicit New Session");
+    expect(skill).toContain("Explicit Join Session");
+    expect(skill).toContain("Success-only replacement");
+    expect(contract).toContain("## Chat and Work Session active context");
+    expect(contract).toContain("schema-v2 session metadata for the Work Session");
+    expect(contract).toContain("layout.json");
+    expect(contract).toContain("Changing the active session ID preserves all existing `artifactDirectory -> { reviewRound, windowInstanceId }` mappings");
+    expect(contract).toContain("Never infer an active session from artifact membership, session title, newest session, PID, or AI client identity");
+    expect(contract).toContain("Lifecycle responses from `wait_for_artifact_review` and `advance_and_wait_for_artifact` echo round context and do not alter the chat's active session");
   });
 });

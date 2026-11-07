@@ -119,7 +119,7 @@ describe("v1.1.4 release contract", () => {
       expect(document).toContain("~/.ai-artifacts/conversation-registry/");
     }
     expect(readme).toContain("MCP_VERSION = 12");
-    expect(readme).toContain("SKILL_VERSION = 3");
+    expect(readme).toContain("SKILL_VERSION = 5");
     expect(readme).toContain("~/.ai-artifacts/managed/integration-version.json");
     expect(readme).toContain("USER CUSTOM RULES");
     expect(readme).toContain("It does not prove that custom rules remain semantically compatible");
@@ -131,7 +131,7 @@ describe("v1.1.4 release contract", () => {
     expect(readme).toContain("The target may be unfocused; other windows ignore the event");
     expect(philosophy).toContain("Focus is a ranking hint, not identity, authorization, or a requirement");
     expect(philosophy).toContain("numeric MCP version 12");
-    expect(philosophy).toContain("numeric skill version 3");
+    expect(philosophy).toContain("numeric skill version 5");
     expect(philosophy).toContain("not SemVer");
     expect(architecture).toContain("Integration asset versioning and skill customization");
     expect(architecture).toContain("valid partial install");

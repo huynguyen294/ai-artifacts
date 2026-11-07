@@ -30,6 +30,12 @@ Each entry includes the date, category, summary of changes, rationale, and affec
   - Extended `ConversationArtifactService` (`src/extension/conversation-artifact-service.ts`) with typed `WorkSessionDataChange` batches (`metadata`, `membership`, `layout`, `artifact`, `types`, `support`), URI classification ignoring temporary/backup files, and deduplicated debounce scheduling.
   - Updated `WorkSessionProvider`, `ArtifactReviewProvider`, `RecentArtifactsTreeDataProvider`, and `WorkSessionsTreeDataProvider` to subscribe to scoped changes so unrelated updates never trigger full reloads or overwrite in-progress user input.
   - Added `workSessionSummaryPatch`, `workSessionArtifactsPatch`, and `workSessionInstructionsPatch` messages in `src/shared/contracts.ts`. `WorkSessionProvider` tracks `lastPersistedInstructions` per open session and emits `workSessionInstructionsPatch` only when `instructions` in `conversation.json` changes on disk (supporting external/AI edits to session instructions while ignoring title/type-only metadata writes and own-save echo events).
+- **Active Session Contract & Skill v5 Bump (Step 7)**:
+  - Standardized AI chat session tracking: each chat conversation maintains at most one active Work Session (`artifactConversationId`) in memory; default reuse continues unless the user explicitly requests New Session or Join Session.
+  - Enforced success-only replacement: active session ID is updated only after lifecycle tool calls succeed; failures never cause unintended fallback or premature context switching.
+  - Changing active session preserves all per-artifact handle mappings (`artifactDirectory -> { reviewRound, windowInstanceId }`); an artifact may belong to multiple Work Sessions concurrently.
+  - Prompts in `artifact-connect-prompt.ts` updated to explicitly instruct agents on success-only replacement for `new` and `join` modes.
+  - Bumped numeric `SKILL_VERSION` from 4 to 5 (keeping `MCP_VERSION = 12`).
 - **Two-Column Work Session Manager (`SessionApp.tsx` & `WorkSessionProvider`)**:
   - Upgraded the `agentPlus.workSession` tab into an interactive manager while keeping `CustomReadonlyEditorProvider` and existing document URIs.
   - Main column renders the `Working` artifact zone (expanding when the side panel is collapsed); collapsible side panel renders `Session Type` → `Instructions` (fixed-height Markdown textarea with explicit **Save**) → `References` → `Archived`.
