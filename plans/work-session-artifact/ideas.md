@@ -1,3 +1,5 @@
+> Quyết định tiếp nối: giữ Quick Pick chọn type, Input Box đổi title, textarea + Save và menu sắp xếp. Ý tưởng kéo thả đã được bỏ, không thêm dnd-kit ở các phase sau. Phần contract active Session mở rộng Chặng 3 theo [plan Phase 3](plan-phase-3.md); các ghi chú bên dưới là ý tưởng lịch sử, không tự trở thành yêu cầu triển khai.
+
 - nâng cấp conversation thành 1 work session mạnh mẽ hơn, có thể là nơi để nhiều agent cùng làm việc trên 1 session
 - nút copy promt inspect bây giờ nhất hoặc hover sẽ ra 1 drop down là. Join vào phiên làm việc hiện tại của artifact này hoặc là bắt đầu 1 phiên làm việc mới từ artifact này. Nếu bắt đầu mới thì tạo cuộc trò chuyện mới như cũ. Nếu join thì join vào conversation của artifact đó.
 
@@ -6,4 +8,4 @@
 * nhưng phải thêm tool thứ 6. Vì join conversation sẽ không dùng inspect, cần phải có copy join promt ở conversation manage. Vậy conversation artifact sẽ không còn hiện tượng 1 artifact trong 2 conversation nữa. mà là nơi quản lý 1 conversation, AI khác sẽ join vào conversation này. Nó là 1 đối tượng riêng
 * conversation bây giờ cần xịn hơn. Có thể biết có bao nhiêu agent đăng ký, phân vai trò, agent có thể biết nhau, có nhiều type artifact, có tag có thể filter.
 
-- không phải nâng cấp conversation nữa mà là tách ra hẳn thành 1 đối tượng session là cách phiên làm việc. Sẽ có nút giống cline. Mở ra là recents artifacts và sessions. Có thể trigger session từ đây hoặc trong artifact có nút work session. Mở ra là 1 custom editor tương tự artifact như là 1 manager. Có các artifacts tương tự roadmap view, filter, search các thứ. User có thể edit title của session, mặc định là tên conversation như cũ. User có giao diện roadmap kéo thả, sắp xếp, thêm rules, workflow, xoá artifact (sau này thêm by search)
+- không phải nâng cấp conversation nữa mà là tách ra hẳn thành 1 đối tượng session là cách phiên làm việc. Sẽ có nút giống cline. Mở ra là recents artifacts và sessions. Có thể trigger session từ đây hoặc trong artifact có nút work session. Mở ra là 1 custom editor tương tự artifact như là 1 manager. Có các artifacts tương tự roadmap view, filter, search các thứ. User có thể edit title của session, mặc định là tên conversation như cũ. User có giao diện manager với menu sắp xếp/chuyển vùng, thêm rules, workflow, xoá artifact (sau này thêm by search)

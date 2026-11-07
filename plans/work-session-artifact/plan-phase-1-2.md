@@ -20,7 +20,7 @@ Quyết định tiếp nối: bỏ drawer conversation cũ; mở tính năng Ses
 
 Quyết định mới nhất thay nhánh inspect bỏ qua v1: **create và inspect cùng trả lỗi khi caller truyền ID conversation v1**, trước mọi mutation/takeover/cấp token. Skill chỉ hướng dẫn user chọn migration conversation đó hoặc chủ động tạo Session mới và ngừng dùng ID cũ. Không giữ nhánh inspect thành công kèm cảnh báo v1.
 
-Đã chốt lại thiết kế lưu trữ để tách đường ghi giữa MCP và Session Manager: **giữ nguyên `registered-artifacts/` làm nguồn membership duy nhất**, tách bố cục ba mảng (`working`, `references`, `archived`) sang file riêng **`layout.json`**, **bỏ lock layout/session** (dùng atomic write, chấp nhận bản lưu sau cùng thắng), và **`Session.updatedAt` hiển thị được tính từ thời điểm lớn nhất giữa `createdAt` và các `registeredAt`** (giữ hành vi MCP register/inspect cập nhật `registeredAt` để tự đẩy Session lên đầu; kéo thả hoặc sửa metadata không cập nhật `updatedAt`). Trình tự đợt này vẫn gồm **7 bước nhỏ** ở mục 13; không đổi phạm vi Phase 3–5 ngoài hướng dẫn xử lý lỗi v1 tối thiểu được làm ngay trong đợt này.
+Đã chốt lại thiết kế lưu trữ để tách đường ghi giữa MCP và Session Manager: **giữ nguyên `registered-artifacts/` làm nguồn membership duy nhất**, tách bố cục ba mảng (`working`, `references`, `archived`) sang file riêng **`layout.json`**, **bỏ lock layout/session** (dùng atomic write, chấp nhận bản lưu sau cùng thắng), và **`Session.updatedAt` hiển thị được tính từ thời điểm lớn nhất giữa `createdAt` và các `registeredAt`** (giữ hành vi MCP register/inspect cập nhật `registeredAt` để tự đẩy Session lên đầu; move/reorder hoặc sửa metadata không cập nhật `updatedAt`). Trình tự đợt này vẫn gồm **7 bước nhỏ** ở mục 13; phạm vi tiếp nối theo [plan Phase 3](plan-phase-3.md) và [plan tổng thể](plan.md) mới nhất: dùng menu sắp xếp, không triển khai drag/drop ở các phase sau.
 
 ## Phase 1 — Model và API dữ liệu
 
@@ -36,7 +36,7 @@ Quyết định đã thống nhất:
 - Tạo artifact chưa có session thì tự tạo session; có session thì reuse.
 - Một artifact có thể thuộc nhiều session. New-session từ artifact vẫn dùng cùng artifact ID.
 - Không thêm `order`, `zone`, `pinned` vào từng file `registered-artifacts/*.json`; ba mảng trong `layout.json` biểu diễn vùng và thứ tự.
-- `Session.updatedAt` hiển thị được tính khi đọc từ thời điểm lớn nhất giữa `createdAt` và các `registeredAt` hiện có. MCP tạo/inspect artifact cập nhật `registeredAt` như hiện tại nên tự đẩy Session lên đầu; kéo thả (`layout.json`) hoặc sửa metadata (`title`, `instructions`, `typeId`) không làm thay đổi `updatedAt`.
+- `Session.updatedAt` hiển thị được tính khi đọc từ thời điểm lớn nhất giữa `createdAt` và các `registeredAt` hiện có. MCP tạo/inspect artifact cập nhật `registeredAt` như hiện tại nên tự đẩy Session lên đầu; move/reorder (`layout.json`) hoặc sửa metadata (`title`, `instructions`, `typeId`) không làm thay đổi `updatedAt`.
 - Bỏ lock cho layout/session; giữ atomic write cho từng file và chấp nhận quy tắc “bản lưu sau cùng thắng” khi nhiều cửa sổ cùng sửa bố cục/metadata.
 - Giữ artifact schema v6, exact handles và cơ chế review/takeover hiện tại.
 
@@ -105,7 +105,7 @@ type WorkSession = WorkSessionMetadata & {
 - **Quy tắc `Session.updatedAt`:**
   - Tính động khi đọc: `updatedAt = max(createdAt, ...registeredAt của các membership hiện có)`.
   - Chỉ tăng khi tạo Session hoặc khi MCP thêm/inspect artifact (cập nhật `registeredAt`).
-  - Kéo thả (`layout.json`), sửa `title`/`instructions`/`typeId`, đổi label type global hoặc gỡ artifact không ghi timestamp `updatedAt` riêng và không tự đẩy Session lên đầu.
+  - Move/reorder (`layout.json`), sửa `title`/`instructions`/`typeId`, đổi label type global hoặc gỡ artifact không ghi timestamp `updatedAt` riêng và không tự đẩy Session lên đầu.
   - Recent artifact vẫn dùng `artifact.updatedAt` riêng.
 - Không sao chép title/type/description/directory của artifact vào ba mảng. Catalog dành cho Phase 4.
 - Chưa thêm `isPinned`, trạng thái archive session, panel preference hoặc metadata cho tính năng hoãn.
@@ -123,7 +123,7 @@ Giữ đường dẫn vật lý hiện có trong Phase 1:
 ```
 
 Tên đường dẫn lịch sử được đóng gói trong shared path helpers; model/API mới dùng Session.
-- **Tách biệt điểm ghi:** MCP chỉ ghi file con trong `registered-artifacts/`; Manager ghi `layout.json` khi sắp xếp và `conversation.json` khi sửa thông tin chung. Không còn xung đột giữa MCP thêm artifact và user kéo thả trên cùng một file.
+- **Tách biệt điểm ghi:** MCP chỉ ghi file con trong `registered-artifacts/`; Manager ghi `layout.json` khi sắp xếp và `conversation.json` khi sửa thông tin chung. MCP thêm artifact và user sắp xếp bằng menu không ghi chung một file.
 - **Không dùng file lock cho layout và session:** dùng atomic write cho từng file và chấp nhận quy tắc “bản lưu sau cùng thắng” (last write wins), kết hợp watcher refresh các cửa sổ đang mở. Nếu `layout.json` thiếu hoặc chưa kịp lưu, membership trong `registered-artifacts/` vẫn bảo toàn đầy đủ danh sách artifact.
 
 ### Danh sách session types dùng chung
@@ -173,7 +173,7 @@ Tên API dưới đây là đề xuất mới, không mô tả hàm đã tồn t
 - Tái sử dụng validation đường dẫn và helper ghi file atomic hiện có; bỏ cơ chế file lock theo session/layout, chấp nhận quy tắc bản lưu sau cùng thắng.
 - Read/list hợp nhất `registered-artifacts/` với `layout.json`: giữ nguyên thứ tự các ID hợp lệ trong `layout.json` và nối các membership mới vào cuối `working`. Các lỗi dữ liệu ở `conversation.json` hoặc `registered-artifacts/` tiếp tục được báo hoặc cô lập theo contract hiện tại; không tự biến dữ liệu hỏng thành session rỗng.
 - API đọc/list Session chỉ trả v2; v1 được nhận diện riêng để migration, không coi v1 hợp lệ là dữ liệu hỏng và không tự chuyển khi đọc. Không duy trì UI/DTO drawer v1.
-- Move là API dữ liệu ghi `layout.json` để Phase 3 dùng menu và Phase 5 dùng drag/drop (chỉ lưu một lần sau khi thả chuột thành công). Không làm drag/drop trong Phase 1.
+- Move là API dữ liệu ghi `layout.json` cho menu chuyển vùng/reorder của Phase 3 và các phase tiếp theo. Không có yêu cầu triển khai drag/drop hoặc cài thư viện kéo thả.
 - Không thêm public delete/archive/pin session trong phase này. Giữ helper rollback nội bộ cho session/membership vừa tạo thất bại.
 
 ### Tích hợp create/inspect và rollback
@@ -259,7 +259,7 @@ Test trọng tâm:
 - Type mặc định khi auto-create/migrate; reuse giữ type; custom type dùng chung giữa các session và còn sau reload. Rename giữ ID, tên trùng/rỗng bị từ chối.
 - Không xoá được type mặc định; xoá type khác chuyển session về mặc định sau xác nhận. Lỗi ghi không xoá entry type khi còn việc chuyển dở.
 - Auto-create/reuse qua MCP ghi `registered-artifacts/`; register/inspect lại cập nhật `registeredAt` (đẩy `Session.updatedAt` lên đầu) nhưng không nhân đôi và không đổi vùng hay thứ tự đã lưu trong `layout.json`.
-- Move/reorder giữa ba mảng lưu vào `layout.json`, kể cả vùng rỗng; artifact mới chưa có trong `layout.json` tự nằm cuối `working`; remove xoá membership và dọn `layout.json`, artifact ở session khác giữ nguyên; kéo thả hoặc sửa metadata không đổi `Session.updatedAt`.
+- Move/reorder giữa ba mảng lưu vào `layout.json`, kể cả vùng rỗng; artifact mới chưa có trong `layout.json` tự nằm cuối `working`; remove xoá membership và dọn `layout.json`, artifact ở session khác giữ nguyên; sắp xếp hoặc sửa metadata không đổi `Session.updatedAt`.
 - Inspect new/reuse và rollback: giữ nguyên khôi phục `registeredAt` của membership có trước hoặc xoá membership mới tạo khi lỗi, không clone artifact hoặc đổi lifecycle ngoài hành vi review hiện tại.
 - Migration v1 giữ ID/title/membership/thứ tự và `updatedAt` tính từ `createdAt`/`registeredAt`; chạy lại không ghi đè v2 đã sửa; Windows chặn replace thì giữ nguồn v1/backup, không fallback copy đè metadata.
 - Cleanup ID stale trong `registered-artifacts/` và `layout.json`; gỡ artifact cuối vẫn giữ session v2/instructions.
@@ -281,7 +281,7 @@ Kiểm tra Extension Host với runtime được build cùng phiên bản: tạo
 
 ## 9. Ngoài phạm vi
 
-Riêng Phase 1 chưa có sidebar/manager UI (sidebar được triển khai tiếp ở Phase 2 trong cùng file). Pin/archive/delete **session**; style, shadcn, icons; cài dnd-kit; agent catalog/description/artifact type; đổi toàn bộ MCP vocabulary; workflow/next-action; ownership hardening; sửa retention policy; release/publish vẫn ngoài phạm vi đợt này. CRUD **session types** thuộc phạm vi, không nhầm với CRUD/xoá session.
+Riêng Phase 1 chưa có sidebar/manager UI (sidebar được triển khai tiếp ở Phase 2 trong cùng file). Pin/archive/delete **session**; style, shadcn, icons; agent catalog/description/artifact type; đổi toàn bộ MCP vocabulary; workflow/next-action; ownership hardening; sửa retention policy; release/publish vẫn ngoài phạm vi đợt này. CRUD **session types** thuộc phạm vi, không nhầm với CRUD/xoá session. Sắp xếp qua menu, không có dependency dnd-kit cần bổ sung.
 
 ## Phase 2 — Sidebar, quản lý session types và điều hướng
 
@@ -367,7 +367,7 @@ Nguồn API: [Tree View API](https://code.visualstudio.com/api/extension-guides/
 
 - Hiện title, type label, instructions và danh sách liên kết artifact chia Working/References/Archived theo thứ tự mảng. Có empty/error state; mở lại cùng session thì dùng lại tab.
 - Artifact title/kind lấy từ manifest qua service hiện có; chưa dựng agent catalog hoặc description preview.
-- Chưa có edit title/instructions/type, panel toggle, header Pin/Connect/More, cards hay kéo thả. Phase 3 bổ sung những phần này trên cùng editor, không tạo tab quản lý thứ hai.
+- Chưa có edit title/instructions/type, panel toggle hoặc menu tổ chức artifact ở đợt chỉ đọc. Phase 3 bổ sung trên cùng editor, không tạo tab quản lý thứ hai. Pin/Archive/Delete Session để sau, Connect manager ở Phase 4; menu là cách sắp xếp đã chốt.
 - Mở bằng command `vscode.openWith` và viewType riêng (tên đề xuất `agentPlus.workSession`), URI metadata canonical của session. Không đăng ký chiếm mọi file `*.json`; provider kiểm tra đúng registry path/schema/ID.
 - Provider kiểm soát đọc dữ liệu; webview chỉ nhận DTO và gửi yêu cầu mở artifact. Kiểm tra artifact thuộc session đang mở trước khi xử lý message; không nhận tuỳ ý đường dẫn từ webview.
 - Theo dõi session/types/artifact thay đổi và refresh nội dung tab. Không cung cấp chỉnh raw JSON để thay manager.
@@ -499,9 +499,9 @@ Thực hiện theo thỏa thuận gộp bước:
 **Luồng render/mở:**
 
 1. Service đọc Session v2 rồi resolve artifact rows bằng manifest/validation/opener đang có; giữ ID và thứ tự mảng. Không lấy toàn bộ Markdown artifact chỉ để dựng danh sách. Artifact thiếu/hỏng báo phù hợp và không tự mở item khác hoặc sửa membership từ thao tác read.
-2. Instructions dùng `parseMarkdownBlocks`/`MarkdownRenderer` hiện có với comments rỗng và không có review handlers; provider chấp nhận `openExternal` theo whitelist http/https/mailto hiện tại. Không dựng renderer HTML mới hoặc bỏ URL policy.
+2. Instructions hiển thị dạng văn bản ở tab chỉ đọc. Khi mở rộng Phase 3, dùng textarea cố định chiều cao + Save; không có yêu cầu render Markdown/preview cho instructions. Giữ URL policy hiện có cho các message `openExternal`.
 3. Click artifact chỉ gửi artifactId; provider xác minh ID còn trong session đang mở, derive canonical path và gọi shared open coordinator. Không nhận arbitrary filesystem path từ webview, không MCP inspect/takeover/connection write.
-4. Subscribe Session/types/artifact thay đổi; mất target thì render missing/error và không tạo lại Session. Chưa có sửa title/type/instructions, panel toggle hoặc drag/drop.
+4. Subscribe Session/types/artifact thay đổi; mất target thì render missing/error và không tạo lại Session. Chưa có sửa title/type/instructions, panel toggle hoặc menu tổ chức artifact ở đợt chỉ đọc.
 
 **Khả năng phải đạt:** sidebar mở đúng tab chỉ đọc, ba vùng đúng order và mở đúng artifact trong window hiện tại; reload và mutation bên ngoài được phản ánh. Session tab không khởi tạo review lifecycle hoặc giành việc của MCP.
 
@@ -582,7 +582,7 @@ Thực hiện theo thỏa thuận gộp bước:
 | Canonical docs/skill khi triển khai | Theo quy định repo, hỏi Chú trước khi đồng bộ docs hành vi; chuẩn bị diff đúng phần cho README, INSTRUCTION, PHILOSOPHY, ARCHITECTURE, COMPONENTS và CHANGE_LOGS. Skill/reference contract và version tests thuộc bước 3 đã có trong scope. Source đã chứng minh vài mô tả v1 cũ lệch code: sửa các đoạn Session thay thế, không mang lại cơ chế drawer/lock giả định cũ. |
 | Bàn giao | Liệt kê component đã đổi, khả năng chạy được, kết quả automated và manual chưa chạy; hướng dẫn Chú build/cài/restart để so MCP cũ/mới. Không tự cài global integration, bump package, tag, publish hoặc migrate dữ liệu thật. |
 
-**Khả năng phải đạt cuối đợt:** model/types lưu bền; create/reuse v2 và lỗi ID v1 thống nhất với skill; sidebar/gate đúng file MCP đã cài; tab chỉ đọc và nút Sessions điều hướng được; popup New/Join và migration single/bulk hoạt động theo thao tác user. Manager editing/type selector/catalog/drag-drop vẫn để các phase sau.
+**Khả năng phải đạt cuối đợt:** model/types lưu bền; create/reuse v2 và lỗi ID v1 thống nhất với skill; sidebar/gate đúng file MCP đã cài; tab chỉ đọc và nút Sessions điều hướng được; popup New/Join và migration single/bulk hoạt động theo thao tác user. Manager editing/type selector và menu tổ chức artifact thuộc Phase 3, catalog thuộc Phase 4.
 
 ## 14. Kiểm chứng Phase 2 và nghiệm thu kết hợp
 
@@ -619,5 +619,5 @@ Cuối đợt chạy `npm.cmd run check`, `npm.cmd test`, `npm.cmd run build` m�
 
 - **Phase 3:** manager editing, Type ✎ chọn/tạo, panel Type → Hướng dẫn → References → Archived, cache toggle, menu thao tác/gỡ artifact và session actions theo phạm vi được chốt.
 - **Phase 4:** agent contract/catalog và trải nghiệm new/join đầy đủ; popup inspect chọn ID tối thiểu đã thuộc bước 6 đợt này. Không lẫn session type với artifact kind/Proceed behavior.
-- **Phase 5:** masonry/filter artifact/search và dnd-kit.
+- **Phase 5:** masonry/metadata card, filter artifact/search; giữ menu move/reorder, không thêm drag/drop.
 - Pin/recent grouping nâng cao, session archive semantics và style/dependency vẫn được ghi là đề xuất khi chưa được duyệt; không tự thêm vào Phase 1+2.

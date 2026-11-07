@@ -1,8 +1,8 @@
 # Phase 3 — Session Manager: hướng dẫn triển khai
 
-Trạng thái: **Đã hoàn thành toàn bộ Phase 3 (Chặng 1, 2, 3 — Bước 1 đến 6 và fix 3 findings); 100% test suite pass (40 test files, 585 tests passed), typecheck và build pass**. Phase 1+2 đã hoàn thành theo [plan tổng thể](plan.md) và [hướng dẫn Phase 1+2](plan-phase-1-2.md).
+Trạng thái: **Phạm vi ban đầu của Phase 3 (Bước 1–6 và fix 3 findings) đã hoàn thành**, với kết quả đã ghi nhận: 40 test files, 585 tests passed, typecheck và build pass. **Chặng 3 được mở rộng thêm Bước 7 — contract active Session, chưa triển khai**; kết quả kiểm chứng cũ không bao gồm bước bổ sung này. Phase 1+2 đã hoàn thành theo [plan tổng thể](plan.md) và [hướng dẫn Phase 1+2](plan-phase-1-2.md).
 
-Mục tiêu: mở rộng tab Session hiện có thành manager chỉnh sửa được; bổ sung filter/search Sessions trên sidebar và wording Quick Input tiếng Anh. Thực hiện theo **6 bước, chia 3 chặng** để review diff từng phần.
+Mục tiêu ban đầu: manager editing, filter/search Sessions và English Quick Input. Phạm vi hiện tại gồm **7 bước trong 3 chặng**: giữ kết quả bước 1–6, bổ sung quy tắc active Session cho chat AI ở bước 7 sau khi Chặng 3 gốc hoàn thành.
 
 ## 1. Phạm vi đã chốt
 
@@ -17,8 +17,11 @@ Mục tiêu: mở rộng tab Session hiện có thành manager chỉnh sửa đ�
 | Filter Sessions | Nút phễu trên header Sessions → Quick Pick một type hoặc **All Types** → áp dụng vào danh sách sidebar. Hiện bộ lọc đang dùng. |
 | Search Sessions | Command **AI Artifacts: Search Sessions** và nút kính lúp trên header Sessions → Quick Pick tìm theo title, chọn để mở đúng Session. |
 | Quick Input | Labels, titles, placeholders, tooltips, xác nhận và thông báo thuộc các luồng Session Quick Input dùng tiếng Anh; giữ nguyên tên/type label do user nhập. |
+| Active Session của chat AI — bổ sung | Mỗi chat giữ tối đa một Session mặc định; create/inspect reuse ID đó, New/Join thành công thay ID đang giữ theo mục 5.7. |
 
-**Ngoài phạm vi:** Pin/Archive/Delete Session; Connect từ manager và contract AI/catalog (Phase 4); description artifact, masonry và drag/drop (các phase sau); thêm artifact ngoài Session; attach/import file/folder, Shift-drop hoặc chip cho Hướng dẫn; rich editor/preview mới; dirty dialog, native save/backup/hot exit; hardening nhiều manager cùng sửa metadata. `Archived` trong manager là **vùng artifact**, không phải archive Session.
+**Ngoài phạm vi:** Pin/Archive/Delete Session; Connect từ manager và catalog/agent context đầy đủ (Phase 4); description artifact và masonry (các phase sau); thêm artifact ngoài Session; attach/import file/folder hoặc chip cho Hướng dẫn; rich editor/preview mới; dirty dialog, native save/backup/hot exit; hardening nhiều manager cùng sửa metadata. `Archived` trong manager là **vùng artifact**, không phải archive Session.
+
+**Cách dùng đã chốt:** giữ Quick Pick chọn/tạo type, Input Box đổi title, textarea + Save cho instructions và menu Move to / Move Up / Move Down. Không triển khai drag/drop sắp xếp artifact hoặc thêm dependency dnd-kit ở bất kỳ phase nào trong roadmap này. Không lấy việc thay các controls hiện tại làm yêu cầu nâng cấp của phase sau.
 
 ## 2. Hiện trạng code và phần cần tận dụng
 
@@ -82,6 +85,7 @@ Textarea khởi tạo khi mở Session, thay đổi do user nhập, own-save ho�
 | 3 — Sidebar và nghiệm thu | 4. Filter/search | Lọc sidebar theo type; tìm toàn bộ v2 và mở đúng Session. | ✅ Đã hoàn thành |
 | 3 — Sidebar và nghiệm thu | 5. English Quick Input | Wording nhất quán, CRUD types vẫn đúng. | ✅ Đã hoàn thành |
 | 3 — Sidebar và nghiệm thu | 6. Validation/bàn giao | Tests/check/build và bằng chứng Extension Host tách riêng. | ✅ Đã hoàn thành |
+| 3 — Mở rộng sau nghiệm thu ban đầu | 7. Active Session contract | Chuẩn hoá default/New/Join cho chat AI; skill/prompt/tests/version đồng bộ. | Chưa triển khai |
 
 Mỗi chặng kết thúc ở phần diff review được và cập nhật tiến độ bằng kết quả thực tế. Không đánh dấu runtime hoàn thành chỉ từ build/render markup pass.
 
@@ -248,7 +252,39 @@ Không nhận Session ID/path tuỳ ý trong action payload. `openArtifact` vẫ
 | Docs khi triển khai | Theo quy định repo, hỏi Chú có muốn đồng bộ docs hành vi trước khi sửa canonical docs. Chuẩn bị phần manager editing/refresh, panel preference, filter/search commands và giới hạn Save trong README/docs liên quan. Plan này không cấp phép sửa toàn bộ docs hoặc code. |
 | Bàn giao | Component đã đổi, kết quả và cách thử; không tự bump version, publish, cài integration global hoặc migrate dữ liệu thật. |
 
+### 5.7. Bước 7 — Mở rộng Chặng 3: contract active Session của chat AI
+
+**Phụ thuộc:** bước 1–6 đã hoàn thành. **Trạng thái:** chưa triển khai; đây là hướng dẫn cho lượt tiếp theo, không thay kết quả đã ghi nhận của Chặng 3 gốc.
+
+**Quan hệ:** một Session có thể được nhiều conversation chat AI cùng sử dụng. Mỗi chat giữ **0 hoặc 1 `activeSessionId`** tại một thời điểm; chat có thể chuyển Session theo yêu cầu user. Đây là ngữ cảnh của chat do AI giữ, không thêm bảng/list chat vào registry. Tham số MCP hiện tại `artifactConversationId` mang Session ID, không phải ID của conversation chat hoặc `reviewSessionId`.
+
+| Intent | ID gửi vào create/inspect | Ngữ cảnh sau thành công |
+| --- | --- | --- |
+| Chưa có active Session | Omit `artifactConversationId` | Giữ ID Session được tool trả về. |
+| Thao tác mặc định, đang giữ S | Gửi S | Tiếp tục dùng S cho các lượt sau. |
+| Create artifact và user yêu cầu New Session | Omit ID cũ dù chat đang giữ S | Thay S bằng ID mới trả về. Chỉ đổi `conversationName` mà vẫn gửi S không phải New Session. |
+| Inspect exact artifact và user yêu cầu New Session | Omit ID cũ dù chat đang giữ S | Thay S bằng ID mới trả về; giữ exact artifact handle. |
+| User chỉ định Join Session T | Gửi exact ID T | Thay active ID bằng T sau thành công. |
+
+- New/Join là quyền đổi mặc định của chat. Chỉ commit active ID mới sau thành công; lỗi không tự retry vào Session cũ. Window-selection retry giữ nguyên intent/Session đích của request, không tự đưa ID cũ trở lại request New.
+- Không đồng thời giữ hai ID làm mặc định. Thay active ID không xoá Session cũ, chuyển membership cũ, clone artifact hoặc làm mất mapping handle/round đang giữ cho từng artifact. Một artifact vẫn có thể thuộc nhiều Session.
+- Không suy ra active Session từ membership của artifact, title, newest Session, PID hoặc AI client. Wait/advance trả lại thông tin của request/round không tự trở thành hành động chuyển Session của chat.
+
+| File/component | Sửa cụ thể khi triển khai bước 7 |
+| --- | --- |
+| `skills/create-review-artifact/SKILL.md` | Chuẩn hoá một active ID theo chat; quy tắc default/New/Join và explicit create-new phải thắng reuse mặc định. Dùng từ Session thay mô tả drawer cũ ở phần identity; giữ exact handles, lifecycle và recovery v1 đã có. |
+| `skills/create-review-artifact/references/artifact-contract.md` | Ghi rõ quan hệ chat–Session và bảng intent, phân biệt active context với membership/review ownership. Đồng bộ mô tả registry v2 đang thay cho đoạn v1/drawer cũ; không đổi signature MCP hoặc thêm tool. |
+| `src/shared/artifact-connect-prompt.ts` | Rà mode new/join đã có: New omit ID cũ, thành công replace active ID; Join dùng exact T và chỉ đổi active sau thành công. Giữ legacy prompt và installed-MCP gate hiện có; không thêm popup/control manager mới. |
+| `test/skill-contract.test.ts`, `test/artifact-connect-prompt.test.ts` | Kiểm chứng chỉ dẫn và prompt cho default, explicit create-new, inspect-new, join, success-only replacement và legacy. Tận dụng data/MCP fixtures đang có cho omit/reuse; không coi text assertions là bằng chứng AI client runtime. |
+| `src/shared/contracts.ts`, version expectations và docs liên quan | Khi thay skill thực sự, tăng numeric `SKILL_VERSION` một đơn vị từ source hiện tại; giữ `MCP_VERSION` nếu MCP không đổi. Đồng bộ receipt/version tests và mô tả version trong README/docs theo source (README và release-contract hiện còn ghi skill 3 trong khi source là 4). Không bump package hoặc cài integration global trong lượt ghi plan. |
+
+**Khả năng phải đạt:** chat đang giữ S vẫn tạo/inspect được vào Session mới theo yêu cầu rồi dùng ID mới cho request mặc định tiếp theo; nhiều chat có thể dùng cùng S. Các thao tác manager, membership và review lifecycle giữ contract đã có.
+
+**Kiểm chứng:** focused suites của skill/prompt; check/test/build sau thay đổi thực. Manual với AI client: default S → create-new N → create/inspect mặc định dùng N; inspect-new → mặc định dùng ID mới; Join T → mặc định dùng T. Ghi kết quả AI runtime riêng; chưa chạy trong lượt cập nhật plan này.
+
 ## 6. Nghiệm thu Phase 3
+
+Mục 1–7 dưới đây là nghiệm thu phạm vi ban đầu đã ghi nhận. Bước 7 mở rộng có tiêu chí riêng ở mục 5.7 và chỉ được đánh dấu hoàn thành sau khi triển khai/kiểm chứng phần bổ sung.
 
 Manual trong Extension Development Host với fixture Session v2/installed MCP đủ version:
 

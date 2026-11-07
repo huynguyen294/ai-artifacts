@@ -14,6 +14,14 @@ Minor typos, formatting fixes, or cosmetic wording adjustments that do not chang
 
 Each entry includes the date, category, summary of changes, rationale, and affected components or files.
 
+## 2026-11-07 — Work Session roadmap scope and upgrade guidance
+
+- Extended the Phase 3 plan with a pending Step 7 in Stage 3 for the active Session contract: each AI chat keeps at most one default Session; explicit New/Join replaces that default after success. Preserved the recorded completion and validation of Steps 1–6; no skill/runtime change is shipped by this documentation update.
+- Removed drag-and-drop and dnd-kit implementation requirements from the roadmap. Retained native Quick Pick type selection, Input Box title editing, textarea + Save instructions, and menu-based artifact move/reorder as the accepted interaction model.
+- Removed the obsolete Phase 1+2 requirement to render session instructions through the artifact Markdown renderer.
+- Added a short apology and explanation to README upgrade guidance for releases that require MCP or skill updates, preserving the existing rule that extension-only updates do not require integration reinstall.
+- Affected files: `README.md`, `plans/work-session-artifact/plan.md`, `plan-phase-3.md`, `plan-phase-1-2.md`, `analyzed.md`, and `ideas.md`. Historical chat transcripts remain reference material.
+
 ## 2026-11-07 — Work Session Phase 3 Implementation (Session Manager, Scoped Refresh, Sidebar Filter/Search & English Quick Input)
 
 ### Changes

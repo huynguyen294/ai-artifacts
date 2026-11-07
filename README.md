@@ -119,6 +119,8 @@ After installing the integration, reload your editor and restart your agent to l
 
 > [!NOTE]
 > **After an extension update:** reinstall only when AI Artifacts reports that the installed MCP runtime or skill is stale. Extension-only UI or documentation updates do not require integration reinstall. After reinstalling an asset, restart the affected AI client and start a new chat.
+>
+> We're sorry for the extra steps when a release requires you to update the MCP server or review skill. These updates support new features and improvements, keeping the extension and AI tools working together. Thank you for your patience and understanding as AI Artifacts evolves.
 
 <details>
 <summary>Runtime version and expected tools</summary>
