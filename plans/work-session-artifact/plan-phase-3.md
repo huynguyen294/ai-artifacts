@@ -1,6 +1,6 @@
 # Phase 3 — Session Manager: hướng dẫn triển khai
 
-Trạng thái: **đã chốt phạm vi và viết hướng dẫn; chưa triển khai code Phase 3**. Phase 1+2 đã hoàn thành theo [plan tổng thể](plan.md) và [hướng dẫn Phase 1+2](plan-phase-1-2.md).
+Trạng thái: **Đang triển khai Phase 3: Hoàn thành Chặng 1 (Bước 1 + 2) và Chặng 2 (Bước 3); chuẩn bị Chặng 3 (Bước 4 + 5 + 6)**. Phase 1+2 đã hoàn thành theo [plan tổng thể](plan.md) và [hướng dẫn Phase 1+2](plan-phase-1-2.md).
 
 Mục tiêu: mở rộng tab Session hiện có thành manager chỉnh sửa được; bổ sung filter/search Sessions trên sidebar và wording Quick Input tiếng Anh. Thực hiện theo **6 bước, chia 3 chặng** để review diff từng phần.
 

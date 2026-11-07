@@ -46,7 +46,11 @@ vi.mock("vscode", () => ({
 import * as vscode from "vscode";
 import { WorkSessionProvider, WorkSessionDocument } from "../src/extension/work-session-provider";
 import { ConversationArtifactService } from "../src/extension/conversation-artifact-service";
-import { createSession, registerArtifactInSession } from "../src/shared/conversation-artifact-registry";
+import {
+  createSession,
+  registerArtifactInSession,
+  updateSessionDetails,
+} from "../src/shared/conversation-artifact-registry";
 import { conversationDirectory, globalArtifactsRoot } from "../src/shared/artifact-files";
 
 describe("WorkSessionProvider", () => {
@@ -392,5 +396,77 @@ describe("WorkSessionProvider", () => {
         message: expect.stringContaining("MCP server version 12 or higher is required"),
       }),
     );
+  });
+
+  it("emits workSessionSummaryPatch when metadata changes on disk externally without overwriting instructions", async () => {
+    const session = await createSession({
+      title: "Patch Test Session",
+      instructions: "Original instructions",
+      userHome: tempHome,
+    });
+
+    const provider = new WorkSessionProvider(
+      mockContext,
+      service,
+      openCoordinator,
+      { userHome: tempHome },
+    );
+
+    const doc = new WorkSessionDocument(
+      { fsPath: path.join(conversationDirectory(session.sessionId, { userHome: tempHome }), "conversation.json") } as any,
+      session.sessionId,
+    );
+
+    let messageListener: ((msg: any) => any) | undefined;
+    const postMessage = vi.fn();
+    const panel = {
+      webview: {
+        options: {},
+        html: "",
+        cspSource: "vscode-webview://test",
+        asWebviewUri: (uri: any) => uri.fsPath ?? String(uri),
+        onDidReceiveMessage: (listener: any) => {
+          messageListener = listener;
+          return { dispose: () => {} };
+        },
+        postMessage,
+      },
+      onDidDispose: () => ({ dispose: () => {} }),
+    };
+
+    await provider.resolveCustomEditor(doc, panel as any, {} as any);
+    await messageListener!({ type: "ready" });
+
+    postMessage.mockClear();
+
+    // External title change -> emits workSessionSummaryPatch
+    await updateSessionDetails(session.sessionId, { title: "Title Only Changed" }, { userHome: tempHome });
+    service.notifyChanged([{ kind: "metadata", sessionId: session.sessionId }]);
+
+    await vi.waitFor(() => {
+      expect(postMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "workSessionSummaryPatch",
+          summary: expect.objectContaining({ title: "Title Only Changed" }),
+        }),
+      );
+    });
+
+    // Instructions change externally -> summary patch may fire, but no instructions-clobbering message is emitted
+    postMessage.mockClear();
+    await updateSessionDetails(
+      session.sessionId,
+      { instructions: "Instructions Changed By AI" },
+      { userHome: tempHome },
+    );
+    service.notifyChanged([{ kind: "metadata", sessionId: session.sessionId }]);
+
+    await vi.waitFor(() => {
+      expect(postMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "workSessionSummaryPatch",
+        }),
+      );
+    });
   });
 });

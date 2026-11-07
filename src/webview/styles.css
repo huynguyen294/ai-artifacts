@@ -924,7 +924,7 @@ button:disabled {
 
 /* Work Session Tab Styles */
 .session-app-container {
-  max-width: 900px;
+  max-width: 1200px;
   margin: 0 auto;
   padding: 24px 20px 48px;
   color: var(--vscode-foreground);
@@ -940,7 +940,16 @@ button:disabled {
 .session-header-top {
   display: flex;
   align-items: center;
-  gap: 12px;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.session-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
 }
 
 .session-title {
@@ -948,6 +957,108 @@ button:disabled {
   font-size: 1.5rem;
   font-weight: 600;
   color: var(--vscode-editor-foreground);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-icon-button {
+  background: transparent;
+  border: none;
+  color: var(--vscode-descriptionForeground);
+  font-size: 0.95rem;
+  cursor: pointer;
+  padding: 3px 6px;
+  border-radius: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s ease;
+}
+
+.session-icon-button:hover {
+  background: color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
+  color: var(--vscode-editor-foreground);
+}
+
+.session-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.session-panel-toggle-btn {
+  padding: 5px 12px;
+  font-size: 0.8rem;
+  font-weight: 500;
+  border-radius: 4px;
+  border: 1px solid var(--vscode-button-border, var(--vscode-panel-border));
+  background: transparent;
+  color: var(--vscode-foreground);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.session-panel-toggle-btn:hover {
+  background: color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
+}
+
+.session-panel-toggle-btn.active {
+  background: color-mix(in srgb, var(--vscode-foreground) 8%, transparent);
+}
+
+.session-header-meta {
+  margin-top: 8px;
+  font-size: 0.8rem;
+  color: var(--vscode-descriptionForeground);
+  display: flex;
+  gap: 8px;
+}
+
+.session-layout {
+  display: flex;
+  gap: 24px;
+  align-items: flex-start;
+}
+
+.session-main-column {
+  flex: 1 1 0%;
+  min-width: 0;
+}
+
+.session-side-panel {
+  width: 360px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.session-side-section {
+  border: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.2));
+  border-radius: 6px;
+  padding: 14px 16px;
+  background-color: var(--vscode-editor-background);
+}
+
+.session-side-section-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.session-side-section-header h4 {
+  margin: 0;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--vscode-editor-foreground);
+}
+
+.session-type-display {
+  display: flex;
+  align-items: center;
 }
 
 .session-type-badge {
@@ -961,41 +1072,60 @@ button:disabled {
   text-transform: capitalize;
 }
 
-.session-header-meta {
-  margin-top: 8px;
-  font-size: 0.8rem;
-  color: var(--vscode-descriptionForeground);
-  display: flex;
-  gap: 8px;
-}
-
-.session-instructions-section {
-  margin-bottom: 24px;
-  padding: 12px 16px;
-  background-color: var(--vscode-textBlockQuote-background, rgba(128, 128, 128, 0.05));
-  border-left: 3px solid var(--vscode-textBlockQuote-border, #007acc);
-  border-radius: 4px;
-}
-
-.session-instructions-section h4 {
-  margin: 0 0 8px 0;
-  font-size: 0.9rem;
-  font-weight: 600;
-}
-
-.session-instructions-markdown {
-  margin: 0;
-  white-space: pre-wrap;
-  word-break: break-word;
-  font-family: var(--vscode-font-family);
+.session-instructions-textarea {
+  width: 100%;
+  min-height: 130px;
+  max-height: 280px;
+  font-family: var(--vscode-editor-font-family, monospace);
   font-size: 0.85rem;
-  line-height: 1.5;
+  padding: 8px 10px;
+  border-radius: 4px;
+  border: 1px solid var(--vscode-input-border, rgba(128, 128, 128, 0.3));
+  background: var(--vscode-input-background, #1e1e1e);
+  color: var(--vscode-input-foreground, #ccc);
+  resize: vertical;
+  overflow-y: auto;
+  box-sizing: border-box;
 }
 
-.session-zones-container {
+.session-instructions-textarea:focus {
+  border-color: var(--vscode-focusBorder, #007acc);
+  outline: none;
+}
+
+.session-instructions-actions {
   display: flex;
-  flex-direction: column;
-  gap: 20px;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.session-save-btn {
+  padding: 5px 14px;
+  font-size: 0.8rem;
+  font-weight: 500;
+  border-radius: 4px;
+  border: none;
+  background: var(--vscode-button-background, #0e639c);
+  color: var(--vscode-button-foreground, #fff);
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+
+.session-save-btn:hover:not(:disabled) {
+  background: var(--vscode-button-hoverBackground, #1177bb);
+}
+
+.session-save-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.session-inline-error {
+  color: var(--vscode-errorForeground, #f48771);
+  font-size: 0.75rem;
+  margin-right: auto;
 }
 
 .session-zone {
@@ -1052,11 +1182,20 @@ button:disabled {
   outline: none;
 }
 
-.session-card-main {
+.session-card-header {
   display: flex;
   justify-content: space-between;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.session-card-main {
+  display: flex;
   align-items: center;
   gap: 8px;
+  flex: 1;
+  min-width: 0;
+  flex-wrap: wrap;
 }
 
 .session-card-title {
@@ -1071,6 +1210,96 @@ button:disabled {
   border-radius: 8px;
   background-color: var(--vscode-badge-background);
   color: var(--vscode-badge-foreground);
+}
+
+.session-card-menu-anchor {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  margin-left: 4px;
+  flex-shrink: 0;
+}
+
+.session-card-menu-btn {
+  background: transparent;
+  border: none;
+  font-size: 1.1rem;
+  line-height: 1;
+  padding: 2px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+  color: var(--vscode-descriptionForeground);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s ease;
+}
+
+.session-card-menu-btn:hover {
+  background: color-mix(in srgb, var(--vscode-foreground) 12%, transparent);
+  color: var(--vscode-editor-foreground);
+}
+
+.session-card-dropdown {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 4px);
+  z-index: 50;
+  min-width: 160px;
+  background: var(--vscode-menu-background, #252526);
+  color: var(--vscode-menu-foreground, #ccc);
+  border: 1px solid var(--vscode-menu-border, rgba(128, 128, 128, 0.3));
+  border-radius: 4px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
+  padding: 4px 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.session-dropdown-header {
+  font-size: 0.65rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  color: var(--vscode-descriptionForeground);
+  padding: 4px 12px 2px;
+  letter-spacing: 0.05em;
+}
+
+.session-dropdown-item {
+  background: transparent;
+  border: none;
+  text-align: left;
+  padding: 6px 12px;
+  font-size: 0.8rem;
+  cursor: pointer;
+  color: inherit;
+  width: 100%;
+  transition: background-color 0.1s ease;
+}
+
+.session-dropdown-item:hover:not(:disabled) {
+  background: var(--vscode-menu-selectionBackground, #007acc);
+  color: var(--vscode-menu-selectionForeground, #fff);
+}
+
+.session-dropdown-item:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.session-dropdown-item-danger {
+  color: var(--vscode-errorForeground, #f48771);
+}
+
+.session-dropdown-item-danger:hover:not(:disabled) {
+  background: var(--vscode-errorForeground, #f48771);
+  color: #fff;
+}
+
+.session-dropdown-divider {
+  height: 1px;
+  margin: 4px 0;
+  background: var(--vscode-menu-separatorBackground, rgba(128, 128, 128, 0.2));
 }
 
 .session-artifact-card-unavailable {
