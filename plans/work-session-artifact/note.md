@@ -1,0 +1,27 @@
+- thêm description cho mỗi zone của session
+- thêm description cho instructionn
+- codex đang dùng MD cho instruction này. Nó làm bằng cách nào? có thể sửa file md và tự động cập nhật lên đây hoặc ngược lại để user ko phải làm trong UI chật chội này.
+- Tree View Recent Artifacts và Sessions: đã chốt menu chuột phải, Pin/Archive/Delete trong Phase 5, cùng UI helper text; chi tiết ở mục Phase 5 của `plan.md`.
+
+## Quyết định tiếp nối
+
+- **Phase 4 — English UI/New–Join:** rà soát toàn App UI, dialog, Tree Views và native UI; đổi labels/messages sản phẩm còn tiếng Việt sang tiếng Anh, giữ nguyên title/type/content user nhập. New: **Start a new work session from this artifact.** Join: **Inspect this artifact and join one of its existing sessions with its full session context.** Join inspect artifact rồi nhận Instructions/metadata/catalog của Session liên quan đã chọn; không chỉ tạo liên kết, không chuyển transcript chat khác. Thuộc Bước 5/Chặng 3, cùng luồng Connect Phase 4.
+- **Phase 5 — UI helper text:** thêm mô tả cố định cho Working, References, Archived và Instructions; không thêm metadata description do user nhập cho từng zone. Mô tả Instructions: **Rules, workflows, and other guidance for AI in this session.**
+- **Phase 4 — Instructions Markdown:** dùng `instructions.md` làm nguồn chính; textarea + Save và nút **Open Markdown file** cùng đọc/ghi nội dung này. AI sửa file Markdown khi được user yêu cầu, không cần sửa metadata. Không duy trì hai bản JSON và Markdown cùng làm nguồn chính.
+- Textarea sửa Markdown source nguyên bản; Save ghi nguyên nội dung UTF-8, không chuyển thành plain text hoặc rich editor. Quyết định chi tiết Phase 4 ở [plan-phase-4.md](plan-phase-4.md).
+- Artifact description phục vụ catalog vẫn là công việc Phase 4: parse Markdown thành text, rút ngắn và thêm `…` khi bị cắt. Không nhầm với UI helper text hoãn sang Phase 5.
+- **Phase 5 — Trạng thái UI riêng:** artifact dùng `<artifactDirectory>/artifact-ui-state.json`, Session dùng `<sessionDirectory>/session-ui-state.json`; cùng cấu trúc `schemaVersion: 1`, `pinned?: boolean` (mặc định false), `archivedAt?: ISO datetime`. Không có file là chưa Pin/chưa Archive. Không thêm trường vào strict metadata của MCP, không tăng MCP/artifact/session schema chỉ vì Pin/Archive.
+- **Menu Recent Artifacts:** Open, Copy Connect Prompt, Pin/Unpin, Archive, Delete. **Menu Sessions:** Open, Rename, Change Type, Copy Connect Prompt, Open Instructions File, Copy Instructions File Path, Pin/Unpin, Archive, Delete. Không có Restore trong menu chuột phải của danh sách mặc định vì mục Archived bị ẩn ở đó; tìm bằng Search rồi mở custom editor để Restore.
+- **Tooltip sidebar (Phase 5):** Recent Artifacts hiện đầy đủ Name/title và Kind label; Sessions hiện đầy đủ Name/title và Session type label. Không cắt tooltip bằng `…` dù dòng trong Tree View bị rút gọn; không nhầm Session type với artifact kind.
+- Pin đưa mục lên nhóm đầu, trong nhóm giữ thứ tự recency; Archive ẩn khỏi danh sách mặc định kể cả đang Pin. Artifact Pin/Archive toàn cục không thay layout hoặc membership trong Session. Restore xoá `archivedAt`; Archive lại bắt đầu mốc mới.
+- **Search và Restore (Phase 5):** Search Artifacts/Search Sessions tìm cả mục Archived còn tồn tại và gắn nhãn Archived ở description; chọn kết quả chỉ Open, không tự Restore hoặc đổi mốc cleanup. Review App hiện nhãn Archived + nút Restore cho artifact Archive toàn cục; Session Manager hiện tương tự khi Session Archive. Restore xoá `archivedAt`, giữ Pin, cập nhật lại sidebar theo filter hiện tại; Session được bỏ điều kiện cleanup Archive 30 ngày. Không thêm Restore trong Quick Pick, không cần trang quản lý Archived riêng.
+- **Cleanup Session:** chỉ Session đã Archive đủ 30 ngày tính từ `archivedAt` mới được cleanup ở lần activation tiếp theo; Pin không miễn cleanup. Xoá Session không xoá artifact bên trong. Quy tắc cleanup Session khác để sau.
+- Delete artifact là xoá toàn cục, khác Remove khỏi một Session; dọn các membership/layout tham chiếu và xác nhận rõ phạm vi. Retention artifact hiện tại vẫn theo `artifact.json.updatedAt` và setting hiện có, không phụ thuộc Pin/Archive.
+
+## Phase 4 — Đã có hướng dẫn triển khai
+
+- [Hướng dẫn Phase 4](plan-phase-4.md): **7 bước / 3 chặng**, chưa triển khai. Chặng 1: Instructions storage và shared context/catalog/kind helpers. Chặng 2: shared inspect core + Join tool + Proceed mapping. Chặng 3: Instructions/Open/Connect, Recent filter/labels, skill/docs và nghiệm thu.
+- **Không fallback JSON:** format Session v2/migration chưa publish nên bỏ inline instructions khỏi persisted metadata và sửa producer/consumer/fixtures trực tiếp; không schema v3, không dual-write, không tự migration read/list. DTO vẫn có instructions đọc từ Markdown. Dữ liệu v2-inline development nếu cần giữ thì chuẩn bị thủ công, không thêm runtime branch.
+- `join_session(sessionId, artifactId?)` trả context, optional inspection trong một call dùng chung core; join-only không takeover/register. Create/inspect cũng trả context; AI đọc reference theo exact catalog path, không readonly inspect.
+- Fixed kinds: plan, implementation-plan, idea, analysis, design, spec, checklist, report, guide, note; cho phép kind mở. Hai plan kinds Proceed execute-approved-plan, còn lại approved; revise giữ comments/token/process-review-feedback. Recent filter All Types/fixed/Other thuộc Phase 4.
+- Phiên bản triển khai đích: MCP **13**, Skill **6**, artifact schema **6**, Session schema **2**; giữ gate theo runtime/receipt trên đĩa. Phiên bản đích chưa phải trạng thái source hiện tại.

@@ -14,6 +14,35 @@ Minor typos, formatting fixes, or cosmetic wording adjustments that do not chang
 
 Each entry includes the date, category, summary of changes, rationale, and affected components or files.
 
+## 2026-11-07 — Detailed Phase 4 implementation guide
+
+- Extended planned Step 5 to audit all app, dialog, Tree View and native UI wording for remaining product-owned Vietnamese strings and convert them to English while preserving user-authored titles, types and content. Confirmed remaining strings in ArtifactConnectDialog, ReviewApp Session tooltips and Recent Artifacts sidebar states.
+- Corrected planned Connect descriptions: New starts a work session from the same artifact; Join inspects it and continues one of its existing Sessions with that Session's full metadata/Instructions/catalog context. This does not transfer another AI chat transcript or merely link an artifact. Wording changes are planned with Phase 4 Connect implementation, not shipped by this documentation edit.
+- Added `plans/work-session-artifact/plan-phase-4.md` with seven pending steps in three reviewable stages: Instructions/shared context and kinds; MCP Join and Proceed contracts; UI Connect/filter, skill and validation. This is planning only, with no application code or installed asset changes.
+- Specified the final unpublished Session v2 format: metadata without inline instructions, a primary `instructions.md` file, raw Markdown textarea/Save/Open, and direct producer/consumer/fixture updates. Superseded the earlier inline-JSON fallback proposal; no runtime fallback, dual-write, schema v3 or read-time migration is planned.
+- Defined a new `join_session` tool for Session-only context or optional artifact inspection through the shared inspect core in one call. Create/inspect also return context; catalog paths support selective filesystem reads without reference takeover or replaying prior approval.
+- Recorded ten fixed artifact kinds plus open kinds, common labels, Recent All Types/fixed/Other filtering, execute-approved-plan for the two plan kinds, and approved for all other kinds while preserving complete feedback comments.
+- Planned MCP 13 / Skill 6 from the verified source baseline 12 / 5, preserving artifact schema 6, Session schema 2 and installed-file checks. Those target versions are not yet implemented.
+- Synchronized the roadmap and notes; Phase 5 UI organization and lifecycle controls remain separate. Validation of this documentation update is limited to document consistency, local links and diff checks, not runtime or implementation test results.
+
+## 2026-11-07 — Planned Phase 5 sidebar menus, Pin/Archive and archived Session cleanup
+
+- Assigned Recent Artifacts and Sessions item context menus, Pin/Unpin, Archive, Delete, and Search-to-editor Restore to Phase 5. Default-list context menus omit Restore because archived items are hidden there. Reuse the Phase 4 Connect and Instructions actions.
+- Planned full sidebar item tooltips: artifact title plus kind label for Recent Artifacts, Session title plus Session type label for Sessions. Tooltip values are not truncated when the visible tree row is shortened.
+- Search Artifacts and Search Sessions include existing archived items with an Archived description label. Opening a result does not restore it or reset cleanup eligibility. Archived artifacts show Restore in Review App; archived Sessions show Restore in Session Manager. Restore clears `archivedAt`, preserves pin state, and refreshes sidebar visibility under the current filter. No Restore button in Quick Pick or separate Archived management page is required.
+- Planned extension-owned `artifact-ui-state.json` and `session-ui-state.json` beside their respective entities, with independent schema version 1, optional `pinned` (default false), and optional `archivedAt`. These do not modify strict MCP artifact/session metadata or require a MCP/schema bump solely for UI state.
+- Pinned items sort first within the existing list limits; archive hides items regardless of pin state without changing membership, layout, or recency. Global artifact archive is separate from a Session's Archived layout zone.
+- Planned activation-time deletion of Sessions archived for at least 30 days, measured from `archivedAt`; pin does not exempt cleanup. Deleting a Session removes only its own data and memberships, never the shared artifacts. Other Session cleanup policies remain deferred.
+- Artifact Delete is global and removes referencing memberships/layout entries. Existing artifact retention remains based on manifest `updatedAt` and its configured retention period, with no pin/archive exemption.
+- Planning only; no runtime changes. Affected files: `plans/work-session-artifact/plan.md` and `plans/work-session-artifact/note.md`.
+
+## 2026-11-07 — Planned Instructions Markdown storage and Phase 5 helper text
+
+- Recorded the Phase 4 decision to use a real `instructions.md` file as the primary instructions source, with the existing textarea and an Open Markdown file action. The agent context/skill should point to that file rather than instruct agents to edit session metadata. This storage change is planned, not implemented.
+- Deferred fixed UI helper text for Working, References, Archived, and Instructions to Phase 5. Instructions describe rules, workflows, and other guidance for AI in the session; artifact descriptions for the Phase 4 catalog remain separate.
+- Recorded the legacy inline-JSON fallback/migration approach as a proposal awaiting the detailed Phase 4 plan, not a committed schema change.
+- Affected planning files: `plans/work-session-artifact/plan.md` and `plans/work-session-artifact/note.md`.
+
 ## 2026-11-07 — Work Session roadmap scope and upgrade guidance
 
 - Extended the Phase 3 plan with a pending Step 7 in Stage 3 for the active Session contract: each AI chat keeps at most one default Session; explicit New/Join replaces that default after success. Preserved the recorded completion and validation of Steps 1–6; no skill/runtime change is shipped by this documentation update.
