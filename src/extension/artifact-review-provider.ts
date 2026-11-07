@@ -123,14 +123,14 @@ export class ArtifactReviewProvider implements vscode.CustomTextEditorProvider {
               promptOptions = undefined;
             } else if (message.mode === "join") {
               if (!message.sessionId) {
-                void vscode.window.showErrorMessage("Thiếu Session ID để tham gia.");
+                void vscode.window.showErrorMessage("Missing Session ID to join.");
                 return;
               }
               const sessions = await this.conversationService.getArtifactSessions(store.artifactId);
               const targetSession = sessions.find((s) => s.sessionId === message.sessionId);
               if (!targetSession || targetSession.version !== 2) {
                 void vscode.window.showErrorMessage(
-                  `Session "${message.sessionId}" không hợp lệ hoặc cần chuyển đổi sang v2 trước khi tham gia.`,
+                  `Session "${message.sessionId}" is invalid or needs to be migrated to v2 before joining.`,
                 );
                 void refreshSessions();
                 return;
@@ -148,13 +148,13 @@ export class ArtifactReviewProvider implements vscode.CustomTextEditorProvider {
           case "openArtifactSessions": {
             const support = await resolveWorkSessionSupport(this.rootOptions, this.context);
             if (!support.supported || !this.conversationService) {
-              void vscode.window.showInformationMessage("Sessions yêu cầu MCP server phiên bản 12 trở lên.");
+              void vscode.window.showInformationMessage("Sessions require MCP server version 12 or higher.");
               return;
             }
 
             const sessions = await this.conversationService.getArtifactSessions(store.artifactId);
             if (sessions.length === 0) {
-              void vscode.window.showInformationMessage("Artifact chưa thuộc Session nào.");
+              void vscode.window.showInformationMessage("This artifact does not belong to any session.");
               return;
             }
 
@@ -164,11 +164,11 @@ export class ArtifactReviewProvider implements vscode.CustomTextEditorProvider {
                 await vscode.commands.executeCommand("agentPlus.openWorkSession", target.sessionId);
               } else {
                 const choice = await vscode.window.showInformationMessage(
-                  `Artifact này thuộc conversation "${target.title}". Bạn có muốn chuyển đổi sang Session v2 để mở?`,
-                  "Chuyển đổi",
-                  "Huỷ",
+                  `This artifact belongs to conversation "${target.title}". Do you want to migrate it to Session v2 to open?`,
+                  "Migrate",
+                  "Cancel",
                 );
-                if (choice === "Chuyển đổi") {
+                if (choice === "Migrate") {
                   await runSingleMigration({
                     sessionId: target.sessionId,
                     rootOptions: this.rootOptions,
@@ -188,12 +188,12 @@ export class ArtifactReviewProvider implements vscode.CustomTextEditorProvider {
             // Multiple sessions: show QuickPick
             const items = sessions.map((s) => ({
               label: s.title,
-              description: s.version === 2 ? `Session · ${s.typeLabel ?? "conversation"}` : "Conversation cũ · Cần chuyển đổi",
+              description: s.version === 2 ? `Session · ${s.typeLabel ?? "conversation"}` : "Legacy conversation · Migration required",
               target: s,
             }));
 
             const selected = await vscode.window.showQuickPick(items, {
-              title: "Chọn Session của Artifact để mở",
+              title: "Select Artifact Session to Open",
             });
 
             if (!selected) return;
@@ -202,11 +202,11 @@ export class ArtifactReviewProvider implements vscode.CustomTextEditorProvider {
               await vscode.commands.executeCommand("agentPlus.openWorkSession", selected.target.sessionId);
             } else {
               const choice = await vscode.window.showInformationMessage(
-                `Chuyển đổi conversation "${selected.target.title}" sang Session v2 để mở?`,
-                "Chuyển đổi",
-                "Huỷ",
+                `Migrate conversation "${selected.target.title}" to Session v2 to open?`,
+                "Migrate",
+                "Cancel",
               );
-              if (choice === "Chuyển đổi") {
+              if (choice === "Migrate") {
                 await runSingleMigration({
                   sessionId: selected.target.sessionId,
                   rootOptions: this.rootOptions,
@@ -225,7 +225,7 @@ export class ArtifactReviewProvider implements vscode.CustomTextEditorProvider {
           case "migrateSelectedConversation": {
             const support = await resolveWorkSessionSupport(this.rootOptions, this.context);
             if (!support.supported || !this.conversationService) {
-              void vscode.window.showInformationMessage("Sessions yêu cầu MCP server phiên bản 12 trở lên.");
+              void vscode.window.showInformationMessage("Sessions require MCP server version 12 or higher.");
               return;
             }
 
@@ -233,7 +233,7 @@ export class ArtifactReviewProvider implements vscode.CustomTextEditorProvider {
             const targetCandidate = sessions.find((s) => s.sessionId === message.sessionId);
             if (!targetCandidate || targetCandidate.version !== 1) {
               void vscode.window.showErrorMessage(
-                `Conversation "${message.sessionId}" không còn ở trạng thái cần chuyển đổi.`,
+                `Conversation "${message.sessionId}" is no longer in a state requiring migration.`,
               );
               void refreshSessions();
               return;

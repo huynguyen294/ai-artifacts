@@ -143,7 +143,7 @@ describe("WorkSession Sidebar Tree Data Providers", () => {
       expect(children[0]?.type).toBe("unsupported");
 
       const item = provider.getTreeItem(children[0]!);
-      expect(item.label).toContain("Sessions yêu cầu MCP server phiên bản 12 trở lên");
+      expect(item.label).toContain("Sessions require MCP server version 12 or higher");
     });
 
     it("renders sessions and migration candidates when MCP version 12 is present", async () => {
@@ -207,6 +207,58 @@ describe("WorkSession Sidebar Tree Data Providers", () => {
         expect(treeItem.description).toContain("Architecture · 0 artifacts");
         expect(treeItem.command?.arguments).toEqual([session.sessionId]);
       }
+    });
+
+    it("filters sessions by selectedTypeId and shows No sessions match this filter when empty", async () => {
+      // Mock integration-version.json with mcpVersion 12
+      const managedDir = path.join(tempHome, ".ai-artifacts", "managed");
+      await mkdir(managedDir, { recursive: true });
+      await writeFile(
+        path.join(managedDir, "integration-version.json"),
+        JSON.stringify({
+          schemaVersion: 1,
+          mcpVersion: 12,
+          updatedAt: new Date().toISOString(),
+          skills: {},
+        }),
+      );
+
+      const typeA = await createSessionType("Type A", { userHome: tempHome });
+      const typeB = await createSessionType("Type B", { userHome: tempHome });
+
+      await createSession({ title: "Session A", typeId: typeA.id, userHome: tempHome });
+      await createSession({ title: "Session B", typeId: typeB.id, userHome: tempHome });
+
+      const provider = new WorkSessionsTreeDataProvider(service, undefined, { userHome: tempHome });
+
+      // 1. Without filter -> returns both sessions
+      let children = await provider.getChildren();
+      let sessionItems = children.filter((c) => c.type === "session");
+      expect(sessionItems).toHaveLength(2);
+
+      // 2. Filter by Type A -> returns only Session A
+      provider.setTypeFilter(typeA.id);
+      expect(provider.getTypeFilter()).toBe(typeA.id);
+      children = await provider.getChildren();
+      sessionItems = children.filter((c) => c.type === "session");
+      expect(sessionItems).toHaveLength(1);
+      expect(sessionItems[0]?.type === "session" && sessionItems[0].title).toBe("Session A");
+
+      // 3. Filter by valid type with 0 matching sessions -> returns emptyFilter
+      const typeEmpty = await createSessionType("Type Empty", { userHome: tempHome });
+      provider.setTypeFilter(typeEmpty.id);
+      children = await provider.getChildren();
+      expect(children).toHaveLength(1);
+      expect(children[0]?.type).toBe("emptyFilter");
+      const emptyTreeItem = provider.getTreeItem(children[0]!);
+      expect(emptyTreeItem.label).toBe("No sessions match this filter");
+
+      // 4. When selected type does not exist in registry -> automatically resets filter to undefined and returns all
+      provider.setTypeFilter("deleted-type-id");
+      children = await provider.getChildren();
+      expect(provider.getTypeFilter()).toBeUndefined();
+      sessionItems = children.filter((c) => c.type === "session");
+      expect(sessionItems).toHaveLength(2);
     });
 
     it("selectively refreshes tree providers based on change kind", () => {

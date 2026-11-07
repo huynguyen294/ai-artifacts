@@ -57,9 +57,9 @@ The core responsibility split is:
 | Artifact file protocol   | Persistent lifecycle and routing communication | Manifest, Markdown, comments, decision, and optional connection state         |
 | Extension entry          | VS Code activation and composition            | Commands, watchers, Activity Bar views, and provider registration            |
 | Artifact Review Provider | Webview/extension orchestration               | One custom-editor session, async message queue, and its subscriptions        |
-| Work Session Provider    | Read-only session inspection orchestration    | `agentPlus.workSession` custom readonly editor, three-zone layout data        |
+| Work Session Provider    | Work Session management orchestration         | `agentPlus.workSession` custom readonly editor, scoped patches, per-session panel state, and host actions |
 | Artifact Store           | Trusted artifact persistence adapter          | Validated review state, comments, and submission writes                      |
-| Review Webview & Session Tab | Human review and session inspection       | Ephemeral UI state, ReviewApp, SessionApp, ConnectDialog, and typed user intent |
+| Review Webview & Session Tab | Human review and Work Session management  | Ephemeral UI state, ReviewApp, SessionApp (two-column manager), ConnectDialog, and typed user intent |
 | Markdown review pipeline | Document rendering and comment anchoring      | Parsed blocks and rendered annotations                                       |
 | Shared contracts         | Cross-process protocol definition             | Schemas, types, filenames, and binding rules                                 |
 | Integration manager      | Installation and verification                 | Extension-managed MCP runtime, skill, and supported-client configuration     |
@@ -254,7 +254,7 @@ The protocol is the communication medium between the independently running MCP p
 - Activate the extension.
 - Construct the review provider, session provider, work session sidebar providers, and workspace-registry publisher.
 - Register the `agentPlus.artifactReview` custom editor and `agentPlus.workSession` custom readonly editor.
-- Register the Activity Bar container `agentPlus-artifacts` (built-in Codicon `library`) with `agentPlus.recentArtifacts` and `agentPlus.sessions` TreeDataProviders.
+- Register the Activity Bar container `agentPlus-artifacts` (built-in Codicon `library`) with `agentPlus.recentArtifacts` and `agentPlus.sessions` TreeDataProviders (using `createTreeView` for `agentPlus.sessions` to display active session type filter descriptions).
 - Ensure and validate the global collection root before registering direct-child `artifact-connection.json` create/change events.
 - Revalidate the connection path, manifest binding, and linked-path safety on each bounded read attempt; ignore events whose target instance ID does not match the current window.
 - Automatically open the corresponding `artifact.md` when configured and targeted, even if that window is unfocused. Disabling auto-open does not undo the MCP connection commit.
@@ -263,6 +263,8 @@ The protocol is the communication medium between the independently running MCP p
   - Open an artifact review from a selected `artifact.md`, an active Markdown or Artifact Review editor, or the global-collection file-picker fallback. Expose **Open Artifact Review** in Explorer, Markdown editor, and editor-tab context menus for file-backed `artifact.md`, then use the shared safe open coordinator rather than bypassing artifact validation.
   - Search artifacts by title in the global collection (`agentPlus.searchArtifact`).
   - Open a work session (`agentPlus.openWorkSession`).
+  - Filter the Sessions sidebar view by session type or All Types (`agentPlus.filterSessions`).
+  - Search all v2 Work Sessions by title (`agentPlus.searchSessions`).
   - Manage global session types via native QuickPick (`agentPlus.manageSessionTypes`).
   - Run single and bulk conversation migration (`agentPlus.migrateConversations`).
   - Install, verify, and uninstall all supported integrations or one specific client.
@@ -374,8 +376,10 @@ Only schema-v6 artifacts at exact validated global handles are loaded. Schemas v
   - Open `ArtifactConnectDialog` when Connect is clicked on MCP version 12+, presenting New Session vs Join Session modes.
   - Capture text selections, draft inline comments, and submit review decisions (`revise`, `approve`, `save`).
 - In `SessionApp`:
-  - Render session title, type badge, markdown instructions, and artifact cards across `Working`, `References`, and `Archived` zones.
-  - Route artifact card clicks to host for safe opening.
+  - Render a two-column Work Session Manager with the `Working` artifact zone in the main column and a collapsible side panel (`Session Type` → `Instructions` → `References` → `Archived`).
+  - Provide controls to rename the session, change or quick-create its session type, edit and explicitly **Save** Markdown `instructions`, toggle the per-session side panel (`globalState`), and organize/reorder/remove artifacts across `Working`, `References`, and `Archived`.
+  - Preserve unsaved `instructions` draft across unrelated background refreshes while accepting `workSessionInstructionsPatch` when the persisted `instructions` field changes on disk, and surface action errors inline without tearing down the manager view.
+  - Route artifact card clicks to the host for safe opening.
 - Reset transient UI upon round or session state change.
 - Copy Markdown or Connect prompt to clipboard.
 
@@ -599,8 +603,8 @@ Tests document the expected responsibility boundaries:
 | Global artifact loading, comments, submissions, schema-v3/v4 rejection, and permissions | `test/artifact-store.test.ts`, `test/global-artifact-path.test.ts`                              |
 | MCP creation, waiting, takeover, inspection, reconnect, token use, rollback, and safety | `test/review-wait-mcp.test.ts`                                                                 |
 | Conversation registry persistence, atomic locking, and retention cleanup               | `test/conversation-artifact-registry.test.ts`                                                   |
-| Conversation artifact service discovery and validation                                 | `test/conversation-artifact-service.test.ts`                                                    |
-| Webview conversation drawer, keyboard navigation, and focus trap                       | `test/conversation-artifacts-drawer.test.tsx`                                                   |
+| Conversation artifact service discovery, scoped change events, and session mutations   | `test/conversation-artifact-service.test.ts`                                                    |
+| Work Session Manager provider, webview state machine, sidebar filter/search, and Quick Input commands | `test/work-session-provider.test.ts`, `test/session-app.test.tsx`, `test/work-session-sidebar.test.ts`, `test/session-type-command.test.ts`, `test/session-filter-command.test.ts`, `test/session-search-command.test.ts`, `test/session-migration-command.test.ts` |
 | Provider async non-blocking queue and conversation routing                             | `test/artifact-review-provider.test.ts`                                                         |
 | Workspace evidence, grouped windows, selection grants, and focus-as-hint behavior      | `test/workspace-registry.test.ts`                                                               |
 | Connection schema, atomic commits, retries, path safety, and target resolution          | `test/artifact-connection.test.ts`                                                              |

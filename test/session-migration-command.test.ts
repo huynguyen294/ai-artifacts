@@ -20,7 +20,7 @@ describe("session-migration-command", () => {
 
       expect(success).toBe(false);
       expect(showErrorMessage).toHaveBeenCalledWith(
-        expect.stringContaining("Không thể chuyển đổi conversation sang Session"),
+        expect.stringContaining("Failed to migrate conversation to Session"),
       );
       expect(openWorkSession).not.toHaveBeenCalled();
       expect(onDidMigrate).not.toHaveBeenCalled();
@@ -42,13 +42,13 @@ describe("session-migration-command", () => {
 
       expect(result).toBeNull();
       expect(showInformationMessage).toHaveBeenCalledWith(
-        "Không có conversation nào cần chuyển đổi sang Sessions.",
+        "No conversations need migration to Sessions.",
       );
       expect(showWarningMessage).not.toHaveBeenCalled();
     });
 
     it("cancels without mutating when user does not confirm", async () => {
-      const showWarningMessage = vi.fn(async () => "Huỷ");
+      const showWarningMessage = vi.fn(async () => "Cancel");
       const migrateCandidate = vi.fn();
 
       const result = await runBulkMigration({
@@ -79,7 +79,7 @@ describe("session-migration-command", () => {
         throw new Error("Disk error");
       });
 
-      const showWarningMessage = vi.fn(async () => "Chuyển tất cả");
+      const showWarningMessage = vi.fn(async () => "Migrate All");
       const showInformationMessage = vi.fn();
       const onDidMigrate = vi.fn();
 
@@ -101,7 +101,7 @@ describe("session-migration-command", () => {
       expect(migrateCandidate).toHaveBeenCalledTimes(3);
       expect(progressReports).toHaveLength(3);
       expect(showInformationMessage).toHaveBeenCalledWith(
-        "Hoàn tất chuyển đổi: 1 thành công, 1 đã là Session, 1 thất bại.",
+        "Migration completed: 1 succeeded, 1 already a Session, 1 failed.",
       );
       expect(onDidMigrate).toHaveBeenCalledTimes(1);
     });

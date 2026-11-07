@@ -1,6 +1,6 @@
 # Phase 3 — Session Manager: hướng dẫn triển khai
 
-Trạng thái: **Đang triển khai Phase 3: Hoàn thành Chặng 1 (Bước 1 + 2) và Chặng 2 (Bước 3); chuẩn bị Chặng 3 (Bước 4 + 5 + 6)**. Phase 1+2 đã hoàn thành theo [plan tổng thể](plan.md) và [hướng dẫn Phase 1+2](plan-phase-1-2.md).
+Trạng thái: **Đã hoàn thành toàn bộ Phase 3 (Chặng 1, 2, 3 — Bước 1 đến 6 và fix 3 findings); 100% test suite pass (40 test files, 585 tests passed), typecheck và build pass**. Phase 1+2 đã hoàn thành theo [plan tổng thể](plan.md) và [hướng dẫn Phase 1+2](plan-phase-1-2.md).
 
 Mục tiêu: mở rộng tab Session hiện có thành manager chỉnh sửa được; bổ sung filter/search Sessions trên sidebar và wording Quick Input tiếng Anh. Thực hiện theo **6 bước, chia 3 chặng** để review diff từng phần.
 
@@ -78,10 +78,10 @@ Textarea khởi tạo khi mở Session, thay đổi do user nhập, own-save ho�
 | --- | --- | --- | --- |
 | 1 — Refresh và host actions | 1. Event có phạm vi | Watcher tới đúng consumer; giữ behavior Phase 1+2. | ✅ Đã hoàn thành |
 | 1 — Refresh và host actions | 2. Contracts/actions | Manager ghi đúng file qua API hiện có; lỗi không xoá state. | ✅ Đã hoàn thành |
-| 2 — Session Manager | 3. UI manager | Sửa tên/Hướng dẫn/type, panel preference, menu artifact. | Chưa triển khai |
-| 3 — Sidebar và nghiệm thu | 4. Filter/search | Lọc sidebar theo type; tìm toàn bộ v2 và mở đúng Session. | Chưa triển khai |
-| 3 — Sidebar và nghiệm thu | 5. English Quick Input | Wording nhất quán, CRUD types vẫn đúng. | Chưa triển khai |
-| 3 — Sidebar và nghiệm thu | 6. Validation/bàn giao | Tests/check/build và bằng chứng Extension Host tách riêng. | Chưa triển khai |
+| 2 — Session Manager | 3. UI manager | Sửa tên/Hướng dẫn/type, panel preference, menu artifact. | ✅ Đã hoàn thành |
+| 3 — Sidebar và nghiệm thu | 4. Filter/search | Lọc sidebar theo type; tìm toàn bộ v2 và mở đúng Session. | ✅ Đã hoàn thành |
+| 3 — Sidebar và nghiệm thu | 5. English Quick Input | Wording nhất quán, CRUD types vẫn đúng. | ✅ Đã hoàn thành |
+| 3 — Sidebar và nghiệm thu | 6. Validation/bàn giao | Tests/check/build và bằng chứng Extension Host tách riêng. | ✅ Đã hoàn thành |
 
 Mỗi chặng kết thúc ở phần diff review được và cập nhật tiến độ bằng kết quả thực tế. Không đánh dấu runtime hoàn thành chỉ từ build/render markup pass.
 

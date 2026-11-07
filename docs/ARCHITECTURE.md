@@ -19,15 +19,15 @@ AI Artifacts MCP -- discovers live windows and coordinates review rounds
 VS Code extension windows -- publish heartbeats, match connection target, open editor / session tab
    |
    v
-React webview -- renders ReviewApp (Markdown, comments, Sessions nav, Connect dialog) & SessionApp (three-zone readonly session viewer)
+React webview -- renders ReviewApp (Markdown, comments, Sessions nav, Connect dialog) & SessionApp (two-column Session Manager)
 ```
 
 ## Ownership boundaries
 
 - The skill chooses when an artifact is appropriate, calls create directly or resolves windows when ambiguous, retains an exact handle mapping, tracks `artifactConversationId`, writes complete Markdown, answers review questions in chat, and reacts to decisions.
 - The MCP server discovers live VS Code windows, exclusively creates schema-v6 artifacts in global storage, commits schema-v1 window-routing requests, manages schema-v2 Work Sessions with fail-closed v1 preflight (`CONVERSATION_MIGRATION_REQUIRED`), and advances review rounds. It generates IDs and review sessions, validates paths and candidate selection tokens, owns transient waiter registration, issues one-time round tokens, and commits round transitions transactionally.
-- Each extension host window publishes fresh canonical workspace roots plus its stable instance ID, focus hint, and active-file context. It validates connection targets and artifact bindings, opens only requests addressed to its own instance ID, serves sessions and artifact queries, and writes user comments/submissions.
-- The webview renders sanitized CommonMark/GFM, provides inline comments, session navigation, and Connect dialogs in `ReviewApp`, as well as three-zone read-only session inspection in `SessionApp`, sending typed messages to the extension host. It has no direct filesystem or process access.
+- Each extension host window publishes fresh canonical workspace roots plus its stable instance ID, focus hint, and active-file context. It validates connection targets and artifact bindings, opens only requests addressed to its own instance ID, serves sessions and artifact queries, executes validated Work Session metadata/layout/membership mutations, and writes user comments/submissions.
+- The webview renders sanitized CommonMark/GFM, provides inline comments, session navigation, and Connect dialogs in `ReviewApp`, as well as two-column Work Session management in `SessionApp`, sending typed messages to the extension host. It has no direct filesystem or process access.
 - `src/shared` is the single contract boundary used by the MCP, extension host, and webview.
 
 ## Lifetime model
@@ -103,14 +103,19 @@ The legacy conversation drawer has been replaced by a first-class Work Session a
 
 1. **AI Artifacts Activity Bar View**: Provides two views (`agentPlus.recentArtifacts` and `agentPlus.sessions`), defaulted to visible on first load:
    - **Recent Artifacts**: Displays the 20 most recently updated artifacts (sorted by `updatedAt` desc) with quick access to full title search via **View all...** (`agentPlus.searchArtifact`).
-   - **Sessions**: Displays all v2 Work Sessions with their session type labels (`Conversation`, `Project`, `Feature`, `Fix`, or custom types), artifact counts, and dynamic `updatedAt` recency.
+   - **Sessions**: Displays v2 Work Sessions with their session type labels (`Conversation`, `Project`, `Feature`, `Fix`, or custom types), artifact counts, and dynamic `updatedAt` recency.
+   - **Filter & Search Sessions**: Header actions on the Sessions view provide window-local filtering by session type (`agentPlus.filterSessions`, showing the active filter in `TreeView.description` and resetting to `All Types` if the selected type is deleted) and accent/case-insensitive title search across all v2 Work Sessions (`agentPlus.searchSessions`, independent of the active sidebar filter).
    - **Session Types Management**: A gear action (`agentPlus.manageSessionTypes`) on the Sessions view header opens a native VS Code QuickPick to create, rename, or delete global session types.
    - **Migration Detection**: Displays the count of legacy v1 conversations with an action to launch bulk migration.
-2. **Dedicated Read-only Session Editor (`agentPlus.workSession`)**: Opening a session renders `SessionApp` showing session metadata, markdown instructions, and artifact cards organized into three zones: `Working`, `References`, and `Archived`. Clicking an artifact card opens it in the review editor via the shared `ArtifactReviewOpenCoordinator`.
+2. **Work Session Manager (`agentPlus.workSession`)**: Opening a session renders `SessionApp` in a two-column layout:
+   - **Main Column**: Displays the `Working` artifact zone, expanding to full width when the side panel is collapsed.
+   - **Collapsible Side Panel**: Ordered as `Session Type` (with quick pick to assign or create a type) → `Instructions` (fixed-height Markdown textarea with explicit **Save**) → `References` zone → `Archived` zone. Per-session panel expanded/collapsed state is persisted in extension `globalState` (`workSessions.panelExpanded.<sessionId>`, default `true`).
+   - **Artifact Organization**: Each artifact card provides a menu to move across `Working` / `References` / `Archived`, reorder (`Move Up` / `Move Down`), or remove the artifact from the session without deleting the underlying artifact files. Clicking an available artifact card opens it in the review editor via the shared `ArtifactReviewOpenCoordinator`.
+   - **Scoped Refresh & Draft Preservation**: `ConversationArtifactService` classifies registry, manifest, and session-types watcher events into scoped `WorkSessionDataChange` batches (`metadata`, `membership`, `layout`, `artifact`, `types`, `support`). Unrelated background refreshes (artifact manifest edits, membership/layout updates, title/type changes) update only their target UI sections and never reset unsaved `Instructions` text or focus. If the persisted `instructions` field on disk actually changes (e.g., edited directly in `conversation.json` by an AI agent), `WorkSessionProvider` emits `workSessionInstructionsPatch` to update the textarea.
 3. **Review App Sessions Navigation & Connect Dialog**:
    - The Review App header provides a **Sessions** button (gated on MCP version >= 12) to reveal the artifact's session.
    - Clicking **Connect** on MCP version >= 12 opens `ArtifactConnectDialog` to choose between **New Session** (instructs the agent to omit the existing session ID and establish a fresh session) and **Join Session** (links into an existing v2 session, with v1 conversations disabled and badged as requiring migration).
-4. **Single & Bulk Migration**: The coordinator (`src/extension/session-migration-command.ts`) provides single migration (migrates v1 to v2 with a backup `conversation.v1.backup.json` and opens the session) and bulk migration with native confirmation dialogs and VS Code progress notification reporting.
+4. **Single & Bulk Migration**: The coordinator (`src/extension/session-migration-command.ts`) provides single migration (migrates v1 to v2 with a backup `conversation.v1.backup.json` and opens the session) and bulk migration with native confirmation dialogs and VS Code progress notification reporting. All Session Quick Input flows and notifications use unified English wording while preserving user-authored session titles, instructions, and type labels.
 
 ## Deployment and filesystem support
 

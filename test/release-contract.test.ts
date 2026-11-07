@@ -82,9 +82,19 @@ describe("v1.1.4 release contract", () => {
       ],
       "view/title": [
         {
-          "command": "agentPlus.manageSessionTypes",
-          "when": "view == agentPlus.sessions",
-          "group": "navigation",
+          command: "agentPlus.filterSessions",
+          when: "view == agentPlus.sessions",
+          group: "navigation@1",
+        },
+        {
+          command: "agentPlus.searchSessions",
+          when: "view == agentPlus.sessions",
+          group: "navigation@2",
+        },
+        {
+          command: "agentPlus.manageSessionTypes",
+          when: "view == agentPlus.sessions",
+          group: "navigation@3",
         },
       ],
     });

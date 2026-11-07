@@ -70,18 +70,20 @@ If product intent, documentation, tests, and implementation disagree, call out t
 - `src/integration/artifact-review-mcp-v4.ts`: historical filename for the current numeric MCP version 12/schema-v6 tools, window resolution, Work Session creation/reuse with fail-closed v1 preflight, connection commits, artifact creation, waiter ownership/takeover, complete review feedback results, round grants, inspection, and transactional round commits.
 - `src/shared/conversation-artifact-registry.ts`: schema-v2 Work Session persistence, layout reconciliation, dynamic `updatedAt`, single migration with backup, and retention pruning.
 - `src/shared/session-type-registry.ts`: global session types registry (`~/.ai-artifacts/session-types.json`).
-- `src/extension/work-session-sidebar.ts`: Activity Bar `AI Artifacts` TreeDataProviders for Recent Artifacts (cap 20 + View all) and Work Sessions v2.
-- `src/extension/session-type-command.ts`: QuickPick native controller for global session types management.
+- `src/extension/work-session-sidebar.ts`: Activity Bar `AI Artifacts` TreeDataProviders for Recent Artifacts (cap 20 + View all) and Work Sessions v2 (including window-local type filtering).
+- `src/extension/session-type-command.ts`: QuickPick native controllers for global session types management and session type selection/quick-create.
+- `src/extension/session-filter-command.ts`: QuickPick native controller for filtering the Sessions sidebar by session type or All Types.
+- `src/extension/session-search-command.ts`: QuickPick native controller for accent/case-insensitive title search across all v2 Work Sessions.
 - `src/extension/session-migration-command.ts`: single and bulk migration coordinator.
-- `src/extension/work-session-provider.ts`: CustomReadonlyEditorProvider for `agentPlus.workSession` tab.
-- `src/extension/conversation-artifact-service.ts`: extension-side conversation artifacts & sessions discovery, validation, and watcher notifications.
+- `src/extension/work-session-provider.ts`: CustomReadonlyEditorProvider for `agentPlus.workSession` tab, handling scoped data refresh patches, external instructions sync, per-session panel preference (`globalState`), and session/artifact management actions.
+- `src/extension/conversation-artifact-service.ts`: extension-side conversation artifacts & sessions discovery, validation, session/layout mutation wrappers, and scoped watcher notifications (`WorkSessionDataChange`).
 - `src/extension/artifact-store.ts`: trusted artifact loading, comment writes, and submission writes.
 - `src/extension/workspace-registry-publisher.ts`: live VS Code workspace heartbeat.
 - `src/extension/artifact-search.ts`: extension-local schema-v6 title normalization, bounded concurrency discovery, and title-only filtering.
 - `src/extension/artifact-search-command.ts`: VS Code Quick Pick UI controller, in-memory filter updates, and safe cancellation/open coordination.
 - `src/extension/workspace-integration.ts`: centralized MCP installation, base runtime provisioning, per-target version receipts, customization-preserving skill replacement, and legacy cleanup.
 - `src/extension/mcp-clients/`: dedicated configuration drivers for Codex, Cursor, Claude Code, Windsurf, GitHub Copilot (VS Code), and Cline.
-- `src/webview/`: review UI and typed messages to the extension host; includes `ReviewApp.tsx` (Sessions button and `ArtifactConnectDialog.tsx`) and `SessionApp.tsx` (three-zone readonly session viewer); no direct filesystem or process access.
+- `src/webview/`: review UI and typed messages to the extension host; includes `ReviewApp.tsx` (Sessions button and `ArtifactConnectDialog.tsx`) and `SessionApp.tsx` (two-column Session Manager with Working main column and collapsible Type / Instructions / References / Archived side panel); no direct filesystem or process access.
 - `src/shared/`: shared schemas, file contracts, artifact-connection safety/persistence, validation, and grouped workspace registry rules.
 - `skills/create-review-artifact/`: Codex trigger and lifecycle orchestration contract.
 - `test/`: executable regression coverage for contracts and failure behavior.

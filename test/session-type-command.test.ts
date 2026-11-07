@@ -26,6 +26,7 @@ class FakeQuickPick {
   matchOnDescription = false;
   items: readonly SessionTypeQuickPickItem[] = [];
   selectedItems: readonly SessionTypeQuickPickItem[] = [];
+  activeItems: readonly SessionTypeQuickPickItem[] = [];
   itemButtonListeners: ((e: { item: SessionTypeQuickPickItem; button: any }) => any)[] = [];
   acceptListeners: (() => any)[] = [];
   hideListeners: (() => any)[] = [];
@@ -62,9 +63,10 @@ class FakeQuickPick {
     for (const l of this.changeValueListeners) l(val);
   }
 
-  triggerButton(item: SessionTypeQuickPickItem, tooltip: string) {
+  triggerButton(item: SessionTypeQuickPickItem, actionId: "rename" | "delete") {
+    const btn = item.buttons?.find((b: any) => b.actionId === actionId) ?? { actionId };
     for (const l of this.itemButtonListeners) {
-      l({ item, button: { tooltip } });
+      l({ item, button: btn });
     }
   }
 
@@ -104,9 +106,9 @@ describe("runManageSessionTypesCommand", () => {
 
     const defaultItem = fakeQuickPick.items.find((i) => i.typeId === DEFAULT_SESSION_TYPE_ID);
     expect(defaultItem).toBeDefined();
-    expect(defaultItem?.description).toBe("[Mặc định]");
-    expect(defaultItem?.buttons?.some((b: any) => b.tooltip === "Xóa")).toBe(false);
-    expect(defaultItem?.buttons?.some((b: any) => b.tooltip === "Đổi tên")).toBe(true);
+    expect(defaultItem?.description).toBe("[Default]");
+    expect(defaultItem?.buttons?.some((b: any) => b.tooltip === "Delete")).toBe(false);
+    expect(defaultItem?.buttons?.some((b: any) => b.tooltip === "Rename")).toBe(true);
   });
 
   it("creates a new session type via the create button", async () => {
@@ -158,7 +160,7 @@ describe("runManageSessionTypesCommand", () => {
     const targetItem = fakeQuickPick.items.find((i) => i.typeId === created.id);
     expect(targetItem).toBeDefined();
 
-    fakeQuickPick.triggerButton(targetItem!, "Đổi tên");
+    fakeQuickPick.triggerButton(targetItem!, "rename");
 
     await vi.waitFor(() => {
       expect(showInputBox).toHaveBeenCalled();
@@ -189,7 +191,46 @@ describe("runManageSessionTypesCommand", () => {
     const targetItem = fakeQuickPick.items.find((i) => i.typeId === created.id);
     expect(targetItem).toBeDefined();
 
-    fakeQuickPick.triggerButton(targetItem!, "Xóa");
+    fakeQuickPick.triggerButton(targetItem!, "delete");
+
+    await vi.waitFor(() => {
+      expect(onDidUpdate).toHaveBeenCalled();
+    });
+
+    const types = await listSessionTypes({ userHome: tempHome });
+    expect(types.some((t) => t.id === created.id)).toBe(false);
+  });
+
+  it("assigns actionId on item buttons and identifies action by actionId directly", async () => {
+    const created = await createSessionType("Action ID Test", { userHome: tempHome });
+
+    const fakeQuickPick = new FakeQuickPick();
+    const onDidUpdate = vi.fn();
+
+    const deps: SessionTypeCommandDeps = {
+      createQuickPick: () => fakeQuickPick as any,
+      showInputBox: vi.fn(),
+      showWarningMessage: vi.fn(),
+      showErrorMessage: vi.fn(),
+      rootOptions: { userHome: tempHome },
+      onDidUpdate,
+    };
+
+    await runManageSessionTypesCommand(deps);
+
+    const targetItem = fakeQuickPick.items.find((i) => i.typeId === created.id);
+    expect(targetItem).toBeDefined();
+    expect(targetItem!.buttons).toHaveLength(2);
+
+    const renameBtn = targetItem!.buttons![0] as any;
+    const deleteBtn = targetItem!.buttons![1] as any;
+    expect(renameBtn.actionId).toBe("rename");
+    expect(deleteBtn.actionId).toBe("delete");
+
+    // Trigger delete using the button object containing actionId (without matching tooltip)
+    for (const l of fakeQuickPick.itemButtonListeners) {
+      await l({ item: targetItem!, button: { actionId: "delete" } });
+    }
 
     await vi.waitFor(() => {
       expect(onDidUpdate).toHaveBeenCalled();
@@ -222,6 +263,8 @@ describe("runSelectSessionTypeQuickPick", () => {
     await vi.waitFor(() => {
       expect(fakeQuickPick.items.length).toBeGreaterThan(0);
     });
+
+    expect(fakeQuickPick.activeItems[0]?.typeId).toBe("feature");
 
     const conversationItem = fakeQuickPick.items.find((i) => i.typeId === "conversation");
     expect(conversationItem).toBeDefined();

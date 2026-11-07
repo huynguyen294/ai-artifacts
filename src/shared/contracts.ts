@@ -568,6 +568,10 @@ export type SessionExtensionToWebviewMessage =
       updatedAt: string;
     }
   | {
+      type: "workSessionInstructionsPatch";
+      instructions: string;
+    }
+  | {
       type: "sessionInstructionsSaved";
       instructions: string;
     }

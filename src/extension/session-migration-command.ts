@@ -20,7 +20,7 @@ export async function runSingleMigration(deps: SingleMigrationDeps): Promise<boo
     return true;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    void deps.showErrorMessage(`Không thể chuyển đổi conversation sang Session: ${message}`);
+    void deps.showErrorMessage(`Failed to migrate conversation to Session: ${message}`);
     return false;
   }
 }
@@ -44,17 +44,17 @@ export async function runBulkMigration(deps: BulkMigrationDeps): Promise<{
 } | null> {
   const candidates = await deps.listCandidates();
   if (candidates.length === 0) {
-    void deps.showInformationMessage("Không có conversation nào cần chuyển đổi sang Sessions.");
+    void deps.showInformationMessage("No conversations need migration to Sessions.");
     return null;
   }
 
   const choice = await deps.showWarningMessage(
-    `Có ${candidates.length} conversation có thể chuyển sang Sessions để sử dụng.`,
-    "Chuyển tất cả",
-    "Huỷ",
+    `There are ${candidates.length} conversations that can be migrated to Sessions.`,
+    "Migrate All",
+    "Cancel",
   );
 
-  if (choice !== "Chuyển tất cả") {
+  if (choice !== "Migrate All") {
     return null;
   }
 
@@ -62,7 +62,7 @@ export async function runBulkMigration(deps: BulkMigrationDeps): Promise<{
   let skipped = 0;
   let failed = 0;
 
-  await deps.withProgress("Đang chuyển đổi conversations sang Sessions...", async (report) => {
+  await deps.withProgress("Migrating conversations to Sessions...", async (report) => {
     const total = candidates.length;
     for (let i = 0; i < total; i++) {
       const candidate = candidates[i]!;
@@ -85,7 +85,7 @@ export async function runBulkMigration(deps: BulkMigrationDeps): Promise<{
   });
 
   void deps.showInformationMessage(
-    `Hoàn tất chuyển đổi: ${succeeded} thành công, ${skipped} đã là Session, ${failed} thất bại.`,
+    `Migration completed: ${succeeded} succeeded, ${skipped} already a Session, ${failed} failed.`,
   );
 
   deps.onDidMigrate?.();

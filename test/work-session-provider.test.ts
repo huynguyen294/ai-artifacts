@@ -15,6 +15,9 @@ vi.mock("../src/extension/work-session-support", () => ({
 }));
 
 vi.mock("vscode", () => ({
+  ThemeIcon: class {
+    constructor(public readonly id: string) {}
+  },
   Uri: {
     file: (fsPath: string) => ({
       fsPath,
@@ -450,9 +453,12 @@ describe("WorkSessionProvider", () => {
           summary: expect.objectContaining({ title: "Title Only Changed" }),
         }),
       );
+      expect(postMessage).not.toHaveBeenCalledWith(
+        expect.objectContaining({ type: "workSessionInstructionsPatch" }),
+      );
     });
 
-    // Instructions change externally -> summary patch may fire, but no instructions-clobbering message is emitted
+    // Instructions change externally -> emits workSessionInstructionsPatch for external update
     postMessage.mockClear();
     await updateSessionDetails(
       session.sessionId,
@@ -464,7 +470,8 @@ describe("WorkSessionProvider", () => {
     await vi.waitFor(() => {
       expect(postMessage).toHaveBeenCalledWith(
         expect.objectContaining({
-          type: "workSessionSummaryPatch",
+          type: "workSessionInstructionsPatch",
+          instructions: "Instructions Changed By AI",
         }),
       );
     });

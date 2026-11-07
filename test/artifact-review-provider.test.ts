@@ -392,7 +392,7 @@ describe("ArtifactReviewProvider sessions transport (Chặng 3)", () => {
       },
     ];
 
-    showInformationMessageMock.mockResolvedValueOnce("Chuyển đổi");
+    showInformationMessageMock.mockResolvedValueOnce("Migrate");
 
     const conversationService: ConversationArtifactProviderController = {
       getArtifactSessions: vi.fn(async () => sampleSessions),
@@ -418,8 +418,8 @@ describe("ArtifactReviewProvider sessions transport (Chặng 3)", () => {
 
     expect(showInformationMessageMock).toHaveBeenCalledWith(
       expect.stringContaining('Legacy Conversation'),
-      "Chuyển đổi",
-      "Huỷ",
+      "Migrate",
+      "Cancel",
     );
     expect(mockRunSingleMigration).toHaveBeenCalledWith(
       expect.objectContaining({

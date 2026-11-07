@@ -114,12 +114,14 @@ export type SessionTreeElement =
       updatedAt: string;
       createdAt: string;
     }
-  | { type: "empty" };
+  | { type: "empty" }
+  | { type: "emptyFilter" };
 
 export class WorkSessionsTreeDataProvider implements vscode.TreeDataProvider<SessionTreeElement>, vscode.Disposable {
   private readonly _onDidChangeTreeData = new vscode.EventEmitter<SessionTreeElement | undefined | null | void>();
   readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
   private readonly disposables: vscode.Disposable[] = [];
+  private selectedTypeId: string | undefined = undefined;
 
   constructor(
     private readonly service: ConversationArtifactService<any>,
@@ -145,6 +147,15 @@ export class WorkSessionsTreeDataProvider implements vscode.TreeDataProvider<Ses
     );
   }
 
+  getTypeFilter(): string | undefined {
+    return this.selectedTypeId;
+  }
+
+  setTypeFilter(typeId: string | undefined): void {
+    this.selectedTypeId = typeId;
+    this.refresh();
+  }
+
   refresh(): void {
     this._onDidChangeTreeData.fire();
   }
@@ -155,9 +166,15 @@ export class WorkSessionsTreeDataProvider implements vscode.TreeDataProvider<Ses
   }
 
   getTreeItem(element: SessionTreeElement): vscode.TreeItem {
+    if (element.type === "emptyFilter") {
+      const item = new vscode.TreeItem("No sessions match this filter");
+      item.iconPath = new vscode.ThemeIcon("filter");
+      return item;
+    }
+
     if (element.type === "unsupported") {
-      const item = new vscode.TreeItem("Sessions yêu cầu MCP server phiên bản 12 trở lên");
-      item.description = element.status.reason ?? "Cần cập nhật integration";
+      const item = new vscode.TreeItem("Sessions require MCP server version 12 or higher");
+      item.description = element.status.reason ?? "Integration update required";
       item.iconPath = new vscode.ThemeIcon("warning");
       item.command = {
         command: "agentPlus.reinstallIntegration",
@@ -168,9 +185,9 @@ export class WorkSessionsTreeDataProvider implements vscode.TreeDataProvider<Ses
 
     if (element.type === "migrationCandidates") {
       const item = new vscode.TreeItem(
-        `Có ${element.count} conversation có thể chuyển sang Sessions...`,
+        `Migrate ${element.count} legacy conversation${element.count !== 1 ? "s" : ""} to Sessions...`,
       );
-      item.description = "Nhấp để chuyển đổi";
+      item.description = "Click to migrate";
       item.iconPath = new vscode.ThemeIcon("arrow-swap");
       item.command = {
         command: "agentPlus.migrateConversations",
@@ -180,8 +197,8 @@ export class WorkSessionsTreeDataProvider implements vscode.TreeDataProvider<Ses
     }
 
     if (element.type === "empty") {
-      const item = new vscode.TreeItem("Chưa có session nào");
-      item.description = "Tạo artifact để tự động bắt đầu session";
+      const item = new vscode.TreeItem("No sessions yet");
+      item.description = "Create an artifact to start a session";
       item.iconPath = new vscode.ThemeIcon("info");
       return item;
     }
@@ -189,7 +206,7 @@ export class WorkSessionsTreeDataProvider implements vscode.TreeDataProvider<Ses
     const item = new vscode.TreeItem(element.title);
     const countLabel = `${element.artifactCount} artifact${element.artifactCount !== 1 ? "s" : ""}`;
     item.description = `${element.typeLabel} · ${countLabel}`;
-    item.tooltip = `Cập nhật: ${element.updatedAt} · Tạo: ${element.createdAt} · ID: ${element.sessionId}`;
+    item.tooltip = `Updated: ${element.updatedAt} · Created: ${element.createdAt} · ID: ${element.sessionId}`;
     item.iconPath = new vscode.ThemeIcon("folder");
     item.command = {
       command: "agentPlus.openWorkSession",
@@ -223,13 +240,24 @@ export class WorkSessionsTreeDataProvider implements vscode.TreeDataProvider<Ses
         typeMap.set(t.id, t.label);
       }
 
+      if (this.selectedTypeId) {
+        const typeStillExists = types.some((t) => t.id === this.selectedTypeId);
+        if (!typeStillExists) {
+          this.selectedTypeId = undefined;
+        }
+      }
+
+      const filteredSessions = this.selectedTypeId
+        ? sessions.filter((s) => s.typeId === this.selectedTypeId)
+        : sessions;
+
       const items: SessionTreeElement[] = [];
 
       if (candidateCount > 0) {
         items.push({ type: "migrationCandidates", count: candidateCount });
       }
 
-      for (const s of sessions) {
+      for (const s of filteredSessions) {
         const typeLabel = typeMap.get(s.typeId) ?? s.typeId;
         const artifactCount = s.working.length + s.references.length + s.archived.length;
         items.push({
@@ -243,8 +271,12 @@ export class WorkSessionsTreeDataProvider implements vscode.TreeDataProvider<Ses
         });
       }
 
-      if (items.length === 0) {
-        return [{ type: "empty" }];
+      if (filteredSessions.length === 0) {
+        if (sessions.length > 0) {
+          items.push({ type: "emptyFilter" });
+        } else if (items.length === 0) {
+          items.push({ type: "empty" });
+        }
       }
 
       return items;

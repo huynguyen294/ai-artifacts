@@ -19,6 +19,10 @@ import {
   runManageSessionTypesCommand,
   type SessionTypeQuickPickItem,
 } from "./session-type-command";
+import { runSessionFilterCommand } from "./session-filter-command";
+import { runSessionSearchCommand } from "./session-search-command";
+import { listSessionTypes } from "../shared/session-type-registry";
+import { resolveWorkSessionSupport } from "./work-session-support";
 import {
   runArtifactSearchCommand,
   type ArtifactQuickPickItem,
@@ -124,13 +128,40 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     }
   };
 
+  const sessionsTreeView = vscode.window.createTreeView("agentPlus.sessions", {
+    treeDataProvider: workSessionsProvider,
+  });
+
+  const updateSessionsFilterDescription = async (): Promise<void> => {
+    const filterId = workSessionsProvider.getTypeFilter();
+    if (!filterId) {
+      sessionsTreeView.description = "";
+      return;
+    }
+    try {
+      const types = await listSessionTypes();
+      const matched = types.find((t) => t.id === filterId);
+      if (!matched) {
+        workSessionsProvider.setTypeFilter(undefined);
+        sessionsTreeView.description = "";
+      } else {
+        sessionsTreeView.description = `Type: ${matched.label}`;
+      }
+    } catch {
+      sessionsTreeView.description = "";
+    }
+  };
+
   context.subscriptions.push(
     workspaceRegistryPublisher,
     conversationArtifactService,
     recentArtifactsProvider,
     workSessionsProvider,
+    sessionsTreeView,
+    workSessionsProvider.onDidChangeTreeData(() => {
+      void updateSessionsFilterDescription();
+    }),
     vscode.window.registerTreeDataProvider("agentPlus.recentArtifacts", recentArtifactsProvider),
-    vscode.window.registerTreeDataProvider("agentPlus.sessions", workSessionsProvider),
     vscode.window.registerCustomEditorProvider(ArtifactReviewProvider.viewType, provider, {
       webviewOptions: { retainContextWhenHidden: true },
       supportsMultipleEditorsPerDocument: false,
@@ -147,12 +178,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         } else {
           const sessions = await conversationArtifactService.listWorkSessions();
           if (sessions.length === 0) {
-            void vscode.window.showInformationMessage("Chưa có session nào.");
+            void vscode.window.showInformationMessage("No sessions found.");
             return;
           }
           const selected = await vscode.window.showQuickPick(
             sessions.map((s) => ({ label: s.title, description: s.sessionId })),
-            { title: "Chọn Session để mở" },
+            { title: "Select Session to Open" },
           );
           if (!selected) return;
           sessionId = selected.description;
@@ -164,7 +195,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         await vscode.commands.executeCommand("vscode.openWith", metadataUri, WorkSessionProvider.viewType);
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);
-        void vscode.window.showErrorMessage(`Không thể mở session: ${msg}`);
+        void vscode.window.showErrorMessage(`Failed to open session: ${msg}`);
       }
     }),
     vscode.commands.registerCommand("agentPlus.manageSessionTypes", async () => {
@@ -176,6 +207,40 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         onDidUpdate: () => {
           workSessionsProvider.refresh();
           conversationArtifactService.notifyChanged([{ kind: "types" }]);
+        },
+      });
+    }),
+    vscode.commands.registerCommand("agentPlus.filterSessions", async () => {
+      const support = await resolveWorkSessionSupport({}, context);
+      if (!support.supported) {
+        void vscode.window.showWarningMessage(
+          support.reason ?? "Filtering sessions requires MCP server version 12 or higher.",
+        );
+        return;
+      }
+      await runSessionFilterCommand({
+        createQuickPick: () => vscode.window.createQuickPick(),
+        currentTypeId: workSessionsProvider.getTypeFilter(),
+        onFilterChanged: (selectedTypeId) => {
+          workSessionsProvider.setTypeFilter(selectedTypeId);
+          void updateSessionsFilterDescription();
+        },
+      });
+    }),
+    vscode.commands.registerCommand("agentPlus.searchSessions", async () => {
+      const support = await resolveWorkSessionSupport({}, context);
+      if (!support.supported) {
+        void vscode.window.showWarningMessage(
+          support.reason ?? "Searching sessions requires MCP server version 12 or higher.",
+        );
+        return;
+      }
+      await runSessionSearchCommand({
+        createQuickPick: () => vscode.window.createQuickPick(),
+        listSessions: () => conversationArtifactService.listWorkSessions(),
+        listTypes: () => listSessionTypes(),
+        openSession: async (sessionId) => {
+          await vscode.commands.executeCommand("agentPlus.openWorkSession", sessionId);
         },
       });
     }),

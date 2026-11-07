@@ -80,15 +80,25 @@ export class WorkSessionProvider implements vscode.CustomReadonlyEditorProvider<
 
     const post = (msg: SessionExtensionToWebviewMessage) => webviewPanel.webview.postMessage(msg);
 
+    let lastPersistedInstructions: string | undefined;
+
     const refreshFull = async (): Promise<void> => {
       try {
+        const previousPersisted = lastPersistedInstructions;
         const viewData = await this.service.resolveSessionViewData(document.sessionId);
+        lastPersistedInstructions = viewData.instructions;
         const panelExpanded = getPanelExpanded();
         void post({
           type: "workSessionState",
           state: { status: "ready", data: viewData },
           panelExpanded,
         });
+        if (previousPersisted !== undefined && viewData.instructions !== previousPersisted) {
+          void post({
+            type: "workSessionInstructionsPatch",
+            instructions: viewData.instructions,
+          });
+        }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         void post({
@@ -160,6 +170,13 @@ export class WorkSessionProvider implements vscode.CustomReadonlyEditorProvider<
                 updatedAt: session.updatedAt,
               },
             });
+            if (lastPersistedInstructions !== undefined && session.instructions !== lastPersistedInstructions) {
+              lastPersistedInstructions = session.instructions;
+              void post({
+                type: "workSessionInstructionsPatch",
+                instructions: session.instructions,
+              });
+            }
           } catch {
             await refreshFull();
           }
@@ -249,6 +266,7 @@ export class WorkSessionProvider implements vscode.CustomReadonlyEditorProvider<
           try {
             if (!(await ensureSupport("saveSessionInstructions"))) return;
             await this.service.updateSessionDetails(document.sessionId, { instructions: msg.instructions });
+            lastPersistedInstructions = msg.instructions;
             void post({ type: "sessionInstructionsSaved", instructions: msg.instructions });
           } catch (error) {
             const message = error instanceof Error ? error.message : String(error);

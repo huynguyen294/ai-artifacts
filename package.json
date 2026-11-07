@@ -102,6 +102,18 @@
         "icon": "$(gear)"
       },
       {
+        "command": "agentPlus.filterSessions",
+        "title": "Filter Sessions",
+        "category": "AI Artifacts",
+        "icon": "$(filter)"
+      },
+      {
+        "command": "agentPlus.searchSessions",
+        "title": "Search Sessions",
+        "category": "AI Artifacts",
+        "icon": "$(search)"
+      },
+      {
         "command": "agentPlus.installAllIntegrations",
         "title": "AI Artifacts: Install All Detected Integrations"
       },
@@ -217,9 +229,19 @@
       ],
       "view/title": [
         {
+          "command": "agentPlus.filterSessions",
+          "when": "view == agentPlus.sessions",
+          "group": "navigation@1"
+        },
+        {
+          "command": "agentPlus.searchSessions",
+          "when": "view == agentPlus.sessions",
+          "group": "navigation@2"
+        },
+        {
           "command": "agentPlus.manageSessionTypes",
           "when": "view == agentPlus.sessions",
-          "group": "navigation"
+          "group": "navigation@3"
         }
       ]
     },

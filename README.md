@@ -234,6 +234,15 @@ If you haven't saved any comments or submitted a decision for the current round,
 3. Click **Connect** in the review header to copy its connection prompt.
 4. Paste the prompt into your AI chat to reconnect.
 
+### 5. Browse and manage Work Sessions
+
+1. Open the **AI Artifacts** view container in the Activity Bar to access **Recent Artifacts** and **Sessions**.
+2. In the **Sessions** header, use **Filter Sessions** (`$(filter)`) to filter by session type, **Search Sessions** (`$(search)`) to find any v2 session by name, or **Manage Session Types** (`$(gear)`) to add, rename, or delete global session types.
+3. Select a session to open the **Work Session** manager tab:
+   - Rename the session or change/quick-create its **Session Type**.
+   - Edit Markdown **Instructions** and click **Save** (closing or reloading the tab before clicking **Save** discards unsaved edits; if an AI agent updates `instructions` in `conversation.json` on disk, the open manager receives the updated text).
+   - Organize artifacts across **Working** (main column) and **References** / **Archived** (collapsible side panel, remembered per session), reorder items, or remove an artifact from the session without deleting the artifact file.
+
 ## Storage, behavior and security
 
 ### Artifact storage and structure

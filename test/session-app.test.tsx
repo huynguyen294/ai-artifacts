@@ -56,7 +56,7 @@ describe("SessionApp Webview Component (Phase 3)", () => {
     it("renders loading state by default", () => {
       const html = renderToStaticMarkup(<SessionApp />);
       expect(html).toContain("session-app loading");
-      expect(html).toContain("Đang tải phiên làm việc...");
+      expect(html).toContain("Loading work session...");
     });
 
     it("renders error banner when status is error", () => {
@@ -64,7 +64,7 @@ describe("SessionApp Webview Component (Phase 3)", () => {
         <SessionApp initialState={{ status: "error", message: "Failed to load session" }} />,
       );
       expect(html).toContain("session-app error");
-      expect(html).toContain("Lỗi tải phiên làm việc");
+      expect(html).toContain("Failed to load work session");
       expect(html).toContain("Failed to load session");
     });
 
@@ -78,26 +78,26 @@ describe("SessionApp Webview Component (Phase 3)", () => {
 
       // Header
       expect(html).toContain("Feature Implementation Session");
-      expect(html).toContain('title="Đổi tên phiên"');
-      expect(html).toContain("Đóng bảng phụ");
+      expect(html).toContain('title="Rename session"');
+      expect(html).toContain('title="Collapse side panel"');
 
       // Main column: Working zone
       expect(html).toContain("session-main-column");
       expect(html).toContain("session-zone-working");
       expect(html).toContain("Main Implementation Plan");
       expect(html).toContain("artifact-working-01");
-      expect(html).toContain('title="Tùy chọn artifact"');
+      expect(html).toContain('title="Artifact options"');
 
       // Side panel: Type -> Instructions -> References -> Archived
       expect(html).toContain("session-side-panel");
-      expect(html).toContain("Loại phiên");
-      expect(html).toContain('title="Thay đổi loại phiên"');
+      expect(html).toContain("Session Type");
+      expect(html).toContain('title="Change session type"');
       expect(html).toContain("Feature");
 
       // Instructions textarea
       expect(html).toContain("session-instructions-textarea");
       expect(html).toContain("## Guidelines");
-      expect(html).toContain("Lưu hướng dẫn");
+      expect(html).toContain("Save");
 
       // References and Archived zones in side panel
       expect(html).toContain("session-zone-references");
@@ -115,7 +115,7 @@ describe("SessionApp Webview Component (Phase 3)", () => {
       );
 
       expect(html).toContain("Feature Implementation Session");
-      expect(html).toContain("Mở bảng phụ");
+      expect(html).toContain('title="Expand side panel"');
 
       // Main column has Working zone
       expect(html).toContain("session-main-column");
@@ -135,7 +135,7 @@ describe("SessionApp Webview Component (Phase 3)", () => {
       );
 
       expect(html).toContain("session-artifact-card-unavailable");
-      expect(html).toContain("Không khả dụng");
+      expect(html).toContain("Unavailable");
       expect(html).toContain('aria-disabled="true"');
     });
 
@@ -311,6 +311,54 @@ describe("SessionApp Webview Component (Phase 3)", () => {
       expect(afterError.draftInstructions).toBe("Draft trying to save but server fails");
       expect(afterError.savingInstructions).toBe(false);
       expect(afterError.instructionsError).toBe("MCP server version 12 or higher is required.");
+    });
+
+    it("updates draft and persisted instructions when receiving workSessionInstructionsPatch (external change on disk)", () => {
+      const initial = createInitialSessionManagerState({
+        status: "ready",
+        data: sampleViewData,
+      });
+
+      const withDraft = sessionManagerReducer(initial, {
+        type: "setDraft",
+        draft: "My in-progress draft",
+      });
+
+      const afterExternalPatch = sessionManagerReducer(withDraft, {
+        type: "message",
+        message: {
+          type: "workSessionInstructionsPatch",
+          instructions: "Instructions updated externally by AI assistant",
+        },
+      });
+
+      expect(afterExternalPatch.draftInstructions).toBe("Instructions updated externally by AI assistant");
+      expect(afterExternalPatch.state.status === "ready" && afterExternalPatch.state.data.instructions).toBe(
+        "Instructions updated externally by AI assistant",
+      );
+    });
+
+    it("captures actionError for non-instructions actions and clears on dismissActionError", () => {
+      const initial = createInitialSessionManagerState({
+        status: "ready",
+        data: sampleViewData,
+      });
+
+      const afterActionError = sessionManagerReducer(initial, {
+        type: "message",
+        message: {
+          type: "actionError",
+          action: "renameSession",
+          message: "Failed to rename session: disk full",
+        },
+      });
+
+      expect(afterActionError.actionError).toBe("Failed to rename session: disk full");
+
+      const dismissed = sessionManagerReducer(afterActionError, {
+        type: "dismissActionError",
+      });
+      expect(dismissed.actionError).toBeUndefined();
     });
 
     it("toggles panel and responds to sessionPanelExpanded message", () => {

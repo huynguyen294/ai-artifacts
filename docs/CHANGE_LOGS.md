@@ -14,6 +14,41 @@ Minor typos, formatting fixes, or cosmetic wording adjustments that do not chang
 
 Each entry includes the date, category, summary of changes, rationale, and affected components or files.
 
+## 2026-11-07 — Work Session Phase 3 Implementation (Session Manager, Scoped Refresh, Sidebar Filter/Search & English Quick Input)
+
+### Changes
+
+- **Scoped Change Pipeline & Partial Webview Refresh**:
+  - Extended `ConversationArtifactService` (`src/extension/conversation-artifact-service.ts`) with typed `WorkSessionDataChange` batches (`metadata`, `membership`, `layout`, `artifact`, `types`, `support`), URI classification ignoring temporary/backup files, and deduplicated debounce scheduling.
+  - Updated `WorkSessionProvider`, `ArtifactReviewProvider`, `RecentArtifactsTreeDataProvider`, and `WorkSessionsTreeDataProvider` to subscribe to scoped changes so unrelated updates never trigger full reloads or overwrite in-progress user input.
+  - Added `workSessionSummaryPatch`, `workSessionArtifactsPatch`, and `workSessionInstructionsPatch` messages in `src/shared/contracts.ts`. `WorkSessionProvider` tracks `lastPersistedInstructions` per open session and emits `workSessionInstructionsPatch` only when `instructions` in `conversation.json` changes on disk (supporting external/AI edits to session instructions while ignoring title/type-only metadata writes and own-save echo events).
+- **Two-Column Work Session Manager (`SessionApp.tsx` & `WorkSessionProvider`)**:
+  - Upgraded the `agentPlus.workSession` tab into an interactive manager while keeping `CustomReadonlyEditorProvider` and existing document URIs.
+  - Main column renders the `Working` artifact zone (expanding when the side panel is collapsed); collapsible side panel renders `Session Type` → `Instructions` (fixed-height Markdown textarea with explicit **Save**) → `References` → `Archived`.
+  - Per-session side panel expanded/collapsed preference is stored in extension `globalState` (`workSessions.panelExpanded.<sessionId>`, default `true`).
+  - Added host-validated manager actions (`renameSession`, `saveSessionInstructions`, `selectSessionType` with quick type creation, `moveArtifact`, `reorderArtifact`, `removeArtifact`, `setSessionPanelExpanded`), gated on installed MCP version >= 12, with inline error reporting (`instructionsError` and dismissible `actionError` banner).
+- **Sidebar Filter & Search Sessions**:
+  - Registered `agentPlus.sessions` via `vscode.window.createTreeView` to display active filter indicators (`Type: <Label>`) on the view header description.
+  - Added `AI Artifacts: Filter Sessions` (`agentPlus.filterSessions` in `src/extension/session-filter-command.ts`) to filter the Sessions tree view in-memory per window by a single session type or `All Types`, preselecting the active item and automatically resetting if the filtered type is deleted.
+  - Added `AI Artifacts: Search Sessions` (`agentPlus.searchSessions` in `src/extension/session-search-command.ts`) to search across all v2 Work Sessions by normalized title (case- and diacritic-insensitive, `alwaysShow: true`, title-only matching) independent of the active sidebar filter.
+- **Unified English Quick Input Wording & Stable Button Identity**:
+  - Standardized all Session Quick Input titles, placeholders, confirmations, and notifications across `session-type-command.ts`, `session-filter-command.ts`, `session-search-command.ts`, `session-migration-command.ts`, `artifact-review-provider.ts`, and `extension.ts` in English while preserving user-provided session titles, instructions, and type labels.
+  - Replaced tooltip-based button detection in `session-type-command.ts` with typed `SessionTypeActionButton` (`actionId: "rename" | "delete"`).
+
+### Rationale
+
+- Turns the read-only session viewer into a complete Work Session Manager without introducing a second editor tab or custom save/lock machinery.
+- Scoped refresh events and `lastPersistedInstructions` comparison allow users to type session instructions without background artifact/membership/metadata updates clobbering their draft, while still receiving external instructions updates written to `conversation.json`.
+- Native Quick Pick filter and search on the Sessions sidebar scale navigation across growing session lists while keeping all Session Quick Input flows consistent in English.
+
+### Affected components or files
+
+- Shared Contracts: `src/shared/contracts.ts`.
+- Extension Host: `src/extension/conversation-artifact-service.ts`, `src/extension/work-session-provider.ts`, `src/extension/work-session-sidebar.ts`, `src/extension/session-type-command.ts`, `src/extension/session-filter-command.ts`, `src/extension/session-search-command.ts`, `src/extension/session-migration-command.ts`, `src/extension/artifact-review-provider.ts`, `src/extension/extension.ts`, `package.json`.
+- Webview: `src/webview/SessionApp.tsx`, `src/webview/styles.css`.
+- Documentation: `README.md`, `docs/ARCHITECTURE.md`, `docs/COMPONENTS.md`, `docs/INSTRUCTION.md`, `docs/CHANGE_LOGS.md`, `plans/work-session-artifact/plan-phase-3.md`.
+- Tests: `test/artifact-contracts.test.ts`, `test/conversation-artifact-service.test.ts`, `test/work-session-provider.test.ts`, `test/session-app.test.tsx`, `test/work-session-sidebar.test.ts`, `test/session-type-command.test.ts`, `test/session-filter-command.test.ts`, `test/session-search-command.test.ts`, `test/session-migration-command.test.ts`, `test/artifact-review-provider.test.ts`, `test/release-contract.test.ts`.
+
 ## 2026-11-07 — Fix AI Artifacts Activity Bar registration
 
 - Changed the container ID and its `contributes.views` key to `agentPlus-artifacts`; VS Code rejects dots in container IDs and otherwise falls back to placing the views in Explorer.

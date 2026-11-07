@@ -989,11 +989,14 @@ button:disabled {
 }
 
 .session-panel-toggle-btn {
-  padding: 5px 12px;
-  font-size: 0.8rem;
-  font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
   border-radius: 4px;
-  border: 1px solid var(--vscode-button-border, var(--vscode-panel-border));
+  border: 1px solid transparent;
   background: transparent;
   color: var(--vscode-foreground);
   cursor: pointer;
@@ -1002,10 +1005,7 @@ button:disabled {
 
 .session-panel-toggle-btn:hover {
   background: color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
-}
-
-.session-panel-toggle-btn.active {
-  background: color-mix(in srgb, var(--vscode-foreground) 8%, transparent);
+  color: var(--vscode-editor-foreground);
 }
 
 .session-header-meta {
@@ -1102,14 +1102,15 @@ button:disabled {
 }
 
 .session-save-btn {
-  padding: 5px 14px;
-  font-size: 0.8rem;
+  padding: 3px 10px;
+  font-size: 0.75rem;
   font-weight: 500;
   border-radius: 4px;
   border: none;
   background: var(--vscode-button-background, #0e639c);
   color: var(--vscode-button-foreground, #fff);
   cursor: pointer;
+  line-height: 1.4;
   transition: background-color 0.15s ease;
 }
 
@@ -1125,14 +1126,43 @@ button:disabled {
 .session-inline-error {
   color: var(--vscode-errorForeground, #f48771);
   font-size: 0.75rem;
-  margin-right: auto;
+  margin-top: 6px;
+}
+
+.session-banner-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  margin-bottom: 16px;
+  border-radius: 4px;
+  background-color: var(--vscode-inputValidation-errorBackground, rgba(255, 0, 0, 0.15));
+  border: 1px solid var(--vscode-inputValidation-errorBorder, #be1100);
+  color: var(--vscode-errorForeground, #f48771);
+  font-size: 0.82rem;
+}
+
+.session-banner-error-close {
+  background: transparent;
+  border: none;
+  color: inherit;
+  font-size: 1.1rem;
+  cursor: pointer;
+  padding: 0 4px;
+  line-height: 1;
 }
 
 .session-zone {
   border: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.2));
   border-radius: 6px;
-  padding: 16px;
+  padding: 14px 16px;
   background-color: var(--vscode-editor-background);
+}
+
+.session-zone-working {
+  border: none;
+  padding: 0;
+  background: transparent;
 }
 
 .session-zone-header {

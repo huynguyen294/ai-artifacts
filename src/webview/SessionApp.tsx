@@ -23,6 +23,7 @@ export interface SessionManagerState {
   hasInitializedDraft: boolean;
   savingInstructions: boolean;
   instructionsError?: string | undefined;
+  actionError?: string | undefined;
   activeCardMenuId?: string | undefined;
 }
 
@@ -31,7 +32,8 @@ export type SessionManagerAction =
   | { type: "setDraft"; draft: string }
   | { type: "startSaveInstructions" }
   | { type: "togglePanel" }
-  | { type: "setActiveCardMenu"; menuId: string | undefined };
+  | { type: "setActiveCardMenu"; menuId: string | undefined }
+  | { type: "dismissActionError" };
 
 export function createInitialSessionManagerState(
   initialState?: SessionAppState,
@@ -44,6 +46,7 @@ export function createInitialSessionManagerState(
     hasInitializedDraft: initialState && initialState.status === "ready" ? true : false,
     savingInstructions: false,
     instructionsError: undefined,
+    actionError: undefined,
     activeCardMenuId: undefined,
   };
 }
@@ -77,6 +80,12 @@ export function sessionManagerReducer(
       return {
         ...current,
         activeCardMenuId: action.menuId,
+      };
+
+    case "dismissActionError":
+      return {
+        ...current,
+        actionError: undefined,
       };
 
     case "message": {
@@ -136,11 +145,30 @@ export function sessionManagerReducer(
         };
       }
 
+      if (msg.type === "workSessionInstructionsPatch") {
+        return {
+          ...current,
+          draftInstructions: msg.instructions,
+          instructionsError: undefined,
+          state:
+            current.state.status === "ready"
+              ? {
+                  status: "ready",
+                  data: {
+                    ...current.state.data,
+                    instructions: msg.instructions,
+                  },
+                }
+              : current.state,
+        };
+      }
+
       if (msg.type === "sessionInstructionsSaved") {
         return {
           ...current,
           savingInstructions: false,
           instructionsError: undefined,
+          actionError: undefined,
           draftInstructions: msg.instructions,
           state:
             current.state.status === "ready"
@@ -170,7 +198,10 @@ export function sessionManagerReducer(
             instructionsError: msg.message,
           };
         }
-        return current;
+        return {
+          ...current,
+          actionError: msg.message,
+        };
       }
 
       if (msg.type === "error") {
@@ -200,6 +231,7 @@ export function SessionApp({ initialState, initialPanelExpanded = true }: Sessio
     draftInstructions,
     savingInstructions,
     instructionsError,
+    actionError,
     activeCardMenuId,
   } = managerState;
 
@@ -232,7 +264,7 @@ export function SessionApp({ initialState, initialPanelExpanded = true }: Sessio
   if (state.status === "loading") {
     return (
       <div className="session-app loading">
-        <div className="session-status-text">Đang tải phiên làm việc...</div>
+        <div className="session-status-text">Loading work session...</div>
       </div>
     );
   }
@@ -241,7 +273,7 @@ export function SessionApp({ initialState, initialPanelExpanded = true }: Sessio
     return (
       <div className="session-app error">
         <div className="session-error-banner">
-          <h3>Lỗi tải phiên làm việc</h3>
+          <h3>Failed to load work session</h3>
           <p>{state.message}</p>
         </div>
       </div>
@@ -300,7 +332,7 @@ export function SessionApp({ initialState, initialPanelExpanded = true }: Sessio
           </h4>
         </div>
         {items.length === 0 ? (
-          <div className="session-zone-empty">Không có artifact trong vùng này</div>
+          <div className="session-zone-empty">No artifacts in this zone</div>
         ) : (
           <div className="session-artifact-list">
             {items.map((artifact, index) => {
@@ -330,7 +362,7 @@ export function SessionApp({ initialState, initialPanelExpanded = true }: Sessio
                     <div className="session-card-main">
                       <span className="session-card-title">{artifact.title}</span>
                       {artifact.unavailable ? (
-                        <span className="session-card-unavailable-badge">Không khả dụng</span>
+                        <span className="session-card-unavailable-badge">Unavailable</span>
                       ) : (
                         <span className="session-card-kind-badge">{artifact.kind}</span>
                       )}
@@ -343,7 +375,7 @@ export function SessionApp({ initialState, initialPanelExpanded = true }: Sessio
                       <button
                         type="button"
                         className="session-card-menu-btn"
-                        title="Tùy chọn artifact"
+                        title="Artifact options"
                         onClick={() =>
                           dispatch({
                             type: "setActiveCardMenu",
@@ -360,14 +392,14 @@ export function SessionApp({ initialState, initialPanelExpanded = true }: Sessio
                           onClick={(e) => e.stopPropagation()}
                           onKeyDown={(e) => e.stopPropagation()}
                         >
-                          <div className="session-dropdown-header">Chuyển vùng</div>
+                          <div className="session-dropdown-header">Move to</div>
                           {zoneKey !== "working" && (
                             <button
                               type="button"
                               className="session-dropdown-item"
                               onClick={() => handleMoveArtifact(artifact.artifactId, "working")}
                             >
-                              Sang Working
+                              Move to Working
                             </button>
                           )}
                           {zoneKey !== "references" && (
@@ -376,7 +408,7 @@ export function SessionApp({ initialState, initialPanelExpanded = true }: Sessio
                               className="session-dropdown-item"
                               onClick={() => handleMoveArtifact(artifact.artifactId, "references")}
                             >
-                              Sang References
+                              Move to References
                             </button>
                           )}
                           {zoneKey !== "archived" && (
@@ -385,18 +417,18 @@ export function SessionApp({ initialState, initialPanelExpanded = true }: Sessio
                               className="session-dropdown-item"
                               onClick={() => handleMoveArtifact(artifact.artifactId, "archived")}
                             >
-                              Sang Archived
+                              Move to Archived
                             </button>
                           )}
                           <div className="session-dropdown-divider" />
-                          <div className="session-dropdown-header">Sắp xếp</div>
+                          <div className="session-dropdown-header">Reorder</div>
                           <button
                             type="button"
                             className="session-dropdown-item"
                             disabled={isFirst}
                             onClick={() => handleReorderArtifact(artifact.artifactId, "up")}
                           >
-                            Lên trên
+                            Move Up
                           </button>
                           <button
                             type="button"
@@ -404,7 +436,7 @@ export function SessionApp({ initialState, initialPanelExpanded = true }: Sessio
                             disabled={isLast}
                             onClick={() => handleReorderArtifact(artifact.artifactId, "down")}
                           >
-                            Xuống dưới
+                            Move Down
                           </button>
                           <div className="session-dropdown-divider" />
                           <button
@@ -412,7 +444,7 @@ export function SessionApp({ initialState, initialPanelExpanded = true }: Sessio
                             className="session-dropdown-item session-dropdown-item-danger"
                             onClick={() => handleRemoveArtifact(artifact.artifactId)}
                           >
-                            Gỡ khỏi phiên
+                            Remove from session
                           </button>
                         </div>
                       )}
@@ -440,9 +472,9 @@ export function SessionApp({ initialState, initialPanelExpanded = true }: Sessio
             <button
               type="button"
               className="session-icon-button"
-              title="Đổi tên phiên"
+              title="Rename session"
               onClick={handleRenameSession}
-              aria-label="Đổi tên phiên"
+              aria-label="Rename session"
             >
               ✎
             </button>
@@ -450,40 +482,64 @@ export function SessionApp({ initialState, initialPanelExpanded = true }: Sessio
           <div className="session-header-actions">
             <button
               type="button"
-              className={`session-panel-toggle-btn ${panelExpanded ? "active" : ""}`}
+              className="session-icon-button session-panel-toggle-btn"
               onClick={handleTogglePanel}
-              title={panelExpanded ? "Đóng bảng phụ" : "Mở bảng phụ"}
+              title={panelExpanded ? "Collapse side panel" : "Expand side panel"}
+              aria-label={panelExpanded ? "Collapse side panel" : "Expand side panel"}
             >
-              {panelExpanded ? "Đóng bảng phụ" : "Mở bảng phụ"}
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+                <path
+                  fillRule="evenodd"
+                  clipRule="evenodd"
+                  d="M1.5 3C1.5 2.17157 2.17157 1.5 3 1.5H13C13.8284 1.5 14.5 2.17157 14.5 3V13C14.5 13.8284 13.8284 14.5 13 14.5H3C2.17157 14.5 1.5 13.8284 1.5 13V3ZM3 2.5H10V13.5H3C2.72386 13.5 2.5 13.2761 2.5 13V3C2.5 2.72386 2.72386 2.5 3 2.5ZM11 13.5H13C13.2761 13.5 13.5 13.2761 13.5 13V3C13.5 2.72386 13.2761 2.5 13 2.5H11V13.5Z"
+                />
+                {panelExpanded && (
+                  <rect x="11" y="2.5" width="2.5" height="11" fill="currentColor" opacity="0.4" />
+                )}
+              </svg>
             </button>
           </div>
         </div>
         <div className="session-header-meta">
-          <span>Cập nhật: {data.updatedAt}</span>
+          <span>Updated: {data.updatedAt}</span>
           <span>·</span>
-          <span>Tạo lúc: {data.createdAt}</span>
+          <span>Created: {data.createdAt}</span>
         </div>
       </header>
 
+      {actionError && (
+        <div className="session-banner-error" role="alert">
+          <span>{actionError}</span>
+          <button
+            type="button"
+            className="session-banner-error-close"
+            onClick={() => dispatch({ type: "dismissActionError" })}
+            aria-label="Dismiss error"
+          >
+            ×
+          </button>
+        </div>
+      )}
+
       <div className="session-layout">
-        {/* Main column: Working Zone */}
+        {/* Main column: Working Zone (borderless, paddingless) */}
         <main className="session-main-column">
           {renderZone("Working", "working", data.working)}
         </main>
 
-        {/* Side panel: Type -> Instructions -> References -> Archived */}
+        {/* Side panel: Type -> Instructions -> References -> Archived (single border each) */}
         {panelExpanded && (
           <aside className="session-side-panel">
             {/* 1. Type Section */}
             <div className="session-side-section session-type-section">
               <div className="session-side-section-header">
-                <h4>Loại phiên</h4>
+                <h4>Session Type</h4>
                 <button
                   type="button"
                   className="session-icon-button"
-                  title="Thay đổi loại phiên"
+                  title="Change session type"
                   onClick={handleSelectType}
-                  aria-label="Thay đổi loại phiên"
+                  aria-label="Change session type"
                 >
                   ✎
                 </button>
@@ -496,7 +552,15 @@ export function SessionApp({ initialState, initialPanelExpanded = true }: Sessio
             {/* 2. Instructions Section */}
             <div className="session-side-section session-instructions-section">
               <div className="session-side-section-header">
-                <h4>Hướng dẫn</h4>
+                <h4>Instructions</h4>
+                <button
+                  type="button"
+                  className="primary session-save-btn"
+                  onClick={handleSaveInstructions}
+                  disabled={savingInstructions || draftInstructions === data.instructions}
+                >
+                  {savingInstructions ? "Saving..." : "Save"}
+                </button>
               </div>
               <textarea
                 className="session-instructions-textarea"
@@ -504,32 +568,18 @@ export function SessionApp({ initialState, initialPanelExpanded = true }: Sessio
                 onChange={(e) => {
                   dispatch({ type: "setDraft", draft: e.target.value });
                 }}
-                placeholder="Nhập hướng dẫn cho phiên làm việc..."
+                placeholder="Enter instructions for this session..."
                 rows={6}
                 disabled={savingInstructions}
               />
-              <div className="session-instructions-actions">
-                {instructionsError && <div className="session-inline-error">{instructionsError}</div>}
-                <button
-                  type="button"
-                  className="primary session-save-btn"
-                  onClick={handleSaveInstructions}
-                  disabled={savingInstructions || draftInstructions === data.instructions}
-                >
-                  {savingInstructions ? "Đang lưu..." : "Lưu hướng dẫn"}
-                </button>
-              </div>
+              {instructionsError && <div className="session-inline-error">{instructionsError}</div>}
             </div>
 
-            {/* 3. References Zone */}
-            <div className="session-side-section">
-              {renderZone("References", "references", data.references)}
-            </div>
+            {/* 3. References Zone (Direct session-zone, single border) */}
+            {renderZone("References", "references", data.references)}
 
-            {/* 4. Archived Zone */}
-            <div className="session-side-section">
-              {renderZone("Archived", "archived", data.archived)}
-            </div>
+            {/* 4. Archived Zone (Direct session-zone, single border) */}
+            {renderZone("Archived", "archived", data.archived)}
           </aside>
         )}
       </div>

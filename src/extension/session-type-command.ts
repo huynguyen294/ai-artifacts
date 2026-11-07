@@ -9,6 +9,10 @@ import {
   renameSessionType,
 } from "../shared/session-type-registry";
 
+export interface SessionTypeActionButton extends vscode.QuickInputButton {
+  readonly actionId: "rename" | "delete";
+}
+
 export interface SessionTypeQuickPickItem extends vscode.QuickPickItem {
   typeId?: string;
   isCreateButton?: boolean;
@@ -25,8 +29,8 @@ export interface SessionTypeCommandDeps {
 
 export async function runManageSessionTypesCommand(deps: SessionTypeCommandDeps): Promise<void> {
   const quickPick = deps.createQuickPick();
-  quickPick.title = "Quản lý loại phiên";
-  quickPick.placeholder = "Áp dụng cho tất cả phiên làm việc";
+  quickPick.title = "Manage Session Types";
+  quickPick.placeholder = "Session types are shared across all sessions";
   quickPick.busy = true;
 
   const disposables: vscode.Disposable[] = [];
@@ -43,7 +47,7 @@ export async function runManageSessionTypesCommand(deps: SessionTypeCommandDeps)
 
       const items: SessionTypeQuickPickItem[] = [
         {
-          label: "$(plus) Thêm loại phiên mới...",
+          label: "$(plus) Add new session type...",
           isCreateButton: true,
           alwaysShow: true,
         },
@@ -52,29 +56,31 @@ export async function runManageSessionTypesCommand(deps: SessionTypeCommandDeps)
       for (const t of types) {
         const count = counts[t.id] ?? 0;
         const isDefault = t.id === DEFAULT_SESSION_TYPE_ID;
-        const buttons: vscode.QuickInputButton[] = [
-          {
-            iconPath: new vscode.ThemeIcon("edit"),
-            tooltip: "Đổi tên",
-          },
-        ];
+        const renameButton: SessionTypeActionButton = {
+          iconPath: new vscode.ThemeIcon("edit"),
+          tooltip: "Rename",
+          actionId: "rename",
+        };
+        const buttons: SessionTypeActionButton[] = [renameButton];
 
         if (!isDefault) {
-          buttons.push({
+          const deleteButton: SessionTypeActionButton = {
             iconPath: new vscode.ThemeIcon("trash"),
-            tooltip: "Xóa",
-          });
+            tooltip: "Delete",
+            actionId: "delete",
+          };
+          buttons.push(deleteButton);
         }
 
         const item: SessionTypeQuickPickItem = {
           label: t.label,
           typeId: t.id,
-          detail: `Đang dùng cho ${count} phiên`,
+          detail: `Used by ${count} session${count !== 1 ? "s" : ""}`,
           alwaysShow: true,
           buttons,
         };
         if (isDefault) {
-          item.description = "[Mặc định]";
+          item.description = "[Default]";
         }
         items.push(item);
       }
@@ -84,7 +90,7 @@ export async function runManageSessionTypesCommand(deps: SessionTypeCommandDeps)
       }
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
-      void deps.showErrorMessage(`Không thể tải danh sách loại phiên: ${msg}`);
+      void deps.showErrorMessage(`Failed to load session types: ${msg}`);
     } finally {
       if (!isDisposed) {
         quickPick.busy = false;
@@ -97,13 +103,14 @@ export async function runManageSessionTypesCommand(deps: SessionTypeCommandDeps)
       const targetItem = e.item;
       if (!targetItem.typeId) return;
 
-      const button = e.button;
-      const tooltip = button.tooltip;
+      const button = e.button as Partial<SessionTypeActionButton>;
+      const isEdit = button.actionId === "rename";
+      const isDelete = button.actionId === "delete";
 
-      if (tooltip === "Đổi tên") {
+      if (isEdit) {
         const newLabel = await deps.showInputBox({
-          title: `Đổi tên loại phiên: ${targetItem.label}`,
-          prompt: "Nhập tên hiển thị mới (không được để trống hoặc trùng lặp)",
+          title: `Rename Session Type: ${targetItem.label}`,
+          prompt: "Enter a new display name (cannot be empty or duplicate)",
           value: targetItem.label,
         });
 
@@ -114,12 +121,12 @@ export async function runManageSessionTypesCommand(deps: SessionTypeCommandDeps)
             await loadItems();
           } catch (error) {
             const msg = error instanceof Error ? error.message : String(error);
-            void deps.showErrorMessage(`Không thể đổi tên loại phiên: ${msg}`);
+            void deps.showErrorMessage(`Failed to rename session type: ${msg}`);
           }
         }
-      } else if (tooltip === "Xóa") {
+      } else if (isDelete) {
         if (targetItem.typeId === DEFAULT_SESSION_TYPE_ID) {
-          void deps.showErrorMessage("Không thể xóa loại phiên mặc định.");
+          void deps.showErrorMessage("The default session type cannot be deleted.");
           return;
         }
 
@@ -131,11 +138,11 @@ export async function runManageSessionTypesCommand(deps: SessionTypeCommandDeps)
             const defaultType = types.find((t) => t.id === DEFAULT_SESSION_TYPE_ID);
             const defaultLabel = defaultType?.label ?? "Conversation";
 
-            const confirmAction = `Chuyển về ${defaultLabel} và xóa`;
+            const confirmAction = "Delete Type";
             const selected = await deps.showWarningMessage(
-              `Loại phiên "${targetItem.label}" đang được sử dụng cho ${count} phiên. Bạn có muốn chuyển các phiên này về "${defaultLabel}" và xóa không?`,
+              `Session type "${targetItem.label}" is used by ${count} session${count !== 1 ? "s" : ""}. These sessions will be reverted to "${defaultLabel}". Are you sure you want to delete this type?`,
               confirmAction,
-              "Hủy",
+              "Cancel",
             );
 
             if (selected === confirmAction) {
@@ -150,7 +157,7 @@ export async function runManageSessionTypesCommand(deps: SessionTypeCommandDeps)
           }
         } catch (error) {
           const msg = error instanceof Error ? error.message : String(error);
-          void deps.showErrorMessage(`Không thể xóa loại phiên: ${msg}`);
+          void deps.showErrorMessage(`Failed to delete session type: ${msg}`);
         }
       }
     }),
@@ -163,8 +170,8 @@ export async function runManageSessionTypesCommand(deps: SessionTypeCommandDeps)
 
       if (selected.isCreateButton) {
         const newLabel = await deps.showInputBox({
-          title: "Thêm loại phiên mới",
-          prompt: "Nhập tên loại phiên mới (áp dụng cho tất cả phiên làm việc)",
+          title: "Add New Session Type",
+          prompt: "Enter a name for the new session type (shared across all sessions)",
         });
 
         if (newLabel !== undefined && newLabel.trim().length > 0) {
@@ -174,7 +181,7 @@ export async function runManageSessionTypesCommand(deps: SessionTypeCommandDeps)
             await loadItems();
           } catch (error) {
             const msg = error instanceof Error ? error.message : String(error);
-            void deps.showErrorMessage(`Không thể tạo loại phiên: ${msg}`);
+            void deps.showErrorMessage(`Failed to create session type: ${msg}`);
           }
         }
       }
@@ -199,6 +206,7 @@ export interface SelectSessionTypeDeps {
   createQuickPick: () => vscode.QuickPick<SessionTypeQuickPickItem>;
   currentTypeId?: string;
   rootOptions?: GlobalArtifactsRootOptions;
+  showErrorMessage?: (message: string) => void | Thenable<unknown>;
 }
 
 export async function runSelectSessionTypeQuickPick(
@@ -240,6 +248,10 @@ export async function runSelectSessionTypeQuickPick(
   };
 
   quickPick.items = buildItems();
+  const currentItem = quickPick.items.find((i) => i.typeId === deps.currentTypeId);
+  if (currentItem) {
+    quickPick.activeItems = [currentItem];
+  }
 
   return new Promise((resolve) => {
     let accepted = false;
@@ -260,7 +272,9 @@ export async function runSelectSessionTypeQuickPick(
         try {
           const created = await createSessionType(rawLabel, deps.rootOptions);
           resolve({ typeId: created.id, created: true });
-        } catch {
+        } catch (error) {
+          const msg = error instanceof Error ? error.message : String(error);
+          void (deps.showErrorMessage ? deps.showErrorMessage(msg) : vscode.window.showErrorMessage(msg));
           resolve(undefined);
         }
       } else if (selected.typeId) {
