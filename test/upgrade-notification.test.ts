@@ -18,11 +18,13 @@ import type { IntegrationVersionManifest, InstalledSkillVersions } from "../src/
 function manifest(
   mcpVersion: number | undefined,
   skills: InstalledSkillVersions,
+  sessionSkills?: InstalledSkillVersions,
 ): IntegrationVersionManifest {
   return {
     schemaVersion: 1,
     ...(mcpVersion === undefined ? {} : { mcpVersion }),
     skills,
+    ...(sessionSkills ? { sessionSkills } : {}),
     updatedAt: "2026-11-02T00:00:00.000Z",
   };
 }
@@ -217,6 +219,49 @@ describe("upgrade notification", () => {
     expect(deps.showInformationMessage).toHaveBeenCalledTimes(1);
   });
 
+  it("detects stale session skills when receipt lacks sessionSkills", async () => {
+    const deps = makeDeps({
+      bundledVersions: { mcpVersion: 10, skillVersion: 2, sessionSkillVersion: 1 },
+      skillTargets: ["agents", "claude"],
+      getInstalledIntegrationVersion: vi.fn(() =>
+        validInstalledState(manifest(10, { agents: 2, claude: 2 }))),
+    });
+
+    await maybeShowUpgradeNotification(deps);
+
+    expect(deps.setLastNotifiedIntegrationState).toHaveBeenCalledWith({
+      mcpVersion: 10,
+      skillVersion: 2,
+      sessionSkillVersion: 1,
+      staleAssets: ["session-skill:agents", "session-skill:claude"],
+    });
+    const message = vi.mocked(deps.showInformationMessage).mock.calls[0]?.[0];
+    expect(message).toContain("shared work session skill (.agents)");
+    expect(message).toContain("Claude work session skill (.claude)");
+    expect(message).not.toContain("MCP runtime");
+  });
+
+  it("syncs all-current when both review skills and session skills match", async () => {
+    const deps = makeDeps({
+      bundledVersions: { mcpVersion: 10, skillVersion: 2, sessionSkillVersion: 1 },
+      skillTargets: ["agents", "claude"],
+      getInstalledIntegrationVersion: vi.fn(() =>
+        validInstalledState(
+          manifest(10, { agents: 2, claude: 2 }, { agents: 1, claude: 1 }),
+        )),
+    });
+
+    await maybeShowUpgradeNotification(deps);
+
+    expect(deps.setLastNotifiedIntegrationState).toHaveBeenCalledWith({
+      mcpVersion: 10,
+      skillVersion: 2,
+      sessionSkillVersion: 1,
+      staleAssets: [],
+    });
+    expect(deps.showInformationMessage).not.toHaveBeenCalled();
+  });
+
   it("does not include the extension package version in the fingerprint", async () => {
     const currentFingerprint: IntegrationNotificationState = {
       mcpVersion: 10,
@@ -347,6 +392,7 @@ describe("extension activation wiring", () => {
     expect(extensionSource).toContain("void maybeShowUpgradeNotification({");
     expect(extensionSource).toContain("mcpVersion: MCP_VERSION");
     expect(extensionSource).toContain("skillVersion: SKILL_VERSION");
+    expect(extensionSource).toContain("sessionSkillVersion: WORK_SESSION_SKILL_VERSION");
     expect(extensionSource).toContain("skillTargets: getDetectedSkillTargets()");
     expect(extensionSource).toContain("readInstalledIntegrationVersion()");
     expect(extensionSource).toContain("LAST_NOTIFIED_INTEGRATION_STATE_KEY");

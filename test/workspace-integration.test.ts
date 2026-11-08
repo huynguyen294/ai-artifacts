@@ -11,7 +11,12 @@ import {
   globalArtifactsRoot,
   managedIntegrationVersionPath,
 } from "../src/shared/artifact-files";
-import { MCP_VERSION, SKILL_VERSION } from "../src/shared/contracts";
+import {
+  CREATE_REVIEW_ARTIFACT_SKILL_VERSION,
+  MCP_VERSION,
+  SKILL_VERSION,
+  WORK_SESSION_SKILL_VERSION,
+} from "../src/shared/contracts";
 import {
   OFFICIAL_SKILL_DESCRIPTIONS,
   USER_CUSTOM_RULES_BEGIN,
@@ -37,6 +42,7 @@ import {
   installAllDetectedIntegrations,
   installClaudeIntegration,
   readInstalledIntegrationVersion,
+  sessionSkillAssetsAreCurrent,
   skillAssetsAreCurrent,
   getReviewSkillMarkdown,
   setupBaseMcpServer,
@@ -126,9 +132,11 @@ describe("Workspace Integration Asset Verifiers", () => {
       targetMcpScript: path.join(targetDir, ".ai-artifacts", "managed", "runtime", "ai-artifacts-review-mcp.mjs"),
       targetLegacyMcpScript: path.join(targetDir, ".vscode", "ai-artifacts", "ai-artifacts-review-mcp.mjs"),
       targetSkill: path.join(targetDir, ".agents", "skills", "create-review-artifact"),
+      targetSessionSkill: path.join(targetDir, ".agents", "skills", "work-session"),
       targetLegacySkill: path.join(targetDir, ".agents", "skills", "create-plan-artifact"),
       sourceMcpScript: path.join(sourceDir, "dist", "server.mjs"),
       sourceSkill: path.join(sourceDir, "skills", "create-review-artifact"),
+      sourceSessionSkill: path.join(sourceDir, "skills", "work-session"),
     };
 
     // Prepare source assets
@@ -140,6 +148,12 @@ describe("Workspace Integration Asset Verifiers", () => {
     await fs.writeFile(path.join(paths.sourceSkill, "SKILL.md"), SOURCE_SKILL_MARKDOWN, "utf8");
     await fs.writeFile(path.join(paths.sourceSkill, "references", "artifact-contract.md"), "# Contract", "utf8");
     await fs.writeFile(path.join(paths.sourceSkill, "agents", "openai.yaml"), "prompt: test", "utf8");
+
+    await fs.mkdir(path.join(paths.sourceSessionSkill, "references"), { recursive: true });
+    await fs.mkdir(path.join(paths.sourceSessionSkill, "agents"), { recursive: true });
+    await fs.writeFile(path.join(paths.sourceSessionSkill, "SKILL.md"), "# Work Session", "utf8");
+    await fs.writeFile(path.join(paths.sourceSessionSkill, "references", "session-contract.md"), "# Contract", "utf8");
+    await fs.writeFile(path.join(paths.sourceSessionSkill, "agents", "openai.yaml"), "prompt: test", "utf8");
   });
 
   afterEach(async () => {
@@ -194,6 +208,23 @@ describe("Workspace Integration Asset Verifiers", () => {
 
     expect(await baseScriptIsCurrent(paths)).toBe(true);
     expect(await skillAssetsAreCurrent(paths)).toBe(true);
+    expect(await sessionSkillAssetsAreCurrent(paths)).toBe(false);
+    expect(await baseAssetsAreCurrent(paths)).toBe(false);
+
+    // Deploy Session Skill
+    await fs.mkdir(path.join(paths.targetSessionSkill, "references"), { recursive: true });
+    await fs.mkdir(path.join(paths.targetSessionSkill, "agents"), { recursive: true });
+    await fs.copyFile(path.join(paths.sourceSessionSkill, "SKILL.md"), path.join(paths.targetSessionSkill, "SKILL.md"));
+    await fs.copyFile(
+      path.join(paths.sourceSessionSkill, "references", "session-contract.md"),
+      path.join(paths.targetSessionSkill, "references", "session-contract.md"),
+    );
+    await fs.copyFile(
+      path.join(paths.sourceSessionSkill, "agents", "openai.yaml"),
+      path.join(paths.targetSessionSkill, "agents", "openai.yaml"),
+    );
+
+    expect(await sessionSkillAssetsAreCurrent(paths)).toBe(true);
     expect(await baseAssetsAreCurrent(paths)).toBe(true);
   });
 
@@ -442,6 +473,7 @@ describe("Workspace Integration Asset Verifiers", () => {
 
     const report = await checkAllIntegrations(mockContext);
     expect(typeof report.skillCurrent).toBe("boolean");
+    expect(typeof report.sessionSkillCurrent).toBe("boolean");
     expect(typeof report.baseCurrent).toBe("boolean");
     expect(Array.isArray(report.clients)).toBe(true);
     expect(report.clients.length).toBeGreaterThan(0);
@@ -467,12 +499,14 @@ describe("Workspace Integration Asset Verifiers", () => {
     const { paths: installedPaths } = await setupBaseMcpServer(context);
     expect(await baseScriptIsCurrent(installedPaths)).toBe(true);
     expect(await skillAssetsAreCurrent(installedPaths)).toBe(true);
+    expect(await sessionSkillAssetsAreCurrent(installedPaths)).toBe(true);
     expect(await baseAssetsAreCurrent(installedPaths)).toBe(true);
     expect(await readInstalledIntegrationVersion({ userHome: targetDir })).toMatchObject({
       status: "valid",
       manifest: {
         mcpVersion: MCP_VERSION,
-        skills: { agents: SKILL_VERSION },
+        skills: { agents: CREATE_REVIEW_ARTIFACT_SKILL_VERSION },
+        sessionSkills: { agents: WORK_SESSION_SKILL_VERSION },
       },
     });
     expect(await fs.readFile(installedPaths.targetMcpScript)).toEqual(
@@ -495,6 +529,15 @@ describe("Workspace Integration Asset Verifiers", () => {
           await fs.readFile(path.join(installedPaths.sourceSkill, relativePath)),
         );
       }
+    }
+    for (const relativePath of [
+      "SKILL.md",
+      path.join("references", "session-contract.md"),
+      path.join("agents", "openai.yaml"),
+    ]) {
+      expect(await fs.readFile(path.join(installedPaths.targetSessionSkill, relativePath))).toEqual(
+        await fs.readFile(path.join(installedPaths.sourceSessionSkill, relativePath)),
+      );
     }
 
     const configPath = path.join(targetDir, ".codex", "config.toml");
@@ -707,6 +750,7 @@ describe("Workspace Integration Asset Verifiers", () => {
     const unrelatedSkill = path.join(targetDir, ".agents", "skills", "unrelated-skill", "SKILL.md");
     const unrelatedClaudeSkill = path.join(targetDir, ".claude", "skills", "unrelated-claude", "SKILL.md");
     const claudeSkill = path.join(targetDir, ".claude", "skills", "create-review-artifact", "SKILL.md");
+    const claudeSessionSkill = path.join(targetDir, ".claude", "skills", "work-session", "SKILL.md");
     const originalCodexHome = process.env.CODEX_HOME;
 
     vi.spyOn(os, "homedir").mockReturnValue(targetDir);
@@ -789,17 +833,20 @@ describe("Workspace Integration Asset Verifiers", () => {
       ).rejects.toThrow();
       await expect(fs.access(path.join(targetDir, ".agents", "skills", "create-plan-artifact"))).rejects.toThrow();
       await expect(fs.access(claudeSkill)).resolves.toBeUndefined();
+      await expect(fs.access(claudeSessionSkill)).resolves.toBeUndefined();
       expect(await readInstalledIntegrationVersion({ userHome: targetDir })).toMatchObject({
         status: "valid",
         manifest: {
           mcpVersion: MCP_VERSION,
-          skills: { agents: SKILL_VERSION, claude: SKILL_VERSION },
+          skills: { agents: CREATE_REVIEW_ARTIFACT_SKILL_VERSION, claude: CREATE_REVIEW_ARTIFACT_SKILL_VERSION },
+          sessionSkills: { agents: WORK_SESSION_SKILL_VERSION, claude: WORK_SESSION_SKILL_VERSION },
         },
       });
 
       let report = await checkAllIntegrations(context);
       expect(report.baseCurrent).toBe(true);
       expect(report.skillCurrent).toBe(true);
+      expect(report.sessionSkillCurrent).toBe(true);
       expect(report.clients.filter((client) => client.isDetected).map((client) => client.status)).toEqual([
         "ready",
         "ready",
@@ -819,6 +866,7 @@ describe("Workspace Integration Asset Verifiers", () => {
       report = await checkAllIntegrations(context);
       expect(report.baseCurrent).toBe(false);
       expect(report.skillCurrent).toBe(false);
+      expect(report.sessionSkillCurrent).toBe(true);
       expect(report.clients.filter((client) => client.isDetected).map((client) => client.status)).toEqual([
         "outdated",
         "outdated",
@@ -877,8 +925,10 @@ describe("Workspace Integration Asset Verifiers", () => {
       await expect(fs.access(installedPaths.targetDirectory)).rejects.toThrow();
       await expect(fs.access(managedIntegrationVersionPath({ userHome: targetDir }))).rejects.toThrow();
       await expect(fs.access(installedPaths.targetSkill)).rejects.toThrow();
+      await expect(fs.access(installedPaths.targetSessionSkill)).rejects.toThrow();
       await expect(fs.access(path.join(targetDir, ".vscode", "ai-artifacts"))).rejects.toThrow();
       await expect(fs.access(path.dirname(claudeSkill))).rejects.toThrow();
+      await expect(fs.access(path.dirname(claudeSessionSkill))).rejects.toThrow();
       await expect(fs.access(productRoot)).resolves.toBeUndefined();
       await expect(fs.readFile(unrelatedSiblingFile, "utf8")).resolves.toBe("do not touch me\n");
       await expect(fs.readFile(unrelatedSkill, "utf8")).resolves.toBe("# Unrelated skill\n");

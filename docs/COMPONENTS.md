@@ -111,17 +111,18 @@ The skill must never create or edit `artifact.json`, `comments.json`, `review-su
 
 **Responsibilities**
 
-- Expose one window resolver plus four lifecycle tools (numeric MCP version 12):
+- Expose one window resolver plus five lifecycle tools (numeric MCP version 12):
   - `resolve_artifact_window`
   - `create_artifact`
   - `wait_for_artifact_review`
   - `inspect_artifact_review`
   - `advance_and_wait_for_artifact`
+  - `join_session`
 - Validate tool arguments, artifact kind, title, and Markdown size.
 - Group fresh window candidates and issue short-lived, single-use window selection tokens.
 - Generate the artifact ID and `reviewSessionId`.
 - Create a schema-v6 artifact beneath the global per-user collection at review round 1.
-- Manage schema-v1 conversation registry (`~/.ai-artifacts/conversation-registry/<artifactConversationId>/`): accept optional flat fields `artifactConversationId?: string` and `conversationName?: string` on create and inspect, register artifacts with atomic lockfiles (`.conversation.lock`), rollback conversation registration if connection commits fail, and echo or return `artifactConversationId` across lifecycle tools.
+- Manage schema-v2 Work Sessions beneath `~/.ai-artifacts/conversation-registry/<sessionId>/`: support standalone create/inspect (default when no session params are passed), accept optional `artifactConversationId` or `conversationName`, handle preflight migration checks for legacy v1 conversations (`CONVERSATION_MIGRATION_REQUIRED`), rollback session registration if connection commits fail, and serve read-only session inspection via `join_session`.
 - Select the focused live target window (or explicit selection token), atomically commit connection state, and return the persistent artifact handle plus connection metadata before attaching any waiter.
 - Attach one transient tool call to `review-submission.json`, or return an existing submission immediately.
 - Detect a submission through filesystem watching with periodic polling as a fallback.
@@ -361,7 +362,6 @@ Only schema-v6 artifacts at exact validated global handles are loaded. Schemas v
 - Entry & discriminator: [`src/webview/main.tsx`](../src/webview/main.tsx)
 - Review Application: [`src/webview/ReviewApp.tsx`](../src/webview/ReviewApp.tsx)
 - Session Application: [`src/webview/SessionApp.tsx`](../src/webview/SessionApp.tsx)
-- Connect Dialog: [`src/webview/ArtifactConnectDialog.tsx`](../src/webview/ArtifactConnectDialog.tsx)
 - Comments drawer: [`src/webview/CommentsDrawer.tsx`](../src/webview/CommentsDrawer.tsx)
 - Focus management: [`src/webview/focus-trap.ts`](../src/webview/focus-trap.ts)
 - Action policy: [`src/webview/review-actions.ts`](../src/webview/review-actions.ts)
@@ -372,13 +372,12 @@ Only schema-v6 artifacts at exact validated global handles are loaded. Schemas v
 - Request initial state from the provider upon ready.
 - In `ReviewApp`:
   - Render artifact title, kind, round, Markdown, comments, and lifecycle notices.
-  - Provide header buttons for Comments drawer, Sessions toggle (gated on MCP version 12), and Connect button.
-  - Open `ArtifactConnectDialog` when Connect is clicked on MCP version 12+, presenting New Session vs Join Session modes.
+  - Provide toolbar buttons for Comments drawer, Sessions toggle (gated on MCP version 12), Start a work session flow (when the artifact has no memberships), and direct Inspect prompt copying.
   - Capture text selections, draft inline comments, and submit review decisions (`revise`, `approve`, `save`).
 - In `SessionApp`:
   - Render a two-column Work Session Manager with the `Working` artifact zone in the main column and a collapsible side panel (`Session Type` → `Instructions` → `References` → `Archived`).
   - Provide controls to rename the session, change or quick-create its session type, edit and explicitly **Save** Markdown `instructions`, toggle the per-session side panel (`globalState`), and organize/reorder/remove artifacts across `Working`, `References`, and `Archived`.
-  - Preserve unsaved `instructions` draft across unrelated background refreshes while accepting `workSessionInstructionsPatch` when the persisted `instructions` field changes on disk, and surface action errors inline without tearing down the manager view.
+  - Preserve unsaved `instructions` draft across unrelated background refreshes while accepting `workSessionInstructionsPatch` when the persisted `instructions.md` file on disk actually changes, and surface action errors inline without tearing down the manager view.
   - Route artifact card clicks to the host for safe opening.
 - Reset transient UI upon round or session state change.
 - Copy Markdown or Connect prompt to clipboard.

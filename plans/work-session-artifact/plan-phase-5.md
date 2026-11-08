@@ -2,6 +2,8 @@
 
 Trạng thái: **Chưa triển khai — 8 bước / 3 chặng.** Lập ngày **2026-11-07**, sau khi đối chiếu code hiện tại và các quyết định của Chú. Viết xong hướng dẫn không đồng nghĩa đã hoàn thành tính năng hoặc đã kiểm chứng Extension Host.
 
+Bổ sung ngày **2026-11-08**: Review App sửa title/type của artifact, Quick Pick chọn/tạo kind mở và MCP đọc kind hiện tại khi trả decision. Phần này nằm trong **Bước 6 / Chặng 3**, làm UI + host + MCP cùng đợt; không thêm phase/chặng mới.
+
 Nguồn phạm vi: [plan tổng](plan.md), [Phase 4](plan-phase-4.md), [Phase 4.5](plan-phase-4.5.md), [note](note.md) và các quyết định tiếp nối. **Grid thay masonry** trong phạm vi Phase 5; các đề xuất masonry trước đó không còn là yêu cầu. Triển khai sau 4.5, dùng output standalone/Inspect trực tiếp/Start/hai skills của phase đó; không dựng lại popup New/Join hoặc auto-create cũ. Các source snapshot bên dưới được đọc trước 4.5 và phải refresh khi implementation bắt đầu; không đổi tiến độ lịch sử Phase 4.
 
 ## 1. Phạm vi theo component
@@ -9,6 +11,8 @@ Nguồn phạm vi: [plan tổng](plan.md), [Phase 4](plan-phase-4.md), [Phase 4.
 | Component | Kết quả cần đạt |
 | --- | --- |
 | Session Manager | Card grid theo thứ tự array; kind/description; search/filter artifact trong phiên; helper text cho các vùng/Instructions; padding side panel giảm nhẹ, đồng đều. |
+| Review App và artifact metadata | Header `ROUND n · Type` với nút sửa type/title; native Input Box/Quick Pick, tạo kind mở; cập nhật `artifact.json.title`/`kind` mà không đổi recency hoặc review round. |
+| MCP decision result | Đọc lại manifest của đúng artifact/round khi xử lý submission, dùng cùng kind mới cho field `kind` và `nextAction` trong hai wait flows; giữ policy Proceed đã có. |
 | Sidebar | Menu chuột phải Recent Artifacts/Sessions, Pin/Unpin, Archive/Delete, tooltip đầy đủ title và kind/type. Giữ Activity Bar riêng và các controls Phase 4. |
 | UI state | File riêng cho artifact và Session; không đưa Pin/Archive vào metadata của MCP hoặc layout. |
 | Search và editors | Search tìm cả Archived; mở vẫn giữ Archive. Header Archived chỉ có nút **Restore** primary cùng tên/nhãn Archived. |
@@ -16,7 +20,7 @@ Nguồn phạm vi: [plan tổng](plan.md), [Phase 4](plan-phase-4.md), [Phase 4.
 | Export | Manager **More → Export / Archive / Delete**. ZIP tài liệu cho người đọc, gồm Instructions và Markdown cả ba vùng. |
 | Session types | Thêm `{ id: "module", label: "Module" }` vào seed khi chưa có file types. Không backfill file đã có. Type mặc định khi tạo Session vẫn là Conversation. |
 
-**Ngoài phạm vi:** drag-and-drop/masonry, sửa MCP review lifecycle/ownership/Proceed, tool MCP mới, readonly inspect, chuyển Instructions về JSON, đổi các native Quick Input đã được chấp nhận, attach/import file/folder, ZIP import, thêm cleanup Session chưa Archive, lock/CAS/merge/conflict hoặc dirty dialog/recovery. Không thêm migration types hoặc Pin/Archive.
+**Ngoài phạm vi:** drag-and-drop/masonry, sửa MCP review lifecycle/ownership hoặc policy Proceed (ngoại lệ duy nhất là đọc kind mới khi trả decision theo mục 3.6), tool MCP mới, readonly inspect, chuyển Instructions về JSON, thiết kế lại các native Quick Input đã được chấp nhận, attach/import file/folder, ZIP import, thêm cleanup Session chưa Archive, lock/CAS/merge/conflict hoặc dirty dialog/recovery. Không thêm migration types hoặc Pin/Archive, không thêm registry/quản lý taxonomy artifact types độc lập. MCP Resources/Composer Mentions để bàn sau, không nằm trong bổ sung này.
 
 ## 2. Hiện trạng code đã kiểm tra
 
@@ -36,6 +40,8 @@ Nguồn phạm vi: [plan tổng](plan.md), [Phase 4](plan-phase-4.md), [Phase 4.
 | `src/shared/conversation-artifact-registry.ts` | `cleanupStaleConversations` xoá membership stale, lọc ba mảng layout, giữ Session v2 rỗng; xoá conversation v1 rỗng theo logic cũ. `readSession` chỉ reconcile layout với membership, không kiểm tra/xoá artifact đã mất. Chưa có Delete Session v2 hoặc cleanup Archive 30 ngày. |
 | `src/extension/extension.ts`, `package.json` | Là điểm đăng ký commands/menus/watchers và activation cleanup. `view/item/context` cho hai tree chưa có; tránh đăng ký lại provider hoặc commands đã có ở Phase 4. |
 | `package-lock.json`, `node_modules/yazl/README.md` | Repo hiện có `yazl` 2.5.1 gián tiếp qua tooling, chưa là dependency trực tiếp. API local có `ZipFile`, `addBuffer`, `addEmptyDirectory`, `outputStream`, `end`; không dùng transitive dependency ngầm cho tính năng export. |
+
+**Snapshot bổ sung cho edit artifact — 2026-11-08:** `artifactManifestSchema` đã có `title` (1–200 ký tự) và `kind` mở theo `artifactKindSchema` (`^[a-z][a-z0-9-]{0,63}$`), nên không cần field/schema mới. `artifact-kinds.ts` có danh sách 10 kinds cố định, `formatArtifactKindLabel` và `isPlanProceedKind`. `ArtifactStore` chưa có API patch title/kind; provider đang full-refresh cho mọi thay đổi `artifact.json`, chưa có typed metadata-only patch. Service đã có event `{ kind: "artifact", artifactId }` và manager/sidebar đọc title/kind từ manifest. `ReviewApp.tsx` hiện render type trước ROUND và chưa có nút edit hai trường này. `readValidatedSubmissionOnce` đang dùng `context.manifest.kind` từ lúc bắt đầu chờ cho cả response và `reviewDecisionAction`; watcher chờ submission không nạp lại manifest. Đó là điểm MCP phải sửa cùng UI. Đây là source review để lập hướng dẫn, không phải kết quả implementation hoặc runtime test.
 
 **Các test nền cần giữ:** `work-session-sidebar.test.ts`, `artifact-search*.test.ts`, `session-search-command.test.ts`, `work-session-provider.test.ts`, `session-app.test.tsx`, `conversation-artifact-service.test.ts`, `conversation-artifact-registry.test.ts`, `artifact-retention.test.ts`, `session-type-registry.test.ts`, `release-contract.test.ts` và regression review hiện có. Lượt lập plan này chỉ đọc source; không chạy lại suite và không tái sử dụng số pass cũ làm bằng chứng Phase 5.
 
@@ -122,13 +128,31 @@ Tên Session/
 
 ZIP lấy dữ liệu persisted, đủ cả ba vùng theo thứ tự layout, không dùng search/filter visible arrays hoặc Instructions đang gõ chưa Save. Nội dung Markdown giữ nguyên; không metadata JSON, ID filename, comments/submission/review state. Không tự thu thập file/folder/assets từ link Markdown, không thiết kế import. Tên được chuẩn hoá thành filename hợp lệ; số thứ tự phân biệt title trùng. Chi tiết lỗi/save ở Bước 7.
 
+### 3.6. Artifact title/type do user chỉnh và kind dùng cho Proceed
+
+```text
+ROUND 2 · Implementation plan [edit type]
+Work Session Artifact — Phân tích và đề xuất phạm vi [edit title]
+```
+
+- UI gọi **Type**, persisted field vẫn là `artifact.json.kind`; tách biệt với `Session.typeId`. Giữ bộ kinds cố định và cho phép kinds mở như hiện tại. Label dùng `formatArtifactKindLabel`: `meeting-note` → `Meeting note`.
+- Sửa title bằng native Input Box, prefill title hiện tại; trim, không rỗng, tối đa 200 ký tự theo manifest schema. Chỉ sửa metadata title; không sửa heading hoặc bất kỳ nội dung nào trong `artifact.md`.
+- Sửa type bằng native Quick Pick: bộ cố định theo thứ tự `FIXED_ARTIFACT_KINDS`, tiếp theo các kinds mở đang được artifacts hợp lệ trong collection sử dụng, rồi **Create new type…**. Dedupe bằng slug, giữ kind hiện tại kể cả không có trong kết quả discovery; đánh dấu lựa chọn hiện tại. Không ghi từng artifact thành một dòng type trùng nhau.
+- Create new type mở Input Box nhập slug `lowercase-with-hyphens`; validate bằng `artifactKindSchema` hiện có, không thêm restriction khác hoặc tự đổi một chuỗi sai thành kind ngoài ý user. Slug đã có thì chọn lại kind đó. Tạo ở đây là gán kind mới cho artifact, không tạo Session type hoặc ghi registry mới. Kind mở không còn artifact nào sử dụng sẽ không có trong các lượt gợi ý sau; không có thao tác rename/delete kind toàn cục trong phase này.
+- Extension host được phép patch **chỉ `title` hoặc `kind`** trong manifest của artifact đã bind. Đọc manifest mới nhất rồi patch đúng trường, ghi atomic bằng primitive an toàn hiện có. Chấp nhận bản ghi sau cùng thắng giữa AI/user; không locks/CAS/conflict detection/merge/retry-on-conflict hoặc ownership handoff cho metadata editing.
+- Rename/change type không sửa `updatedAt`, `createdAt`, ID, reviewSessionId, reviewRound, Markdown/SHA, comments, submission, connection, membership/registeredAt, layout hoặc UI state. Không tự làm mới artifact retention, đẩy recency hoặc gia hạn Session. Chỉ thay thứ tự hiển thị nếu kết quả filter theo title/kind thực sự thay đổi.
+- Khi MCP xử lý submission, đọc lại manifest hiện tại của đúng artifact/round rồi dùng **cùng bản manifest đó** cho response `kind`, link title nếu có và `nextAction`: `plan`/`implementation-plan` → `execute-approved-plan`, mọi kind khác → `approved`; `revise` và `save` giữ semantics đã có. Không thêm kind vào submission schema, không restart waiter hoặc tăng round để đổi type.
+- Việc đọc lại đặt trong hàm xử lý submission chung để cả `wait_for_artifact_review` và nhánh wait của `advance_and_wait_for_artifact` đều nhận kind mới. Giữ các binding/checks hiện có cho artifactId/reviewSessionId/reviewRound/SHA/comments/submission. Không dùng title để tìm lại artifact hoặc đọc manifest mới rồi âm thầm nhận một round khác.
+- Edit metadata không phát lại decision, không tạo grant mới hoặc biến Proceed đã lưu thành yêu cầu execution mới. Các nhánh inspect snapshot cũ tiếp tục là lịch sử theo contract 4.5; không mở rộng việc sửa này thành thay đổi token/ownership/approval protocol.
+- Theo quy tắc header Archived ở mục 3.2, ẩn cả hai nút edit khi artifact globally Archived; Restore đưa lại header thường. Giữ các điều kiện read-only/deleted hiện có; lỗi native picker/write chỉ báo tại thao tác, không làm mất nội dung review.
+
 ## 4. Chia chặng và đầu ra review
 
 | Chặng | Bước | Đầu ra review được |
 | --- | --- | --- |
 | **1 — Nền persistence và deletion** | **1–2** | UI-state schemas/read-write + seed Module; primitive Delete artifact/Session, dùng lại retention/prune, focused tests. Chưa có menu mới để user bấm. |
 | **2 — Quản lý danh sách và Archived** | **3–5** | Sidebar menus/tooltip/Pin/Archive/Delete, Search Archived, header Restore/More và cleanup Session Archive 30 ngày chạy xuyên host/editor. |
-| **3 — Trình bày và export** | **6–8** | Grid/cards/filter/helper text, ZIP tài liệu, docs, check/test/build và manual verification được ghi rõ. |
+| **3 — Trình bày, edit artifact và export** | **6–8** | Grid/cards/filter/helper text; header edit title/type + kind mở + Proceed dùng kind mới trong cùng Bước 6; ZIP tài liệu, docs, check/test/build và manual verification được ghi rõ. |
 
 Hoàn thành từng chặng theo implementation và bằng chứng thực tế. Không đánh dấu xong chỉ vì docs hoặc một test snapshot pass. Ưu tiên rebase/tận dụng output Phase 4 đã xong trước khi bắt đầu UI; không triển khai lại Add/Connect/Instructions/kind filter ở Phase 5.
 
@@ -213,7 +237,9 @@ Hoàn thành từng chặng theo implementation và bằng chứng thực tế. 
 
 **Đạt được:** 29 ngày giữ, đúng 30 ngày xoá; archived+pinned vẫn xoá; chưa Archive/rỗng/lâu không dùng vẫn giữ; Restore trước cleanup thì giữ; artifacts của Session bị cleanup không bị xoá bởi primitive Session. Retention artifact độc lập vẫn theo setting cũ.
 
-### Bước 6 — Grid, card metadata, manager filter/search và helper text
+### Bước 6 — Grid, card metadata, manager filter/search, helper text và edit artifact
+
+#### 6.1. Session Manager grid/cards/filter/helper text
 
 **Files:** `contracts.ts` (row DTO), `conversation-artifact-service.ts`, `SessionApp.tsx`, `styles.css`; dùng lại `markdown-description.ts`, `artifact-kinds.ts`, `normalizeArtifactTitleSearch` hoặc helper thuần tương ứng.
 
@@ -227,6 +253,48 @@ Hoàn thành từng chặng theo implementation và bằng chứng thực tế. 
 8. Áp padding nhẹ, bằng nhau cho bốn blocks sidebar; giữ Type chip, native pickers, textarea Markdown rows/overflow + Save/Open, panel memory và các nút Add/Connect của Phase 4. Không thêm DnD hoặc rich editor.
 
 **Đạt được:** các dải độ rộng và panel on/off đúng bảng; render trái→phải đúng array; Move Up/Down thay thứ tự và tồn tại sau mở lại. Filter không ghi layout/updatedAt và không làm mất Instructions đang gõ. References/Archived hai cột không tràn ngang, menu truy cập được trong panel.
+
+#### 6.2. Review App sửa title/type và MCP trả kind mới
+
+**Files:** `src/shared/contracts.ts`, `src/shared/artifact-kinds.ts` (dùng lại), `src/extension/artifact-store.ts`, `src/extension/artifact-review-provider.ts`; tạo `src/extension/artifact-metadata-command.ts` cho native input/picker controller (tên mới đề xuất); `artifact-search.ts`, `conversation-artifact-service.ts`, `work-session-provider.ts`, `work-session-sidebar.ts` chỉ chỉnh phần discovery/events cần thiết; `src/webview/ReviewApp.tsx`, `styles.css`; `src/integration/artifact-review-mcp-v4.ts`.
+
+**A. Contract và persistence — hoàn thành trước khi nối nút UI**
+
+1. Thêm hai strict actions không nhận path/ID tuỳ ý từ webview: `{ type: "renameArtifact" }` và `{ type: "changeArtifactType" }`. Provider lấy target từ `ArtifactStore` đã bind; giá trị mới lấy từ native input. Không thêm tool MCP hay trường metadata persisted.
+2. Thêm API hẹp cho store, ví dụ `updateMetadata(patch: { title?: string; kind?: string })`. Validate patch qua title/kind schema hiện có, resolve lại exact safe global handle/file và parse manifest mới nhất; chỉ spread trường được yêu cầu lên manifest đó. Kiểm tra writable/deleted như các thao tác host hiện có, không nhận nguyên manifest từ webview.
+3. Ghi qua `writeNewManagedFile` → `replaceManagedFile` → dọn đúng temp của lần ghi, theo pattern `writeComments` hiện có (hoặc primitive tương đương repo); giữ Windows fallback/quy tắc managed files. Không dùng comments writer để ghi manifest. Không tự thêm lock hoặc đổi transaction protocol của MCP.
+4. Ghi thành công trả title/kind đã persisted cho provider. Huỷ picker, nhập không hợp lệ hoặc giá trị không đổi thì không ghi file. Lỗi đọc/ghi không coi là đã lưu; không tự tạo lại artifact bị xoá. Không gọi load có side effect tạo comments chỉ để đổi metadata nếu đã có helper đọc manifest an toàn.
+
+**B. Native input và danh sách type — không thêm registry**
+
+5. Rename dùng Input Box: title **Rename artifact**, prompt **Enter a title for this artifact**, placeholder **Artifact title**. Prefill title hiện tại; trim/validate 1–200 ký tự. Cancel không làm gì.
+6. Type picker có title **Change artifact type**, placeholder **Select a type or create a new one**. Dùng `discoverSearchableArtifacts` để lấy kinds mở từ collection hợp lệ, dedupe và sort nhóm mở theo label/slug; nhóm fixed giữ thứ tự shared constant. Hiện label đã format và raw slug ở description để search/nhận diện, đánh dấu **Current**. Không thay behavior fixed/Other của filter Recent.
+7. Dòng **Create new type…** mở Input Box title **Create artifact type**, prompt **Enter a type in lowercase, using hyphens between words**, placeholder **meeting-note**. Trim và validate bằng `artifactKindSchema`. Ví dụ `meeting-note` hợp lệ, `Meeting Note` chưa hợp lệ và phải được sửa trước khi lưu; không tự slugify mất dấu/nghĩa. Slug trùng chỉ là chọn type đã có, không tạo bản ghi phụ. Sau confirm gọi cùng store patch `kind`.
+8. Controller dùng dependencies của native UI/discovery/store để test bằng fixture; không đọc/ghi collection home thật trong tests. Discovery lỗi được báo đúng; không tự seed một registry mới để bù lỗi.
+
+**C. Header và đồng bộ metadata scoped**
+
+9. Đổi eyebrow thành `ROUND {reviewRound} · {formatArtifactKindLabel(kind)}`; đặt nút pencil bên type với tooltip/aria-label **Change artifact type**. Đặt pencil bên title với tooltip/aria-label **Rename artifact**. Dùng icon/style button đã có, layout wrap được khi title dài; giữ utility controls/Markdown/Comments bên dưới.
+10. Thêm typed patch như `{ type: "artifactMetadataPatch", artifactId, title, kind }`. Webview nhận patch đúng artifactId, chỉ cập nhật hai fields trong `state.artifact`; giữ Markdown renderer, comments, selection/popover đang nhập, send status và round. Không remount app, không giả round change hoặc reset feedback khi rename.
+11. Tách nhánh watcher manifest: nếu validated manifest chỉ đổi title/kind trên cùng identity/round và các fields khác giữ nguyên, gửi metadata patch; nếu có round/content/lifecycle change thì giữ full-refresh hiện có. Đọc/validate đúng file vẫn cần thiết; không bỏ watcher cho thay đổi bên ngoài. Dùng pending/error tại thao tác; nút edit không gửi trùng khi native flow đang mở hoặc quyết định đang submit.
+12. Reuse `{ kind: "artifact", artifactId }` hiện có và watcher/debounce để Recent title/tooltip/kind-filter, search lần sau, manager rows/filter và catalog đọc đúng metadata mới. Không tạo loại event generic cho toàn bộ Session; không refresh/replace Instructions draft vì artifact đổi nhãn. Không gọi register để cập nhật cache, không sửa memberships/layout/registeredAt. Catalog đọc manifest hiện tại qua resolver có sẵn, không thêm dữ liệu snapshot ngang hàng.
+13. Giữ Archived header chỉ Restore: hide edit buttons theo cùng nhánh header. Restore cho phép sửa lại title/type. Lỗi rename/type giữ nội dung đang xem và các comments chưa submit; không chuyển toàn app sang terminal error.
+
+**D. MCP đọc kind mới — cùng checkpoint với UI edit type**
+
+14. Trong `readValidatedSubmissionOnce`, khi đã có submission cần xử lý, đọc/parse manifest hiện tại qua cùng managed-file/validation helpers; đối chiếu artifactId/reviewSessionId/reviewRound với context của waiter. Giữ bounded retry JSON và đường lỗi binding hiện có. Không reload/reset waiter, không lấy nhầm context của round mới.
+15. Tạo context/metadata kết quả từ bản manifest vừa đọc; dùng kind đó cho `reviewDecisionAction` và response `kind`, đồng thời title mới cho artifact link khi response có link. Không tính nextAction từ kind mới nhưng trả field kind/link từ context cũ. `attachRoundGrant` hiện tạo artifactLink bằng context của caller: đồng bộ việc lấy title mới ở đường này khi cần, không thay binding/token.
+16. Đặt logic ở shared result path; cả wait ban đầu lẫn wait sau advance dùng chung. Không chỉ sửa handler `submitReview` ở extension vì MCP waiter có context riêng. Không thêm `kind` vào `review-submission.json`, không phát lại Proceed đã nhận hoặc dùng metadata edit để re-grant execution. Giữ distinction fresh decision/historical snapshot của skill.
+
+**Kiểm chứng đúng phạm vi:**
+
+- `test/artifact-store.test.ts`: đổi title/kind hợp lệ chỉ thay trường yêu cầu; `updatedAt`, identity/round và các file Markdown/comments/submission/connection/membership giữ nguyên. Huỷ/no-op không ghi qua controller; validation dùng schema thật.
+- `test/artifact-review-provider.test.ts` và test controller native mới khi cần: đúng bound artifact, picker fixed + distinct open + Current + Create, nhập custom slug, cancel/invalid/no-op; success patch và lỗi không xoá nội dung.
+- `test/review-app.test.tsx`: ROUND đứng trước type, hai edit actions đúng, metadata patch giữ round/feedback draft, archived hide/Restore hiện lại buttons. Tận dụng test provider/app sẵn, không test chỉ số lượng DOM hoặc mirror toàn implementation.
+- `test/review-wait-mcp.test.ts`: waiter đã bắt đầu với `implementation-plan` → sửa manifest thành `note` → Proceed trả `kind: note`, `nextAction.type: approved`; chiều `note` → `plan` trả `execute-approved-plan`. Có case từ wait sau advance và giữ tests revise/save/old snapshots hiện có. Chờ waiter thực sự bắt đầu trước khi patch manifest để test bắt được stale context, không chỉ load kind mới ngay từ đầu.
+- Service/sidebar/manager tests đã có: rename/kind xuất hiện đúng trong metadata hiển thị và các filter liên quan, recency không đổi; Instructions draft không reset. Không thêm cross-agent conflict matrix hoặc coordination test ngoài quyết định last-write-wins.
+
+**Đạt được cùng đợt:** user sửa title/type, tạo kind mở và xem metadata mới ở các nơi liên quan; round/retention/feedback giữ nguyên; Proceed trả kind và action thống nhất theo manifest mới. Chưa xong phần D thì chưa coi edit type sẵn sàng chỉ vì picker/header chạy được. Không cần tăng artifact schema hoặc thêm registry; runtime thay đổi được build/cài lại/restart để test theo quy ước MCP 12 của feature chưa release, không tự bump version theo bước.
 
 ### Bước 7 — Export ZIP tài liệu cho người đọc
 
@@ -244,20 +312,23 @@ Hoàn thành từng chặng theo implementation và bằng chứng thực tế. 
 
 ### Bước 8 — Validation, docs và bàn giao
 
-**Files docs:** cập nhật `README.md`, `docs/ARCHITECTURE.md`, `docs/PHILOSOPHY.md`, `docs/INSTRUCTION.md`, `docs/CHANGE_LOGS.md` theo hành vi thật; plan tổng/note/checkpoints. Chỉ sửa skill nếu wording cũ về artifact lifetime/cleanup thực sự cần đồng bộ, không đổi contract/tool vì UI feature.
+**Files docs:** cập nhật `README.md`, `docs/ARCHITECTURE.md`, `docs/PHILOSOPHY.md`, `docs/INSTRUCTION.md`, `docs/CHANGE_LOGS.md` theo hành vi thật; plan tổng/note/checkpoints. Chỉ sửa skill nếu wording cũ về artifact lifetime/cleanup/metadata ownership thực sự cần đồng bộ; không tự sửa wording skills đóng băng của 4.5, không thêm tool hoặc thay contract Proceed chỉ vì UI feature.
 
 - Ghi rõ Archive toàn cục vs zone Archived, Search/Restore, Delete Session giữ artifacts, Delete artifact toàn cục, Session Archive cleanup activation sau 30 ngày, Pin không miễn artifact retention.
+- Bổ sung docs quyền extension sửa `artifact.json.title`/`kind`, label Type khác Session Type, tạo kind mở không registry, last-write-wins, giữ updatedAt/round/Markdown và đọc kind hiện tại khi trả Proceed. Canonical ownership docs phải ghi ngoại lệ metadata hẹp này, không diễn giải thành quyền extension/skill ghi các lifecycle fields khác.
 - API/DTO tests đi cùng bước thay đổi; mở rộng regression hiện có thay vì duplicate một suite chỉ kiểm tra implementation. Không yêu cầu exhaustive cross-window/ownership matrix ngoài phạm vi.
 - Chạy `npm.cmd run check`, `npm.cmd test`, `npm.cmd run build` sau khi các chặng hoàn tất; chạy focused suites trong từng chặng. Kiểm tra `git diff --check`. Ghi đúng pass/skipped và các giới hạn; không đổi version để chữa test.
-- Manual Extension Host: menu đúng item khi tab khác active; >20 Recent có Pin/Archive/filter; Search Archived→Open→Restore; Archive header chỉ Restore; Delete artifact trong hai Sessions; Delete Session giữ artifact; panel on/off và grid qua ba dải; filter+Move không mất order; UI-state update không thay Instructions draft; ZIP mở/giải nén đúng.
+- Manual Extension Host: menu đúng item khi tab khác active; >20 Recent có Pin/Archive/filter; Search Archived→Open→Restore; Archive header chỉ Restore; Delete artifact trong hai Sessions; Delete Session giữ artifact; panel on/off và grid qua ba dải; filter+Move không mất order; UI-state update không thay Instructions draft; header ROUND trước type, rename/select/create kind rồi metadata/filters cập nhật mà feedback draft còn nguyên; ZIP mở/giải nén đúng. Manual agent: đang wait → đổi plan/non-plan → Proceed nhận đúng kind/action, không yêu cầu user restart waiter chỉ để nhận loại mới.
 - Cleanup 30 ngày và seeded types dùng temp root hoặc profile test, không chỉnh dữ liệu global thật chỉ để test. Không đổi/đăng ký lại Activity Bar/icon đang được Chú chấp nhận.
 
 ## 6. Tiêu chí hoàn thành và tiến độ
 
 - [ ] **Chặng 1:** UI state/schema/default-read/atomic-patch và Module seed-only; deletion dùng chung retention/prune, tests isolated pass.
 - [ ] **Chặng 2:** hai context menus, Pin/Archive sort/filter, Search Archived, tooltip, Restore-only header/More, Delete scopes và cleanup Archive 30 ngày; scoped events cập nhật đúng editor.
-- [ ] **Chặng 3:** grid thay masonry với hai bộ cột, side panel hai cột/padding, card descriptions/filter/helper text, Export ZIP đủ tài liệu, docs và validation.
-- [ ] Regression giữ nguyên review lifecycle/schema/active Session/registeredAt/Instructions contract của Phase 4.
+- [ ] **Chặng 3:** grid thay masonry với hai bộ cột, side panel hai cột/padding, card descriptions/filter/helper text, edit title/type theo Bước 6.2, Export ZIP đủ tài liệu, docs và validation.
+- [ ] **Edit artifact:** ROUND trước type, hai native edit flows và Create new type; manifest chỉ đổi title/kind, updatedAt/round/Markdown/comments giữ nguyên; scoped metadata refresh và last-write-wins, không registry/conflict hardening.
+- [ ] **Proceed với kind mới:** cả hai wait flows đọc cùng manifest hiện tại cho response kind/nextAction; plan ↔ non-plan sau khi waiter bắt đầu trả action đúng; không restart waiter hoặc reexecute saved decision.
+- [ ] Regression giữ nguyên review lifecycle/schema/active Session/registeredAt/Instructions contract của Phase 4.5, ngoài phần đọc metadata mới khi trả decision được chốt ở mục 3.6.
 - [ ] Check/test/build/diff checks được ghi kết quả thật; manual UI/ZIP/cleanup evidence hoặc phần chưa xác minh được nêu rõ.
 - [ ] Chú review output trước khi đánh dấu Phase 5 hoàn thành. Không tự kết luận release-ready chỉ từ automated checks.
 
@@ -270,5 +341,9 @@ Hoàn thành từng chặng theo implementation và bằng chứng thực tế. 
 | Grid/filter có thể làm lệch thứ tự lưu | Array là nguồn duy nhất, grid row flow, derived filter không persist; Move/Up/Down dùng index gốc. |
 | UI-state watcher có thể kéo refresh rộng | Typed ID events/patches, không reload Instructions/review content khi chỉ Pin/Archive; giữ reducer và scoped refresh Phase 4. |
 | Export có tài liệu mất hoặc lỗi ghi | Báo lỗi rõ, không xuất thiếu trong im lặng; temp output trước finalize, không có chức năng repair/import. |
+| Edit type nhưng waiter còn kind cũ | Nạp lại manifest trong shared submission result, kind/nextAction/link cùng bản mới, đối chiếu đúng identity/round; test đổi loại sau khi waiter đã bắt đầu ở cả hai wait flows. |
+| Rename/type refresh làm mất feedback hoặc nhầm Session type | Typed metadata patch chỉ title/kind; giữ drafts/round và dùng event artifact đã có. Kind mở chỉ là slug trên artifact, không chạm Session type registry. |
 
 **Độ khó dự kiến:** trung bình; deletion/cleanup và scoped event wiring cần rà kỹ hơn CSS/menu. Phase 4 đã cung cấp context/snippet/kind/Connect/Instructions và Add nên Phase 5 dùng lại, không xây lại luồng agent. Optional hardening về cross-window conflict, active waiter coordination, cache dài hạn, ZIP import và cleanup Session khác vẫn ngoài phạm vi.
+
+**Kiểm tra lượt bổ sung plan 2026-11-08:** chỉ đọc source và cập nhật hướng dẫn/checkpoints; không triển khai edit metadata, đổi MCP/skill/version, chạy feature tests/check/build hoặc ghi dữ liệu global. Khi implementation bắt đầu, đối chiếu lại source Phase 4.5 và snapshot ở mục 2; không dùng ghi chú này làm bằng chứng tính năng đã hoạt động.

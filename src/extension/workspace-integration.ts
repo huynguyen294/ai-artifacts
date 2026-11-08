@@ -22,6 +22,9 @@ import { upsertJsonMcpServer, writeTextFileAtomic } from "./mcp-clients/json-mcp
 import { cleanupBaseMcpServer } from "./mcp-clients/base-cleanup";
 import {
   REVIEW_SKILL_ASSETS,
+  WORK_SESSION_SKILL_ASSETS,
+  officialSkillDirectoryIsCurrent,
+  replaceOfficialSkillDirectory,
   replaceSkillDirectory,
   sameFile,
   skillDirectoryIsCurrent,
@@ -36,9 +39,11 @@ import {
 } from "../shared/artifact-files";
 import { ensureManagedDirectory } from "../shared/artifact-validation";
 import {
+  CREATE_REVIEW_ARTIFACT_SKILL_VERSION,
   INTEGRATION_VERSION_SCHEMA_VERSION,
   MCP_VERSION,
   SKILL_VERSION,
+  WORK_SESSION_SKILL_VERSION,
   integrationVersionManifestSchema,
   type InstalledSkillVersions,
   type IntegrationVersionManifest,
@@ -51,10 +56,12 @@ export type BaseIntegrationPaths = {
   targetMcpScript: string;
   targetLegacyMcpScript: string;
   targetSkill: string;
+  targetSessionSkill: string;
   targetLegacySkill: string;
   workspacesDirectory: string;
   sourceMcpScript: string;
   sourceSkill: string;
+  sourceSessionSkill: string;
 };
 
 export function getCopilotConfigPath(context?: vscode.ExtensionContext): string {
@@ -100,6 +107,7 @@ export function getBaseIntegrationPaths(
     targetMcpScript: managedMcpScriptPath({ userHome }),
     targetLegacyMcpScript: path.join(legacyDirectory, "ai-artifacts-review-mcp.mjs"),
     targetSkill: path.join(agentSkillsDirectory, "create-review-artifact"),
+    targetSessionSkill: path.join(agentSkillsDirectory, "work-session"),
     targetLegacySkill: path.join(agentSkillsDirectory, "create-plan-artifact"),
     workspacesDirectory: managedWorkspaceRegistryDirectory({ userHome }),
     sourceMcpScript: vscode.Uri.joinPath(
@@ -109,6 +117,7 @@ export function getBaseIntegrationPaths(
       "codex-artifacts-review-mcp.mjs",
     ).fsPath,
     sourceSkill: vscode.Uri.joinPath(context.extensionUri, "skills", "create-review-artifact").fsPath,
+    sourceSessionSkill: vscode.Uri.joinPath(context.extensionUri, "skills", "work-session").fsPath,
   };
 }
 
@@ -123,16 +132,21 @@ export async function skillAssetsAreCurrent(paths: BaseIntegrationPaths): Promis
   return skillDirectoryIsCurrent(paths.sourceSkill, paths.targetSkill);
 }
 
+export async function sessionSkillAssetsAreCurrent(paths: BaseIntegrationPaths): Promise<boolean> {
+  return officialSkillDirectoryIsCurrent(paths.sourceSessionSkill, paths.targetSessionSkill);
+}
+
 export async function baseScriptIsCurrent(paths: BaseIntegrationPaths): Promise<boolean> {
   return sameFile(paths.sourceMcpScript, paths.targetMcpScript);
 }
 
 export async function baseAssetsAreCurrent(paths: BaseIntegrationPaths): Promise<boolean> {
-  const [skillCurrent, scriptCurrent] = await Promise.all([
+  const [skillCurrent, sessionSkillCurrent, scriptCurrent] = await Promise.all([
     skillAssetsAreCurrent(paths),
+    sessionSkillAssetsAreCurrent(paths),
     baseScriptIsCurrent(paths),
   ]);
-  return skillCurrent && scriptCurrent;
+  return skillCurrent && sessionSkillCurrent && scriptCurrent;
 }
 
 export type InstalledIntegrationVersionReadResult =
@@ -210,6 +224,9 @@ export async function setupBaseMcpServer(
     ...REVIEW_SKILL_ASSETS.map((relativePath) =>
       fs.access(path.join(paths.sourceSkill, relativePath)),
     ),
+    ...WORK_SESSION_SKILL_ASSETS.map((relativePath) =>
+      fs.access(path.join(paths.sourceSessionSkill, relativePath)),
+    ),
   ]);
   const [assetsCurrent, legacyScriptPresent, legacySkillPresent] = await Promise.all([
     baseAssetsAreCurrent(paths),
@@ -233,6 +250,9 @@ export async function setupBaseMcpServer(
   // Deploy Agent Skill to ~/.agents/skills/create-review-artifact
   await replaceSkillDirectory(paths.sourceSkill, paths.targetSkill);
 
+  // Deploy Work Session Skill to ~/.agents/skills/work-session
+  await replaceOfficialSkillDirectory(paths.sourceSessionSkill, paths.targetSessionSkill);
+
   // Clean up legacy skill if present
   await fs.rm(paths.targetLegacySkill, { recursive: true, force: true }).catch(() => {});
 
@@ -240,16 +260,18 @@ export async function setupBaseMcpServer(
   const legacyDirectory = path.join(userHome, ".vscode", "ai-artifacts");
   await fs.rm(path.join(legacyDirectory, "mcp.json"), { force: true }).catch(() => {});
 
-  const [scriptCurrent, skillCurrent] = await Promise.all([
+  const [scriptCurrent, skillCurrent, sessionSkillCurrent] = await Promise.all([
     baseScriptIsCurrent(paths),
     skillAssetsAreCurrent(paths),
+    sessionSkillAssetsAreCurrent(paths),
   ]);
-  if (!scriptCurrent || !skillCurrent) {
-    throw new Error("Base MCP runtime or shared review skill verification failed after installation.");
+  if (!scriptCurrent || !skillCurrent || !sessionSkillCurrent) {
+    throw new Error("Base MCP runtime or shared review/session skills verification failed after installation.");
   }
   await writeInstalledIntegrationVersion({
     mcpVersion: MCP_VERSION,
-    skills: { agents: SKILL_VERSION },
+    skills: { agents: CREATE_REVIEW_ARTIFACT_SKILL_VERSION },
+    sessionSkills: { agents: WORK_SESSION_SKILL_VERSION },
   }, { userHome });
 
   return { paths, assetsUpdated };
@@ -287,7 +309,12 @@ export async function installAllDetectedIntegrations(
   const { paths } = await setupBaseMcpServer(context);
   const copilotConfigPath = getCopilotConfigPath(context);
   const clineConfigPath = getClineConfigPath(context);
-  const drivers = getAllClientDrivers(copilotConfigPath, clineConfigPath, paths.sourceSkill);
+  const drivers = getAllClientDrivers(
+    copilotConfigPath,
+    clineConfigPath,
+    paths.sourceSkill,
+    paths.sourceSessionSkill,
+  );
   const installedClients: string[] = [];
 
   for (const driver of drivers) {
@@ -300,7 +327,10 @@ export async function installAllDetectedIntegrations(
           throw new Error(`Claude integration verification failed after installation: ${check.detail ?? check.status}`);
         }
         await writeInstalledIntegrationVersion(
-          { skills: { claude: SKILL_VERSION } },
+          {
+            skills: { claude: CREATE_REVIEW_ARTIFACT_SKILL_VERSION },
+            sessionSkills: { claude: WORK_SESSION_SKILL_VERSION },
+          },
           { userHome: os.homedir() },
         );
       }
@@ -362,13 +392,22 @@ export async function installClaudeIntegration(
   context: vscode.ExtensionContext,
 ): Promise<void> {
   const { paths } = await setupBaseMcpServer(context);
-  const claudeDriver = new ClaudeClientDriver(undefined, undefined, paths.sourceSkill);
+  const claudeDriver = new ClaudeClientDriver(
+    undefined,
+    undefined,
+    paths.sourceSkill,
+    undefined,
+    paths.sourceSessionSkill,
+  );
   await claudeDriver.install(paths.targetMcpScript);
   const check = await claudeDriver.check(paths.targetMcpScript);
   if (check.status !== "ready") {
     throw new Error(`Claude integration verification failed after installation: ${check.detail ?? check.status}`);
   }
-  await writeInstalledIntegrationVersion({ skills: { claude: SKILL_VERSION } });
+  await writeInstalledIntegrationVersion({
+    skills: { claude: CREATE_REVIEW_ARTIFACT_SKILL_VERSION },
+    sessionSkills: { claude: WORK_SESSION_SKILL_VERSION },
+  });
 }
 
 // 6. Windsurf
@@ -465,36 +504,56 @@ export async function checkAllIntegrations(
   context: vscode.ExtensionContext,
 ): Promise<{
   skillCurrent: boolean;
+  sessionSkillCurrent: boolean;
   baseCurrent: boolean;
   clients: ClientVerificationReport[];
 }> {
   const paths = getBaseIntegrationPaths(context);
-  const [skillCurrent, baseCurrent] = await Promise.all([
+  const [skillCurrent, sessionSkillCurrent, baseCurrent] = await Promise.all([
     skillAssetsAreCurrent(paths),
+    sessionSkillAssetsAreCurrent(paths),
     baseScriptIsCurrent(paths),
   ]);
-  const assetsCurrent = skillCurrent && baseCurrent;
+  const assetsCurrent = skillCurrent && sessionSkillCurrent && baseCurrent;
   const copilotConfigPath = getCopilotConfigPath(context);
   const clineConfigPath = getClineConfigPath(context);
-  const drivers = getAllClientDrivers(copilotConfigPath, clineConfigPath, paths.sourceSkill);
+  const drivers = getAllClientDrivers(
+    copilotConfigPath,
+    clineConfigPath,
+    paths.sourceSkill,
+    paths.sourceSessionSkill,
+  );
   const clients: ClientVerificationReport[] = [];
 
   for (const driver of drivers) {
     const isDetected = driver.isDetected();
     const checkResult = await driver.check(paths.targetMcpScript);
-    const status = checkResult.status === "ready" && !assetsCurrent
-      ? "outdated"
-      : checkResult.status;
+    let detail = checkResult.detail;
+    let status = checkResult.status;
+    if (status === "ready" && !assetsCurrent) {
+      status = "outdated";
+      if (!detail) {
+        if (!skillCurrent && !sessionSkillCurrent) {
+          detail = "Shared review skill and work session skill are outdated or missing.";
+        } else if (!skillCurrent) {
+          detail = "Shared review skill is outdated or missing.";
+        } else if (!sessionSkillCurrent) {
+          detail = "Shared work session skill is outdated or missing.";
+        } else {
+          detail = "Base MCP runtime is outdated or missing.";
+        }
+      }
+    }
     clients.push({
       id: driver.id,
       name: driver.name,
       isDetected,
       status,
-      ...(checkResult.detail ? { detail: checkResult.detail } : {}),
+      ...(detail ? { detail } : {}),
     });
   }
 
-  return { skillCurrent, baseCurrent, clients };
+  return { skillCurrent, sessionSkillCurrent, baseCurrent, clients };
 }
 
 // Backward compatibility methods for existing tests and callers

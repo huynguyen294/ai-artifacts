@@ -53,7 +53,7 @@ If product intent, documentation, tests, and implementation disagree, call out t
 - Integration reinstall is required only when the bundled numeric `MCP_VERSION` or `SKILL_VERSION` differs from the corresponding verified receipt in `~/.ai-artifacts/managed/integration-version.json`; extension-only changes with current receipts must not force reinstall.
 - `MCP_VERSION` and `SKILL_VERSION` are independent monotonic integers, not SemVer or aliases for the extension package version. Missing, invalid, absent, or mismatched receipt entries are stale.
 - Commit MCP, `.agents`, and `.claude` receipt fields independently and only after the corresponding install and verification succeeds. Never mark a partial failure current.
-- Preserve only the declared skill customization points (`description:` and `USER CUSTOM RULES`) during reinstall. If target frontmatter or markers cannot be preserved deterministically, fail closed before replacing the target.
+- Preserve only the declared skill customization points (`description:` and `USER CUSTOM RULES`) during reinstall of `create-review-artifact`. Work Session skill assets are replaced officially without customization. If target frontmatter or markers cannot be preserved deterministically, fail closed before replacing the target.
 
 ## Change guidelines
 
@@ -86,10 +86,11 @@ If product intent, documentation, tests, and implementation disagree, call out t
 - `src/extension/artifact-search-command.ts`: VS Code Quick Pick UI controller, in-memory filter updates, and safe cancellation/open coordination.
 - `src/extension/workspace-integration.ts`: centralized MCP installation, base runtime provisioning, per-target version receipts, customization-preserving skill replacement, and legacy cleanup.
 - `src/extension/mcp-clients/`: dedicated configuration drivers for Codex, Cursor, Claude Code, Windsurf, GitHub Copilot (VS Code), and Cline.
-- `src/webview/`: review UI and typed messages to the extension host; includes `ReviewApp.tsx` (Sessions button and `ArtifactConnectDialog.tsx`) and `SessionApp.tsx` (two-column Session Manager with Working main column and collapsible Type / Instructions / References / Archived side panel); no direct filesystem or process access.
+- `src/webview/`: review UI and typed messages to the extension host; includes `ReviewApp.tsx` (Sessions button, Start a work session flow, and direct Inspect prompt) and `SessionApp.tsx` (two-column Session Manager with Working main column and collapsible Type / Instructions / References / Archived side panel); no direct filesystem or process access.
 - `src/shared/`: shared schemas, file contracts, artifact-connection safety/persistence, validation, and grouped workspace registry rules.
 - `src/shared/session-connect-prompt.ts`: builder for agent takeover/join prompts targeting a specific Work Session.
-- `skills/create-review-artifact/`: Codex trigger and lifecycle orchestration contract.
+- `skills/create-review-artifact/`: review artifact lifecycle orchestration contract.
+- `skills/work-session/`: multi-agent work session orchestration contract.
 - `test/`: executable regression coverage for contracts and failure behavior.
 
 ## Validation

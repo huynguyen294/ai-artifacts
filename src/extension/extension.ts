@@ -67,7 +67,13 @@ import {
   maybeShowUpgradeNotification,
   type IntegrationNotificationState,
 } from "./upgrade-notification";
-import { artifactIdSchema, MCP_VERSION, SKILL_VERSION } from "../shared/contracts";
+import {
+  artifactIdSchema,
+  CREATE_REVIEW_ARTIFACT_SKILL_VERSION,
+  MCP_VERSION,
+  SKILL_VERSION,
+  WORK_SESSION_SKILL_VERSION,
+} from "../shared/contracts";
 import {
   ConversationArtifactService,
   setupConversationRegistryWatcher,
@@ -604,6 +610,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     bundledVersions: {
       mcpVersion: MCP_VERSION,
       skillVersion: SKILL_VERSION,
+      sessionSkillVersion: WORK_SESSION_SKILL_VERSION,
     },
     skillTargets: getDetectedSkillTargets(),
     getInstalledIntegrationVersion: () => readInstalledIntegrationVersion(),

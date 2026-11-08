@@ -136,7 +136,7 @@ After installing the integration, reload your editor and restart your agent to l
 <details>
 <summary>Runtime version and expected tools</summary>
 
-The current source bundles numeric MCP version 12 and skill version 6. The MCP catalog contains exactly six tools: `resolve_artifact_window`, `create_artifact`, `wait_for_artifact_review`, `inspect_artifact_review`, `advance_and_wait_for_artifact`, and `join_session`. A client that reports a different MCP version or exposes an older catalog must be reinstalled and restarted.
+The current source bundles numeric MCP version 12, review skill version 4, and work session skill version 2 (with `SKILL_VERSION = 4` bridge constant). The MCP catalog contains exactly six tools: `resolve_artifact_window`, `create_artifact`, `wait_for_artifact_review`, `inspect_artifact_review`, `advance_and_wait_for_artifact`, and `join_session`. A client that reports a different MCP version or exposes an older catalog must be reinstalled and restarted.
 
 MCP version 12 is reserved for the unreleased Work Session feature and remains its release version across implementation stages. The current runtime supports schema-v2 Sessions and explicit migration from legacy v1 conversations. Session instructions are read from `instructions.md`; existing v2 metadata may still contain an optional inline `instructions` string, which is accepted but not used as the instructions source. New metadata writes omit that field. Updating a test runtime bundle still requires reinstalling the changed runtime even when its numeric version remains 12.
 
@@ -338,8 +338,8 @@ Work Sessions organize artifacts independently of their review lifecycles and AI
 ## Compatibility and upgrades
 
 - Version 1.1.0 supports only schema v6 stored under `~/.ai-artifacts/artifacts/`.
-- The current integration uses numeric `MCP_VERSION = 12` and `SKILL_VERSION = 6`. These are independent monotonic asset versions, not SemVer and not the extension package version.
-- Successful installation records the verified MCP runtime, shared `.agents` skill, and detected Claude skill independently in `~/.ai-artifacts/managed/integration-version.json`. A missing or invalid receipt is treated as stale.
+- The current integration uses numeric `MCP_VERSION = 12`, `CREATE_REVIEW_ARTIFACT_SKILL_VERSION = 4` (`SKILL_VERSION = 4`), and `WORK_SESSION_SKILL_VERSION = 2`. These are independent monotonic asset versions, not SemVer and not the extension package version.
+- Successful installation records the verified MCP runtime, shared `.agents` skills (`skills` and `sessionSkills`), and detected Claude skills independently in `~/.ai-artifacts/managed/integration-version.json`. A missing or invalid receipt is treated as stale.
 - Schema v3/v4/v5 and workspace-local `.ai-artifacts` or `.codex-artifacts` lifecycles are not opened, advanced, or migrated by v1.1.x. Existing files remain untouched on disk.
 - This is a hard compatibility cutoff. A rollback to a 0.9.x extension also requires reinstalling the matching older runtime and skill; do not use a 0.9.x runtime with v1.1.x artifacts.
 - Reinstall only when the extension reports a stale MCP or skill asset because its numeric version changed. Extension-only updates with current receipts do not create another reinstall notification.
@@ -350,7 +350,7 @@ Work Sessions organize artifacts independently of their review lifecycles and AI
 
 AI Artifacts provides two comprehensive ways to remove MCP configurations and runtime assets:
 
-- **Automatic Cleanup upon Extension Uninstall:** When you uninstall the AI Artifacts extension from VS Code or Cursor (`Extensions -> Uninstall`), an automated lifecycle hook (`vscode:uninstall`) runs a standalone script that automatically removes the `ai_artifacts` MCP configuration from all detected AI clients and completely deletes base runtime assets (`~/.ai-artifacts/managed/`, legacy `~/.vscode/ai-artifacts/`, `~/.agents/skills/create-review-artifact/`, and `~/.claude/skills/create-review-artifact/`).
+- **Automatic Cleanup upon Extension Uninstall:** When you uninstall the AI Artifacts extension from VS Code or Cursor (`Extensions -> Uninstall`), an automated lifecycle hook (`vscode:uninstall`) runs a standalone script that automatically removes the `ai_artifacts` MCP configuration from all detected AI clients and completely deletes base runtime assets (`~/.ai-artifacts/managed/`, legacy `~/.vscode/ai-artifacts/`, `~/.agents/skills/create-review-artifact/`, `~/.agents/skills/work-session/`, `~/.claude/skills/create-review-artifact/`, and `~/.claude/skills/work-session/`).
 - **Manual Cleanup via Command Palette:** If you want to disconnect MCP integrations while keeping the VS Code extension active, open the Command Palette (`Ctrl+Shift+P` / `Cmd+Shift+P`):
   - **`AI Artifacts: Uninstall All Detected Integrations`**: Removes MCP configs from all detected editors and clears base runtime assets.
   - Or choose a specific client: **`AI Artifacts: Uninstall Integration for Cursor`**, **`... for Codex`**, **`... for Claude`**, **`... for GitHub Copilot`**, **`... for Cline`**, or **`... for Windsurf`**.

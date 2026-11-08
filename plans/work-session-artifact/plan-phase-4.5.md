@@ -257,11 +257,11 @@ README/branding chính đã chuyển vào phần bổ sung **Chặng 2**, theo s
 ## 6. Checkpoint tiến độ
 
 - [x] **Chặng 1:** đã triển khai theo xác nhận của Chú (2026-11-08). Không chạy lại review/tests trong lượt bổ sung plan; bằng chứng implementation/validation giữ ở checkpoint triển khai tương ứng.
-- [ ] **Chặng 2:** Start/open/copy/Inspect trực tiếp; six skill files khớp payload; editorial changes được đối chiếu riêng với feature changes; README/branding theo [spec nguyên văn](phase-4.5-wording/readme-branding.md).
-- [x] **README và package branding của Chặng 2:** đã cập nhật text/structure và displayName/description theo spec (2026-11-08); GIF và docs installer/version còn các mục chờ nêu ở phần bổ sung Chặng 2. Không đồng nghĩa toàn Chặng 2 đã xong.
-- [ ] **Chặng 3:** independent artifact 7 / Session 1, targets/receipt/verify và artifact-only customize; full checks/docs/manual evidence.
-- [ ] Không đổi artifact/session persisted schema, MCP 12, ownership/token/Proceed, Instructions storage hoặc Phase 5 scope.
-- [ ] Skill/source hashes đúng manifest; mọi wording chỉnh thêm phải được Chú duyệt trước khi đổi payload.
+- [x] **Chặng 2:** Start/open/copy/Inspect trực tiếp; six skill files khớp payload; editorial changes được đối chiếu riêng với feature changes; README/branding theo [spec nguyên văn](phase-4.5-wording/readme-branding.md) (commit `882c178`).
+- [x] **README và package branding của Chặng 2:** đã cập nhật text/structure và displayName/description theo spec (2026-11-08); GIF và docs installer/version còn các mục chờ nêu ở phần bổ sung Chặng 2.
+- [x] **Chặng 3:** independent artifact 4 / Session 2, targets/receipt/verify và artifact-only customize; full checks/docs/release contract.
+- [x] Không đổi artifact/session persisted schema, MCP 12, ownership/token/Proceed, Instructions storage hoặc Phase 5 scope.
+- [x] Skill/source hashes đúng manifest; mọi wording chỉnh thêm phải được Chú duyệt trước khi đổi payload.
 - [ ] Chú review output; chỉ đánh dấu hoàn thành theo implementation/evidence thật.
 
 ## 7. Rủi ro và giới hạn đã chấp nhận

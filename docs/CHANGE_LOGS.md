@@ -14,6 +14,36 @@ Minor typos, formatting fixes, or cosmetic wording adjustments that do not chang
 
 Each entry includes the date, category, summary of changes, rationale, and affected components or files.
 
+## 2026-11-08 — Phase 4.5 Stage 3 implementation: Two-skill installer, independent version receipts & cleanup
+
+- Extended Base Integration installer (`src/extension/workspace-integration.ts`): deploys both `skills/create-review-artifact` and `skills/work-session` to `.agents/skills/`; validates all packaged assets before replacing targets.
+- Enforced customization boundaries: `create-review-artifact` preserves user customizations (`description:` and `USER CUSTOM RULES`) via `replaceSkillDirectory`; `work-session` installs official assets atomically via `replaceOfficialSkillDirectory` without customization merge.
+- Added Claude integration support for two skills (`src/extension/mcp-clients/claude-client.ts`): deploys and verifies both skills under `.claude/skills/`, ensuring relative sibling links resolve correctly.
+- Implemented independent version receipts: records `skills` (version 4) and `sessionSkills` (version 2) independently per target (`agents` and `claude`) in `~/.ai-artifacts/managed/integration-version.json`.
+- Enhanced upgrade notification (`src/extension/upgrade-notification.ts`, `src/extension/extension.ts`): detects stale `sessionSkills` independently from `skills` and MCP runtime when upgrading from older installations; alerts user to run installer.
+- Enhanced verification report (`src/extension/integration-verification.ts`, `src/extension/workspace-integration.ts`): reports separate status for "Review skill" and "Work session skill", providing granular error details when base assets are missing or outdated.
+- Synchronized canonical docs and release contract (`README.md`, `docs/ARCHITECTURE.md`, `docs/PHILOSOPHY.md`, `docs/COMPONENTS.md`, `docs/INSTRUCTION.md`, `test/release-contract.test.ts`): normalized version constants (`MCP_VERSION = 12`, `SKILL_VERSION = 4`, `WORK_SESSION_SKILL_VERSION = 2`), removed legacy `ArtifactConnectDialog` references, documented 6 MCP lifecycle tools (including `join_session`), and verified release contract assertions.
+- Updated cleanup routine (`src/extension/mcp-clients/base-cleanup.ts`): uninstalls both `create-review-artifact` and `work-session` across `.agents/skills/` and `.claude/skills/` without touching unrelated user skills or review data.
+- Updated integration verification and test suites (`test/workspace-integration.test.ts`, `test/mcp-client-drivers.test.ts`, `test/upgrade-notification.test.ts`, `test/integration-verification.test.ts`, `test/release-contract.test.ts`): validated full lifecycle installation, partial install state handling, and clean uninstallation.
+
+## 2026-11-08 — Phase 4.5 Stage 2 implementation: Start Work Session, direct Inspect, two skills split & webview tests
+
+- Implemented `startWorkSession` flow (`src/extension/artifact-review-provider.ts`, `src/webview/ReviewApp.tsx`): enables promoting standalone artifacts into a multi-artifact Work Session; prompts native input box prefilled with artifact title, creates session, registers artifact into Working zone, copies 3-line session connect prompt to clipboard, opens Session Manager tab, and safely rolls back newly created session on failure.
+- Streamlined direct Inspect flow: removed `ArtifactConnectDialog.tsx` modal; clicking `Inspect artifact` directly copies exact 2-line inspect prompt template from `src/shared/artifact-connect-prompt.ts`.
+- Enhanced Review App toolbar to handle 4 session states: unsupported MCP (< 12) disabled, loading disabled, zero sessions rendering "Start a work session" button with helper text, and 1+ sessions rendering "Sessions" toggle with count badge.
+- Packaged frozen skill assets: split into two independent skills — standalone review lifecycle `skills/create-review-artifact/` (skill version 4) and multi-agent coordination `skills/work-session/` (session skill version 2), matching 100% SHA-256 LF hashes from `phase-4.5-wording/manifest.json`.
+- Added Webview component test suite (`test/review-app.test.tsx`) asserting loading state, 4 toolbar session states, direct inspect button copied feedback, and absence of modal dialogs.
+- Fixed `tsconfig.json` `include` list to add `"test/**/*.tsx"`, ensuring all React webview test suites are strictly typechecked by `npm run check`.
+- Updated dev sandbox harness (`dev/main.tsx`) to mock `startWorkSession` and 2-line `copyArtifactConnectPrompt`.
+- Synchronized package branding in `package.json` and `README.md` (`displayName`, 274-character description preserving all supported AI clients, Contents sub-navigation).
+
+## 2026-11-08 — Phase 5 artifact metadata editing plan
+
+- Extended Phase 5 Step 6 / Stage 3 with Review App header order (`ROUND` before type), native rename and type selection, and creation of open kinds using the existing artifact kind schema. No separate type registry is planned.
+- Specified extension-owned patches limited to artifact `title` and `kind`, atomic writes with last-write-wins, unchanged `updatedAt`/review round/Markdown/comments/memberships, scoped metadata updates, and hidden edit controls in the globally archived header.
+- Added the accompanying MCP result change: re-read and validate the same artifact/round manifest when processing a submission, using its current kind for both the returned kind and existing Proceed action policy across both wait flows. No new submission field, waiter restart, ownership change, or replay of historical approval.
+- Detailed affected files, picker wording, implementation sequence, regression checks, and completion criteria; synchronized the main roadmap and notes. Planning-only update: no source implementation, runtime/global-data changes, or feature test results claimed. MCP Resources/Composer Mentions remain outside this addition.
+
 ## 2026-11-08 — Phase 4.5 Stage 2 README and branding specification
 
 - Added `plans/work-session-artifact/phase-4.5-wording/readme-branding.md` with approved verbatim display name, package description retaining supported clients, README introduction, Work Session GIF caption, and Features & Usage contents structure.
