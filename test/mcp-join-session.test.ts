@@ -504,6 +504,81 @@ describe("join_session MCP tool & proceed directives", () => {
     expect(sessionInspected.structuredContent.session.sessionId).toBe(sessionCreated.structuredContent.artifactConversationId);
   });
 
+  it("verifies the 3 core session scenarios: without session, joined session, and explicit standalone while in session", async () => {
+    const fixture = await workspaceFixture();
+    const client = startClient(fixture.registry);
+    await initialize(client);
+
+    // Scenario 1: Without session -> create standalone artifact
+    const art1 = await callTool(client, "create_artifact", {
+      title: "Standalone Artifact Without Session",
+      kind: "idea",
+      markdown: "# Idea 1\n\nNo active session.\n",
+    });
+    expect(art1.isError).toBeFalsy();
+    expect(art1.structuredContent.session).toBeNull();
+    expect(art1.structuredContent.artifactConversationId).toBeUndefined();
+
+    const inspectArt1 = await callTool(client, "inspect_artifact_review", {
+      artifactDirectory: art1.structuredContent.artifactDirectory,
+    });
+    expect(inspectArt1.isError).toBeFalsy();
+    expect(inspectArt1.structuredContent.session).toBeNull();
+
+    // Setup an active Work Session S
+    const sessionS = await createSession({
+      userHome: fixture.userHome,
+      title: "Active Session S",
+    });
+
+    // Chat joins Session S
+    const joinS = await callTool(client, "join_session", {
+      sessionId: sessionS.sessionId,
+    });
+    expect(joinS.isError).toBeFalsy();
+    expect(joinS.structuredContent.session.sessionId).toBe(sessionS.sessionId);
+    expect(joinS.structuredContent.session.catalog.working).toHaveLength(0);
+
+    // Scenario 2: With active session S, create artifact bound to S
+    const art2 = await callTool(client, "create_artifact", {
+      title: "Artifact In Session S",
+      kind: "plan",
+      markdown: "# Plan in Session S\n",
+      artifactConversationId: sessionS.sessionId,
+    });
+    expect(art2.isError).toBeFalsy();
+    expect(art2.structuredContent.session).toBeDefined();
+    expect(art2.structuredContent.session.sessionId).toBe(sessionS.sessionId);
+    expect(art2.structuredContent.artifactConversationId).toBe(sessionS.sessionId);
+    expect(art2.structuredContent.session.catalog.working).toHaveLength(1);
+    expect(art2.structuredContent.session.catalog.working[0].artifactId).toBe(art2.structuredContent.artifactId);
+
+    // Scenario 3: While active session S is active in chat, user asks for explicit standalone artifact
+    const art3 = await callTool(client, "create_artifact", {
+      title: "Explicit Standalone Artifact While In S",
+      kind: "spec",
+      markdown: "# Standalone Spec\n",
+    });
+    expect(art3.isError).toBeFalsy();
+    expect(art3.structuredContent.session).toBeNull();
+    expect(art3.structuredContent.artifactConversationId).toBeUndefined();
+
+    // Inspect art3 as standalone
+    const inspectArt3 = await callTool(client, "inspect_artifact_review", {
+      artifactDirectory: art3.structuredContent.artifactDirectory,
+    });
+    expect(inspectArt3.isError).toBeFalsy();
+    expect(inspectArt3.structuredContent.session).toBeNull();
+
+    // Re-verify Session S: only art2 was added, art1 and art3 never touched S
+    const refreshS = await callTool(client, "join_session", {
+      sessionId: sessionS.sessionId,
+    });
+    expect(refreshS.isError).toBeFalsy();
+    expect(refreshS.structuredContent.session.catalog.working).toHaveLength(1);
+    expect(refreshS.structuredContent.session.catalog.working[0].artifactId).toBe(art2.structuredContent.artifactId);
+  });
+
   it("inspect_artifact_review and join_session do not replay execution directive from past approved snapshot", async () => {
     const fixture = await workspaceFixture();
     const client = startClient(fixture.registry);

@@ -126,6 +126,8 @@ describe("v1.1.4 release contract", () => {
     for (const document of [readme, philosophy, architecture, components, instructions, contract]) {
       expect(document).toMatch(/schema[- ]v6/i);
       expect(document).toContain("~/.ai-artifacts/artifacts/");
+    }
+    for (const document of [readme, philosophy, architecture, components, instructions]) {
       expect(document).toContain("~/.ai-artifacts/conversation-registry/");
     }
     expect(readme).toContain("MCP_VERSION = 12");

@@ -16,6 +16,7 @@
     "src/**/*.ts",
     "src/**/*.tsx",
     "test/**/*.ts",
+    "test/**/*.tsx",
     "dev/**/*.ts",
     "dev/**/*.tsx",
     "vite.config.ts",

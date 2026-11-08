@@ -1,15 +1,17 @@
 import * as vscode from "vscode";
-import {
-  buildArtifactConnectPrompt,
-  type ArtifactConnectPromptOptions,
-} from "../shared/artifact-connect-prompt";
+import { buildArtifactConnectPrompt } from "../shared/artifact-connect-prompt";
 import type { GlobalArtifactsRootOptions } from "../shared/artifact-files";
 import {
+  conversationNameSchema,
   webviewToExtensionMessageSchema,
   type ArtifactSessionTarget,
   type ExtensionToWebviewMessage,
+  type WorkSession,
   type WorkSessionDataChange,
 } from "../shared/contracts";
+import { removeConversation } from "../shared/conversation-artifact-registry";
+import { buildSessionConnectPrompt } from "../shared/session-connect-prompt";
+import { validateArtifactReviewTarget } from "./artifact-review-open";
 import { ArtifactStore } from "./artifact-store";
 import { runSingleMigration } from "./session-migration-command";
 import { resolveWorkSessionSupport } from "./work-session-support";
@@ -21,13 +23,15 @@ function nonce(): string {
 
 export type ConversationArtifactProviderController = {
   getArtifactSessions: (artifactId: string) => Promise<ArtifactSessionTarget[]>;
+  createSession?: (input: { title: string; typeId?: string; instructions?: string }) => Promise<WorkSession>;
+  registerArtifactInSession?: (sessionId: string, artifactId: string) => Promise<void>;
   onDidChange: (listener: (changes?: readonly WorkSessionDataChange[]) => void | Promise<void>) => { dispose: () => void };
 };
 
 export type ArtifactStoreController = Pick<
   ArtifactStore,
   "artifactDirectory" | "artifactId" | "load" | "addComment" | "removeComment" | "submitReview"
->;
+> & { artifactPath?: string };
 
 export class ArtifactReviewProvider implements vscode.CustomTextEditorProvider {
   static readonly viewType = "agentPlus.artifactReview";
@@ -116,33 +120,113 @@ export class ArtifactReviewProvider implements vscode.CustomTextEditorProvider {
             await refresh();
             return;
           case "copyArtifactConnectPrompt": {
-            const support = await resolveWorkSessionSupport(this.rootOptions, this.context);
-            let promptOptions: ArtifactConnectPromptOptions | undefined;
-
-            if (!support.supported || !this.conversationService) {
-              promptOptions = undefined;
-            } else if (message.mode === "join") {
-              if (!message.sessionId) {
-                void vscode.window.showErrorMessage("Missing Session ID to join.");
-                return;
-              }
-              const sessions = await this.conversationService.getArtifactSessions(store.artifactId);
-              const targetSession = sessions.find((s) => s.sessionId === message.sessionId);
-              if (!targetSession || targetSession.version !== 2) {
-                void vscode.window.showErrorMessage(
-                  `Session "${message.sessionId}" is invalid or needs to be migrated to v2 before joining.`,
-                );
-                void refreshSessions();
-                return;
-              }
-              promptOptions = { mode: "join", sessionId: message.sessionId, artifactId: store.artifactId };
-            } else if (message.mode === "new") {
-              promptOptions = { mode: "new" };
-            }
-
-            const prompt = buildArtifactConnectPrompt(store.artifactDirectory, promptOptions);
+            const prompt = buildArtifactConnectPrompt(store.artifactDirectory);
             await vscode.env.clipboard.writeText(prompt);
             await post({ type: "artifactConnectPromptCopied" });
+            return;
+          }
+          case "startWorkSession": {
+            const support = await resolveWorkSessionSupport(this.rootOptions, this.context);
+            if (
+              !support.supported
+              || !this.conversationService?.createSession
+              || !this.conversationService?.registerArtifactInSession
+            ) {
+              void vscode.window.showInformationMessage("Sessions require MCP server version 12 or higher.");
+              return;
+            }
+
+            const artifactFilePath = store.artifactPath ?? document.uri.fsPath;
+            let targetTitle = store.artifactId;
+            try {
+              const target = await validateArtifactReviewTarget(artifactFilePath, this.rootOptions);
+              targetTitle = target.manifest.title;
+            } catch {
+              void vscode.window.showErrorMessage(
+                `Artifact "${store.artifactId}" is no longer valid or has been removed.`,
+              );
+              return;
+            }
+
+            const rawTitle = await vscode.window.showInputBox({
+              title: "Start a work session",
+              prompt: "Enter a name for the new work session",
+              placeHolder: "Work session name",
+              value: targetTitle,
+              validateInput: (value) => {
+                const parsed = conversationNameSchema.safeParse(value?.trim());
+                if (!parsed.success) {
+                  return "Work session name must be between 1 and 200 characters.";
+                }
+                return undefined;
+              },
+            });
+
+            if (rawTitle === undefined) {
+              return;
+            }
+
+            const title = rawTitle.trim();
+            const parsedTitle = conversationNameSchema.safeParse(title);
+            if (!parsedTitle.success) {
+              void vscode.window.showErrorMessage("Work session name must be between 1 and 200 characters.");
+              return;
+            }
+
+            let session: WorkSession;
+            try {
+              session = await this.conversationService.createSession({ title: parsedTitle.data });
+            } catch (error) {
+              const message = error instanceof Error ? error.message : String(error);
+              void vscode.window.showErrorMessage(`Failed to create work session: ${message}`);
+              return;
+            }
+
+            try {
+              await this.conversationService.registerArtifactInSession(session.sessionId, store.artifactId);
+            } catch (error) {
+              await removeConversation(session.sessionId, this.rootOptions).catch(() => undefined);
+              const message = error instanceof Error ? error.message : String(error);
+              void vscode.window.showErrorMessage(`Failed to register artifact in session: ${message}`);
+              return;
+            }
+
+            void refreshSessions();
+
+            let openSucceeded = false;
+            try {
+              await vscode.commands.executeCommand("agentPlus.openWorkSession", session.sessionId);
+              openSucceeded = true;
+            } catch {
+              openSucceeded = false;
+            }
+
+            let copySucceeded = false;
+            try {
+              const prompt = buildSessionConnectPrompt({ sessionId: session.sessionId, title: parsedTitle.data });
+              await vscode.env.clipboard.writeText(prompt);
+              copySucceeded = true;
+            } catch {
+              copySucceeded = false;
+            }
+
+            if (openSucceeded && copySucceeded) {
+              void vscode.window.showInformationMessage(
+                "Work session created. Connect prompt copied. Paste it into your AI chat to connect.",
+              );
+            } else if (openSucceeded && !copySucceeded) {
+              void vscode.window.showWarningMessage(
+                "Work session created, but the Connect prompt could not be copied. Open the session and use Connect to try again.",
+              );
+            } else if (!openSucceeded && copySucceeded) {
+              void vscode.window.showWarningMessage(
+                "Work session created and Connect prompt copied, but the session could not be opened. Paste the prompt into your AI chat to connect.",
+              );
+            } else {
+              void vscode.window.showErrorMessage(
+                "Work session created, but it could not be opened and the Connect prompt could not be copied. Open it from Sessions to continue.",
+              );
+            }
             return;
           }
           case "openArtifactSessions": {

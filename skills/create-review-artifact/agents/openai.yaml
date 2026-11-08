@@ -1,4 +1,4 @@
 interface:
   display_name: "Create Review Artifact"
-  short_description: "Create, reconnect, or join review artifacts and work sessions"
-  default_prompt: "Use $create-review-artifact to coordinate the explicitly requested review artifact, work session, and their review lifecycles."
+  short_description: "Create, inspect, and review Markdown artifacts"
+  default_prompt: "Use $create-review-artifact to coordinate the explicitly requested artifact and its review rounds."

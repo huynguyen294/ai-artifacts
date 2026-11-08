@@ -9,9 +9,9 @@ export const SESSION_TYPES_SCHEMA_VERSION = 1 as const;
 export const DEFAULT_SESSION_TYPE_ID = "conversation" as const;
 export const INTEGRATION_VERSION_SCHEMA_VERSION = 1 as const;
 export const MCP_VERSION = 12 as const;
-export const CREATE_REVIEW_ARTIFACT_SKILL_VERSION = 7 as const;
-export const WORK_SESSION_SKILL_VERSION = 1 as const;
-export const SKILL_VERSION = 6 as const;
+export const CREATE_REVIEW_ARTIFACT_SKILL_VERSION = 4 as const;
+export const WORK_SESSION_SKILL_VERSION = 2 as const;
+export const SKILL_VERSION = 4 as const;
 export const ARTIFACT_ROOT_BLOCK_ID = "__artifact_root__" as const;
 export const ARTIFACT_ROOT_BLOCK_TYPE = "artifact" as const;
 export const ARTIFACT_ROOT_TEXT = "Applies to the entire artifact" as const;
@@ -510,13 +510,8 @@ export const webviewToExtensionMessageSchema = z.discriminatedUnion("type", [
   commentDraftSchema.extend({ type: z.literal("addComment") }),
   z.object({ type: z.literal("removeComment"), commentId: z.string().uuid() }),
   z.object({ type: z.literal("submitReview"), decision: reviewDecisionSchema }),
-  z
-    .object({
-      type: z.literal("copyArtifactConnectPrompt"),
-      mode: z.enum(["new", "join"]).optional(),
-      sessionId: artifactConversationIdSchema.optional(),
-    })
-    .strict(),
+  z.object({ type: z.literal("copyArtifactConnectPrompt") }).strict(),
+  z.object({ type: z.literal("startWorkSession") }).strict(),
   z.object({ type: z.literal("openExternal"), url: z.string().url() }),
   z.object({ type: z.literal("openConversationArtifact"), artifactId: artifactIdSchema }).strict(),
   z.object({ type: z.literal("openArtifactSessions") }).strict(),

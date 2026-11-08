@@ -5,6 +5,7 @@ import "../src/webview/styles.css";
 import "./vscode-theme.css";
 import { createInitialReviewState, createInitialSessionsState } from "./mock-data";
 import { DevToolbar } from "./DevToolbar";
+import { buildArtifactConnectPrompt } from "../src/shared/artifact-connect-prompt";
 import {
   ARTIFACT_ROOT_BLOCK_ID,
   ARTIFACT_ROOT_BLOCK_TYPE,
@@ -150,9 +151,33 @@ export function DevHostApp(): ReactNode {
       }
 
       case "copyArtifactConnectPrompt": {
-        const prompt = `@codex inspect_artifact_review(artifactDirectory: "dev/artifacts/${current.artifact.artifactId}")`;
-        void navigator.clipboard.writeText(prompt);
+        const prompt = buildArtifactConnectPrompt(`dev/artifacts/${current.artifact.artifactId}`);
+        void navigator.clipboard?.writeText(prompt);
         postToWebview({ type: "artifactConnectPromptCopied" });
+        break;
+      }
+
+      case "startWorkSession": {
+        const title = current.artifact.title.trim() || "Untitled work session";
+        const newSessionId = crypto.randomUUID();
+        console.info(`[Dev Host] Start work session: "${title}" (${newSessionId})`);
+        postToWebview({
+          type: "artifactSessionsState",
+          supported: true,
+          sessions: [
+            {
+              sessionId: newSessionId,
+              title,
+              version: 2,
+            },
+          ],
+        });
+        postToWebview({ type: "artifactConnectPromptCopied" });
+        break;
+      }
+
+      case "openArtifactSessions": {
+        console.info("[Dev Host] Request to open artifact sessions");
         break;
       }
 

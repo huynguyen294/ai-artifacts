@@ -200,9 +200,9 @@ describe("artifact schema v6 contract", () => {
 describe("integration version receipt schema v1 contract", () => {
   it("locks numeric bundled versions and accepts complete or partial receipts", () => {
     expect(MCP_VERSION).toBe(12);
-    expect(CREATE_REVIEW_ARTIFACT_SKILL_VERSION).toBe(7);
-    expect(WORK_SESSION_SKILL_VERSION).toBe(1);
-    expect(SKILL_VERSION).toBe(6);
+    expect(CREATE_REVIEW_ARTIFACT_SKILL_VERSION).toBe(4);
+    expect(WORK_SESSION_SKILL_VERSION).toBe(2);
+    expect(SKILL_VERSION).toBe(4);
     expect(INTEGRATION_VERSION_SCHEMA_VERSION).toBe(1);
 
     const completeReceiptWithSession = {

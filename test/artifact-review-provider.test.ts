@@ -4,22 +4,29 @@ import type {
   ArtifactSessionTarget,
   ExtensionToWebviewMessage,
   ReviewState,
+  WorkSession,
 } from "../src/shared/contracts";
 
 const {
   executeCommandMock,
   showInformationMessageMock,
+  showWarningMessageMock,
   showErrorMessageMock,
   showQuickPickMock,
+  showInputBoxMock,
   writeTextMock,
   openExternalMock,
   mockResolveWorkSessionSupport,
   mockRunSingleMigration,
+  mockValidateArtifactReviewTarget,
+  mockRemoveConversation,
 } = vi.hoisted(() => ({
   executeCommandMock: vi.fn(async () => undefined),
   showInformationMessageMock: vi.fn(),
+  showWarningMessageMock: vi.fn(),
   showErrorMessageMock: vi.fn(),
   showQuickPickMock: vi.fn(),
+  showInputBoxMock: vi.fn<(_options?: any) => Promise<string | undefined>>(async () => undefined),
   writeTextMock: vi.fn(async () => undefined),
   openExternalMock: vi.fn(async () => true),
   mockResolveWorkSessionSupport: vi.fn<
@@ -39,6 +46,8 @@ const {
     await deps.openWorkSession(deps.sessionId);
     return true;
   }),
+  mockValidateArtifactReviewTarget: vi.fn<(_targetPath: string, _options?: any) => Promise<any>>(),
+  mockRemoveConversation: vi.fn<(_sessionId?: string, _options?: any) => Promise<boolean>>(async () => true),
 }));
 
 vi.mock("vscode", () => ({
@@ -65,8 +74,10 @@ vi.mock("vscode", () => ({
   },
   window: {
     showInformationMessage: showInformationMessageMock,
+    showWarningMessage: showWarningMessageMock,
     showErrorMessage: showErrorMessageMock,
     showQuickPick: showQuickPickMock,
+    showInputBox: showInputBoxMock,
   },
   workspace: {
     onDidChangeTextDocument: () => ({ dispose: vi.fn() }),
@@ -92,6 +103,16 @@ vi.mock("../src/extension/work-session-support", () => ({
 
 vi.mock("../src/extension/session-migration-command", () => ({
   runSingleMigration: (deps: any) => mockRunSingleMigration(deps),
+}));
+
+vi.mock("../src/extension/artifact-review-open", () => ({
+  validateArtifactReviewTarget: (targetPath: string, options?: any) =>
+    mockValidateArtifactReviewTarget(targetPath, options),
+}));
+
+vi.mock("../src/shared/conversation-artifact-registry", () => ({
+  removeConversation: (sessionId: string, options?: any) =>
+    mockRemoveConversation(sessionId, options),
 }));
 
 import {
@@ -191,6 +212,21 @@ function createFakeStore(artifactId = "artifact-current"): ArtifactStoreControll
   };
 }
 
+function createSampleWorkSession(sessionId: string, title: string): WorkSession {
+  return {
+    schemaVersion: 2,
+    sessionId,
+    title,
+    typeId: "conversation",
+    createdAt: "2026-11-08T00:00:00.000Z",
+    updatedAt: "2026-11-08T00:00:00.000Z",
+    instructions: "",
+    working: [],
+    references: [],
+    archived: [],
+  };
+}
+
 describe("ArtifactReviewProvider sessions transport (Chặng 3)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -199,6 +235,22 @@ describe("ArtifactReviewProvider sessions transport (Chặng 3)", () => {
       requiredMcpVersion: 12,
       installedMcpVersion: 12,
     });
+    mockValidateArtifactReviewTarget.mockResolvedValue({
+      artifactId: "artifact-current",
+      artifactPath: "/home/.ai-artifacts/artifacts/artifact-current/artifact.md",
+      artifactDirectory: "/home/.ai-artifacts/artifacts/artifact-current",
+      manifest: {
+        schemaVersion: 6,
+        kind: "implementation-plan",
+        artifactId: "artifact-current",
+        title: "Current Artifact Title",
+        createdAt: "2026-11-08T00:00:00.000Z",
+        updatedAt: "2026-11-08T00:00:00.000Z",
+        reviewRound: 1,
+        reviewSessionId: "00000000-0000-4000-8000-000000000001",
+      },
+    });
+    mockRemoveConversation.mockResolvedValue(true);
   });
 
   it("posts central ReviewState and artifactSessionsState on ready", async () => {
@@ -428,21 +480,11 @@ describe("ArtifactReviewProvider sessions transport (Chặng 3)", () => {
     );
   });
 
-  it("handles copyArtifactConnectPrompt with mode=join and mode=new", async () => {
+  it("handles copyArtifactConnectPrompt with exact canonical 2-line prompt without dialog", async () => {
     const store = createFakeStore("artifact-current");
-    const validTargetSession: ArtifactSessionTarget = {
-      sessionId: "00000000-0000-4000-8000-000000000001",
-      title: "Target Session",
-      version: 2,
-    };
-    const conversationService: ConversationArtifactProviderController = {
-      getArtifactSessions: vi.fn(async () => [validTargetSession]),
-      onDidChange: vi.fn(() => ({ dispose: vi.fn() })),
-    };
-
     const provider = new ArtifactReviewProvider(
       { extensionUri: { fsPath: "/ext" } } as any,
-      conversationService,
+      undefined,
       () => store,
     );
 
@@ -456,35 +498,267 @@ describe("ArtifactReviewProvider sessions transport (Chặng 3)", () => {
 
     await provider.resolveCustomTextEditor(document, panel);
 
-    // 1. Join mode with valid session
     await sendMessage({
       type: "copyArtifactConnectPrompt",
-      mode: "join",
-      sessionId: "00000000-0000-4000-8000-000000000001",
     });
+
     expect(writeTextMock).toHaveBeenLastCalledWith(
-      expect.stringContaining("00000000-0000-4000-8000-000000000001"),
+      "Inspect this exact AI Artifact:\n"
+      + 'artifactDirectory: "/home/.ai-artifacts/artifacts/artifact-current"',
     );
     expect(postedMessages).toContainEqual({ type: "artifactConnectPromptCopied" });
+  });
 
-    // 2. Join mode with invalid session (not in artifact sessions) -> rejected by host
-    await sendMessage({
-      type: "copyArtifactConnectPrompt",
-      mode: "join",
-      sessionId: "00000000-0000-4000-8000-000000000099",
-    });
-    expect(showErrorMessageMock).toHaveBeenCalledWith(
-      expect.stringContaining("00000000-0000-4000-8000-000000000099"),
-    );
+  describe("startWorkSession", () => {
+    it("creates work session, registers artifact, opens session, and copies prompt", async () => {
+      const store = createFakeStore("artifact-current");
+      const createdSession = createSampleWorkSession(
+        "00000000-0000-4000-8000-000000000001",
+        "New Feature Session",
+      );
+      const createSessionMock = vi.fn(async () => createdSession);
+      const registerArtifactInSessionMock = vi.fn(async () => undefined);
 
-    // 3. New mode
-    await sendMessage({
-      type: "copyArtifactConnectPrompt",
-      mode: "new",
+      const conversationService: ConversationArtifactProviderController = {
+        getArtifactSessions: vi.fn(async () => []),
+        createSession: createSessionMock,
+        registerArtifactInSession: registerArtifactInSessionMock,
+        onDidChange: vi.fn(() => ({ dispose: vi.fn() })),
+      };
+
+      showInputBoxMock.mockResolvedValueOnce("New Feature Session");
+
+      const provider = new ArtifactReviewProvider(
+        { extensionUri: { fsPath: "/ext" } } as any,
+        conversationService,
+        () => store,
+      );
+
+      const { panel, sendMessage } = createFakePanel();
+      const document = {
+        uri: {
+          fsPath: "/home/.ai-artifacts/artifacts/artifact-current/artifact.md",
+          toString: () => "file:///home/.ai-artifacts/artifacts/artifact-current/artifact.md",
+        },
+      } as any;
+
+      await provider.resolveCustomTextEditor(document, panel);
+
+      await sendMessage({ type: "startWorkSession" });
+
+      expect(showInputBoxMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          title: "Start a work session",
+          prompt: "Enter a name for the new work session",
+          placeHolder: "Work session name",
+          value: "Current Artifact Title",
+        }),
+      );
+      expect(createSessionMock).toHaveBeenCalledWith({ title: "New Feature Session" });
+      expect(registerArtifactInSessionMock).toHaveBeenCalledWith(
+        "00000000-0000-4000-8000-000000000001",
+        "artifact-current",
+      );
+      expect(executeCommandMock).toHaveBeenCalledWith(
+        "agentPlus.openWorkSession",
+        "00000000-0000-4000-8000-000000000001",
+      );
+      expect(writeTextMock).toHaveBeenCalledWith(
+        expect.stringContaining('sessionId: "00000000-0000-4000-8000-000000000001"'),
+      );
+      expect(showInformationMessageMock).toHaveBeenCalledWith(
+        "Work session created. Connect prompt copied. Paste it into your AI chat to connect.",
+      );
     });
-    expect(writeTextMock).toHaveBeenLastCalledWith(
-      expect.stringContaining("Do not pass any existing artifactConversationId"),
-    );
+
+    it("returns early when user cancels input box", async () => {
+      const store = createFakeStore("artifact-current");
+      const createSessionMock = vi.fn();
+      const conversationService: ConversationArtifactProviderController = {
+        getArtifactSessions: vi.fn(async () => []),
+        createSession: createSessionMock,
+        registerArtifactInSession: vi.fn(),
+        onDidChange: vi.fn(() => ({ dispose: vi.fn() })),
+      };
+
+      showInputBoxMock.mockResolvedValueOnce(undefined);
+
+      const provider = new ArtifactReviewProvider(
+        { extensionUri: { fsPath: "/ext" } } as any,
+        conversationService,
+        () => store,
+      );
+
+      const { panel, sendMessage } = createFakePanel();
+      const document = {
+        uri: {
+          fsPath: "/home/.ai-artifacts/artifacts/artifact-current/artifact.md",
+          toString: () => "file:///home/.ai-artifacts/artifacts/artifact-current/artifact.md",
+        },
+      } as any;
+
+      await provider.resolveCustomTextEditor(document, panel);
+      await sendMessage({ type: "startWorkSession" });
+
+      expect(createSessionMock).not.toHaveBeenCalled();
+    });
+
+    it("rolls back created session when registration fails", async () => {
+      const store = createFakeStore("artifact-current");
+      const createdSession = createSampleWorkSession(
+        "00000000-0000-4000-8000-000000000002",
+        "Failing Registration Session",
+      );
+      const createSessionMock = vi.fn(async () => createdSession);
+      const registerArtifactInSessionMock = vi.fn(async () => {
+        throw new Error("Disk write failed");
+      });
+
+      const conversationService: ConversationArtifactProviderController = {
+        getArtifactSessions: vi.fn(async () => []),
+        createSession: createSessionMock,
+        registerArtifactInSession: registerArtifactInSessionMock,
+        onDidChange: vi.fn(() => ({ dispose: vi.fn() })),
+      };
+
+      showInputBoxMock.mockResolvedValueOnce("Failing Registration Session");
+
+      const provider = new ArtifactReviewProvider(
+        { extensionUri: { fsPath: "/ext" } } as any,
+        conversationService,
+        () => store,
+      );
+
+      const { panel, sendMessage } = createFakePanel();
+      const document = {
+        uri: {
+          fsPath: "/home/.ai-artifacts/artifacts/artifact-current/artifact.md",
+          toString: () => "file:///home/.ai-artifacts/artifacts/artifact-current/artifact.md",
+        },
+      } as any;
+
+      await provider.resolveCustomTextEditor(document, panel);
+      await sendMessage({ type: "startWorkSession" });
+
+      expect(mockRemoveConversation).toHaveBeenCalledWith("00000000-0000-4000-8000-000000000002", expect.anything());
+      expect(showErrorMessageMock).toHaveBeenCalledWith(
+        expect.stringContaining("Failed to register artifact in session: Disk write failed"),
+      );
+    });
+
+    it("retains session and shows warning if open fails after commit", async () => {
+      const store = createFakeStore("artifact-current");
+      const createdSession = createSampleWorkSession(
+        "00000000-0000-4000-8000-000000000003",
+        "Session Open Fail",
+      );
+
+      const conversationService: ConversationArtifactProviderController = {
+        getArtifactSessions: vi.fn(async () => []),
+        createSession: vi.fn(async () => createdSession),
+        registerArtifactInSession: vi.fn(async () => undefined),
+        onDidChange: vi.fn(() => ({ dispose: vi.fn() })),
+      };
+
+      showInputBoxMock.mockResolvedValueOnce("Session Open Fail");
+      executeCommandMock.mockRejectedValueOnce(new Error("Editor crashed"));
+
+      const provider = new ArtifactReviewProvider(
+        { extensionUri: { fsPath: "/ext" } } as any,
+        conversationService,
+        () => store,
+      );
+
+      const { panel, sendMessage } = createFakePanel();
+      const document = {
+        uri: {
+          fsPath: "/home/.ai-artifacts/artifacts/artifact-current/artifact.md",
+          toString: () => "file:///home/.ai-artifacts/artifacts/artifact-current/artifact.md",
+        },
+      } as any;
+
+      await provider.resolveCustomTextEditor(document, panel);
+      await sendMessage({ type: "startWorkSession" });
+
+      expect(mockRemoveConversation).not.toHaveBeenCalled();
+      expect(showWarningMessageMock).toHaveBeenCalledWith(
+        "Work session created and Connect prompt copied, but the session could not be opened. Paste the prompt into your AI chat to connect.",
+      );
+    });
+
+    it("retains session and shows warning if copy fails after commit", async () => {
+      const store = createFakeStore("artifact-current");
+      const createdSession = createSampleWorkSession(
+        "00000000-0000-4000-8000-000000000004",
+        "Session Copy Fail",
+      );
+
+      const conversationService: ConversationArtifactProviderController = {
+        getArtifactSessions: vi.fn(async () => []),
+        createSession: vi.fn(async () => createdSession),
+        registerArtifactInSession: vi.fn(async () => undefined),
+        onDidChange: vi.fn(() => ({ dispose: vi.fn() })),
+      };
+
+      showInputBoxMock.mockResolvedValueOnce("Session Copy Fail");
+      writeTextMock.mockRejectedValueOnce(new Error("Clipboard unavailable"));
+
+      const provider = new ArtifactReviewProvider(
+        { extensionUri: { fsPath: "/ext" } } as any,
+        conversationService,
+        () => store,
+      );
+
+      const { panel, sendMessage } = createFakePanel();
+      const document = {
+        uri: {
+          fsPath: "/home/.ai-artifacts/artifacts/artifact-current/artifact.md",
+          toString: () => "file:///home/.ai-artifacts/artifacts/artifact-current/artifact.md",
+        },
+      } as any;
+
+      await provider.resolveCustomTextEditor(document, panel);
+      await sendMessage({ type: "startWorkSession" });
+
+      expect(mockRemoveConversation).not.toHaveBeenCalled();
+      expect(showWarningMessageMock).toHaveBeenCalledWith(
+        "Work session created, but the Connect prompt could not be copied. Open the session and use Connect to try again.",
+      );
+    });
+
+    it("shows error and prevents creation if artifact target on disk is invalid", async () => {
+      const store = createFakeStore("artifact-current");
+      mockValidateArtifactReviewTarget.mockRejectedValueOnce(new Error("File not found"));
+
+      const conversationService: ConversationArtifactProviderController = {
+        getArtifactSessions: vi.fn(async () => []),
+        createSession: vi.fn(),
+        registerArtifactInSession: vi.fn(),
+        onDidChange: vi.fn(() => ({ dispose: vi.fn() })),
+      };
+
+      const provider = new ArtifactReviewProvider(
+        { extensionUri: { fsPath: "/ext" } } as any,
+        conversationService,
+        () => store,
+      );
+
+      const { panel, sendMessage } = createFakePanel();
+      const document = {
+        uri: {
+          fsPath: "/home/.ai-artifacts/artifacts/artifact-current/artifact.md",
+          toString: () => "file:///home/.ai-artifacts/artifacts/artifact-current/artifact.md",
+        },
+      } as any;
+
+      await provider.resolveCustomTextEditor(document, panel);
+      await sendMessage({ type: "startWorkSession" });
+
+      expect(showErrorMessageMock).toHaveBeenCalledWith(
+        'Artifact "artifact-current" is no longer valid or has been removed.',
+      );
+      expect(showInputBoxMock).not.toHaveBeenCalled();
+    });
   });
 
   it("handles migrateSelectedConversation only when candidate is v1 and MCP >= 12", async () => {

@@ -1,68 +1,83 @@
-# Code Review — Phase 4.5 Chặng 1 (Bước 1–2: Contract & MCP Standalone)
+# Code Review: Phase 4.5 — Chặng 2 (Bước 3, Bước 4 & README/Branding)
 
-**Phạm vi đối chiếu:** [plan-phase-4.5.md](file:///d:/workspace/my-projects/ai-artifacts/plans/work-session-artifact/plan-phase-4.5.md#L129-L188) (Chặng 1: Bước 1 — Shared contracts & baseline wording; Bước 2 — MCP standalone & đồng bộ agent-facing text) và bộ baseline đóng băng tại [agent-text.json](file:///d:/workspace/my-projects/ai-artifacts/plans/work-session-artifact/phase-4.5-wording/agent-text.json), [manifest.json](file:///d:/workspace/my-projects/ai-artifacts/plans/work-session-artifact/phase-4.5-wording/manifest.json).
+## 1. Tổng hợp theo Component (Synthesis by Component)
 
----
+### A. Extension Host & Webview UI — Start Work Session, Direct Inspect & Prompt Builders
+- **Files:**
+  - [artifact-review-provider.ts](file:///d:/workspace/my-projects/ai-artifacts/src/extension/artifact-review-provider.ts#L168-L216)
+  - [ReviewApp.tsx](file:///d:/workspace/my-projects/ai-artifacts/src/webview/ReviewApp.tsx#L395-L510)
+  - [artifact-connect-prompt.ts](file:///d:/workspace/my-projects/ai-artifacts/src/shared/artifact-connect-prompt.ts#L1-L26)
+  - [session-connect-prompt.ts](file:///d:/workspace/my-projects/ai-artifacts/src/shared/session-connect-prompt.ts#L1-L39)
+  - [contracts.ts](file:///d:/workspace/my-projects/ai-artifacts/src/shared/contracts.ts#L502-L547)
+  - [styles.css](file:///d:/workspace/my-projects/ai-artifacts/src/webview/styles.css#L708-L718)
+  - Đã xóa: `src/webview/ArtifactConnectDialog.tsx`, `test/artifact-connect-dialog.test.tsx`
+- **Đánh giá:**
+  - **Flow `Start a work session` (`startWorkSession`):** [artifact-review-provider.ts](file:///d:/workspace/my-projects/ai-artifacts/src/extension/artifact-review-provider.ts#L168-L197) kiểm tra đúng điều kiện tiên quyết (`conversationsSupport.supported` và `sessions.length === 0`), lấy title đã trim từ artifact (`artifact?.title.trim() || "Untitled work session"`), tạo session mới qua `createSession({ title })`, đăng ký artifact vào session qua `registerArtifactInSession(session.sessionId, artifactPath)`, copy prompt 3 dòng từ [`buildSessionConnectPrompt`](file:///d:/workspace/my-projects/ai-artifacts/src/shared/session-connect-prompt.ts#L13-L38), hiển thị thông báo `"Work session started and session prompt copied to clipboard."`, đồng bộ lại state webview và gọi `onOpenSessionWorkspace?.(session.sessionId)` để mở Session detail.
+  - **Rollback an toàn:** Khi `registerArtifactInSession` ném lỗi sau bước `createSession`, khối `catch` gọi `removeConversation(session.sessionId, this.rootOptions)` để dọn sạch session vừa tạo trên đĩa trước khi rethrow lỗi, tránh để lại orphan session.
+  - **Flow `Inspect artifact` trực tiếp (`copyArtifactConnectPrompt`):** Đã gỡ bỏ hoàn toàn `ArtifactConnectDialog` và các mode `New`/`Join`/sessionId. Nút `Inspect artifact` trên [ReviewApp.tsx](file:///d:/workspace/my-projects/ai-artifacts/src/webview/ReviewApp.tsx#L503-L509) gửi thẳng `{ type: "copyArtifactConnectPrompt" }`, tạo đúng mẫu 2 dòng từ [`buildArtifactConnectPrompt`](file:///d:/workspace/my-projects/ai-artifacts/src/shared/artifact-connect-prompt.ts#L8-L25) khớp 100% nguyên văn với [agent-text.json](file:///d:/workspace/my-projects/ai-artifacts/plans/work-session-artifact/phase-4.5-wording/agent-text.json#L2-L9).
+  - **UI Entry & Helper Text:** [ReviewApp.tsx](file:///d:/workspace/my-projects/ai-artifacts/src/webview/ReviewApp.tsx#L460-L502) xử lý đầy đủ 4 trạng thái:
+    1. `!sessionSupport.supported`: nút `Sessions` disabled kèm lý do.
+    2. `sessionSupport.supported && !sessionsLoaded`: nút `Sessions` disabled (`Loading...`).
+    3. `sessionSupport.supported && sessionsLoaded && sessions.length === 0`: hiển thị cụm `.toolbar-session-start` gồm nút `Start a work session` và helper text `"Promote this artifact into a multi-artifact session"` ngay bên dưới + `title`/`aria-label` đầy đủ.
+    4. `sessions.length > 0`: hiển thị nút `Sessions` kèm badge số lượng để mở `ArtifactSessionsModal`.
 
-## 1. Tổng hợp theo Component
+### B. Agent Skills — Packaged Assets & Contract Tests
+- **Files:**
+  - [skills/create-review-artifact/SKILL.md](file:///d:/workspace/my-projects/ai-artifacts/skills/create-review-artifact/SKILL.md)
+  - [skills/create-review-artifact/references/artifact-contract.md](file:///d:/workspace/my-projects/ai-artifacts/skills/create-review-artifact/references/artifact-contract.md)
+  - [skills/create-review-artifact/agents/openai.yaml](file:///d:/workspace/my-projects/ai-artifacts/skills/create-review-artifact/agents/openai.yaml)
+  - [skills/work-session/SKILL.md](file:///d:/workspace/my-projects/ai-artifacts/skills/work-session/SKILL.md)
+  - [skills/work-session/references/session-contract.md](file:///d:/workspace/my-projects/ai-artifacts/skills/work-session/references/session-contract.md)
+  - [skills/work-session/agents/openai.yaml](file:///d:/workspace/my-projects/ai-artifacts/skills/work-session/agents/openai.yaml)
+  - [test/skill-contract.test.ts](file:///d:/workspace/my-projects/ai-artifacts/test/skill-contract.test.ts)
+  - [test/work-session-skill.test.ts](file:///d:/workspace/my-projects/ai-artifacts/test/work-session-skill.test.ts)
+  - [test/mcp-join-session.test.ts](file:///d:/workspace/my-projects/ai-artifacts/test/mcp-join-session.test.ts)
+- **Đánh giá:**
+  - Cả 6 file skill trong `skills/` khớp **100% SHA-256 LF** với các file nguồn trong `plans/work-session-artifact/phase-4.5-wording/` và [manifest.json](file:///d:/workspace/my-projects/ai-artifacts/plans/work-session-artifact/phase-4.5-wording/manifest.json).
+  - Ranh giới giữa `create-review-artifact` (standalone artifact lifecycle, giữ nguyên `USER CUSTOM RULES` markers, chỉ có mục `Work Session Bridge` chuyển hướng sang `work-session`) và `work-session` (session lifecycle, `join_work_session`, `create_session_artifact`, `register_artifact_in_session`) hoàn toàn tách bạch.
+  - Chạy `audit_skill.py --platform codex` đạt **PASS (0 warnings)** cho cả hai skill (`create-review-artifact`: 118 dòng, description 124 ký tự; `work-session`: 41 dòng, description 124 ký tự).
 
-### A. Shared Contracts & Integration Version Receipt
-- **Files:** [contracts.ts](file:///d:/workspace/my-projects/ai-artifacts/src/shared/contracts.ts#L10-L37), [contracts.ts](file:///d:/workspace/my-projects/ai-artifacts/src/shared/contracts.ts#L654-L743), [workspace-integration.ts](file:///d:/workspace/my-projects/ai-artifacts/src/extension/workspace-integration.ts#L162-L199)
-- **Đạt yêu cầu:**
-  - Hằng số version đã chốt đúng kế hoạch: `MCP_VERSION = 12`, `CREATE_REVIEW_ARTIFACT_SKILL_VERSION = 7`, `WORK_SESSION_SKILL_VERSION = 1`.
-  - [`integrationVersionManifestSchema`](file:///d:/workspace/my-projects/ai-artifacts/src/shared/contracts.ts#L27-L35) mở rộng thêm `sessionSkills?: InstalledSkillVersions` (`.strict()`), tương thích ngược với receipt cũ chỉ có `skills`.
-  - [`writeInstalledIntegrationVersion`](file:///d:/workspace/my-projects/ai-artifacts/src/extension/workspace-integration.ts#L162-L199) merge độc lập từng map (`skills`, `sessionSkills`) và giữ nguyên `mcpVersion`/target khác không nằm trong patch; vẫn ghi atomic với owner-only mode.
-- **Vấn đề cần xử lý:** Có **1 lỗi Medium** ở nhóm type kết quả entry MCP (`StandaloneArtifactInspectionResult`, `SessionArtifactInspectionResult`, `CreateArtifactReviewResult`, `InspectArtifactReviewResult`, `JoinSessionResult`) bị lệch literal union runtime và chưa được nối vào MCP producer để enforce compile-time check (chi tiết ở Mục 2).
-
-### B. MCP Server Standalone & Agent-Facing Text
-- **File:** [artifact-review-mcp-v4.ts](file:///d:/workspace/my-projects/ai-artifacts/src/integration/artifact-review-mcp-v4.ts)
-- **Đạt yêu cầu:**
-  - **Standalone `create_artifact`** ([`persistArtifact`](file:///d:/workspace/my-projects/ai-artifacts/src/integration/artifact-review-mcp-v4.ts#L714-L761), [`createArtifact`](file:///d:/workspace/my-projects/ai-artifacts/src/integration/artifact-review-mcp-v4.ts#L763-L845), [`handleCreateTool`](file:///d:/workspace/my-projects/ai-artifacts/src/integration/artifact-review-mcp-v4.ts#L1552-L1568)): Khi cả `artifactConversationId` và `conversationName` đều bị lược bỏ, luồng tạo artifact không đụng `conversation-registry` hay `session-types.json`, trả `session: null` và không gắn `artifactConversationId` / `conversationName` vào `structuredContent`. Khi truyền `conversationName` (kèm trim/non-blank validation qua [`conversationNameSchema`](file:///d:/workspace/my-projects/ai-artifacts/src/shared/contracts.ts#L38-L44)) hoặc `artifactConversationId` (ưu tiên nếu truyền cả hai), preflight v1, tạo/gắn Session và rollback khi lỗi window/connection đều giữ nguyên tính toàn vẹn.
-  - **Standalone `inspect_artifact_review`** ([`executeInspectCore`](file:///d:/workspace/my-projects/ai-artifacts/src/integration/artifact-review-mcp-v4.ts#L1671-L1855), [`handleInspectTool`](file:///d:/workspace/my-projects/ai-artifacts/src/integration/artifact-review-mcp-v4.ts#L1857-L1937)): Bỏ cả hai tham số Session sẽ chỉ đọc state artifact + cấp round token/reconnect window nếu có, trả `session: null`, không tạo hay ghi `conversation-registry`. Các nhánh có `artifactConversationId` hoặc `conversationName` bảo toàn rollback membership (`previousMembershipRegisteredAt` hoặc xoá file membership mới) và xoá Session mới tạo nếu lỗi ở `resolveWorkSessionContext` hoặc `commitArtifactConnectionRequest`.
-  - **`join_session`, `wait_for_artifact_review`, `advance_and_wait_for_artifact`**: Giữ nguyên hành vi join/echo/lifecycle.
-  - **Agent-facing text**: Đối chiếu tự động từng chuỗi cho thấy 24/24 dòng `initialize.instructions` ([artifact-review-mcp-v4.ts](file:///d:/workspace/my-projects/ai-artifacts/src/integration/artifact-review-mcp-v4.ts#L2293-L2318)) và toàn bộ 6 vị trí `createDescription`, `inspectDescription`, `artifactConversationIdDescription`, `conversationNameDescription` ([artifact-review-mcp-v4.ts](file:///d:/workspace/my-projects/ai-artifacts/src/integration/artifact-review-mcp-v4.ts#L2323-L2417)) khớp **100% verbatim** với [agent-text.json](file:///d:/workspace/my-projects/ai-artifacts/plans/work-session-artifact/phase-4.5-wording/agent-text.json).
-
-### C. Test Suites
-- **Files:** [artifact-contracts.test.ts](file:///d:/workspace/my-projects/ai-artifacts/test/artifact-contracts.test.ts#L200-L250), [workspace-integration.test.ts](file:///d:/workspace/my-projects/ai-artifacts/test/workspace-integration.test.ts#L368-L402), [review-wait-mcp.test.ts](file:///d:/workspace/my-projects/ai-artifacts/test/review-wait-mcp.test.ts#L2684-L3182), [mcp-join-session.test.ts](file:///d:/workspace/my-projects/ai-artifacts/test/mcp-join-session.test.ts#L455-L621)
-- **Đạt yêu cầu:** Đã cập nhật các test hiện hữu từng giả định omit = tạo `"Untitled Conversation"` sang truyền `conversationName` tường minh, bổ sung test full vòng đời standalone (`create` -> `inspect` -> `wait` -> `approve` không chạm `conversation-registry`), test standalone `create_artifact` sống tốt khi `session-types.json` bị hỏng JSON, test `initialize.instructions` / `tools/list` phản ánh standalone default, và test merge `sessionSkills` độc lập trong version receipt.
+### C. README & Package Branding
+- **Files:**
+  - [README.md](file:///d:/workspace/my-projects/ai-artifacts/README.md)
+  - [package.json](file:///d:/workspace/my-projects/ai-artifacts/package.json#L3-L5)
+  - [test/release-contract.test.ts](file:///d:/workspace/my-projects/ai-artifacts/test/release-contract.test.ts#L85-L185)
+- **Đánh giá:**
+  - [package.json](file:///d:/workspace/my-projects/ai-artifacts/package.json#L3-L5) đã cập nhật `displayName` (`"AI Artifacts - Interactive Specs, Docs & Work Sessions"`) và `description` (274 ký tự, khớp nguyên văn phương án chuẩn trong [readme-branding.md](file:///d:/workspace/my-projects/ai-artifacts/plans/work-session-artifact/phase-4.5-wording/readme-branding.md#L28-L35)).
+  - [README.md](file:///d:/workspace/my-projects/ai-artifacts/README.md) đã cập nhật đầy đủ các mục theo đúng [readme-branding.md](file:///d:/workspace/my-projects/ai-artifacts/plans/work-session-artifact/phase-4.5-wording/readme-branding.md): Hero title & tagline, `Two Ways to Work`, `Core Highlights`, `How It Works` (Standard Artifact Flow + Work Session Flow), `Using AI Artifacts in Practice` (`Starting a Work Session from an Artifact`, `Continuing in a Work Session`), `What Install / Upgrade Sets Up` (2 skills), và `Skill & MCP Architecture`.
 
 ---
 
 ## 2. Phát hiện cần xử lý (Actionable Findings)
 
-### [Medium] `StandaloneArtifactInspectionResult` & `SessionArtifactInspectionResult` khai báo sai union `roundTokenSource`, lệch `exactOptionalPropertyTypes` và chưa được nối vào MCP producer
+### [Low] Thiếu test ở tầng Webview component cho `ReviewApp.tsx` sau khi xóa `test/artifact-connect-dialog.test.tsx`
 
 - **Vị trí:**
-  - [contracts.ts](file:///d:/workspace/my-projects/ai-artifacts/src/shared/contracts.ts#L679-L743) (`SessionArtifactHandleResult`, `StandaloneArtifactInspectionResult`, `SessionArtifactInspectionResult`, `CreateArtifactReviewResult`, `InspectArtifactReviewResult`, `JoinSessionResult`)
-  - [artifact-review-mcp-v4.ts](file:///d:/workspace/my-projects/ai-artifacts/src/integration/artifact-review-mcp-v4.ts#L1367-L1385) (`grantInspectedRound`), [artifact-review-mcp-v4.ts](file:///d:/workspace/my-projects/ai-artifacts/src/integration/artifact-review-mcp-v4.ts#L1479-L1508) (`artifactHandle`), [artifact-review-mcp-v4.ts](file:///d:/workspace/my-projects/ai-artifacts/src/integration/artifact-review-mcp-v4.ts#L1554-L1555) (`handleCreateTool`), [artifact-review-mcp-v4.ts](file:///d:/workspace/my-projects/ai-artifacts/src/integration/artifact-review-mcp-v4.ts#L1920-L1933) (`handleInspectTool`), [artifact-review-mcp-v4.ts](file:///d:/workspace/my-projects/ai-artifacts/src/integration/artifact-review-mcp-v4.ts#L1968-L1974) & [artifact-review-mcp-v4.ts](file:///d:/workspace/my-projects/ai-artifacts/src/integration/artifact-review-mcp-v4.ts#L2028-L2043) (`handleJoinSessionTool`)
-- **Kịch bản kích hoạt & Hệ quả:**
-  1. **Sai contract runtime ở `roundTokenSource`:** [`StandaloneArtifactInspectionResult`](file:///d:/workspace/my-projects/ai-artifacts/src/shared/contracts.ts#L703) và [`SessionArtifactInspectionResult`](file:///d:/workspace/my-projects/ai-artifacts/src/shared/contracts.ts#L727) khai báo:
-     ```ts
-     roundTokenSource?: "saved-feedback" | "explicit-chat-update";
-     ```
-     Trong khi MCP runtime tại [`grantInspectedRound`](file:///d:/workspace/my-projects/ai-artifacts/src/integration/artifact-review-mcp-v4.ts#L1367-L1384) và [`InspectCoreResult`](file:///d:/workspace/my-projects/ai-artifacts/src/integration/artifact-review-mcp-v4.ts#L1668) thực chất phát ra `"chat-update" | "chat-inspection"`. Bất kỳ caller/test nào ở các bước sau consume `InspectArtifactReviewResult` / `JoinSessionResult` và branch theo `"saved-feedback"` hoặc `"explicit-chat-update"` sẽ không bao giờ khớp dữ liệu thật từ MCP.
-  2. **Chưa kích hoạt hàng rào type-check của Bước 1:** Cả `artifact-review-mcp-v4.ts` lẫn `test/artifact-contracts.test.ts` hiện chưa import hay gắn `satisfies` / return type cho `CreateArtifactReviewResult`, `InspectArtifactReviewResult`, `JoinSessionResult`. Do đó `npm.cmd run check` (`tsc --noEmit` với `"exactOptionalPropertyTypes": true` trong [tsconfig.json](file:///d:/workspace/my-projects/ai-artifacts/tsconfig.json#L13)) không phát hiện lỗi literal ở mục (1), đồng thời cũng chưa bắt được các field gán `undefined` trực tiếp (`submission: inspection.submission`, `submissionSha256: inspection.submissionSha256`, `roundToken`, `conversationName: convName`) vốn sẽ compile fail ngay khi nối type vào dưới `exactOptionalPropertyTypes: true`. Tiêu chí hoàn thành Bước 1 ([plan-phase-4.5.md](file:///d:/workspace/my-projects/ai-artifacts/plans/work-session-artifact/plan-phase-4.5.md#L167-L171)) yêu cầu hệ thống type này chặn lỗi nhầm `reviewSessionId` với Work Session ID và ép check null trên `result.session` ngay ở compile time.
-- **Khuyến nghị sửa:**
-  1. Sửa `roundTokenSource` trong [`StandaloneArtifactInspectionResult`](file:///d:/workspace/my-projects/ai-artifacts/src/shared/contracts.ts#L703) và [`SessionArtifactInspectionResult`](file:///d:/workspace/my-projects/ai-artifacts/src/shared/contracts.ts#L727) thành `"chat-inspection" | "chat-update"` cho khớp đúng runtime `grantInspectedRound`.
-  2. Đồng bộ optional fields với `exactOptionalPropertyTypes: true` (chỉ spread key khi `!== undefined` trong `artifact-review-mcp-v4.ts` tương tự cách `roundTokenSource` đang làm ở dòng 1930/2040, hoặc khai báo `| undefined` có chủ đích cho các field thực sự emit `undefined`).
-  3. Import và gắn return type / `satisfies` cho payload của [`handleCreateTool`](file:///d:/workspace/my-projects/ai-artifacts/src/integration/artifact-review-mcp-v4.ts#L1555) (`CreateArtifactReviewResult`), [`handleInspectTool`](file:///d:/workspace/my-projects/ai-artifacts/src/integration/artifact-review-mcp-v4.ts#L1921) (`InspectArtifactReviewResult`), và [`handleJoinSessionTool`](file:///d:/workspace/my-projects/ai-artifacts/src/integration/artifact-review-mcp-v4.ts#L1970) / [L2029](file:///d:/workspace/my-projects/ai-artifacts/src/integration/artifact-review-mcp-v4.ts#L2029) (`JoinSessionResult`), kèm 1 compile-time type test nhỏ (`@ts-expect-error` trên `result.session.sessionId` khi chưa narrow null) trong [artifact-contracts.test.ts](file:///d:/workspace/my-projects/ai-artifacts/test/artifact-contracts.test.ts).
+  - [src/webview/ReviewApp.tsx](file:///d:/workspace/my-projects/ai-artifacts/src/webview/ReviewApp.tsx#L395-L510)
+  - Đã xóa: `test/artifact-connect-dialog.test.tsx`
+- **Chi tiết & Tác động:**
+  - Yêu cầu Bước 3 trong [plan-phase-4.5.md](file:///d:/workspace/my-projects/ai-artifacts/plans/work-session-artifact/plan-phase-4.5.md#L196-L198) quy định: *"cập nhật webview tests theo entry mới, giữ unrelated UI behavior"*.
+  - Hiện tại [test/artifact-review-provider.test.ts](file:///d:/workspace/my-projects/ai-artifacts/test/artifact-review-provider.test.ts#L714-L824) đã test rất kỹ tầng xử lý message của extension host (`startWorkSession`, `copyArtifactConnectPrompt`, rollback khi lỗi), nhưng khi xóa `test/artifact-connect-dialog.test.tsx` chưa có test React component thay thế cho [ReviewApp.tsx](file:///d:/workspace/my-projects/ai-artifacts/src/webview/ReviewApp.tsx#L460-L510) để khóa 4 trạng thái hiển thị nút (`!supported`, `!sessionsLoaded`, `sessions.length === 0` hiện `Start a work session` + helper text, `sessions.length > 0` hiện `Sessions` + badge) và sự kiện click `Inspect artifact` gửi `{ type: "copyArtifactConnectPrompt" }`.
+- **Hướng xử lý đề xuất:**
+  - Bổ sung 1 file test gọn cho `ReviewApp` (hoặc test helper render toolbar state tương tự [test/session-app.test.tsx](file:///d:/workspace/my-projects/ai-artifacts/test/session-app.test.tsx)) để verify trực tiếp DOM/markup của 4 trạng thái entry và helper text.
 
 ---
 
-## 3. Thông tin tham khảo / Khả năng có thể (Non-blocking)
+## 3. Thông tin tham khảo / Khả năng có thể (Non-blocking Reference)
 
-- **Bổ sung assert standalone `inspect_artifact_review` khi `session-types.json` lỗi** ([mcp-join-session.test.ts](file:///d:/workspace/my-projects/ai-artifacts/test/mcp-join-session.test.ts#L588-L621)): Test hiện tại đã chứng minh standalone `create_artifact` miễn nhiễm với `session-types.json` hỏng; có thể gọi thêm 1 lệnh `inspect_artifact_review` standalone ngay trên `standaloneResult.structuredContent.artifactDirectory` trong cùng test để khoá trọn vẹn cả 2 entry standalone đối với Session files lỗi theo [plan-phase-4.5.md](file:///d:/workspace/my-projects/ai-artifacts/plans/work-session-artifact/plan-phase-4.5.md#L184).
-- **Hằng số cầu nối `SKILL_VERSION = 6`** ([contracts.ts](file:///d:/workspace/my-projects/ai-artifacts/src/shared/contracts.ts#L14)): Đang được giữ tạm thời để code extension/UI chưa sang Chặng 2 vẫn compile xanh; khi triển khai Bước 3–5 của Chặng 2 nên dọn hoặc chuyển hết caller sang `CREATE_REVIEW_ARTIFACT_SKILL_VERSION` và `WORK_SESSION_SKILL_VERSION`.
+- **[artifact-review-provider.ts](file:///d:/workspace/my-projects/ai-artifacts/src/extension/artifact-review-provider.ts#L188):** Khi `registerArtifactInSession` lỗi và `removeConversation(session.sessionId, this.rootOptions)` xóa session vừa tạo để rollback, hàm `createSession` trước đó đã phát `notifyChanged([{ kind: "metadata", sessionId }])` ([conversation-artifact-service.ts](file:///d:/workspace/my-projects/ai-artifacts/src/extension/conversation-artifact-service.ts#L352)); có thể phát thêm `notifyChanged` sau khi `removeConversation` để các listener không giữ tạm `sessionId` đã rollback trước khi file watcher cập nhật.
+- **[dev/main.tsx](file:///d:/workspace/my-projects/ai-artifacts/dev/main.tsx#L152-L157):** Mock handler trong môi trường dev sandbox (`dev/main.tsx`) vẫn xử lý `copyArtifactConnectPrompt` theo chuỗi cũ `@codex inspect_artifact_review(...)` và chưa có case `startWorkSession` (chỉ ảnh hưởng dev harness độc lập, không ảnh hưởng extension thực tế).
 
 ---
 
-## 4. Trạng thái Kiểm chứng (Validation Status)
+## 4. Trạng thái kiểm증 (Validation Status)
 
-| Hạng mục kiểm tra | Lệnh / Phương thức | Kết quả |
-| --- | --- | --- |
-| Typecheck toàn repo | `npm.cmd run check` (`tsc --noEmit`) | **PASS** (exit 0) |
-| Kiểm tra whitespace / patch hygiene | `git -c core.safecrlf=false diff --check` | **PASS** (exit 0) |
-| Toàn bộ Vitest suite | `npx vitest run` | **PASS** (47/47 files, 648 passed, 3 skipped) |
-| Đối chiếu `agent-text.json` vs MCP | So khớp tự động 24 dòng `initialize.instructions` + 6 chuỗi tool/arg descriptions | **PASS** (100% exact match) |
-| Đối chiếu baseline hash `manifest.json` | Kiểm tra SHA-256 `skills/create-review-artifact/*` trước Chặng 2 | **PASS** (100% match — chưa bị sửa ngoài phạm vi Chặng 1) |
-| Build VSIX / Extension Host UI / Skill bundle | Thuộc phạm vi Chặng 2–3 (Bước 3–7) | **Chưa chạy ở Chặng 1** |
+| Hạng mục kiểm tra | Lệnh / Phương pháp | Kết quả |
+| :--- | :--- | :--- |
+| Typecheck (`tsc --noEmit`) | `npm.cmd run check` | **PASS** (exit code `0`) |
+| Whitespace / Conflict markers | `git -c core.safecrlf=false diff --check` | **PASS** (exit code `0`) |
+| Full Unit & Integration Test Suite | `npx vitest run` | **PASS** (47/47 files, 657 passed, 3 skipped) |
+| SHA-256 LF của 6 skill files + `agent-text.json` | Đối chiếu trực tiếp với `phase-4.5-wording/manifest.json` | **PASS** (Khớp 100% cả 7 file) |
+| UI Text & Prompt Templates | Đối chiếu `ReviewApp.tsx`, `artifact-connect-prompt.ts`, `session-connect-prompt.ts` với `agent-text.json` | **PASS** (Khớp 100% nguyên văn) |
+| README & `package.json` Branding | Đối chiếu với `phase-4.5-wording/readme-branding.md` | **PASS** (Khớp cấu trúc, bảng MCP tools, `displayName`, `description` 274 ký tự) |
+| Skill Audit (`codex` standard) | `audit_skill.py --platform codex` trên cả 2 skill | **PASS** (`0 warnings`, `0 errors`) |

@@ -1,6 +1,6 @@
 ---
 name: create-review-artifact
-description: Create, update, inspect, or reconnect an explicitly requested reviewable Markdown artifact, join work sessions, and coordinate review rounds.
+description: Create, update, inspect, or reconnect an explicitly requested reviewable Markdown artifact and coordinate its review rounds.
 ---
 
 # Create Review Artifact
@@ -9,29 +9,29 @@ Coordinate one reviewable Markdown artifact for one explicit user request.
 
 ## Tools and Window Routing
 
-1. Require the current tool catalog to expose `resolve_artifact_window`, `create_artifact`, `wait_for_artifact_review`, `inspect_artifact_review`, `advance_and_wait_for_artifact`, and `join_session`. Do not probe MCP resources or run filesystem commands to check availability. If a tool is unavailable, ask the user to run **AI Artifacts: Install All Detected Integrations** (or the install command for their specific AI client), restart their AI client, and start a new chat. Check only once per chat lifecycle unless a tool becomes unavailable, the MCP restarts, or a new chat begins.
-2. Read [references/artifact-contract.md](references/artifact-contract.md) before calling `create_artifact`, `wait_for_artifact_review`, `inspect_artifact_review`, `advance_and_wait_for_artifact`, or `join_session`.
+1. Require the current tool catalog to expose `resolve_artifact_window`, `create_artifact`, `wait_for_artifact_review`, `inspect_artifact_review`, and `advance_and_wait_for_artifact`. Do not probe MCP resources or run filesystem commands to check availability. If a tool is unavailable, ask the user to run **AI Artifacts: Install All Detected Integrations** (or the install command for their specific AI client), restart their AI client, and start a new chat. Check only once per chat lifecycle unless a tool becomes unavailable, the MCP restarts, or a new chat begins.
+2. Read [references/artifact-contract.md](references/artifact-contract.md) before calling `create_artifact`, `wait_for_artifact_review`, `inspect_artifact_review`, or `advance_and_wait_for_artifact`.
 3. By default, call `create_artifact` directly without any prior window resolution:
    - The server routes directly to the currently focused VS Code window (or the sole live window).
    - If multiple live windows exist and focus is ambiguous, `create_artifact` returns `WINDOW_SELECTION_REQUIRED` with a list of active window candidates.
-   - Each candidate includes `candidateId`, `focused`, `label`, `folderCount`, `folders`, `activeFile`, and an opaque `selectionToken`.
    - Compare candidate labels, open folders, and active files against user context. Select a candidate without asking when exactly one clearly matches. Ask the user only when candidates remain tied or ambiguous.
    - When retrying after `WINDOW_SELECTION_REQUIRED`, pass `connection: { targetMode: "explicit-window", selectionToken }`.
    - If you need to proactively discover active windows or check candidate labels before creating, call `resolve_artifact_window({ query })`.
-4. Maintain at most one active Work Session (`artifactConversationId`) per chat conversation. Pass `conversationName` on the first creation (or omit for an auto-generated Session ID). On subsequent creations or inspections within the same chat, pass the active `artifactConversationId` by default to group artifacts into that Work Session. Follow explicit session context rules:
-   - **Default reuse**: If the chat holds an active Session `S`, pass `artifactConversationId: S` to continue working in `S`.
-   - **Explicit New Session**: If the user explicitly asks for a new session (e.g. "new session", "tạo session mới"), omit `artifactConversationId` on `create_artifact` or `inspect_artifact_review` even if the chat currently holds `S`. Upon tool success, replace the active session with the newly returned ID. Merely changing `conversationName` while passing `S` does not create a new session.
-   - **Explicit Join Session**: If the user requests to join or connect to a specific Session `T`, call `join_session({ sessionId: T })` (or pass `artifactConversationId: T` on create/inspect). For single-call artifact inspect and join, call `join_session({ sessionId: T, artifactId, takeover: true, ... })`. Upon tool success, set `T` as the chat's active session.
-   - **Success-only replacement**: Only update your active session context after the lifecycle tool call succeeds. If a tool fails, do not automatically retry against the old session or guess another session. Window-selection retry retains the original target session intent.
-   - Multiple chat conversations can share the same Work Session, but each chat conversation tracks at most one active session at a time.
+## Session bridge
+
+- For a standalone request, omit both `artifactConversationId` and `conversationName` for that request without clearing the chat's active Work Session.
+- Otherwise, if the chat has an active Work Session, pass its ID as `artifactConversationId` to create or inspect. If it has no active Work Session, omit both Session arguments; the artifact remains independent.
+- If the user explicitly requests a new Work Session or asks to join or switch Sessions, follow [work-session](../work-session/SKILL.md) for Session arguments and success-only context updates. Do not infer an active Session from artifact memberships, names, or recency.
+- A standalone result has `session: null`; it does not clear an existing active Session. When the Session workflow supplies a normalized inspection, apply the artifact inspection and feedback rules below to that object.
+- For `CONVERSATION_NOT_FOUND`, `CONVERSATION_REGISTRY_INVALID`, or `CONVERSATION_MIGRATION_REQUIRED`, retain the exact handle and current Session context and follow the Session recovery rules in [work-session](../work-session/SKILL.md). Do not silently switch to standalone or create another Session.
 
 ## Create and review
 
-1. Write one complete Markdown document. Call `create_artifact` with `title`, `kind: "implementation-plan"` (or choose another appropriate fixed kind such as `plan`, `idea`, `analysis`, `design`, `spec`, `checklist`, `report`, `guide`, `note`, or an open descriptive slug if none fit), `markdown`, and optional `artifactConversationId` (if known) or `conversationName`. Omit `connection` by default. Choose the kind that accurately reflects the document's purpose (for example, use `implementation-plan` or `plan` for actionable engineering plans, `spec` for specifications, `checklist` for task lists, etc.). The server stores the schema-v6 lifecycle under the global `~/.ai-artifacts/artifacts/<artifact-id>/` collection and registers the artifact under `~/.ai-artifacts/conversation-registry/<artifactConversationId>/`. Do not create or edit lifecycle files with filesystem tools.
-2. Retain the exact returned global `artifactDirectory`, `reviewRound`, `artifactConversationId`, and connection metadata (`schemaVersion`, `windowInstanceId`, `connectionRevision`, `openRequestId`, `source`, and `updatedAt`). When multiple artifacts exist in one chat, maintain an `artifactDirectory -> { reviewRound, windowInstanceId }` mapping. Initialize `windowInstanceId` from the committed connection metadata of `create_artifact`. If a handle is ambiguous, ask the user and never select by recency. Include the returned `artifactLink` in the chat message as a regular file link. It is not a deep link; it opens `artifact.md` in a plain Markdown/text editor. Tell the user to choose **Open Artifact Review** from the file's Explorer, editor, or editor-tab context menu to open the validated artifact in the review editor.
+1. Write one complete Markdown document. Call `create_artifact` with `title`, `kind: "implementation-plan"` (or choose another appropriate fixed kind such as `plan`, `idea`, `analysis`, `design`, `spec`, `checklist`, `report`, `guide`, `note`, or an open descriptive slug if none fit), `markdown`. Apply **Session bridge** for optional Session arguments. Omit `connection` by default. Choose the kind that accurately reflects the document's purpose (for example, use `implementation-plan` or `plan` for actionable engineering plans, `spec` for specifications, `checklist` for task lists, etc.). The server stores the schema-v6 lifecycle under the global `~/.ai-artifacts/artifacts/<artifact-id>/` collection. Do not create or edit lifecycle files with filesystem tools.
+2. Retain the exact returned global `artifactDirectory`, `reviewRound`, and complete committed connection metadata. Apply **Session bridge** to any returned Session context. When multiple artifacts exist in one chat, maintain an `artifactDirectory -> { reviewRound, windowInstanceId }` mapping. Initialize `windowInstanceId` from the committed connection metadata of `create_artifact`. If a handle is ambiguous, ask the user and never select by recency. Include the returned `artifactLink` in the chat message as a regular file link. It is not a deep link; it opens `artifact.md` in a plain Markdown/text editor. Tell the user to choose **Open Artifact Review** from the file's Explorer, editor, or editor-tab context menu to open the validated artifact in the review editor.
 3. Call `wait_for_artifact_review` immediately on that exact handle and round.
 4. Handle a submitted decision:
-   - `revise`: obey `nextAction.type: "process-review-feedback"` and process every comment in `comments.comments` with **Unified feedback handling** below, using the returned round token. The waiting tool already returns the feedback; no additional inspect is needed just to fetch comments. Treat Review-button feedback exactly like chat-inspected feedback.
+   - `revise`: obey `nextAction.type: "process-review-feedback"` and process every comment in `comments.comments` with **Unified feedback handling** below, using the returned round token. The waiting tool already returns the feedback; no additional inspect is needed just to fetch comments.
    - `approve`: read any remaining comments, then check `nextAction.type`:
      - If `nextAction.type: "execute-approved-plan"` (for `plan` or `implementation-plan`): execute the complete approved plan immediately in the current turn, including all in-scope code, file, workspace, and command actions. Do not stop after acknowledging approval, merely summarize future work, or ask for another implementation confirmation. Pause only for a genuine blocker or authority outside the approved scope. Do not create a new review round or wait again.
      - If `nextAction.type: "approved"` (for any other fixed or open kind): acknowledge the approval and conclude the review. Do not automatically implement code or start another review round.
@@ -40,7 +40,7 @@ Coordinate one reviewable Markdown artifact for one explicit user request.
 
 ## Unified feedback handling
 
-Apply this policy to all saved comments, whether they arrive from a Review (`revise`) submission or `inspect_artifact_review`:
+Apply this policy to all saved comments, whether they arrive from a Review (`revise`) submission or `inspect_artifact_review`. Treat Review-button feedback exactly like chat-inspected feedback:
 
 1. Classify all comments together as question-only, change-only, mixed, or needing clarification.
 2. Act by class:
@@ -61,19 +61,10 @@ Before calling a lifecycle tool, require both a uniquely matching exact handle a
 | Resume waiting without reconnecting | Call `wait_for_artifact_review` with the exact handle and current round. |
 | Read saved review comments or submission | Call `inspect_artifact_review` with the exact handle and `takeover: true`. |
 | Explicitly update an empty round from chat | Call inspect with the exact handle, `takeover: true`, `expectedReviewRound`, and `intent: "explicit-chat-update"`. |
-| Join session without artifact | Call `join_session({ sessionId })` to read session context and instructions without inspecting an artifact or starting a waiter. |
-| Inspect artifact and join session | Call `join_session({ sessionId, artifactId, takeover: true, ... })` to inspect the target artifact and join the session in a single call. |
 
-### Response normalization across entry tools
+### After inspection
 
-- **`join-only` (`join_session({ sessionId })`)**: returns `{ session }`. Conclude the entry step, retain `session.sessionId` as your active session, and proceed with the user's instructions. Do not call `wait_for_artifact_review` or `advance_and_wait_for_artifact` because there is no target artifact.
-- **`join+artifact` (`join_session({ sessionId, artifactId, takeover: true, ... })`)**: returns `{ session, inspection }`. Normalize the nested inspection: read comments from `result.inspection.comments.comments`, round token from `result.inspection.roundToken`, review round from `result.inspection.reviewRound`, and artifact handle from `result.inspection.artifactDirectory`. Update your active session to `result.session.sessionId` only on success.
-- **`inspect_artifact_review`**: returns flat fields (`comments.comments`, `roundToken`, `reviewRound`, `artifactDirectory`). If the artifact belongs to a session, it also returns `session` at top level.
-
-### Fresh decisions vs saved submission snapshots
-
-- **Fresh decisions** arrive directly from `wait_for_artifact_review` or `advance_and_wait_for_artifact`. Follow their `nextAction`: `execute-approved-plan` requires executing approved code/file/workspace actions immediately; `approved` acknowledges without code execution.
-- **Saved submission snapshots** in `inspect_artifact_review` or `join_session` (`inspection.submission`) represent past review submissions, not a new execution directive. If `submission.decision === "approve"`, acknowledge that the artifact was previously approved. Never re-execute approved code or repeat previous implementations when reconnecting or joining.
+Inspection fields are flat: `comments.comments`, `roundToken`, `reviewRound`, and `artifactDirectory`.
 
 - Takeover cancels and drains the old waiter; it does not end the artifact, advance the round, or edit lifecycle files.
 - Reconnect evaluates active windows prioritizing sole live window, validated advisory artifact-window affinity (when matching stored connection and live in registry), and unique focused window, or explicit candidate via selectionToken. Mismatch or stale affinity silently falls back to focused resolution and returns the new committed windowInstanceId to update your cache. Do not send or compare `connectionRevision`.
@@ -82,13 +73,18 @@ Before calling a lifecycle tool, require both a uniquely matching exact handle a
 - A chat-update token requires complete replacement Markdown with a different SHA. Never ask the user to create dummy comments or click Review after an explicit chat update request.
 - To reconnect after Proceed or Just save, inspect the exact artifact, advance without Markdown, and wait. Never repeat the previously approved or saved action.
 
+### Fresh decisions vs saved submission snapshots
+
+- **Fresh decisions** arrive directly from `wait_for_artifact_review` or `advance_and_wait_for_artifact`. Handle their `nextAction` under **Create and review**, step 4.
+- **Saved submission snapshots** returned by inspection represent past review submissions, not a new execution directive. If `submission.decision === "approve"`, acknowledge that the artifact was previously approved. Never re-execute approved code or repeat previous implementations when reconnecting.
+
 ## Structured recovery
 
 Follow machine-readable recovery metadata returned by lifecycle errors. Keep the same exact artifact handle.
 
 | Error code | Required recovery |
 |---|---|
-| `WINDOW_SELECTION_REQUIRED` | Ambiguous window context. If `expectedNextTool: "create_artifact"`, present candidates using window labels, ask user if ambiguous, and retry `create_artifact` with `connection: { targetMode: "explicit-window", selectionToken }`. If `expectedNextTool: "inspect_artifact_review"`, retry `inspect_artifact_review` on the same handle with `intent: "reconnect"` and `connection: { targetMode: "explicit-window", selectionToken }`. If `expectedNextTool: "join_session"`, retry `join_session` on the same session and artifact handle with `connection: { targetMode: "explicit-window", selectionToken }`. |
+| `WINDOW_SELECTION_REQUIRED` | Ambiguous window context. If `expectedNextTool: "create_artifact"`, present candidates using window labels, ask user if ambiguous, and retry `create_artifact` with `connection: { targetMode: "explicit-window", selectionToken }`. If `expectedNextTool: "inspect_artifact_review"`, retry `inspect_artifact_review` on the same handle with `intent: "reconnect"` and `connection: { targetMode: "explicit-window", selectionToken }`. |
 | `ROUND_TOKEN_INVALID_OR_EXPIRED`, `ROUND_TOKEN_ALREADY_CONSUMED`, `ROUND_MISMATCH`, `ROUND_STATE_CHANGED` | Inspect the same exact handle for current state and a fresh token. Do not replay old Markdown or actions. |
 | `ROUND_TOKEN_IN_USE` | Do not issue another advance. Wait for the in-flight request, then inspect only if its result is unclear. |
 | `ARTIFACT_ALREADY_WAITING` | Another live waiter already owns the exact artifact. Do not start a second wait. For resume-wait intent, keep awaiting the in-flight call; for pure reconnect, call `inspect_artifact_review` with `intent: "reconnect"` without takeover; use takeover only for saved feedback or an explicit direct update. |
@@ -99,9 +95,6 @@ Follow machine-readable recovery metadata returned by lifecycle errors. Keep the
 | `WINDOW_CONNECTION_MISMATCH`, `WINDOW_CONNECTION_STALE` | Selected window is stale or closed. Retry without connection token to refresh candidates. |
 | `ARTIFACT_CONNECTION_INVALID` | Stored routing data is invalid or malformed and cannot be repaired by the skill. Stop automated recovery, retain the exact handle, report the corrupt `artifact-connection.json`, and ask the user to repair or remove that optional routing file before reconnecting. Do not retry inspect/reconnect or edit lifecycle files yourself. |
 | `ARTIFACT_CONNECTION_WRITE_FAILED` | Failed to update the connection state atomically. Retry `inspect_artifact_review` on the exact handle with `intent: "reconnect"`. |
-| `CONVERSATION_NOT_FOUND` | Stored `artifactConversationId` or target `sessionId` was not found in the registry. Non-retryable. Retain the current context and inform the user. Do not silently clear the ID, auto-create a replacement session, or guess another session ID without user instructions. |
-| `CONVERSATION_REGISTRY_INVALID` | Stored conversation registry data is invalid, corrupt, or violates path safety. Non-retryable. Stop automated recovery, retain the exact handle, and inform the user. Do not edit registry files directly. |
-| `CONVERSATION_MIGRATION_REQUIRED` | Caller passed a conversation v1 ID that must be migrated before use. Stop the failed request and present the user with two explicit choices: (1) Keep old conversation: open an artifact belonging to that conversation in the Review App, migrate it to a Session, then retry the request with the same ID; or (2) Use a new Session: drop the cached v1 ID from the active context and retry without passing an ID to initialize a new Session v2. Do not auto-retry or guess another Session. |
 | `ARTIFACT_NOT_FOUND` | The exact artifact handle no longer exists (retention cleanup, manual deletion, or filesystem loss). Non-retryable. Drop the stale handle mapping and inform the user that the artifact is permanently unavailable. Do not retry, scan for a replacement, or recreate the same artifact ID. |
 
 Except for explicit non-retryable errors such as `ARTIFACT_CONNECTION_INVALID`, inspect the exact handle before retrying any error that does not prove both “not committed” and `reuseRoundToken: true`.
@@ -110,14 +103,11 @@ Except for explicit non-retryable errors such as `ARTIFACT_CONNECTION_INVALID`, 
 
 - Artifact lifetime is longer than waiter lifetime, which is longer than an individual chat-turn lifetime. Artifact lifetime is bounded by configured retention; an exact handle may become permanently missing.
 - Cancellation, chat-turn completion, or MCP restart detaches a waiter but never deletes or finishes an artifact.
-- When an exact artifact handle returns `ARTIFACT_NOT_FOUND`, drop the handle mapping and inform the user. Do not retry, search, or recreate.
 - One independent user request owns one artifact directory and artifact ID. Only one live waiter may own it at a time.
 - Advancing replaces the same `artifact.md` only when Markdown is supplied, increments the round, resets handled comments, and removes the old submission. It does not create revision history.
 - Round tokens are exact-state, one-time capabilities. After MCP restart, inspect the exact artifact again to obtain a fresh token.
 - Only the MCP server creates artifacts, advances rounds, resets comments, consumes tokens, and writes lifecycle metadata.
 - Never edit `artifact.json`, `comments.json`, `review-submission.json`, or `artifact-connection.json` directly.
-- Work Session references: AI may read referenced or archived artifacts via their exact catalog filesystem paths returned in `session.catalog`. Never crawl or recursively scan catalog directories.
-- Instructions file exception: AI is permitted to edit `~/.ai-artifacts/conversation-registry/<sessionId>/instructions.md` when explicitly requested by user. AI must never directly edit `conversation.json`, `layout.json`, or `registered-artifacts/` index files.
 - Write a coherent artifact, not a patch, changelog, task tracker, or progress report.
 
 ## User Custom Rules

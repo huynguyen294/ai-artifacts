@@ -27,7 +27,6 @@ import { formatArtifactKindLabel } from "../shared/artifact-kinds";
 import { SelectionCommentPopover, type SelectionDraft } from "./SelectionCommentPopover";
 import { CommentDetailPopover } from "./CommentDetailPopover";
 import { CommentsDrawer } from "./CommentsDrawer";
-import { ArtifactConnectDialog } from "./ArtifactConnectDialog";
 import { trapFocusInContainer } from "./focus-trap";
 import { deriveReviewActions } from "./review-actions";
 
@@ -120,8 +119,18 @@ function captureSelection(blocks: Map<string, MarkdownBlock>): { draft: Selectio
   };
 }
 
-export function App(): ReactNode {
-  const [state, setState] = useState<ReviewState>();
+export interface ReviewAppProps {
+  initialState?: ReviewState;
+  initialSessionSupport?: {
+    supported: boolean;
+    sessions: ArtifactSessionTarget[];
+  };
+  initialSessionsLoaded?: boolean;
+  initialConnectPromptCopied?: boolean;
+}
+
+export function App(props?: ReviewAppProps): ReactNode {
+  const [state, setState] = useState<ReviewState | undefined>(props?.initialState);
   const [error, setError] = useState<string>();
   const [draft, setDraft] = useState<SelectionDraft | null>(null);
   const [body, setBody] = useState("");
@@ -129,14 +138,14 @@ export function App(): ReactNode {
   const [sessionSupport, setSessionSupport] = useState<{
     supported: boolean;
     sessions: ArtifactSessionTarget[];
-  }>({ supported: false, sessions: [] });
-  const [connectDialogOpen, setConnectDialogOpen] = useState(false);
+  }>(props?.initialSessionSupport ?? { supported: false, sessions: [] });
+  const [sessionsLoaded, setSessionsLoaded] = useState(props?.initialSessionsLoaded ?? false);
   const [activeComment, setActiveComment] = useState<{ id: string; anchor: HTMLElement }>();
   const [sendStatus, setSendStatus] = useState<SendStatus>("idle");
   const [sendMessage, setSendMessage] = useState<string>();
   const [submittingDecision, setSubmittingDecision] = useState<ReviewDecision>();
   const [copied, setCopied] = useState(false);
-  const [connectPromptCopied, setConnectPromptCopied] = useState(false);
+  const [connectPromptCopied, setConnectPromptCopied] = useState(props?.initialConnectPromptCopied ?? false);
   const reviewRoundRef = useRef<number | undefined>(undefined);
   const generalFeedbackButtonRef = useRef<HTMLButtonElement>(null);
   const connectButtonRef = useRef<HTMLButtonElement>(null);
@@ -155,7 +164,6 @@ export function App(): ReactNode {
           setDraft(null);
           setBody("");
           setDrawerOpen(false);
-          setConnectDialogOpen(false);
           setActiveComment(undefined);
           window.getSelection()?.removeAllRanges();
         }
@@ -178,6 +186,7 @@ export function App(): ReactNode {
           supported: message.supported,
           sessions: message.sessions,
         });
+        setSessionsLoaded(true);
       } else if (message.type === "sendState") {
         setSendStatus(message.status);
         setSendMessage(message.message);
@@ -397,14 +406,10 @@ export function App(): ReactNode {
               ref={connectButtonRef}
               className={`icon-button copy-button${connectPromptCopied ? " copied" : ""}`}
               onClick={() => {
-                if (sessionSupport.supported) {
-                  setConnectDialogOpen(true);
-                } else {
-                  vscode.postMessage({ type: "copyArtifactConnectPrompt" });
-                }
+                vscode.postMessage({ type: "copyArtifactConnectPrompt" });
               }}
-              aria-label={connectPromptCopied ? "AI connect prompt copied" : "Copy AI connect prompt"}
-              title={connectPromptCopied ? "Copied!" : "Copy AI connect prompt"}
+              aria-label={connectPromptCopied ? "Inspect prompt copied" : "Inspect artifact"}
+              title={connectPromptCopied ? "Inspect prompt copied" : "Inspect artifact"}
             >
               {connectPromptCopied ? (
                 <svg aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="none">
@@ -462,34 +467,57 @@ export function App(): ReactNode {
 
       <nav className="review-utility-bar" aria-label="Artifact review tools">
         <div className="review-utility-bar-left">
-          <button
-            type="button"
-            className="ghost sessions-toggle"
-            disabled={!sessionSupport.supported}
-            title={
-              !sessionSupport.supported
-                ? "Sessions require MCP server version 12 or higher"
-                : `Open sessions for this artifact (${sessionSupport.sessions.length})`
-            }
-            onClick={() => {
-              vscode.postMessage({ type: "openArtifactSessions" });
-            }}
-          >
-            <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
-              <path fillRule="evenodd" clipRule="evenodd" d="M11.536 2.164a1 1 0 0 1 .928 0l9 4.5a1 1 0 0 1 0 1.79l-9 4.5a1 1 0 0 1-.894 0l-9-4.5a1 1 0 0 1 0-1.79l9-4.5zm.464 1.713L4.472 7.5 12 11.264 19.528 7.5 12 3.877z" />
-              <path fillRule="evenodd" clipRule="evenodd" d="M2.536 10.664a1 1 0 0 1 1.358-.456L12 14.264l8.106-4.056a1 1 0 1 1 .894 1.789l-8.553 4.277a1 1 0 0 1-.894 0l-8.553-4.277a1 1 0 0 1-.464-1.333z" />
-              <path fillRule="evenodd" clipRule="evenodd" d="M2.536 15.664a1 1 0 0 1 1.358-.456L12 19.264l8.106-4.056a1 1 0 1 1 .894 1.789l-8.553 4.277a1 1 0 0 1-.894 0l-8.553-4.277a1 1 0 0 1-.464-1.333z" />
-            </svg>
-            <span>Sessions</span>
-            {sessionSupport.sessions.length > 0 && (
-              <span
-                className="comment-count-badge"
-                aria-label={`${sessionSupport.sessions.length} sessions`}
+          {sessionSupport.supported && sessionsLoaded && sessionSupport.sessions.length === 0 ? (
+            <div className="start-session-container">
+              <button
+                type="button"
+                className="ghost start-work-session-button"
+                title="For ongoing work, keep related artifacts and shared instructions together across agents and chats."
+                onClick={() => {
+                  vscode.postMessage({ type: "startWorkSession" });
+                }}
               >
-                {sessionSupport.sessions.length}
+                <svg aria-hidden="true" width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
+                  <path d="M8 2a.75.75 0 0 1 .75.75v4.5h4.5a.75.75 0 0 1 0 1.5h-4.5v4.5a.75.75 0 0 1-1.5 0v-4.5h-4.5a.75.75 0 0 1 0-1.5h4.5v-4.5A.75.75 0 0 1 8 2Z" />
+                </svg>
+                <span>Start a work session</span>
+              </button>
+              <span className="start-session-helper">
+                For ongoing work, keep related artifacts and shared instructions together across agents and chats.
               </span>
-            )}
-          </button>
+            </div>
+          ) : (
+            <button
+              type="button"
+              className="ghost sessions-toggle"
+              disabled={!sessionSupport.supported || !sessionsLoaded}
+              title={
+                !sessionSupport.supported
+                  ? "Sessions require MCP server version 12 or higher"
+                  : !sessionsLoaded
+                    ? "Loading sessions..."
+                    : `Open sessions for this artifact (${sessionSupport.sessions.length})`
+              }
+              onClick={() => {
+                vscode.postMessage({ type: "openArtifactSessions" });
+              }}
+            >
+              <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                <path fillRule="evenodd" clipRule="evenodd" d="M11.536 2.164a1 1 0 0 1 .928 0l9 4.5a1 1 0 0 1 0 1.79l-9 4.5a1 1 0 0 1-.894 0l-9-4.5a1 1 0 0 1 0-1.79l9-4.5zm.464 1.713L4.472 7.5 12 11.264 19.528 7.5 12 3.877z" />
+                <path fillRule="evenodd" clipRule="evenodd" d="M2.536 10.664a1 1 0 0 1 1.358-.456L12 14.264l8.106-4.056a1 1 0 1 1 .894 1.789l-8.553 4.277a1 1 0 0 1-.894 0l-8.553-4.277a1 1 0 0 1-.464-1.333z" />
+                <path fillRule="evenodd" clipRule="evenodd" d="M2.536 15.664a1 1 0 0 1 1.358-.456L12 19.264l8.106-4.056a1 1 0 1 1 .894 1.789l-8.553 4.277a1 1 0 0 1-.894 0l-8.553-4.277a1 1 0 0 1-.464-1.333z" />
+              </svg>
+              <span>Sessions</span>
+              {sessionSupport.sessions.length > 0 && (
+                <span
+                  className="comment-count-badge"
+                  aria-label={`${sessionSupport.sessions.length} sessions`}
+                >
+                  {sessionSupport.sessions.length}
+                </span>
+              )}
+            </button>
+          )}
         </div>
         <div className="review-utility-bar-right">
           <button
@@ -564,21 +592,6 @@ export function App(): ReactNode {
           onRemove={() => removeComment(selectedComment.id)}
         />
       )}
-      <ArtifactConnectDialog
-        open={connectDialogOpen}
-        sessions={sessionSupport.sessions}
-        onClose={() => {
-          setConnectDialogOpen(false);
-          connectButtonRef.current?.focus();
-        }}
-        onCopy={(options) => {
-          vscode.postMessage({
-            type: "copyArtifactConnectPrompt",
-            mode: options.mode,
-            sessionId: options.mode === "join" ? options.sessionId : undefined,
-          });
-        }}
-      />
       <CommentsDrawer
         open={drawerOpen}
         comments={comments}
@@ -590,3 +603,5 @@ export function App(): ReactNode {
     </div>
   );
 }
+
+export { App as ReviewApp };

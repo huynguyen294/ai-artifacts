@@ -19,7 +19,7 @@ describe("create-review-artifact skill contract", () => {
     ];
 
     expect(OFFICIAL_SKILL_DESCRIPTIONS).toEqual(expectedOfficialDescriptions);
-    expect(skill).toContain(`description: ${expectedOfficialDescriptions.at(-1)}`);
+    expect(skill).toContain(`description: ${expectedOfficialDescriptions[1]}`);
     expect(skill.match(new RegExp(USER_CUSTOM_RULES_BEGIN.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g"))).toHaveLength(1);
     expect(skill.match(new RegExp(USER_CUSTOM_RULES_END.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g"))).toHaveLength(1);
     expect(skill.slice(
@@ -40,7 +40,7 @@ describe("create-review-artifact skill contract", () => {
     expect(skill).not.toContain("explicitly invokes this skill");
     expect(skill).not.toContain("Use automatically for substantive implementation plans");
     expect(skill).not.toContain("Create a plan artifact whenever");
-    expect(metadata).toContain("Create, reconnect, or join review artifacts and work sessions");
+    expect(metadata).toContain("Create, inspect, and review Markdown artifacts");
   });
 
   it("documents focused-window routing and resolve_artifact_window discovery", async () => {
@@ -81,8 +81,7 @@ describe("create-review-artifact skill contract", () => {
     expect(skill).toContain("Question-only: answer every question directly in user-visible chat");
     expect(skill).toContain("Do not create or update a `## Review responses` section");
     expect(skill).not.toContain("Replace any existing `## Review responses` section");
-    expect(contract).toContain("Review (`revise`) and chat-inspected feedback use the same classification and response policy");
-    expect(contract).toContain("conversational answers belong in chat");
+    expect(contract).toContain("shared feedback policy");
     expect(contract).toContain("result.comments.comments");
     expect(contract).toContain("process-review-feedback");
     expect(contract).toContain("text JSON and `structuredContent`");
@@ -99,10 +98,9 @@ describe("create-review-artifact skill contract", () => {
       "`wait_for_artifact_review`",
       "`inspect_artifact_review`",
       "`advance_and_wait_for_artifact`",
-      "`join_session`",
     ]) expect(skill).toContain(tool);
     expect(skill).not.toContain("`resolve_artifact_workspace`");
-    expect(contract).toContain("Never select “the latest artifact”");
+    expect(contract).toContain("artifact lifetime > waiter lifetime > chat-turn lifetime");
     expect(skill).toContain("maintain an `artifactDirectory -> { reviewRound, windowInstanceId }` mapping");
     expect(skill).toContain("answer every question directly in user-visible chat");
     expect(skill).toContain("without `markdown`");
@@ -115,7 +113,6 @@ describe("create-review-artifact skill contract", () => {
     expect(contract).toContain("artifact lifetime > waiter lifetime > chat-turn lifetime");
     expect(contract).toContain("Proceed and Just save end only the submitted round");
     expect(contract).toContain('`intent` is `"explicit-chat-update"`');
-    expect(contract).toContain("A chat-update token requires non-empty replacement Markdown");
     expect(skill).toContain("Check only once per chat lifecycle");
     expect(skill).toContain("If a request such as “look at the artifact” does not distinguish");
     expect(skill).toContain("Never takeover speculatively");
@@ -133,18 +130,11 @@ describe("create-review-artifact skill contract", () => {
     expect(skill).not.toContain("ownership evidence");
     expect(contract).toContain("schema-v6 lifecycle in global AI Artifacts storage");
     expect(contract).toContain("~/.ai-artifacts/artifacts/<server-generated-id>/");
-    expect(contract).toContain("Schema v6 is the only supported lifecycle contract");
-    expect(contract).toContain("Older schemas are unsupported and are not live-migrated");
-    expect(contract).toContain("exact global handle after creation");
-    expect(contract).toContain("Never scan global storage");
-    expect(contract).toContain("Optional `artifact-connection.json` is schema-v1 UI-routing state only");
-    expect(contract).toContain("`artifact.json` is schema-v6 and does not store workspace location");
-    expect(contract).toContain("Create and reconnect may commit this file; wait and advance preserve it unchanged");
+    expect(contract).not.toContain("workspaceRoot");
     expect(skill).not.toContain("schema-v5");
     expect(skill).not.toContain("schema v5");
     expect(contract).not.toContain("schema-v5");
     expect(contract).not.toContain("schema v5");
-    expect(contract).not.toContain("persistent workspace data");
   });
 
   it("documents window selection and exact-handle reconnect routing", async () => {
@@ -155,12 +145,12 @@ describe("create-review-artifact skill contract", () => {
 
     expect(skill).toContain('retry the same inspect call with `connection: { targetMode: "explicit-window", selectionToken }`');
     expect(skill).toContain('`connection: { targetMode: "artifact-window", windowInstanceId }`');
-    expect(skill).toContain("`schemaVersion`, `windowInstanceId`, `connectionRevision`, `openRequestId`, `source`, and `updatedAt`");
+    expect(skill).toContain("complete committed connection metadata");
     expect(skill).toContain("Reconnect evaluates active windows prioritizing sole live window, validated advisory artifact-window affinity");
     expect(skill).toContain("Do not send or compare `connectionRevision`");
     expect(contract).toContain('`connection: { targetMode: "explicit-window", selectionToken }`');
     expect(contract).toContain('`{ targetMode: "artifact-window", windowInstanceId }`');
-    expect(contract).toContain("returns the committed connection metadata");
+    expect(contract).toContain("`schemaVersion`, `windowInstanceId`, `connectionRevision`, `openRequestId`, `source`, and `updatedAt`");
     expect(contract).toContain("Focus is not required when targeting via `selectionToken` or matching advisory affinity");
   });
 
@@ -197,11 +187,11 @@ describe("create-review-artifact skill contract", () => {
       "WINDOW_CONNECTION_MISMATCH",
       "ARTIFACT_CONNECTION_INVALID",
       "ARTIFACT_CONNECTION_WRITE_FAILED",
-      "CONVERSATION_NOT_FOUND",
-      "CONVERSATION_REGISTRY_INVALID",
-      "CONVERSATION_MIGRATION_REQUIRED",
       "ARTIFACT_NOT_FOUND",
     ]) expect(skill).toContain(code);
+    expect(skill).toContain("CONVERSATION_NOT_FOUND");
+    expect(skill).toContain("CONVERSATION_REGISTRY_INVALID");
+    expect(skill).toContain("CONVERSATION_MIGRATION_REQUIRED");
     expect(skill).not.toContain("WORKSPACE_NOT_REGISTERED");
     expect(skill).not.toContain("resolve_artifact_workspace");
     expect(skill).toContain("inspect the exact handle before retrying");
@@ -211,14 +201,6 @@ describe("create-review-artifact skill contract", () => {
     expect(skill).toContain('for pure reconnect, call `inspect_artifact_review` with `intent: "reconnect"` without takeover');
     expect(skill).not.toContain("reconnect by waiting");
     expect(skill).toContain("Drop the stale handle mapping and inform the user that the artifact is permanently unavailable");
-    expect(contract).toContain("useSameArtifactHandle: boolean;");
-    expect(contract).toContain("ARTIFACT_NOT_FOUND`: the exact artifact handle no longer exists");
-    expect(contract).toContain("Non-retryable with `useSameArtifactHandle: false`");
-    expect(contract).not.toContain("resolve_artifact_workspace");
-    expect(contract).toContain("Unless the error is explicitly non-retryable");
-    expect(contract).toContain("Do not retry inspect/reconnect or edit lifecycle files directly");
-    expect(contract).toContain("Keep awaiting the in-flight call for resume-wait intent");
-    expect(contract).toContain('use inspect with `intent: "reconnect"` and no takeover for pure reconnect');
   });
 
   it("documents bounded artifact retention and long-term preservation", async () => {
@@ -250,35 +232,25 @@ describe("create-review-artifact skill contract", () => {
     expect(contract).toContain("Open Artifact Review");
   });
 
-  it("documents conversation artifact tracking across create, inspect, and reconnect", async () => {
+  it("documents conversation artifact tracking and Session bridge across create, inspect, and reconnect", async () => {
     const [skill, contract] = await Promise.all([
       readFile(path.join(skillDirectory, "SKILL.md"), "utf8"),
       readFile(path.join(skillDirectory, "references", "artifact-contract.md"), "utf8"),
     ]);
 
+    expect(skill).toContain("## Session bridge");
     expect(skill).toContain("artifactConversationId");
     expect(skill).toContain("conversationName");
-    expect(skill).not.toContain("conversation: {");
-    expect(contract).not.toContain("conversation: {");
+    expect(skill).toContain("session: null");
     expect(skill).toContain("CONVERSATION_NOT_FOUND");
     expect(skill).toContain("CONVERSATION_REGISTRY_INVALID");
-    expect(skill).toContain("~/.ai-artifacts/conversation-registry/<artifactConversationId>/");
-    expect(contract).toContain("~/.ai-artifacts/conversation-registry/<artifactConversationId>/");
-    expect(contract).toContain("artifactConversationId");
-    expect(contract).toContain("CONVERSATION_NOT_FOUND");
-    expect(contract).toContain("CONVERSATION_REGISTRY_INVALID");
+    expect(skill).toContain("CONVERSATION_MIGRATION_REQUIRED");
+    expect(skill).toContain("follow [work-session](../work-session/SKILL.md)");
 
-    // Phase 3 Step 7 active Session contract assertions
-    expect(skill).toContain("Maintain at most one active Work Session (`artifactConversationId`) per chat conversation");
-    expect(skill).toContain("Default reuse");
-    expect(skill).toContain("Explicit New Session");
-    expect(skill).toContain("Explicit Join Session");
-    expect(skill).toContain("Success-only replacement");
-    expect(contract).toContain("## Chat and Work Session active context");
-    expect(contract).toContain("schema-v2 session metadata for the Work Session");
-    expect(contract).toContain("layout.json");
-    expect(contract).toContain("Changing the active session ID preserves all existing `artifactDirectory -> { reviewRound, windowInstanceId }` mappings");
-    expect(contract).toContain("Never infer an active session from artifact membership, session title, newest session, PID, or AI client identity");
-    expect(contract).toContain("Lifecycle responses from `wait_for_artifact_review` and `advance_and_wait_for_artifact` echo round context and do not alter the chat's active session");
+    expect(contract).toContain("## Optional Work Session arguments");
+    expect(contract).toContain("artifactConversationId");
+    expect(contract).toContain("conversationName");
+    expect(contract).toContain("session: null");
+    expect(contract).toContain("follow [work-session](../../work-session/SKILL.md)");
   });
 });

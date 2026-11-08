@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
   "normalization": "UTF-8 without BOM; normalize CRLF to LF only; do not trim or reword",
-  "createReviewArtifactSkillVersion": 7,
-  "workSessionSkillVersion": 1,
+  "createReviewArtifactSkillVersion": 4,
+  "workSessionSkillVersion": 2,
   "baseline": {
     "skills/create-review-artifact/SKILL.md": "3b8e19b9fd33e3a6b96f98e61b59f080a6c5a56a210fa4e6098b99853994882d",
     "skills/create-review-artifact/references/artifact-contract.md": "3860f60e50ffec4764d45379bc801d5cd72730d911b3bbd76479caccafbb5a7e",
