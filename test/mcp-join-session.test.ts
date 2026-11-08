@@ -455,30 +455,53 @@ describe("join_session MCP tool & proceed directives", () => {
     );
   });
 
-  it("create_artifact and inspect_artifact_review return session: SessionContext matching active session ID", async () => {
+  it("create_artifact and inspect_artifact_review return session: SessionContext matching active session ID, or session: null when standalone", async () => {
     const fixture = await workspaceFixture();
     const client = startClient(fixture.registry);
     await initialize(client);
 
-    const created = await callTool(client, "create_artifact", {
-      title: "Contract Artifact",
+    // 1. Standalone create and inspect (no conversationName, no artifactConversationId)
+    const standaloneCreated = await callTool(client, "create_artifact", {
+      title: "Standalone Contract Artifact",
+      kind: "spec",
+      markdown: "# Standalone Contract\n\nVerifying wire result.\n",
+    });
+
+    expect(standaloneCreated.isError).toBeFalsy();
+    expect(standaloneCreated.structuredContent.session).toBeNull();
+    expect(standaloneCreated.structuredContent.artifactConversationId).toBeUndefined();
+    expect(standaloneCreated.structuredContent.conversationName).toBeUndefined();
+
+    const standaloneInspected = await callTool(client, "inspect_artifact_review", {
+      artifactDirectory: standaloneCreated.structuredContent.artifactDirectory,
+    });
+
+    expect(standaloneInspected.isError).toBeFalsy();
+    expect(standaloneInspected.structuredContent.session).toBeNull();
+    expect(standaloneInspected.structuredContent.artifactConversationId).toBeUndefined();
+    expect(standaloneInspected.structuredContent.conversationName).toBeUndefined();
+
+    // 2. Named Session create and inspect
+    const sessionCreated = await callTool(client, "create_artifact", {
+      title: "Contract Artifact In Session",
       kind: "spec",
       markdown: "# Contract\n\nVerifying wire result.\n",
+      conversationName: "Contract Session Thread",
     });
 
-    expect(created.isError).toBeFalsy();
-    expect(created.structuredContent.session).toBeDefined();
-    expect(created.structuredContent.session.sessionId).toBe(created.structuredContent.artifactConversationId);
-    expect(created.structuredContent.session.catalog.working[0].artifactId).toBe(created.structuredContent.artifactId);
+    expect(sessionCreated.isError).toBeFalsy();
+    expect(sessionCreated.structuredContent.session).toBeDefined();
+    expect(sessionCreated.structuredContent.session.sessionId).toBe(sessionCreated.structuredContent.artifactConversationId);
+    expect(sessionCreated.structuredContent.session.catalog.working[0].artifactId).toBe(sessionCreated.structuredContent.artifactId);
 
-    const inspected = await callTool(client, "inspect_artifact_review", {
-      artifactDirectory: created.structuredContent.artifactDirectory,
-      artifactConversationId: created.structuredContent.artifactConversationId,
+    const sessionInspected = await callTool(client, "inspect_artifact_review", {
+      artifactDirectory: sessionCreated.structuredContent.artifactDirectory,
+      artifactConversationId: sessionCreated.structuredContent.artifactConversationId,
     });
 
-    expect(inspected.isError).toBeFalsy();
-    expect(inspected.structuredContent.session).toBeDefined();
-    expect(inspected.structuredContent.session.sessionId).toBe(created.structuredContent.artifactConversationId);
+    expect(sessionInspected.isError).toBeFalsy();
+    expect(sessionInspected.structuredContent.session).toBeDefined();
+    expect(sessionInspected.structuredContent.session.sessionId).toBe(sessionCreated.structuredContent.artifactConversationId);
   });
 
   it("inspect_artifact_review and join_session do not replay execution directive from past approved snapshot", async () => {
@@ -562,7 +585,7 @@ describe("join_session MCP tool & proceed directives", () => {
     });
   });
 
-  it("rolls back newly created artifact and session on create_artifact when session-types.json is corrupted", async () => {
+  it("permits standalone create when session-types.json is corrupted, but rolls back session creation", async () => {
     const fixture = await workspaceFixture();
     const client = startClient(fixture.registry);
     await initialize(client);
@@ -572,20 +595,33 @@ describe("join_session MCP tool & proceed directives", () => {
     await mkdir(path.dirname(typesPath), { recursive: true });
     await writeFile(typesPath, "{ invalid json", "utf8");
 
-    const result = await callTool(client, "create_artifact", {
+    // 1. Standalone create does NOT touch session-types.json, so it succeeds
+    const standaloneResult = await callTool(client, "create_artifact", {
+      title: "Standalone Immune To Corrupted Types",
+      kind: "spec",
+      markdown: "# Standalone Spec\n",
+    });
+    expect(standaloneResult.isError).toBeFalsy();
+    expect(standaloneResult.structuredContent.session).toBeNull();
+
+    // 1b. Standalone inspect also does NOT touch session-types.json, so it succeeds and returns session: null
+    const standaloneInspect = await callTool(client, "inspect_artifact_review", {
+      artifactDirectory: standaloneResult.structuredContent.artifactDirectory,
+    });
+    expect(standaloneInspect.isError).toBeFalsy();
+    expect(standaloneInspect.structuredContent.session).toBeNull();
+
+    // 2. Named session creation attempts to resolve session context/types, so it fails and rolls back
+    const sessionResult = await callTool(client, "create_artifact", {
       title: "Will Rollback",
       kind: "spec",
       markdown: "# Spec\n",
+      conversationName: "Will Rollback Thread",
     });
 
-    expect(result.isError).toBe(true);
+    expect(sessionResult.isError).toBe(true);
 
-    // Verify artifact directory was rolled back / deleted
-    const artifactsDir = globalArtifactsRoot({ userHome: fixture.userHome });
-    const artifactEntries = await readdir(artifactsDir).catch(() => []);
-    expect(artifactEntries).toEqual([]);
-
-    // Verify session directory was rolled back / deleted
+    // Verify session directory was rolled back / deleted (only standalone artifact remains)
     const convDir = conversationRegistryRoot({ userHome: fixture.userHome });
     const convEntries = await readdir(convDir).catch(() => []);
     expect(convEntries).toEqual([]);

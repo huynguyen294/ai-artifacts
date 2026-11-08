@@ -163,6 +163,7 @@ export async function writeInstalledIntegrationVersion(
   patch: {
     mcpVersion?: number;
     skills?: Partial<InstalledSkillVersions>;
+    sessionSkills?: Partial<InstalledSkillVersions>;
   },
   options: { userHome?: string } = {},
 ): Promise<IntegrationVersionManifest> {
@@ -179,6 +180,14 @@ export async function writeInstalledIntegrationVersion(
       ...(currentManifest?.skills ?? {}),
       ...(patch.skills ?? {}),
     },
+    ...((currentManifest?.sessionSkills !== undefined || patch.sessionSkills !== undefined)
+      ? {
+          sessionSkills: {
+            ...(currentManifest?.sessionSkills ?? {}),
+            ...(patch.sessionSkills ?? {}),
+          },
+        }
+      : {}),
     updatedAt: new Date().toISOString(),
   });
   await writeTextFileAtomic(

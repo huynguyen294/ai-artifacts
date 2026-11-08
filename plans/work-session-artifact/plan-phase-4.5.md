@@ -1,6 +1,6 @@
 # Phase 4.5 — Artifact độc lập và Work Session skill: hướng dẫn triển khai
 
-Trạng thái: **Chưa triển khai — 6 bước / 3 chặng.** Lập ngày **2026-11-07**, trên baseline Phase 4 đã hoàn thành theo checkpoint của phase đó. Lượt này chỉ lập tài liệu và bộ wording mẫu; không thay source, installed skills/runtime hoặc dữ liệu global.
+Trạng thái: **Chặng 1 đã triển khai theo xác nhận của Chú ngày 2026-11-08; tiếp tục Chặng 2 — 6 bước / 3 chặng.** Lập ngày **2026-11-07**, trên baseline Phase 4 đã hoàn thành theo checkpoint của phase đó. Lượt bổ sung README/branding chỉ cập nhật kế hoạch; không review lại implementation Chặng 1 hoặc xác nhận lại tests/runtime.
 
 Nguồn: [plan tổng](plan.md), [Phase 4](plan-phase-4.md), [Phase 5](plan-phase-5.md), [note](note.md) và các quyết định tiếp nối của Chú. Phase 4.5 thay hành vi tự tạo Session và popup Inspect New/Join của các phase trước; không viết lại lịch sử hoàn thành Phase 4.
 
@@ -20,6 +20,8 @@ Nguồn: [plan tổng](plan.md), [Phase 4](plan-phase-4.md), [Phase 5](plan-phas
 [manifest.json](phase-4.5-wording/manifest.json) ghi hash SHA-256 LF của từng file đích và hash baseline skill hiện tại để nhận biết drift. [agent-text.json](phase-4.5-wording/agent-text.json) chốt nguyên văn 24 chuỗi `initialize.instructions`, descriptions cần đổi trong tools/list, hai Connect/Inspect prompt templates và UI wording. Đây là tài liệu đóng băng; **runtime không import từ `plans/`**. Chép chuỗi tương ứng vào source, còn templates chỉ thay các placeholders được chỉ định.
 
 Nếu source baseline thay đổi trước lúc áp dụng, đọc diff của phần đó và giữ thay đổi ngoài phạm vi; không dùng việc drift làm lý do tự viết lại wording mẫu. Nếu wording thật sự cần sửa để khớp API mới, trình Chú nội dung thay đổi trước, rồi mới cập nhật payload/hash. Không sửa tests chỉ để hợp thức hoá wording ngoài payload.
+
+**README/branding — bổ sung Chặng 2:** [readme-branding.md](phase-4.5-wording/readme-branding.md) chốt nguyên văn displayName, package description có clients, README intro, caption GIF và cây Features & Usage. Chỉ đọc khi làm phần docs/branding; không chép lại nội dung vào plan hoặc thay skill payload/manifest. Không đưa phần bổ sung này trở lại Chặng 1 đã triển khai.
 
 ## 2. Phạm vi theo component và ranh giới
 
@@ -154,8 +156,8 @@ Session skill chỉ nạp cho Session entry/related work; standalone artifact kh
 | Chặng | Bước | Kết quả để review |
 | --- | --- | --- |
 | **1 — Contract và MCP** | **1–2** | Đóng băng wording/result/receipt contracts; standalone, named New và reuse S hoạt động qua MCP, review regression giữ nguyên |
-| **2 — UI và skills** | **3–4** | Start từ artifact + Inspect trực tiếp; sáu skill assets chép đúng payload, skill behavior được đối chiếu |
-| **3 — Installer và nghiệm thu** | **5–6** | Hai counter/targets, customize artifact-only, stale/partial install rõ; docs/checks và manual evidence |
+| **2 — UI, skills và README/branding** | **3–4 + phần bổ sung bên dưới** | Start từ artifact + Inspect trực tiếp; sáu skill assets chép đúng payload, skill behavior được đối chiếu; README/metadata theo wording riêng đã chốt |
+| **3 — Installer và nghiệm thu** | **5–6** | Hai counter/targets, customize artifact-only, stale/partial install rõ; hoàn tất docs version/install, checks và manual evidence |
 
 ### Bước 1 — Chốt shared contracts và baseline wording
 
@@ -207,6 +209,24 @@ Session skill chỉ nạp cho Session entry/related work; standalone artifact kh
 
 **Đạt được:** frozen wording khớp chính xác; artifact lifecycle clauses không bị yếu đi; Session skill không biến mỗi từ plan/blueprint thành bắt buộc Join hoặc tự tạo artifact. Static prose/hash checks chỉ chứng minh asset đúng; manual agent check ghi riêng ở Bước 6.
 
+### Bổ sung Chặng 2 — README/branding, sau Bước 3–4
+
+**Files khi triển khai:** `README.md`, `package.json`; chỉ đồng bộ `test/release-contract.test.ts` hoặc assertion metadata khác nếu thay displayName/description thực sự ảnh hưởng tests hiện có. `media/work-session.gif` chờ asset Chú cung cấp; không tự tạo.
+
+Thực hiện theo [spec wording README/branding](phase-4.5-wording/readme-branding.md): tên hiển thị mới, description 274 ký tự giữ clients, intro giữ giá trị review cũ, caption/GIF cuối How It Works, Features & Usage có submenu Contents và hướng dẫn Session/Instructions đúng baseline 4.5. Không đổi định danh extension, không bump version vì branding, không đưa UI Phase 5 vào capability hiện tại. Chặng 3 đối chiếu lại phần install/verify/uninstall/version sau khi assets đã hoàn tất.
+
+**Đạt được:** README giới thiệu rõ review và Multi-Agent Work Sessions, có hướng dẫn Start/Connect/continue/organize/Instructions; wording nguyên văn khớp spec, links đúng, thiếu GIF được ghi rõ thay vì tạo broken image. Không sửa lại output Chặng 1.
+
+**Tiến độ README riêng — 2026-11-08:**
+
+- [x] Đã cập nhật H1/intro/caption nguyên văn, Features & Usage và submenu Contents; giữ hướng dẫn review và thêm Start/Connect, active Session, tổ chức artifacts, Shared Instructions. Sửa mô tả drawer v1/inline Instructions và storage sang Work Session v2.
+- [x] Lượt README chỉ sửa `README.md` và các tài liệu plan liên quan. Không đánh dấu UI/skills của Chặng 2 đã triển khai chỉ từ README.
+- [x] Lượt hoàn tất branding theo yêu cầu tiếp theo của Chú: đã áp dụng `package.json.displayName`/`description` nguyên văn theo spec (2026-11-08); tên khớp README H1, description đủ clients. Giữ nguyên extension ID/version và toàn bộ metadata khác; không sửa source/skill/installer vì branding.
+- [ ] GIF `media/work-session.gif` chờ Chú cung cấp; README hiện chỉ có caption/text, không có image link hỏng.
+- [ ] Chặng 3 cập nhật install/locations/verify/uninstall và version thực tế của hai skills sau khi installer/assets hoàn tất; README hiện giữ thông tin installer/artifact skill đã có. Đối chiếu lại hướng dẫn UI/agent với implementation khi nghiệm thu.
+
+Kiểm chứng lượt README: đối chiếu các đoạn frozen wording, Contents/anchors và relative links/assets, giữ các hướng dẫn lifecycle cũ, `git diff --check` trên phạm vi README/plan. Kiểm chứng branding bổ sung: JSON hợp lệ, displayName/description khớp spec và README, description 274 ký tự, diff package chỉ hai trường hiển thị, metadata định danh/version và lockfile giữ nguyên. Không chạy feature tests/check/build hoặc xác minh Extension Host/AI client cho thay đổi tài liệu/metadata này.
+
 ### Bước 5 — Installer, version, verify và customize artifact-only
 
 **Files:** `workspace-integration.ts`, `mcp-clients/skill-helper.ts`, `mcp-clients/claude-client.ts`, `mcp-clients/index.ts`, `mcp-clients/base-cleanup.ts`, `integration-verification.ts`, `global-integration-status.ts`, contracts/version tests; `.vscodeignore` chỉ sửa nếu package thực sự thiếu assets.
@@ -225,6 +245,8 @@ Session skill chỉ nạp cho Session entry/related work; standalone artifact kh
 
 **Docs:** `README.md`, `docs/INSTRUCTION.md`, `docs/ARCHITECTURE.md`, `docs/PHILOSOPHY.md`, `docs/COMPONENTS.md`, `docs/CHANGE_LOGS.md`, roadmap/note. Chỉ mô tả behavior thật khi code xong; wording skills giữ nguyên payload.
 
+README/branding chính đã chuyển vào phần bổ sung **Chặng 2**, theo spec riêng; Bước 6 chỉ rà tính nhất quán với kết quả cuối phase và hoàn tất docs installer/version, không dời toàn bộ README sang Chặng 3.
+
 - Focused tests mỗi chặng; cuối phase chạy `npm.cmd run check`, `npm.cmd test`, `npm.cmd run build`, `git diff --check`. Ghi pass/skipped đúng thực tế, không đặt số tests mục tiêu theo lịch sử.
 - Chạy skill validator/audit trên hai payload/target folders khi công cụ khả dụng; báo rõ missing dependency nếu không chạy được. Validator không chứng minh agent làm đúng.
 - Manual Extension Host: artifact không membership → Start/input/cancel/create/open/copy; artifact có memberships → Sessions; legacy v1 migration vẫn truy cập được; Inspect copy trực tiếp không popup; errors open/copy giữ đúng ID; sidebar Add/manager Connect và panel/Instructions editing giữ baseline.
@@ -234,8 +256,9 @@ Session skill chỉ nạp cho Session entry/related work; standalone artifact kh
 
 ## 6. Checkpoint tiến độ
 
-- [ ] **Chặng 1:** frozen contract/result/receipt + standalone/New/reuse S MCP, lifecycle regression pass.
-- [ ] **Chặng 2:** Start/open/copy/Inspect trực tiếp; six skill files khớp payload; editorial changes được đối chiếu riêng với feature changes.
+- [x] **Chặng 1:** đã triển khai theo xác nhận của Chú (2026-11-08). Không chạy lại review/tests trong lượt bổ sung plan; bằng chứng implementation/validation giữ ở checkpoint triển khai tương ứng.
+- [ ] **Chặng 2:** Start/open/copy/Inspect trực tiếp; six skill files khớp payload; editorial changes được đối chiếu riêng với feature changes; README/branding theo [spec nguyên văn](phase-4.5-wording/readme-branding.md).
+- [x] **README và package branding của Chặng 2:** đã cập nhật text/structure và displayName/description theo spec (2026-11-08); GIF và docs installer/version còn các mục chờ nêu ở phần bổ sung Chặng 2. Không đồng nghĩa toàn Chặng 2 đã xong.
 - [ ] **Chặng 3:** independent artifact 7 / Session 1, targets/receipt/verify và artifact-only customize; full checks/docs/manual evidence.
 - [ ] Không đổi artifact/session persisted schema, MCP 12, ownership/token/Proceed, Instructions storage hoặc Phase 5 scope.
 - [ ] Skill/source hashes đúng manifest; mọi wording chỉnh thêm phải được Chú duyệt trước khi đổi payload.
@@ -260,4 +283,4 @@ Session skill chỉ nạp cho Session entry/related work; standalone artifact kh
 - Audit `skill-reviewer --platform codex` trên cả hai thư mục mẫu: **PASS, 0 warnings**.
 - `skill-creator/scripts/quick_validate.py` chưa chạy được vì Python thiếu **PyYAML** (`ModuleNotFoundError: No module named 'yaml'`). Không ghi nhận official validator pass. Kiểm tra bổ sung độc lập cho frontmatter, name/description, metadata interface, default prompt và relative links đã pass.
 - Đã đối chiếu **7 hashes** (sáu assets + agent text), **3 baseline skill sources** không đổi, **60 relative links**, **23 đoạn lifecycle artifact giữ nguyên văn**, whitespace và `git diff --check`.
-- Không chạy lại feature tests/check/build chỉ vì ghi tài liệu; không cài skills/runtime hoặc xác minh Extension Host/AI client trong lượt này. Các checklist implementation ở mục 6 vẫn chưa hoàn thành.
+- Khi lập plan ban đầu không chạy lại feature tests/check/build chỉ vì ghi tài liệu; không cài skills/runtime hoặc xác minh Extension Host/AI client. Tiến độ mới nhất theo mục 6; xác nhận Chặng 1 của Chú không phải kết quả kiểm chứng lại trong lượt bổ sung docs.

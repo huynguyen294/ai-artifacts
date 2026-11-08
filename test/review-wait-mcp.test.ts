@@ -187,12 +187,21 @@ async function taggedEvidence(workspace: string): Promise<{ kind: "tagged-file";
 async function createArtifact(
   client: TestClient,
   _workspace?: string,
-  options: { title?: string; kind?: string; markdown?: string; connection?: Record<string, unknown> } = {},
+  options: {
+    title?: string;
+    kind?: string;
+    markdown?: string;
+    connection?: Record<string, unknown>;
+    artifactConversationId?: string;
+    conversationName?: string;
+  } = {},
 ): Promise<Record<string, any>> {
   const args: Record<string, unknown> = {
     title: options.title ?? "MCP bridge",
     kind: options.kind ?? "implementation-plan",
     markdown: options.markdown ?? initialMarkdown,
+    ...(options.artifactConversationId ? { artifactConversationId: options.artifactConversationId } : {}),
+    ...(options.conversationName ? { conversationName: options.conversationName } : {}),
   };
   if (options.connection) {
     args.connection = options.connection;
@@ -2767,6 +2776,7 @@ describe("artifact review MCP server v8", () => {
       title: "Recovered Create With Same Window Token",
       kind: "implementation-plan",
       markdown: initialMarkdown,
+      conversationName: "Recovered Create With Same Window Token",
       connection: {
         targetMode: "explicit-window",
         selectionToken: selected.selectionToken,
@@ -2805,6 +2815,7 @@ describe("artifact review MCP server v8", () => {
       title: "Ambiguous Conversation Plan",
       kind: "plan",
       markdown: "# Plan\n",
+      conversationName: "Ambiguous Conversation Plan",
     });
     expect(ambiguous.isError).toBe(true);
     expect(ambiguous.content[0].text).toContain("WINDOW_SELECTION_REQUIRED");
@@ -2823,6 +2834,7 @@ describe("artifact review MCP server v8", () => {
       title: "Rolled Back Conversation Plan",
       kind: "plan",
       markdown: "# Plan\n",
+      conversationName: "Rolled Back Conversation Plan",
     });
     expect(failedConnection.isError).toBe(true);
     expect(await readdir(fixture.globalRoot)).toEqual([]);
@@ -2905,7 +2917,10 @@ describe("artifact review MCP server v8", () => {
     const client = startClient(fixture.registry);
     await initialize(client);
 
-    const created = await createArtifact(client, fixture.workspace, { title: "Inspect Validation Artifact" });
+    const created = await createArtifact(client, fixture.workspace, {
+      title: "Inspect Validation Artifact",
+      conversationName: "Inspect Validation Session",
+    });
 
     const unknownKey = await callTool(client, "inspect_artifact_review", {
       artifactDirectory: created.artifactDirectory,
@@ -2961,8 +2976,14 @@ describe("artifact review MCP server v8", () => {
     const client = startClient(fixture.registry);
     await initialize(client);
 
-    const first = await createArtifact(client, fixture.workspace, { title: "First Artifact" });
-    const second = await createArtifact(client, fixture.workspace, { title: "Second Artifact" });
+    const first = await createArtifact(client, fixture.workspace, {
+      title: "First Artifact",
+      conversationName: "First Session Thread",
+    });
+    const second = await createArtifact(client, fixture.workspace, {
+      title: "Second Artifact",
+      conversationName: "Second Session Thread",
+    });
     const convRoot = conversationRegistryRoot({ userHome: fixture.userHome });
 
     const firstMembershipPath = conversationRegisteredArtifactPath(
@@ -3106,6 +3127,57 @@ describe("artifact review MCP server v8", () => {
 
     // Verify v1 registered-artifacts was untouched
     expect(await readdir(path.join(v1Dir, "registered-artifacts"))).toHaveLength(0);
+  });
+
+  it("standalone artifact create, inspect, wait, and advance completely isolate from work sessions", async () => {
+    const fixture = await workspaceFixture();
+    const client = startClient(fixture.registry);
+    await initialize(client);
+
+    // 1. Standalone create
+    const created = await callTool(client, "create_artifact", {
+      title: "Pure Standalone Plan",
+      kind: "plan",
+      markdown: "# Standalone\n\nPure standalone behavior.\n",
+    });
+    expect(created.isError).toBeFalsy();
+    expect(created.structuredContent.session).toBeNull();
+    expect(created.structuredContent.artifactConversationId).toBeUndefined();
+    expect(created.structuredContent.conversationName).toBeUndefined();
+
+    // Verify conversation registry directory was NOT created
+    const convRoot = conversationRegistryRoot({ userHome: fixture.userHome });
+    const convEntries = await readdir(convRoot).catch(() => []);
+    expect(convEntries).toEqual([]);
+
+    // 2. Standalone inspect
+    const inspected = await callTool(client, "inspect_artifact_review", {
+      artifactDirectory: created.structuredContent.artifactDirectory,
+    });
+    expect(inspected.isError).toBeFalsy();
+    expect(inspected.structuredContent.session).toBeNull();
+    expect(inspected.structuredContent.artifactConversationId).toBeUndefined();
+    expect(inspected.structuredContent.conversationName).toBeUndefined();
+
+    // 3. Wait on standalone artifact
+    const waiting = callToolTracked(client, "wait_for_artifact_review", {
+      artifactDirectory: created.structuredContent.artifactDirectory,
+      expectedReviewRound: 1,
+    });
+    await waiting.sent;
+
+    // Simulate approval submit
+    const store = new ArtifactStore(created.structuredContent.artifactPath, { userHome: fixture.userHome });
+    await store.submitReview("approve");
+
+    const result = await waiting.promise;
+    expect(result.isError).toBeFalsy();
+    expect(result.structuredContent.nextAction).toMatchObject({ type: "execute-approved-plan" });
+    expect(result.structuredContent.artifactConversationId).toBeUndefined();
+
+    // Conversation registry must remain completely untouched
+    const finalConvEntries = await readdir(convRoot).catch(() => []);
+    expect(finalConvEntries).toEqual([]);
   });
 });
 

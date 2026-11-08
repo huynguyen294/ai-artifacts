@@ -45,6 +45,9 @@ import {
   type ReviewDecision,
   type SessionContext,
   type WorkSession,
+  type CreateArtifactReviewResult,
+  type InspectArtifactReviewResult,
+  type JoinSessionResult,
 } from "../shared/contracts";
 import {
   ARTIFACT_MARKDOWN_FILE,
@@ -658,8 +661,8 @@ async function persistArtifact(
 ): Promise<{
   context: ArtifactContext;
   connection: ArtifactConnection;
-  conversation: WorkSession;
-  session: SessionContext;
+  conversation: WorkSession | undefined;
+  session: SessionContext | null;
 }> {
   const rootOptions = globalRootOptions();
   const collectionRoot = await ensureSafeGlobalArtifactsRoot(rootOptions);
@@ -713,7 +716,8 @@ async function persistArtifact(
         throw new ConversationRegistryError("Injected conversation registration failure.");
       }
 
-      let conversation: WorkSession;
+      let conversation: WorkSession | undefined;
+      let session: SessionContext | null = null;
       if (input.artifactConversationId) {
         await preflightConversationVersion(input.artifactConversationId, rootOptions);
         const reg = await registerArtifactInSession(input.artifactConversationId, artifactId, {
@@ -722,10 +726,11 @@ async function persistArtifact(
         });
         registeredInExistingConversationId = input.artifactConversationId;
         conversation = reg.session;
-      } else {
+        session = await resolveWorkSessionContext(conversation.sessionId, rootOptions);
+      } else if (input.conversationName) {
         const created = await createSession({
           ...rootOptions,
-          title: input.conversationName ?? input.title,
+          title: input.conversationName,
           createdAt,
         });
         createdConversationId = created.sessionId;
@@ -734,9 +739,11 @@ async function persistArtifact(
           registeredAt: createdAt,
         });
         conversation = reg.session;
+        session = await resolveWorkSessionContext(conversation.sessionId, rootOptions);
+      } else {
+        conversation = undefined;
+        session = null;
       }
-
-      const session = await resolveWorkSessionContext(conversation.sessionId, rootOptions);
 
       if (process.env.NODE_ENV === "test" && process.env.CODEX_ARTIFACTS_TEST_FAIL_CREATE === "at-connection") {
         throw new Error("Injected connection write failure.");
@@ -799,8 +806,8 @@ async function preflightConversationVersion(
 async function createArtifact(args: JsonObject | undefined): Promise<{
   context: ArtifactContext;
   connection: ArtifactConnection;
-  conversation: WorkSession;
-  session: SessionContext;
+  conversation: WorkSession | undefined;
+  session: SessionContext | null;
 }> {
   const input = parseCreateArguments(args);
   if (input.artifactConversationId) {
@@ -1455,11 +1462,26 @@ function toolError(error: unknown): JsonObject {
   };
 }
 
+type BaseArtifactHandle = {
+  artifactDirectory: string;
+  artifactId: string;
+  artifactPath: string;
+  artifactUrl: string;
+  artifactLink: string;
+  reviewSessionId: string;
+  reviewRound: number;
+  artifactSha256: string;
+  kind: string;
+  artifactConversationId?: string | undefined;
+  conversationName?: string | undefined;
+  connection?: ArtifactConnection | undefined;
+};
+
 function artifactHandle(
   context: ArtifactContext,
   connection?: ArtifactConnection,
   conversation?: ArtifactConversationMetadata | WorkSession,
-): JsonObject {
+): BaseArtifactHandle {
   const artifactUrl = toArtifactFileUrl(context.artifactPath);
   const artifactLink = formatArtifactLink(context.manifest.title, artifactUrl);
   const convId = conversation
@@ -1485,7 +1507,7 @@ function artifactHandle(
     ...(convId
       ? {
           artifactConversationId: convId,
-          conversationName: convName,
+          ...(convName !== undefined ? { conversationName: convName } : {}),
         }
       : {}),
     ...(connection
@@ -1548,7 +1570,20 @@ async function handleResolveWindowTool(id: unknown, args: JsonObject | undefined
 async function handleCreateTool(id: unknown, args: JsonObject | undefined): Promise<void> {
   try {
     const { context, connection, conversation, session } = await createArtifact(args);
-    respond(id, toolResult({ ...artifactHandle(context, connection, conversation), session }));
+    const baseHandle = artifactHandle(context, connection, conversation);
+    const result: CreateArtifactReviewResult =
+      session !== null && conversation !== undefined
+        ? {
+            ...baseHandle,
+            artifactConversationId: conversation.sessionId,
+            ...(baseHandle.conversationName !== undefined ? { conversationName: baseHandle.conversationName } : {}),
+            session,
+          }
+        : {
+            ...baseHandle,
+            session: null,
+          };
+    respond(id, toolResult(result));
   } catch (error) {
     respond(
       id,
@@ -1657,8 +1692,8 @@ type InspectCoreInput = {
 type InspectCoreResult = {
   context: ArtifactContext;
   inspection: ArtifactInspectionRaw;
-  session: WorkSession;
-  sessionContext: SessionContext;
+  session: WorkSession | undefined;
+  sessionContext: SessionContext | null;
   connection: ArtifactConnection | null;
   roundToken?: string | undefined;
   roundTokenSource?: "chat-inspection" | "chat-update" | "submitted-review" | undefined;
@@ -1751,7 +1786,8 @@ async function executeInspectCore(input: InspectCoreInput): Promise<InspectCoreR
   let createdInspectConversationId: string | undefined;
   let existingInspectConversationId: string | undefined;
   let previousMembershipRegisteredAt: string | undefined;
-  let session: WorkSession;
+  let session: WorkSession | undefined;
+  let sessionContext: SessionContext | null = null;
   if (input.artifactConversationId) {
     existingInspectConversationId = input.artifactConversationId;
     const reg = await registerArtifactInSession(
@@ -1761,26 +1797,42 @@ async function executeInspectCore(input: InspectCoreInput): Promise<InspectCoreR
     );
     previousMembershipRegisteredAt = reg.previousRegisteredAt;
     session = reg.session;
-  } else {
+    try {
+      sessionContext = await resolveWorkSessionContext(session.sessionId, rootOptions);
+    } catch (error) {
+      if (previousMembershipRegisteredAt !== undefined) {
+        await registerArtifactInSession(existingInspectConversationId, context.artifactId, {
+          ...rootOptions,
+          registeredAt: previousMembershipRegisteredAt,
+        }).catch(() => undefined);
+      } else {
+        await removeArtifactFromSession(existingInspectConversationId, context.artifactId, rootOptions).catch(
+          () => undefined,
+        );
+      }
+      throw error;
+    }
+  } else if (input.conversationName) {
     const created = await createSession({
       ...rootOptions,
-      title: input.conversationName ?? context.manifest.title,
+      title: input.conversationName,
     });
     createdInspectConversationId = created.sessionId;
     try {
       const reg = await registerArtifactInSession(created.sessionId, context.artifactId, rootOptions);
       session = reg.session;
+      sessionContext = await resolveWorkSessionContext(session.sessionId, rootOptions);
     } catch (error) {
       await removeConversation(created.sessionId, rootOptions).catch(() => undefined);
       throw error;
     }
+  } else {
+    session = undefined;
+    sessionContext = null;
   }
 
-  let sessionContext: SessionContext;
   let connection: ArtifactConnection | null = null;
   try {
-    sessionContext = await resolveWorkSessionContext(session.sessionId, rootOptions);
-
     if (intent === "reconnect" && targetReconnectWindow) {
       if (
         process.env.NODE_ENV === "test" &&
@@ -1895,21 +1947,40 @@ async function handleInspectTool(id: unknown, args: JsonObject | undefined): Pro
         expectedNextTool: INSPECT_TOOL_NAME,
       });
 
-    respond(
-      id,
-      toolResult({
-        ...artifactHandle(context, connection ?? undefined, session),
-        manifest: context.manifest,
-        markdown: inspection.markdown,
-        comments: inspection.comments,
-        commentsSha256: inspection.commentsSha256,
-        submission: inspection.submission,
-        submissionSha256: inspection.submissionSha256,
-        roundToken,
-        ...(roundTokenSource ? { roundTokenSource } : {}),
-        session: sessionContext,
-      }),
-    );
+    const baseHandle = artifactHandle(context, connection ?? undefined, session);
+    const validRoundTokenSource =
+      roundTokenSource === "chat-inspection" || roundTokenSource === "chat-update"
+        ? roundTokenSource
+        : undefined;
+    const result: InspectArtifactReviewResult =
+      sessionContext !== null && session !== undefined
+        ? {
+            ...baseHandle,
+            artifactConversationId: session.sessionId,
+            ...(baseHandle.conversationName !== undefined ? { conversationName: baseHandle.conversationName } : {}),
+            manifest: context.manifest,
+            markdown: inspection.markdown,
+            comments: inspection.comments,
+            commentsSha256: inspection.commentsSha256,
+            ...(inspection.submission !== undefined ? { submission: inspection.submission } : {}),
+            ...(inspection.submissionSha256 !== undefined ? { submissionSha256: inspection.submissionSha256 } : {}),
+            ...(roundToken !== undefined ? { roundToken } : {}),
+            ...(validRoundTokenSource !== undefined ? { roundTokenSource: validRoundTokenSource } : {}),
+            session: sessionContext,
+          }
+        : {
+            ...baseHandle,
+            manifest: context.manifest,
+            markdown: inspection.markdown,
+            comments: inspection.comments,
+            commentsSha256: inspection.commentsSha256,
+            ...(inspection.submission !== undefined ? { submission: inspection.submission } : {}),
+            ...(inspection.submissionSha256 !== undefined ? { submissionSha256: inspection.submissionSha256 } : {}),
+            ...(roundToken !== undefined ? { roundToken } : {}),
+            ...(validRoundTokenSource !== undefined ? { roundTokenSource: validRoundTokenSource } : {}),
+            session: null,
+          };
+    respond(id, toolResult(result));
   } catch (error) {
     respond(id, toolError(asLifecycleRecoveryError(error, { entryTool: INSPECT_TOOL_NAME, hasArtifactHandle: true })));
   }
@@ -1944,12 +2015,10 @@ async function handleJoinSessionTool(id: unknown, args: JsonObject | undefined):
         throw error;
       }
       const sessionContext = await resolveWorkSessionContext(sessionId, rootOptions);
-      respond(
-        id,
-        toolResult({
-          session: sessionContext,
-        }),
-      );
+      const result: JoinSessionResult = {
+        session: sessionContext,
+      };
+      respond(id, toolResult(result));
       return;
     }
 
@@ -2003,23 +2072,28 @@ async function handleJoinSessionTool(id: unknown, args: JsonObject | undefined):
         expectedNextTool: JOIN_SESSION_TOOL_NAME,
       });
 
-    respond(
-      id,
-      toolResult({
-        session: sessionContext,
-        inspection: {
-          ...artifactHandle(context, connection ?? undefined, session),
-          manifest: context.manifest,
-          markdown: inspection.markdown,
-          comments: inspection.comments,
-          commentsSha256: inspection.commentsSha256,
-          submission: inspection.submission,
-          submissionSha256: inspection.submissionSha256,
-          roundToken,
-          ...(roundTokenSource ? { roundTokenSource } : {}),
-        },
-      }),
-    );
+    const baseHandle = artifactHandle(context, connection ?? undefined, session);
+    const validRoundTokenSource =
+      roundTokenSource === "chat-inspection" || roundTokenSource === "chat-update"
+        ? roundTokenSource
+        : undefined;
+    const result: JoinSessionResult = {
+      session: sessionContext!,
+      inspection: {
+        ...baseHandle,
+        artifactConversationId: session!.sessionId,
+        ...(baseHandle.conversationName !== undefined ? { conversationName: baseHandle.conversationName } : {}),
+        manifest: context.manifest,
+        markdown: inspection.markdown,
+        comments: inspection.comments,
+        commentsSha256: inspection.commentsSha256,
+        ...(inspection.submission !== undefined ? { submission: inspection.submission } : {}),
+        ...(inspection.submissionSha256 !== undefined ? { submissionSha256: inspection.submissionSha256 } : {}),
+        ...(roundToken !== undefined ? { roundToken } : {}),
+        ...(validRoundTokenSource !== undefined ? { roundTokenSource: validRoundTokenSource } : {}),
+      },
+    };
+    respond(id, toolResult(result));
   } catch (error) {
     respond(
       id,
@@ -2244,9 +2318,9 @@ async function handleRequest(message: JsonObject): Promise<void> {
         "When multiple windows exist and none or multiple are focused, create_artifact returns WINDOW_SELECTION_REQUIRED with candidates and single-use selection tokens.",
         "To query windows or inspect active candidates, call resolve_artifact_window.",
         "Pass connection: { targetMode: 'explicit-window', selectionToken } when targeting a specific candidate, or connection: { targetMode: 'artifact-window', windowInstanceId } to inspect_artifact_review (intent=reconnect) as an advisory affinity hint.",
-        "Create returns the exact artifactDirectory, artifactConversationId, and committed connection metadata; retain them and pass artifactConversationId to subsequent create_artifact and inspect_artifact_review calls in the same chat session, then call wait_for_artifact_review.",
-        "When inspecting an artifact from a new chat session without an active artifactConversationId, omit artifactConversationId so inspect_artifact_review creates a new conversation and registers the artifact.",
-        "To join an existing work session, call join_session with sessionId; supply artifactId to inspect and attach an artifact to that session.",
+        "Create returns the exact artifactDirectory, reviewRound, and committed connection metadata; retain them and call wait_for_artifact_review. A non-null Work Session context is returned only when a Session is selected or explicitly created.",
+        "Create and inspect without artifactConversationId or conversationName are standalone and return session: null without creating or registering a Work Session. While a chat has an active Session, pass its ID unless the user explicitly requests standalone; a name without an ID explicitly creates a new Session.",
+        "Use the work-session skill to join or refresh an exact Session with join_session and sessionId; supply artifactId only when the request also calls for artifact inspection and registration in that Session.",
         "A cancelled waiter never ends or deletes the artifact.",
         "Both wait_for_artifact_review and advance_and_wait_for_artifact return the complete validated comments document for every submitted decision; read feedback from comments.comments. A revise result also returns nextAction.type=process-review-feedback and a one-time roundToken so feedback can be processed without an additional inspection just to fetch comments.",
         "Treat comments returned by a Review submission and comments read through inspect_artifact_review with the same policy: answer questions visibly in chat before calling advance_and_wait_for_artifact, update Markdown only for requested changes, omit markdown for question-only feedback, and ask for clarification without consuming the token when needed.",
@@ -2297,7 +2371,7 @@ async function handleRequest(message: JsonObject): Promise<void> {
           name: CREATE_TOOL_NAME,
           title: "Create artifact",
           description:
-            "Create a secure schema-v6 Markdown artifact in global AI Artifacts storage, register it in a new or existing logical conversation, atomically commit its schema-v1 window-routing connection (routing to the focused VS Code window by default, or an explicit candidate via selectionToken), and return the exact persistent handle, artifactConversationId, and connection metadata without waiting.",
+            "Create a secure schema-v6 Markdown artifact in global AI Artifacts storage, optionally register it in an explicitly selected or newly requested Work Session, atomically commit its schema-v1 window-routing connection (routing to the focused VS Code window by default, or an explicit candidate via selectionToken), and return the exact persistent handle, nullable session context, and connection metadata without waiting.",
           inputSchema: {
             type: "object",
             properties: {
@@ -2308,14 +2382,14 @@ async function handleRequest(message: JsonObject): Promise<void> {
                 type: "string",
                 format: "uuid",
                 description:
-                  "Optional active conversation UUID for the current chat session. Omit for the first artifact in a chat to create a new conversation.",
+                  "Optional exact Work Session UUID. Registers or refreshes the artifact in that Session. Omit this and conversationName for standalone behavior. If both are supplied, this ID takes precedence.",
               },
               conversationName: {
                 type: "string",
                 minLength: 1,
                 maxLength: 200,
                 description:
-                  "Optional human-readable conversation name when creating a new conversation. Defaults to the artifact title.",
+                  "Explicit name for a new Work Session when artifactConversationId is omitted. Omit both Session arguments for standalone behavior; omission does not create a Session.",
               },
               connection: {
                 type: "object",
@@ -2364,7 +2438,7 @@ async function handleRequest(message: JsonObject): Promise<void> {
           name: INSPECT_TOOL_NAME,
           title: "Inspect artifact review",
           description:
-            "Read the current manifest, Markdown, comments, optional submission, connection metadata, and validated hashes for an exact artifact, and register/update its membership in the active or newly created conversation. With intent=reconnect, re-evaluate and atomically bind an active VS Code window (sole live window, validated artifact-window affinity, unique focused window, or explicit via connection.selectionToken). Takeover first cancels and drains its current waiter. Returns a one-time round token when saved feedback is present or when intent is explicit-chat-update.",
+            "Read the current manifest, Markdown, comments, optional submission, connection metadata, and validated hashes for an exact artifact. Session registration occurs only when artifactConversationId or conversationName is supplied; omission is standalone. With intent=reconnect, re-evaluate and atomically bind an active VS Code window (sole live window, validated artifact-window affinity, unique focused window, or explicit via connection.selectionToken). Takeover first cancels and drains its current waiter. Returns a one-time round token when saved feedback is present or when intent is explicit-chat-update.",
           inputSchema: {
             type: "object",
             properties: {
@@ -2385,14 +2459,14 @@ async function handleRequest(message: JsonObject): Promise<void> {
                 type: "string",
                 format: "uuid",
                 description:
-                  "Optional active conversation UUID for the current chat session. Omit when inspecting from a new chat session to create a new conversation and register this artifact.",
+                  "Optional exact Work Session UUID. Registers or refreshes the artifact in that Session. Omit this and conversationName for standalone behavior. If both are supplied, this ID takes precedence.",
               },
               conversationName: {
                 type: "string",
                 minLength: 1,
                 maxLength: 200,
                 description:
-                  "Optional human-readable conversation name when creating a new conversation from inspect. Defaults to the artifact title.",
+                  "Explicit name for a new Work Session when artifactConversationId is omitted. Omit both Session arguments for standalone behavior; omission does not create a Session.",
               },
               connection: {
                 description:

@@ -371,9 +371,11 @@ describe("Workspace Integration Asset Verifiers", () => {
     await writeInstalledIntegrationVersion({
       mcpVersion: MCP_VERSION,
       skills: { agents: SKILL_VERSION },
+      sessionSkills: { agents: 1 },
     }, { userHome: targetDir });
     await writeInstalledIntegrationVersion({
       skills: { claude: SKILL_VERSION },
+      sessionSkills: { claude: 1 },
     }, { userHome: targetDir });
     const complete = await readInstalledIntegrationVersion({ userHome: targetDir });
     expect(complete).toMatchObject({
@@ -381,6 +383,7 @@ describe("Workspace Integration Asset Verifiers", () => {
       manifest: {
         mcpVersion: MCP_VERSION,
         skills: { agents: SKILL_VERSION, claude: SKILL_VERSION },
+        sessionSkills: { agents: 1, claude: 1 },
       },
     });
 

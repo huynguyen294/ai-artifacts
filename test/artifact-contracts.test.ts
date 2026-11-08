@@ -7,9 +7,11 @@ import {
   ARTIFACT_ROOT_BLOCK_TYPE,
   ARTIFACT_ROOT_TEXT,
   ARTIFACT_SCHEMA_VERSION,
+  CREATE_REVIEW_ARTIFACT_SKILL_VERSION,
   INTEGRATION_VERSION_SCHEMA_VERSION,
   MCP_VERSION,
   SKILL_VERSION,
+  WORK_SESSION_SKILL_VERSION,
   artifactConnectionSchema,
   artifactManifestSchema,
   commentsDocumentSchema,
@@ -198,10 +200,27 @@ describe("artifact schema v6 contract", () => {
 describe("integration version receipt schema v1 contract", () => {
   it("locks numeric bundled versions and accepts complete or partial receipts", () => {
     expect(MCP_VERSION).toBe(12);
+    expect(CREATE_REVIEW_ARTIFACT_SKILL_VERSION).toBe(7);
+    expect(WORK_SESSION_SKILL_VERSION).toBe(1);
     expect(SKILL_VERSION).toBe(6);
     expect(INTEGRATION_VERSION_SCHEMA_VERSION).toBe(1);
 
-    const completeReceipt = {
+    const completeReceiptWithSession = {
+      schemaVersion: INTEGRATION_VERSION_SCHEMA_VERSION,
+      mcpVersion: MCP_VERSION,
+      skills: {
+        agents: CREATE_REVIEW_ARTIFACT_SKILL_VERSION,
+        claude: CREATE_REVIEW_ARTIFACT_SKILL_VERSION,
+      },
+      sessionSkills: {
+        agents: WORK_SESSION_SKILL_VERSION,
+        claude: WORK_SESSION_SKILL_VERSION,
+      },
+      updatedAt: timestamp,
+    };
+    expect(integrationVersionManifestSchema.parse(completeReceiptWithSession)).toEqual(completeReceiptWithSession);
+
+    const legacyReceiptWithoutSession = {
       schemaVersion: INTEGRATION_VERSION_SCHEMA_VERSION,
       mcpVersion: MCP_VERSION,
       skills: {
@@ -210,11 +229,12 @@ describe("integration version receipt schema v1 contract", () => {
       },
       updatedAt: timestamp,
     };
-    expect(integrationVersionManifestSchema.parse(completeReceipt)).toEqual(completeReceipt);
+    expect(integrationVersionManifestSchema.parse(legacyReceiptWithoutSession)).toEqual(legacyReceiptWithoutSession);
 
     const partialReceipt = {
       schemaVersion: INTEGRATION_VERSION_SCHEMA_VERSION,
       skills: { agents: SKILL_VERSION },
+      sessionSkills: { agents: WORK_SESSION_SKILL_VERSION },
       updatedAt: timestamp,
     };
     expect(integrationVersionManifestSchema.parse(partialReceipt)).toEqual(partialReceipt);
@@ -575,5 +595,47 @@ describe("artifact conversation schema v1 contract", () => {
         type: "unknownAction",
       }),
     ).toThrow();
+  });
+
+  it("enforces standalone vs session-linked discrimination on CreateArtifactReviewResult and InspectArtifactReviewResult", () => {
+    const standaloneResult: contracts.CreateArtifactReviewResult = {
+      artifactDirectory: "d:/workspace/artifacts/test",
+      artifactId: "test-001",
+      artifactPath: "d:/workspace/artifacts/test/artifact.md",
+      artifactUrl: "file:///d:/workspace/artifacts/test/artifact.md",
+      artifactLink: "[Test](file:///d:/workspace/artifacts/test/artifact.md)",
+      reviewSessionId: "11111111-1111-4111-8111-111111111111",
+      reviewRound: 1,
+      artifactSha256: "a".repeat(64),
+      kind: "plan",
+      session: null,
+    };
+
+    expect(standaloneResult.session).toBeNull();
+    if (standaloneResult.session === null) {
+      expect("artifactConversationId" in standaloneResult).toBe(false);
+    }
+
+    const inspectionResult: contracts.InspectArtifactReviewResult = {
+      artifactDirectory: "d:/workspace/artifacts/test",
+      artifactId: "test-001",
+      artifactPath: "d:/workspace/artifacts/test/artifact.md",
+      artifactUrl: "file:///d:/workspace/artifacts/test/artifact.md",
+      artifactLink: "[Test](file:///d:/workspace/artifacts/test/artifact.md)",
+      reviewSessionId: "11111111-1111-4111-8111-111111111111",
+      reviewRound: 1,
+      artifactSha256: "a".repeat(64),
+      kind: "plan",
+      manifest: manifest() as any,
+      markdown: "# Test\n",
+      comments: comments() as any,
+      commentsSha256: "b".repeat(64),
+      roundToken: "token-123",
+      roundTokenSource: "chat-inspection",
+      session: null,
+    };
+
+    expect(inspectionResult.roundTokenSource).toBe("chat-inspection");
+    expect(inspectionResult.session).toBeNull();
   });
 });

@@ -14,6 +14,12 @@ Minor typos, formatting fixes, or cosmetic wording adjustments that do not chang
 
 Each entry includes the date, category, summary of changes, rationale, and affected components or files.
 
+## 2026-11-08 — Phase 4.5 Stage 2 README and branding specification
+
+- Added `plans/work-session-artifact/phase-4.5-wording/readme-branding.md` with approved verbatim display name, package description retaining supported clients, README introduction, Work Session GIF caption, and Features & Usage contents structure.
+- Scheduled this documentation/metadata work in Stage 2 after its UI/skill steps; Stage 3 retains final installer/version documentation verification. Existing skill payloads and hashes are unchanged.
+- Recorded Stage 1 completion as owner-confirmed; no implementation review, tests, runtime validation, README/package edits, or GIF creation was performed in this planning update.
+
 ## 2026-11-07 — Phase 4.5 implementation guide and frozen skill wording
 
 - Added `plans/work-session-artifact/plan-phase-4.5.md`: six steps in three stages for standalone artifacts, explicit Session creation/reuse, direct artifact Inspect, Start Session with open/copy, separate skills, independent version receipts, and validation. Phase 5 remains separate and follows the 4.5 baseline.

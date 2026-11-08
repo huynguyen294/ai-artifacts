@@ -9,6 +9,8 @@ export const SESSION_TYPES_SCHEMA_VERSION = 1 as const;
 export const DEFAULT_SESSION_TYPE_ID = "conversation" as const;
 export const INTEGRATION_VERSION_SCHEMA_VERSION = 1 as const;
 export const MCP_VERSION = 12 as const;
+export const CREATE_REVIEW_ARTIFACT_SKILL_VERSION = 7 as const;
+export const WORK_SESSION_SKILL_VERSION = 1 as const;
 export const SKILL_VERSION = 6 as const;
 export const ARTIFACT_ROOT_BLOCK_ID = "__artifact_root__" as const;
 export const ARTIFACT_ROOT_BLOCK_TYPE = "artifact" as const;
@@ -27,6 +29,7 @@ export const integrationVersionManifestSchema = z
     schemaVersion: z.literal(INTEGRATION_VERSION_SCHEMA_VERSION),
     mcpVersion: z.number().int().positive().optional(),
     skills: installedSkillVersionsSchema,
+    sessionSkills: installedSkillVersionsSchema.optional(),
     updatedAt: z.string().datetime(),
   })
   .strict();
@@ -647,3 +650,94 @@ export type SessionExtensionToWebviewMessage =
       message: string;
     }
   | { type: "error"; message: string };
+
+export type StandaloneArtifactHandleResult = {
+  artifactDirectory: string;
+  artifactId: string;
+  artifactPath: string;
+  artifactUrl: string;
+  artifactLink: string;
+  reviewSessionId: string;
+  reviewRound: number;
+  artifactSha256: string;
+  kind: string;
+  connection?: ArtifactConnection | undefined;
+  session: null;
+};
+
+export type SessionArtifactHandleResult = {
+  artifactDirectory: string;
+  artifactId: string;
+  artifactPath: string;
+  artifactUrl: string;
+  artifactLink: string;
+  reviewSessionId: string;
+  reviewRound: number;
+  artifactSha256: string;
+  kind: string;
+  artifactConversationId: string;
+  conversationName?: string | undefined;
+  session: SessionContext;
+  connection?: ArtifactConnection | undefined;
+};
+
+export type CreateArtifactReviewResult = StandaloneArtifactHandleResult | SessionArtifactHandleResult;
+
+export type StandaloneArtifactInspectionResult = {
+  artifactDirectory: string;
+  artifactId: string;
+  artifactPath: string;
+  artifactUrl: string;
+  artifactLink: string;
+  reviewSessionId: string;
+  reviewRound: number;
+  artifactSha256: string;
+  kind: string;
+  manifest: ArtifactManifest;
+  markdown: string;
+  comments: CommentsDocument;
+  commentsSha256: string;
+  submission?: ReviewSubmission | undefined;
+  submissionSha256?: string | undefined;
+  roundToken?: string | undefined;
+  roundTokenSource?: "chat-inspection" | "chat-update" | undefined;
+  connection?: ArtifactConnection | undefined;
+  session: null;
+};
+
+export type SessionArtifactInspectionResult = {
+  artifactDirectory: string;
+  artifactId: string;
+  artifactPath: string;
+  artifactUrl: string;
+  artifactLink: string;
+  reviewSessionId: string;
+  reviewRound: number;
+  artifactSha256: string;
+  kind: string;
+  artifactConversationId: string;
+  conversationName?: string | undefined;
+  manifest: ArtifactManifest;
+  markdown: string;
+  comments: CommentsDocument;
+  commentsSha256: string;
+  submission?: ReviewSubmission | undefined;
+  submissionSha256?: string | undefined;
+  roundToken?: string | undefined;
+  roundTokenSource?: "chat-inspection" | "chat-update" | undefined;
+  connection?: ArtifactConnection | undefined;
+  session: SessionContext;
+};
+
+export type InspectArtifactReviewResult = StandaloneArtifactInspectionResult | SessionArtifactInspectionResult;
+
+export type JoinSessionOnlyResult = {
+  session: SessionContext;
+};
+
+export type JoinSessionWithArtifactResult = {
+  session: SessionContext;
+  inspection: Omit<SessionArtifactInspectionResult, "session">;
+};
+
+export type JoinSessionResult = JoinSessionOnlyResult | JoinSessionWithArtifactResult;
