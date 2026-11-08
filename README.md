@@ -282,8 +282,10 @@ For related work, the Session skill reads the latest shared instructions and rel
 4. Select a session to open the Session Manager. Rename it or change/quick-create its **Session Type** independently of artifact kinds.
 5. Click **＋** beside **Working** to choose an existing artifact from a Quick Pick. The selected artifact is added to the end of Working; it can belong to more than one session.
 6. Use artifact menus to move items between **Working**, **References**, and **Archived**, reorder them with **Move Up** / **Move Down**, or **Remove from session** without deleting the artifact itself.
+7. Use the in-session filter bar to search artifacts by title or filter by artifact kind across all zones. Cards display title, kind badge, a 2-line description snippet, and updatedAt timestamp.
+8. Use the More (`⋯`) menu in the Session Manager header to **Export** the session to a `.zip` archive containing `Instructions.md` and organized folders (`Working/`, `References/`, `Archived/`) with numbered Markdown files, or to **Archive** or **Delete** the session.
 
-Working occupies the main column. References and Archived appear in the collapsible side panel, whose visibility is remembered separately for each session. Archived is a layout zone within the session; it does not change the artifact’s global retention period.
+Working occupies the main column with a responsive grid layout. References and Archived appear in the collapsible side panel (fixed 2 columns), whose visibility is remembered separately for each session. The in-session Archived zone is a layout zone within the session; it differs from global artifact archiving. Global session archives are automatically pruned after 30 days of archiving.
 
 ### Shared Instructions
 

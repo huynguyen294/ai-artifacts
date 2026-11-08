@@ -16,7 +16,7 @@ import {
   type GlobalArtifactsRootOptions,
 } from "./artifact-files";
 import {
-  assertGlobalArtifactDirectory,
+  ensureSafeGlobalArtifactDirectory,
   ensureSafeManagedArtifactFile,
   parseArtifactManifest,
 } from "./artifact-validation";
@@ -49,15 +49,8 @@ export async function resolveWorkSessionContext(
 
   async function resolveCatalogItem(artifactId: string): Promise<SessionCatalogItem> {
     try {
-      const artifactDirectory = path.join(collectionRoot, artifactId);
-      assertGlobalArtifactDirectory(artifactId, artifactDirectory, options);
-
-      const dirStat = await fs.lstat(artifactDirectory);
-      if (dirStat.isSymbolicLink() || !dirStat.isDirectory()) {
-        throw new Error("Artifact path must be a regular directory, not a symlink.");
-      }
-
-      const canonicalDir = await fs.realpath(artifactDirectory);
+      const candidateDir = path.join(collectionRoot, artifactId);
+      const canonicalDir = await ensureSafeGlobalArtifactDirectory(artifactId, candidateDir, options);
       const manifestPath = await ensureSafeManagedArtifactFile(
         canonicalDir,
         path.join(canonicalDir, ARTIFACT_MANIFEST_FILE),

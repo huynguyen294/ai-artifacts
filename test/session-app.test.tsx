@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { WorkSessionViewData } from "../src/shared/contracts";
 import {
   createInitialSessionManagerState,
+  formatArtifactDate,
   SessionApp,
   sessionManagerReducer,
 } from "../src/webview/SessionApp";
@@ -537,6 +538,107 @@ describe("SessionApp Webview Component (Phase 3)", () => {
 
       handleMenuAnchorKeyDown(mockEvent);
       expect(stopPropagationMock).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe("Phase 5: Grid, card descriptions, filter bar, and helper text", () => {
+    it("renders data-panel-expanded attribute on session-app-container", () => {
+      const htmlExpanded = renderToStaticMarkup(
+        <SessionApp initialState={{ status: "ready", data: sampleViewData }} initialPanelExpanded={true} />,
+      );
+      expect(htmlExpanded).toContain('data-panel-expanded="true"');
+
+      const htmlCollapsed = renderToStaticMarkup(
+        <SessionApp initialState={{ status: "ready", data: sampleViewData }} initialPanelExpanded={false} />,
+      );
+      expect(htmlCollapsed).toContain('data-panel-expanded="false"');
+    });
+
+    it("renders in-session filter bar and distinct kind options", () => {
+      const html = renderToStaticMarkup(
+        <SessionApp initialState={{ status: "ready", data: sampleViewData }} />,
+      );
+      expect(html).toContain('class="session-filter-bar"');
+      expect(html).toContain('class="session-filter-search"');
+      expect(html).toContain('class="session-filter-select"');
+      expect(html).toContain('value="all"');
+      expect(html).toContain("All Types");
+      expect(html).toContain('<option value="implementation-plan">Implementation plan</option>');
+      expect(html).toContain('<option value="spec">Spec</option>');
+    });
+
+    it("renders helper texts for side panel zones and instructions, omitting working description", () => {
+      const html = renderToStaticMarkup(
+        <SessionApp initialState={{ status: "ready", data: sampleViewData }} initialPanelExpanded={true} />,
+      );
+      expect(html).not.toContain("Artifacts you are actively working on.");
+      expect(html).toContain("Supporting material for this session.");
+      expect(html).toContain("Artifacts set aside within this session.");
+      expect(html).toContain("Rules, workflows, and other guidance for AI in this session.");
+
+      const workingHeaderIdx = html.indexOf("session-zone-working");
+      const filterBarIdx = html.indexOf("session-filter-bar");
+      expect(filterBarIdx).toBeGreaterThan(workingHeaderIdx);
+    });
+
+    it("renders card description when present and omits when absent", () => {
+      const viewDataWithDesc: WorkSessionViewData = {
+        ...sampleViewData,
+        working: [
+          {
+            artifactId: "art-with-desc",
+            title: "Described Artifact",
+            kind: "plan",
+            description: "A summary snippet describing this artifact.",
+            updatedAt: "2026-04-10T11:00:00.000Z",
+          },
+          {
+            artifactId: "art-without-desc",
+            title: "No Desc Artifact",
+            kind: "plan",
+            updatedAt: "2026-04-10T11:00:00.000Z",
+          },
+        ],
+      };
+
+      const html = renderToStaticMarkup(
+        <SessionApp initialState={{ status: "ready", data: viewDataWithDesc }} />,
+      );
+      expect(html).toContain('class="session-card-description"');
+      expect(html).toContain("A summary snippet describing this artifact.");
+    });
+
+    it("renders loading and error states without hooks violation", () => {
+      const loadingHtml = renderToStaticMarkup(<SessionApp />);
+      expect(loadingHtml).toContain("Loading work session...");
+
+      const errorHtml = renderToStaticMarkup(
+        <SessionApp initialState={{ status: "error", message: "Failed to load session" }} />,
+      );
+      expect(errorHtml).toContain("Failed to load work session");
+      expect(errorHtml).toContain("Failed to load session");
+    });
+
+    it("formats card date correctly and displays Updated or Created with YYYY/MM/DD", () => {
+      expect(formatArtifactDate("2026-10-28T16:12:57.613Z", "2026-10-28T10:00:00.000Z")).toContain("Updated:");
+      expect(formatArtifactDate("2026-10-28T16:12:57.613Z", "2026-10-28T10:00:00.000Z")).toContain("/10/28");
+
+      expect(formatArtifactDate("2026-10-28T10:00:00.000Z", "2026-10-28T10:00:00.000Z")).toContain("Created:");
+      expect(formatArtifactDate("2026-10-28T10:00:00.000Z", "2026-10-28T10:00:00.000Z")).toContain("/10/28");
+
+      const html = renderToStaticMarkup(
+        <SessionApp initialState={{ status: "ready", data: sampleViewData }} />,
+      );
+      expect(html).toContain("session-add-artifact-btn");
+      expect(html).toContain("Add Artifact</span>");
+      expect(html).toContain("primary session-header-btn session-connect-btn");
+      expect(html).not.toContain("session-card-id");
+
+      // Verify instructions helper is placed after textarea
+      const textareaIdx = html.indexOf("session-instructions-textarea");
+      const helperIdx = html.indexOf("Rules, workflows, and other guidance for AI in this session.");
+      expect(textareaIdx).toBeGreaterThan(-1);
+      expect(helperIdx).toBeGreaterThan(textareaIdx);
     });
   });
 });

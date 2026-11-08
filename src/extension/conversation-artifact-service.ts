@@ -28,6 +28,7 @@ import {
   type WorkSessionViewData,
   type ArtifactSessionTarget,
 } from "../shared/contracts";
+import { extractMarkdownDescription } from "../shared/markdown-description";
 import { getSessionUiState } from "./artifact-ui-state";
 import {
   createSession as createSessionRegistry,
@@ -47,7 +48,11 @@ import {
   type MigrationCandidateEntry,
 } from "../shared/conversation-artifact-registry";
 import { listSessionTypes } from "../shared/session-type-registry";
-import { parseArtifactManifest } from "../shared/artifact-validation";
+import {
+  ensureSafeGlobalArtifactDirectory,
+  ensureSafeManagedArtifactFile,
+  parseArtifactManifest,
+} from "../shared/artifact-validation";
 import {
   validateArtifactReviewTarget,
   type ArtifactFileUri,
@@ -303,13 +308,37 @@ export class ConversationArtifactService<TUri extends ArtifactFileUri> {
       const collectionRoot = globalArtifactsRoot(this.rootOptions);
       for (const id of artifactIds) {
         try {
-          const manifestPath = path.join(collectionRoot, id, ARTIFACT_MANIFEST_FILE);
+          const candidateDir = path.join(collectionRoot, id);
+          const canonicalDir = await ensureSafeGlobalArtifactDirectory(id, candidateDir, this.rootOptions);
+          const manifestPath = await ensureSafeManagedArtifactFile(
+            canonicalDir,
+            path.join(canonicalDir, ARTIFACT_MANIFEST_FILE),
+          );
           const rawText = await fs.readFile(manifestPath, "utf8");
           const manifest = parseArtifactManifest(JSON.parse(rawText));
+          if (manifest.artifactId !== id) {
+            throw new Error(`Manifest artifactId "${manifest.artifactId}" does not match member id "${id}".`);
+          }
+
+          let description: string | undefined;
+          try {
+            const mdPath = await ensureSafeManagedArtifactFile(
+              canonicalDir,
+              path.join(canonicalDir, ARTIFACT_MARKDOWN_FILE),
+            );
+            const mdRaw = await fs.readFile(mdPath, "utf8");
+            const desc = extractMarkdownDescription(mdRaw);
+            if (desc) description = desc;
+          } catch {
+            description = undefined;
+          }
+
           rows.push({
             artifactId: id,
             title: manifest.title,
             kind: manifest.kind,
+            ...(description ? { description } : {}),
+            createdAt: manifest.createdAt,
             updatedAt: manifest.updatedAt,
           });
         } catch {

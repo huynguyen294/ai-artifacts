@@ -122,6 +122,7 @@ type ReviewWaitResult = {
   schemaVersion: typeof ARTIFACT_SCHEMA_VERSION;
   artifactId: string;
   kind: string;
+  title?: string;
   reviewSessionId: string;
   reviewRound: number;
   artifactSha256: string;
@@ -720,11 +721,11 @@ async function persistArtifact(
       let session: SessionContext | null = null;
       if (input.artifactConversationId) {
         await preflightConversationVersion(input.artifactConversationId, rootOptions);
+        registeredInExistingConversationId = input.artifactConversationId;
         const reg = await registerArtifactInSession(input.artifactConversationId, artifactId, {
           ...rootOptions,
           registeredAt: createdAt,
         });
-        registeredInExistingConversationId = input.artifactConversationId;
         conversation = reg.session;
         session = await resolveWorkSessionContext(conversation.sessionId, rootOptions);
       } else if (input.conversationName) {
@@ -905,10 +906,22 @@ async function loadArtifactContext(rawDirectory: unknown): Promise<ArtifactConte
 async function readValidatedSubmissionOnce(context: ArtifactContext): Promise<ReviewWaitResult | undefined> {
   const submissionRaw = await readOptionalManagedFile(context.artifactDirectory, context.submissionPath);
   if (submissionRaw === undefined) return undefined;
-  const [currentMarkdown, currentCommentsRaw] = await Promise.all([
+  const [currentMarkdown, currentCommentsRaw, currentManifestRaw] = await Promise.all([
     readManagedFile(context.artifactDirectory, context.artifactPath),
     readManagedFile(context.artifactDirectory, context.commentsPath),
+    readManagedFile(context.artifactDirectory, context.manifestPath),
   ]);
+  const currentManifest = parseArtifactManifest(JSON.parse(currentManifestRaw));
+  if (
+    currentManifest.artifactId !== context.artifactId ||
+    currentManifest.reviewSessionId !== context.reviewSessionId ||
+    currentManifest.reviewRound !== context.reviewRound
+  ) {
+    throw new Error("Artifact manifest identity or round mismatch.");
+  }
+  const effectiveKind = currentManifest.kind;
+  const effectiveTitle = currentManifest.title;
+
   const currentArtifactSha256 = sha256(currentMarkdown);
   const currentCommentsSha256 = sha256(currentCommentsRaw);
   const currentComments = parseBoundCommentsDocument(JSON.parse(currentCommentsRaw), {
@@ -928,11 +941,12 @@ async function readValidatedSubmissionOnce(context: ArtifactContext): Promise<Re
   if (submission.decision === "revise" && currentComments.comments.length === 0) {
     throw new Error("A review request must include at least one comment.");
   }
-  const nextAction = reviewDecisionAction(context.manifest.kind, submission.decision);
+  const nextAction = reviewDecisionAction(effectiveKind, submission.decision);
   return {
     schemaVersion: ARTIFACT_SCHEMA_VERSION,
     artifactId: context.artifactId,
-    kind: context.manifest.kind,
+    kind: effectiveKind,
+    title: effectiveTitle,
     reviewSessionId: context.reviewSessionId,
     reviewRound: context.reviewRound,
     artifactSha256: currentArtifactSha256,
@@ -1325,7 +1339,7 @@ function grantSubmittedRound(
   artifactLink?: string;
 } {
   const artifactUrl = toArtifactFileUrl(context.artifactPath);
-  const artifactLink = formatArtifactLink(context.manifest.title, artifactUrl);
+  const artifactLink = formatArtifactLink(result.title ?? context.manifest.title, artifactUrl);
   if (result.decision !== "revise") return { ...result, artifactUrl, artifactLink };
   pruneRoundGrants();
   const roundToken = randomUUID();

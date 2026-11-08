@@ -208,6 +208,18 @@ export function App(props?: ReviewAppProps): ReactNode {
       } else if (message.type === "artifactConnectPromptCopied") {
         setConnectPromptCopied(true);
         window.setTimeout(() => setConnectPromptCopied(false), 1600);
+      } else if (message.type === "artifactMetadataPatch") {
+        setState((prev) => {
+          if (!prev || prev.artifact.artifactId !== message.artifactId) return prev;
+          return {
+            ...prev,
+            artifact: {
+              ...prev.artifact,
+              title: message.title,
+              kind: message.kind,
+            },
+          };
+        });
       } else if (message.type === "artifactDeleted") {
         setIsDeleted(true);
         setIsRestoring(false);
@@ -383,9 +395,33 @@ export function App(props?: ReviewAppProps): ReactNode {
         <div className="artifact-heading">
           <span className="eyebrow">
             {isArchived && <span className="archived-pill">Archived · </span>}
-            {formatArtifactKindLabel(state.artifact.kind)} · ROUND {state.artifact.reviewRound}
+            ROUND {state.artifact.reviewRound} · {formatArtifactKindLabel(state.artifact.kind)}
+            {!isArchived && (
+              <button
+                type="button"
+                className="inline-icon-btn"
+                title="Change artifact type"
+                aria-label="Change artifact type"
+                onClick={() => vscode.postMessage({ type: "changeArtifactType" })}
+              >
+                ✎
+              </button>
+            )}
           </span>
-          <h1>{state.artifact.title}</h1>
+          <div className="artifact-title-row">
+            <h1>{state.artifact.title}</h1>
+            {!isArchived && (
+              <button
+                type="button"
+                className="inline-icon-btn"
+                title="Rename artifact"
+                aria-label="Rename artifact"
+                onClick={() => vscode.postMessage({ type: "renameArtifact" })}
+              >
+                ✎
+              </button>
+            )}
+          </div>
         </div>
         {isArchived ? (
           <div className="topbar-actions">

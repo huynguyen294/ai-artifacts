@@ -531,6 +531,8 @@ export const webviewToExtensionMessageSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("openArtifactSessions") }).strict(),
   z.object({ type: z.literal("migrateSelectedConversation"), sessionId: artifactConversationIdSchema }).strict(),
   z.object({ type: z.literal("restoreArtifact") }).strict(),
+  z.object({ type: z.literal("renameArtifact") }).strict(),
+  z.object({ type: z.literal("changeArtifactType") }).strict(),
   z.object({ type: z.literal("ready") }),
 ]);
 
@@ -556,6 +558,12 @@ export type ExtensionToWebviewMessage =
         archivedAt?: string;
       };
     }
+  | {
+      type: "artifactMetadataPatch";
+      artifactId: string;
+      title: string;
+      kind: string;
+    }
   | { type: "artifactDeleted"; artifactId: string }
   | { type: "error"; message: string };
 
@@ -564,6 +572,8 @@ export const workSessionArtifactRowSchema = z
     artifactId: artifactIdSchema,
     title: z.string().min(1),
     kind: artifactKindSchema,
+    description: z.string().optional(),
+    createdAt: z.string().datetime().optional(),
     updatedAt: z.string().datetime(),
     unavailable: z.boolean().optional(),
   })
@@ -635,10 +645,13 @@ export const sessionWebviewToExtensionMessageSchema = z.discriminatedUnion("type
     })
     .strict(),
   z.object({ type: z.literal("removeArtifact"), artifactId: artifactIdSchema }).strict(),
+  z.object({ type: z.literal("renameArtifact"), artifactId: artifactIdSchema }).strict(),
+  z.object({ type: z.literal("changeArtifactType"), artifactId: artifactIdSchema }).strict(),
   z.object({ type: z.literal("setSessionPanelExpanded"), expanded: z.boolean() }).strict(),
   z.object({ type: z.literal("restoreSession") }).strict(),
   z.object({ type: z.literal("archiveSession") }).strict(),
   z.object({ type: z.literal("deleteSession") }).strict(),
+  z.object({ type: z.literal("exportSession") }).strict(),
 ]);
 export type SessionWebviewToExtensionMessage = z.infer<typeof sessionWebviewToExtensionMessageSchema>;
 

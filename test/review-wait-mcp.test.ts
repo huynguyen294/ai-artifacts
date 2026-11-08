@@ -3179,5 +3179,67 @@ describe("artifact review MCP server v8", () => {
     const finalConvEntries = await readdir(convRoot).catch(() => []);
     expect(finalConvEntries).toEqual([]);
   });
+
+  describe("dynamic kind re-read during wait", () => {
+    it("reflects updated kind when changed from plan to non-plan while waiter is waiting", async () => {
+      const fixture = await workspaceFixture();
+      const client = startClient(fixture.registry);
+      await initialize(client);
+
+      const created = await callTool(client, "create_artifact", {
+        title: "Dynamic Kind Test",
+        kind: "implementation-plan",
+        markdown: "# Content\nWill change type.",
+      });
+      expect(created.isError).toBeFalsy();
+
+      const waiting = callToolTracked(client, "wait_for_artifact_review", {
+        artifactDirectory: created.structuredContent.artifactDirectory,
+        expectedReviewRound: 1,
+      });
+      await waiting.sent;
+
+      const store = new ArtifactStore(created.structuredContent.artifactPath, { userHome: fixture.userHome });
+      await store.updateMetadata({ kind: "note" });
+      await store.submitReview("approve");
+
+      const result = await waiting.promise;
+      expect(result.isError).toBeFalsy();
+      expect(result.structuredContent.kind).toBe("note");
+      expect(result.structuredContent.nextAction).toMatchObject({
+        type: "approved",
+      });
+    });
+
+    it("reflects updated kind when changed from non-plan to plan while waiter is waiting", async () => {
+      const fixture = await workspaceFixture();
+      const client = startClient(fixture.registry);
+      await initialize(client);
+
+      const created = await callTool(client, "create_artifact", {
+        title: "Dynamic Kind To Plan Test",
+        kind: "note",
+        markdown: "# Note Content\nWill change to plan.",
+      });
+      expect(created.isError).toBeFalsy();
+
+      const waiting = callToolTracked(client, "wait_for_artifact_review", {
+        artifactDirectory: created.structuredContent.artifactDirectory,
+        expectedReviewRound: 1,
+      });
+      await waiting.sent;
+
+      const store = new ArtifactStore(created.structuredContent.artifactPath, { userHome: fixture.userHome });
+      await store.updateMetadata({ kind: "plan" });
+      await store.submitReview("approve");
+
+      const result = await waiting.promise;
+      expect(result.isError).toBeFalsy();
+      expect(result.structuredContent.kind).toBe("plan");
+      expect(result.structuredContent.nextAction).toMatchObject({
+        type: "execute-approved-plan",
+      });
+    });
+  });
 });
 

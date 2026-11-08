@@ -7,11 +7,14 @@ import {
   webviewToExtensionMessageSchema,
   type ArtifactSessionTarget,
   type ExtensionToWebviewMessage,
+  type ReviewState,
   type WorkSession,
   type WorkSessionDataChange,
 } from "../shared/contracts";
 import { removeConversation } from "../shared/conversation-artifact-registry";
 import { buildSessionConnectPrompt } from "../shared/session-connect-prompt";
+import { parseArtifactManifest } from "../shared/artifact-validation";
+import { promptChangeArtifactType, promptRenameArtifact } from "./artifact-metadata-command";
 import { validateArtifactReviewTarget } from "./artifact-review-open";
 import { ArtifactStore } from "./artifact-store";
 import { getArtifactUiState, patchArtifactUiState } from "./artifact-ui-state";
@@ -33,7 +36,10 @@ export type ConversationArtifactProviderController = {
 export type ArtifactStoreController = Pick<
   ArtifactStore,
   "artifactDirectory" | "artifactId" | "load" | "addComment" | "removeComment" | "submitReview"
-> & { artifactPath?: string };
+> & {
+  updateMetadata?: ArtifactStore["updateMetadata"];
+  artifactPath?: string;
+};
 
 export class ArtifactReviewProvider implements vscode.CustomTextEditorProvider {
   static readonly viewType = "agentPlus.artifactReview";
@@ -59,10 +65,12 @@ export class ArtifactReviewProvider implements vscode.CustomTextEditorProvider {
     panel.webview.html = this.html(panel.webview);
 
     const post = (message: ExtensionToWebviewMessage): Thenable<boolean> => panel.webview.postMessage(message);
+    let lastLoadedState: ReviewState | undefined;
     const refresh = async (): Promise<void> => {
       if (disposed) return;
       try {
         const state = await store.load();
+        lastLoadedState = state;
         if (disposed) return;
         await post({ type: "state", state });
       } catch (error) {
@@ -145,6 +153,54 @@ export class ArtifactReviewProvider implements vscode.CustomTextEditorProvider {
               const message = error instanceof Error ? error.message : String(error);
               void vscode.window.showErrorMessage(`Failed to restore artifact: ${message}`);
               await post({ type: "error", message: `Failed to restore artifact: ${message}` });
+            }
+            return;
+          }
+          case "renameArtifact": {
+            try {
+              const result = await promptRenameArtifact(store as ArtifactStore, lastLoadedState?.artifact.title);
+              if (result) {
+                if (lastLoadedState) {
+                  lastLoadedState.artifact.title = result.title;
+                  lastLoadedState.artifact.kind = result.kind;
+                }
+                await post({
+                  type: "artifactMetadataPatch",
+                  artifactId: store.artifactId,
+                  title: result.title,
+                  kind: result.kind,
+                });
+                (this.conversationService as any)?.scheduleChangeNotification?.([{ kind: "artifact", artifactId: store.artifactId }]);
+              }
+            } catch (error) {
+              const message = error instanceof Error ? error.message : String(error);
+              void vscode.window.showErrorMessage(`Failed to rename artifact: ${message}`);
+            }
+            return;
+          }
+          case "changeArtifactType": {
+            try {
+              const result = await promptChangeArtifactType(
+                store as ArtifactStore,
+                this.rootOptions,
+                lastLoadedState?.artifact.kind,
+              );
+              if (result) {
+                if (lastLoadedState) {
+                  lastLoadedState.artifact.title = result.title;
+                  lastLoadedState.artifact.kind = result.kind;
+                }
+                await post({
+                  type: "artifactMetadataPatch",
+                  artifactId: store.artifactId,
+                  title: result.title,
+                  kind: result.kind,
+                });
+                (this.conversationService as any)?.scheduleChangeNotification?.([{ kind: "artifact", artifactId: store.artifactId }]);
+              }
+            } catch (error) {
+              const message = error instanceof Error ? error.message : String(error);
+              void vscode.window.showErrorMessage(`Failed to change artifact type: ${message}`);
             }
             return;
           }
@@ -420,8 +476,36 @@ export class ArtifactReviewProvider implements vscode.CustomTextEditorProvider {
         "{artifact.json,artifact.md,comments.json,review-submission.json}",
       ),
     );
+    const handleFileChange = async (uri: vscode.Uri) => {
+      if (disposed) return;
+      if (uri.fsPath.endsWith("artifact.json") && lastLoadedState) {
+        try {
+          const raw = await fs.readFile(uri.fsPath, "utf8");
+          const manifest = parseArtifactManifest(JSON.parse(raw));
+          if (
+            manifest.artifactId === lastLoadedState.artifact.artifactId &&
+            manifest.reviewRound === lastLoadedState.artifact.reviewRound &&
+            manifest.createdAt === lastLoadedState.artifact.createdAt &&
+            manifest.reviewSessionId === lastLoadedState.artifact.reviewSessionId
+          ) {
+            lastLoadedState.artifact.title = manifest.title;
+            lastLoadedState.artifact.kind = manifest.kind;
+            await post({
+              type: "artifactMetadataPatch",
+              artifactId: store.artifactId,
+              title: manifest.title,
+              kind: manifest.kind,
+            });
+            return;
+          }
+        } catch {
+          // Fall through to full refresh
+        }
+      }
+      void refresh();
+    };
     fileWatcher.onDidCreate(() => void refresh());
-    fileWatcher.onDidChange(() => void refresh());
+    fileWatcher.onDidChange((uri) => void handleFileChange(uri));
     fileWatcher.onDidDelete(() => void refresh());
 
     const uiStateWatcher = vscode.workspace.createFileSystemWatcher(

@@ -199,8 +199,13 @@ function createFakePanel() {
 
 function createFakeStore(artifactId = "artifact-current"): ArtifactStoreController & {
   loadMock: ReturnType<typeof vi.fn>;
+  updateMetadataMock: ReturnType<typeof vi.fn>;
 } {
   const loadMock = vi.fn(async () => sampleReviewState(artifactId));
+  const updateMetadataMock = vi.fn(async (patch: { title?: string; kind?: string }) => ({
+    title: patch.title ?? "Current Artifact Title",
+    kind: patch.kind ?? "implementation-plan",
+  }));
   return {
     artifactDirectory: `/home/.ai-artifacts/artifacts/${artifactId}`,
     artifactId,
@@ -209,6 +214,8 @@ function createFakeStore(artifactId = "artifact-current"): ArtifactStoreControll
     addComment: vi.fn(async () => sampleReviewState(artifactId)),
     removeComment: vi.fn(async () => sampleReviewState(artifactId)),
     submitReview: vi.fn(async () => sampleReviewState(artifactId)),
+    updateMetadata: updateMetadataMock,
+    updateMetadataMock,
   };
 }
 
@@ -863,6 +870,52 @@ describe("ArtifactReviewProvider sessions transport (Chặng 3)", () => {
     changeListener!([{ kind: "types" }]);
     await vi.waitFor(() => {
       expect(getArtifactSessionsMock).toHaveBeenCalledTimes(3);
+    });
+  });
+
+  it("handles renameArtifact and changeArtifactType messages by posting artifactMetadataPatch", async () => {
+    const store = createFakeStore("artifact-current");
+    const provider = new ArtifactReviewProvider(
+      { extensionUri: { fsPath: "/ext" } } as any,
+      undefined,
+      () => store,
+    );
+
+    const { panel, sendMessage, postedMessages } = createFakePanel();
+    const document = {
+      uri: {
+        fsPath: "/home/.ai-artifacts/artifacts/artifact-current/artifact.md",
+        toString: () => "file:///home/.ai-artifacts/artifacts/artifact-current/artifact.md",
+      },
+    } as any;
+
+    await provider.resolveCustomTextEditor(document, panel);
+    await sendMessage({ type: "ready" });
+
+    // 1. Rename artifact
+    showInputBoxMock.mockResolvedValueOnce("Renamed Artifact Title");
+    await sendMessage({ type: "renameArtifact" });
+
+    expect(store.updateMetadataMock).toHaveBeenCalledWith({ title: "Renamed Artifact Title" });
+    expect(postedMessages).toContainEqual({
+      type: "artifactMetadataPatch",
+      artifactId: "artifact-current",
+      title: "Renamed Artifact Title",
+      kind: "implementation-plan",
+    });
+
+    // 2. Change artifact type
+    showQuickPickMock.mockImplementationOnce(async (items: any[]) => {
+      return items.find((it: any) => it.kindSlug === "guide");
+    });
+    await sendMessage({ type: "changeArtifactType" });
+
+    expect(store.updateMetadataMock).toHaveBeenCalledWith({ kind: "guide" });
+    expect(postedMessages).toContainEqual({
+      type: "artifactMetadataPatch",
+      artifactId: "artifact-current",
+      title: "Current Artifact Title",
+      kind: "guide",
     });
   });
 });

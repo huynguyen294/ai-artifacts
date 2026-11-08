@@ -32,21 +32,8 @@ export type ArtifactFilterResult = {
   limited: boolean;
 };
 
-/**
- * Normalizes a string for accent-insensitive, case-insensitive title matching.
- *
- * Steps: NFD decompose → strip combining marks → đ/Đ → d → lowercase →
- * collapse whitespace → trim.
- */
-export function normalizeArtifactTitleSearch(value: string): string {
-  return value
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[đĐ]/g, "d")
-    .toLowerCase()
-    .replace(/\s+/g, " ")
-    .trim();
-}
+import { normalizeArtifactTitleSearch } from "../shared/artifact-title-search";
+export { normalizeArtifactTitleSearch };
 
 /**
  * Enumerates and validates all schema-v6 artifacts in the canonical global

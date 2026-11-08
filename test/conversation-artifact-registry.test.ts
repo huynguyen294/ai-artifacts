@@ -939,5 +939,95 @@ describe("ConversationArtifactRegistry", () => {
       expect(migrationResult.status).toBe("migrated");
       expect(migrationResult.session.working).toEqual(["valid-art-1"]);
     });
+
+    it("WS-F1: cleanupStaleConversations preserves unarchived empty Session v2 when metadata read fails or has corrupt JSON", async () => {
+      const session = await createSession({
+        title: "Protected Empty Session",
+        userHome,
+      });
+
+      const convDir = conversationDirectory(session.sessionId, { userHome });
+      const metaPath = conversationMetadataPath(session.sessionId, { userHome });
+      const registeredDir = conversationRegisteredArtifactsDirectory(session.sessionId, { userHome });
+
+      // Scenario 1: One-shot read failure (EACCES)
+      const realReadFile = fs.readFile.bind(fs);
+      const readSpy = vi.spyOn(fs, "readFile").mockImplementation(async (filePath: any, options?: any): Promise<any> => {
+        if (filePath === metaPath) {
+          const err: any = new Error("Permission denied");
+          err.code = "EACCES";
+          throw err;
+        }
+        return realReadFile(filePath, options);
+      });
+
+      try {
+        const cleanupResult = await cleanupStaleConversations({ userHome });
+        expect(cleanupResult.removedConversations).toBe(0);
+        await expect(fs.access(metaPath)).resolves.toBeUndefined();
+        await expect(fs.access(registeredDir)).resolves.toBeUndefined();
+      } finally {
+        readSpy.mockRestore();
+      }
+
+      // Scenario 2: Corrupted JSON in metadata
+      await fs.writeFile(metaPath, "{ corrupt json syntax", "utf8");
+      const cleanupResult2 = await cleanupStaleConversations({ userHome });
+      expect(cleanupResult2.removedConversations).toBe(0);
+      await expect(fs.access(metaPath)).resolves.toBeUndefined();
+      await expect(fs.access(registeredDir)).resolves.toBeUndefined();
+    });
+
+    it("WS-F2: registerArtifactInSession rolls back new membership or restores previous membership if readSession fails post-commit", async () => {
+      const session = await createSession({
+        title: "Rollback Test Session",
+        userHome,
+      });
+
+      const memberPath = conversationRegisteredArtifactPath(session.sessionId, "new-art-1", { userHome });
+      const instructionsFile = workSessionInstructionsPath(session.sessionId, { userHome });
+
+      const realReadFile = fs.readFile.bind(fs);
+      let failInstructions = false;
+      const readSpy = vi.spyOn(fs, "readFile").mockImplementation(async (filePath: any, options?: any): Promise<any> => {
+        if (failInstructions && filePath === instructionsFile) {
+          const err: any = new Error("Disk I/O error during readSession");
+          err.code = "EIO";
+          throw err;
+        }
+        return realReadFile(filePath, options);
+      });
+
+      try {
+        failInstructions = true;
+        await expect(
+          registerArtifactInSession(session.sessionId, "new-art-1", { userHome }),
+        ).rejects.toThrow("Disk I/O error during readSession");
+
+        await expect(fs.access(memberPath)).rejects.toThrow();
+
+        failInstructions = false;
+        const initialRegisteredAt = "2026-01-01T00:00:00.000Z";
+        await registerArtifactInSession(session.sessionId, "existing-art-1", {
+          userHome,
+          registeredAt: initialRegisteredAt,
+        });
+
+        const existingMemberPath = conversationRegisteredArtifactPath(session.sessionId, "existing-art-1", { userHome });
+        failInstructions = true;
+        await expect(
+          registerArtifactInSession(session.sessionId, "existing-art-1", {
+            userHome,
+            registeredAt: "2026-11-08T12:00:00.000Z",
+          }),
+        ).rejects.toThrow("Disk I/O error during readSession");
+
+        const rolledBackText = await realReadFile(existingMemberPath, "utf8");
+        const parsed = JSON.parse(rolledBackText);
+        expect(parsed.registeredAt).toBe(initialRegisteredAt);
+      } finally {
+        readSpy.mockRestore();
+      }
+    });
   });
 });

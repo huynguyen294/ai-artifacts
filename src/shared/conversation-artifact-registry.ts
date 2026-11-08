@@ -1134,8 +1134,23 @@ export async function registerArtifactInSession(
 
   await writeAtomicJsonFile(canonicalRegisteredArtifactsDir, membershipPath, membership, false);
 
-  const session = await readSession(validatedSessionId, rootOptions);
-  return { session, previousRegisteredAt, added };
+  try {
+    const session = await readSession(validatedSessionId, rootOptions);
+    return { session, previousRegisteredAt, added };
+  } catch (readError) {
+    if (added) {
+      await fs.unlink(membershipPath).catch(() => {});
+    } else if (previousRegisteredAt !== undefined) {
+      const rollbackMembership: ArtifactConversationMembership = {
+        schemaVersion: ARTIFACT_CONVERSATION_SCHEMA_VERSION,
+        artifactConversationId: validatedSessionId,
+        artifactId: validatedArtifactId,
+        registeredAt: previousRegisteredAt,
+      };
+      await writeAtomicJsonFile(canonicalRegisteredArtifactsDir, membershipPath, rollbackMembership, false).catch(() => {});
+    }
+    throw readError;
+  }
 }
 
 export async function moveArtifactInSession(
@@ -1800,15 +1815,24 @@ export async function cleanupStaleConversations(
 
     // Inspect conversation schema version
     let isWorkSessionV2 = false;
+    let isConversationV1 = false;
+    const metadataPath = path.join(canonicalConversationDir, CONVERSATION_METADATA_FILE);
     try {
-      const metadataPath = path.join(canonicalConversationDir, CONVERSATION_METADATA_FILE);
       const metaText = await fs.readFile(metadataPath, "utf8");
       const metaJson = JSON.parse(metaText);
       if (metaJson?.schemaVersion === WORK_SESSION_SCHEMA_VERSION) {
+        parseWorkSessionMetadata(metaJson, convId);
         isWorkSessionV2 = true;
+      } else if (metaJson?.schemaVersion === ARTIFACT_CONVERSATION_SCHEMA_VERSION) {
+        parseConversationMetadata(metaJson, convId);
+        isConversationV1 = true;
+      } else {
+        logDiagnostic?.(`Unrecognized conversation schema version in ${metadataPath}`, metaJson);
+        hadSkippedEntries = true;
       }
-    } catch {
-      isWorkSessionV2 = false;
+    } catch (error) {
+      logDiagnostic?.(`Failed to inspect conversation metadata ${metadataPath}`, error);
+      hadSkippedEntries = true;
     }
 
     if (isWorkSessionV2) {
@@ -1837,14 +1861,13 @@ export async function cleanupStaleConversations(
         // ignore layout prune failure during retention cleanup
       }
       // Critical: WorkSession v2 is PRESERVED even if it has 0 memberships!
-    } else {
+    } else if (isConversationV1) {
       // v1 cleanup: remove empty conversation directory
       if (remainingValidMemberships === 0 && !hadSkippedEntries) {
         try {
           // Atomically remove registered-artifacts only if it is genuinely empty;
           // if a concurrent registration added a membership or temp file after readdir, rmdir fails with ENOTEMPTY.
           await fs.rmdir(canonicalRegisteredArtifactsDir);
-          const metadataPath = path.join(canonicalConversationDir, CONVERSATION_METADATA_FILE);
           await fs.unlink(metadataPath).catch((error) => {
             if (errorCode(error) !== "ENOENT") throw error;
           });

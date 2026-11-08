@@ -530,4 +530,57 @@ describe("ArtifactStore", () => {
       await expectNoTemporaryFiles(directory);
     },
   );
+
+  describe("updateMetadata", () => {
+    it("updates title only, preserving kind, updatedAt, and lifecycle identity", async () => {
+      const { directory, store } = await fixture();
+      const initialManifest = JSON.parse(await readFile(path.join(directory, "artifact.json"), "utf8"));
+
+      const result = await store.updateMetadata({ title: "Renamed Title" });
+      expect(result).toEqual({ title: "Renamed Title", kind: "implementation-plan" });
+
+      const updatedManifest = JSON.parse(await readFile(path.join(directory, "artifact.json"), "utf8"));
+      expect(updatedManifest.title).toBe("Renamed Title");
+      expect(updatedManifest.kind).toBe("implementation-plan");
+      expect(updatedManifest.updatedAt).toBe(initialManifest.updatedAt);
+      expect(updatedManifest.createdAt).toBe(initialManifest.createdAt);
+      expect(updatedManifest.reviewRound).toBe(initialManifest.reviewRound);
+      expect(updatedManifest.reviewSessionId).toBe(initialManifest.reviewSessionId);
+      await expectNoTemporaryFiles(directory);
+    });
+
+    it("updates kind only, preserving title and timestamps", async () => {
+      const { directory, store } = await fixture();
+      const initialManifest = JSON.parse(await readFile(path.join(directory, "artifact.json"), "utf8"));
+
+      const result = await store.updateMetadata({ kind: "custom-note" });
+      expect(result).toEqual({ title: "Artifact", kind: "custom-note" });
+
+      const updatedManifest = JSON.parse(await readFile(path.join(directory, "artifact.json"), "utf8"));
+      expect(updatedManifest.title).toBe("Artifact");
+      expect(updatedManifest.kind).toBe("custom-note");
+      expect(updatedManifest.updatedAt).toBe(initialManifest.updatedAt);
+      await expectNoTemporaryFiles(directory);
+    });
+
+    it("no-ops without writing when values are unchanged", async () => {
+      const { directory, store } = await fixture();
+      const initialStat = await stat(path.join(directory, "artifact.json"));
+
+      const result = await store.updateMetadata({ title: "Artifact", kind: "implementation-plan" });
+      expect(result).toEqual({ title: "Artifact", kind: "implementation-plan" });
+
+      const afterStat = await stat(path.join(directory, "artifact.json"));
+      expect(afterStat.mtimeMs).toBe(initialStat.mtimeMs);
+      await expectNoTemporaryFiles(directory);
+    });
+
+    it("rejects invalid title or invalid kind slug", async () => {
+      const { store } = await fixture();
+      await expect(store.updateMetadata({ title: "" })).rejects.toThrow();
+      await expect(store.updateMetadata({ title: "a".repeat(201) })).rejects.toThrow();
+      await expect(store.updateMetadata({ kind: "Invalid Slug" })).rejects.toThrow();
+      await expect(store.updateMetadata({})).rejects.toThrow("No metadata changes provided.");
+    });
+  });
 });

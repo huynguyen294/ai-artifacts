@@ -54,6 +54,19 @@ Each entry includes the date, category, summary of changes, rationale, and affec
 - Updated dev sandbox harness (`dev/main.tsx`) to mock `startWorkSession` and 2-line `copyArtifactConnectPrompt`.
 - Synchronized package branding in `package.json` and `README.md` (`displayName`, 274-character description preserving all supported AI clients, Contents sub-navigation).
 
+## 2026-11-08 — Phase 5 implementation: List Management, Archiving, Grid, Edit Metadata, Export & Cleanup
+
+- Implemented Chặng 1 & 2: schema v1 UI state (`artifact-ui-state.json`, `session-ui-state.json`) with atomic read/write; single-artifact deletion coordinator and session deletion preserving artifacts; context menus for Recent Artifacts and Sessions views; Pin/Archive sorting; Search Archived in Quick Pick; Restore-only header for archived artifacts and sessions; and automatic cleanup of sessions archived for >= 30 days during extension activation.
+- Hardened Chặng 1 & 2 findings (F1–F6 & 2 Lows): pre-validation of metadata schema v2 and exact ID in `deleteSession`; retention skips corrupt sessions; tree item normalizer for right-click context menus; reducer-backed `restoringSession` reset on error/patch; deletion commit point at staging rename; canonical root parent and regular file checks preventing symlink traverse; terminal deleted state message on ENOENT; scoped `artifactUiState` watcher events; diagnostic warnings replacing silent swallows.
+- Implemented Chặng 3:
+  - Responsive container-query grid layout for Working zone (1 col < 800px; 2 cols 800-1099px closed / 1 col open; 3 cols 1100px+ closed / 2 cols open) and fixed 2-column grid for side panel References/Archived zones.
+  - In-session search input and kind filter selector across all zones; distinct kinds dynamically computed; helper texts for Working, References, Archived, and Instructions blocks.
+  - Two-line description snippet rendered on artifact cards from Markdown plain text.
+  - ReviewApp header order (`ROUND {round} · {kind}`) with native inline edit pencil buttons for renaming and changing artifact type (fixed kinds + discovered open kinds + Create new type with lowercase hyphenated validation); hidden when globally archived.
+  - MCP review submission processing re-reads latest on-disk manifest to immediately reflect dynamic kind updates in `nextAction` (`execute-approved-plan` for plans vs `approved` for non-plans) across both wait flows.
+  - Work Session ZIP export via `yazl`: exports root `Instructions.md` and numbered artifact Markdown files in `Working/`, `References/`, and `Archived/` folders to user-selected archive.
+- Added comprehensive test suites: `test/work-session-export.test.ts`, `test/artifact-metadata-command.test.ts`, `test/session-app.test.tsx` (cards/grid/filter), `test/artifact-store.test.ts` (`updateMetadata`), and `test/review-wait-mcp.test.ts` (dynamic kind re-read during wait).
+
 ## 2026-11-08 — Phase 5 artifact metadata editing plan
 
 - Extended Phase 5 Step 6 / Stage 3 with Review App header order (`ROUND` before type), native rename and type selection, and creation of open kinds using the existing artifact kind schema. No separate type registry is planned.

@@ -252,5 +252,24 @@ describe("ReviewApp Webview Component (Phase 4.5)", () => {
       expect(html).toContain("Artifact Deleted");
       expect(html).toContain("This artifact has been deleted permanently and is no longer available.");
     });
+
+    it("renders ROUND before type, with edit buttons when active, and hides edit buttons when archived", () => {
+      const activeState = createSampleReviewState();
+      const activeHtml = renderToStaticMarkup(<ReviewApp initialState={activeState} />);
+
+      // Eyebrow format: ROUND {round} · {kind}
+      expect(activeHtml).toContain("ROUND 1 · Implementation plan");
+      // Edit buttons present
+      expect(activeHtml).toContain('title="Change artifact type"');
+      expect(activeHtml).toContain('title="Rename artifact"');
+
+      // When archived: edit buttons hidden
+      const archivedState = createSampleReviewState({
+        uiState: { pinned: false, archivedAt: "2026-11-08T00:00:00.000Z" },
+      });
+      const archivedHtml = renderToStaticMarkup(<ReviewApp initialState={archivedState} />);
+      expect(archivedHtml).not.toContain('title="Change artifact type"');
+      expect(archivedHtml).not.toContain('title="Rename artifact"');
+    });
   });
 });

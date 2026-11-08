@@ -193,5 +193,42 @@ describe("resolveWorkSessionContext", () => {
     const statAfter = await fs.stat(instructionsFile);
     expect(statAfter.mtimeMs).toBe(statBefore.mtimeMs);
   });
+
+  it("WS-F3: marks artifact unavailable when member directory is a junction or symlink", async () => {
+    const session = await createSession({
+      title: "Junction Catalog Test",
+      userHome: tempHome,
+    });
+
+    const outsideDir = path.join(tempHome, "outside-catalog-art");
+    await fs.mkdir(outsideDir, { recursive: true });
+    const manifest = {
+      schemaVersion: 6,
+      artifactId: "linked-cat-art",
+      title: "Outside Linked Artifact",
+      kind: "note",
+      createdAt: "2026-05-01T10:00:00.000Z",
+      updatedAt: "2026-05-01T11:00:00.000Z",
+      reviewRound: 1,
+      reviewSessionId: "11111111-1111-4111-8111-111111111111",
+    };
+    await fs.writeFile(path.join(outsideDir, ARTIFACT_MANIFEST_FILE), JSON.stringify(manifest), "utf8");
+    await fs.writeFile(path.join(outsideDir, ARTIFACT_MARKDOWN_FILE), "# Linked", "utf8");
+
+    const root = artifactCollectionRoot({ userHome: tempHome });
+    await fs.mkdir(root, { recursive: true });
+    const linkPath = path.join(root, "linked-cat-art");
+    await fs.symlink(outsideDir, linkPath, process.platform === "win32" ? "junction" : "dir");
+
+    await registerArtifactInSession(session.sessionId, "linked-cat-art", { userHome: tempHome });
+
+    const context = await resolveWorkSessionContext(session.sessionId, { userHome: tempHome });
+    expect(context.catalog.working).toEqual([
+      {
+        artifactId: "linked-cat-art",
+        unavailable: true,
+      },
+    ]);
+  });
 });
 

@@ -22,6 +22,9 @@ import type { ArtifactReviewOpenCoordinator } from "./artifact-review-open";
 import type { ConversationArtifactService } from "./conversation-artifact-service";
 import { runAddArtifactToSessionQuickPick } from "./session-artifact-add-command";
 import { runSelectSessionTypeQuickPick, type SessionTypeQuickPickItem } from "./session-type-command";
+import { exportWorkSession } from "./work-session-export";
+import { ArtifactStore } from "./artifact-store";
+import { promptRenameArtifact, promptChangeArtifactType } from "./artifact-metadata-command";
 import { getWebviewHtml } from "./webview-html";
 import { resolveWorkSessionSupport } from "./work-session-support";
 
@@ -450,6 +453,42 @@ export class WorkSessionProvider implements vscode.CustomReadonlyEditorProvider<
             const message = error instanceof Error ? error.message : String(error);
             void post({ type: "actionError", action: "removeArtifact", message });
           }
+        } else if (msg.type === "renameArtifact") {
+          try {
+            const artifactFile = path.join(
+              globalArtifactsRoot(this.rootOptions),
+              msg.artifactId,
+              ARTIFACT_MARKDOWN_FILE,
+            );
+            const store = new ArtifactStore(artifactFile, this.rootOptions);
+            const result = await promptRenameArtifact(store);
+            if (result) {
+              this.service.scheduleChangeNotification([
+                { kind: "artifact", artifactId: msg.artifactId },
+              ]);
+            }
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            void vscode.window.showErrorMessage(`Failed to rename artifact: ${message}`);
+          }
+        } else if (msg.type === "changeArtifactType") {
+          try {
+            const artifactFile = path.join(
+              globalArtifactsRoot(this.rootOptions),
+              msg.artifactId,
+              ARTIFACT_MARKDOWN_FILE,
+            );
+            const store = new ArtifactStore(artifactFile, this.rootOptions);
+            const result = await promptChangeArtifactType(store, this.rootOptions);
+            if (result) {
+              this.service.scheduleChangeNotification([
+                { kind: "artifact", artifactId: msg.artifactId },
+              ]);
+            }
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            void vscode.window.showErrorMessage(`Failed to change artifact type: ${message}`);
+          }
         } else if (msg.type === "restoreSession") {
           try {
             if (!(await ensureSupport("restoreSession"))) {
@@ -510,6 +549,17 @@ export class WorkSessionProvider implements vscode.CustomReadonlyEditorProvider<
           } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
             void post({ type: "actionError", action: "deleteSession", message });
+          }
+        } else if (msg.type === "exportSession") {
+          try {
+            if (!(await ensureSupport("exportSession"))) return;
+            const result = await exportWorkSession(document.sessionId, this.rootOptions);
+            if (result.success) {
+              void vscode.window.showInformationMessage(`Exported session to ${path.basename(result.targetPath)}`);
+            }
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            void post({ type: "actionError", action: "exportSession", message });
           }
         }
       }),

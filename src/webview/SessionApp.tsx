@@ -1,5 +1,6 @@
-import { useEffect, useReducer, useRef, useState } from "react";
+import { useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { formatArtifactKindLabel } from "../shared/artifact-kinds";
+import { normalizeArtifactTitleSearch } from "../shared/artifact-title-search";
 import type {
   SessionExtensionToWebviewMessage,
   WorkSessionArtifactRow,
@@ -266,6 +267,30 @@ export function sessionManagerReducer(
   }
 }
 
+const ZONE_HELPERS = {
+  working: "",
+  references: "Supporting material for this session.",
+  archived: "Artifacts set aside within this session.",
+} as const;
+
+const INSTRUCTIONS_HELPER = "Rules, workflows, and other guidance for AI in this session.";
+
+export function formatArtifactDate(updatedAt: string, createdAt?: string): string {
+  const isUpdated = Boolean(createdAt && updatedAt && createdAt !== updatedAt);
+  const targetDateStr = isUpdated ? updatedAt : (createdAt || updatedAt);
+  const prefix = isUpdated ? "Updated" : "Created";
+  try {
+    const d = new Date(targetDateStr);
+    if (isNaN(d.getTime())) return `${prefix}: ${targetDateStr}`;
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${prefix}: ${y}/${m}/${day}`;
+  } catch {
+    return `${prefix}: ${targetDateStr}`;
+  }
+}
+
 export function SessionApp({ initialState, initialPanelExpanded = true }: SessionAppProps = {}) {
   const [managerState, dispatch] = useReducer(
     sessionManagerReducer,
@@ -273,6 +298,8 @@ export function SessionApp({ initialState, initialPanelExpanded = true }: Sessio
   );
   const [moreMenuOpen, setMoreMenuOpen] = useState(false);
   const moreMenuRef = useRef<HTMLDivElement>(null);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [kindFilter, setKindFilter] = useState("all");
 
   const {
     state,
@@ -332,6 +359,28 @@ export function SessionApp({ initialState, initialPanelExpanded = true }: Sessio
     return () => window.removeEventListener("click", handleClick);
   }, [moreMenuOpen]);
 
+  const distinctKinds = useMemo(() => {
+    if (state.status !== "ready") return [];
+    const allItems = [
+      ...state.data.working,
+      ...state.data.references,
+      ...state.data.archived,
+    ];
+    const set = new Set<string>();
+    for (const item of allItems) {
+      if (item.kind && !item.unavailable) {
+        set.add(item.kind);
+      }
+    }
+    return Array.from(set).sort();
+  }, [state]);
+
+  useEffect(() => {
+    if (kindFilter !== "all" && !distinctKinds.includes(kindFilter)) {
+      setKindFilter("all");
+    }
+  }, [distinctKinds, kindFilter]);
+
   if (state.status === "loading") {
     return (
       <div className="session-app loading">
@@ -370,6 +419,42 @@ export function SessionApp({ initialState, initialPanelExpanded = true }: Sessio
   const handleDeleteSession = () => {
     setMoreMenuOpen(false);
     vscode.postMessage({ type: "deleteSession" });
+  };
+
+  const handleExportSession = () => {
+    setMoreMenuOpen(false);
+    vscode.postMessage({ type: "exportSession" });
+  };
+
+  const handleRenameArtifact = (artifactId: string) => {
+    dispatch({ type: "setActiveCardMenu", menuId: undefined });
+    vscode.postMessage({ type: "renameArtifact", artifactId });
+  };
+
+  const handleChangeArtifactType = (artifactId: string) => {
+    dispatch({ type: "setActiveCardMenu", menuId: undefined });
+    vscode.postMessage({ type: "changeArtifactType", artifactId });
+  };
+
+  const isFiltered = searchQuery.trim().length > 0 || kindFilter !== "all";
+
+  const filterItems = (items: readonly WorkSessionArtifactRow[]) => {
+    const query = normalizeArtifactTitleSearch(searchQuery);
+    return items.filter((item) => {
+      if (kindFilter !== "all") {
+        if (item.unavailable || item.kind !== kindFilter) {
+          return false;
+        }
+      }
+      if (query) {
+        const titleNorm = normalizeArtifactTitleSearch(item.title);
+        const idNorm = normalizeArtifactTitleSearch(item.artifactId);
+        if (!titleNorm.includes(query) && !idNorm.includes(query)) {
+          return false;
+        }
+      }
+      return true;
+    });
   };
 
   const handleTogglePanel = () => {
@@ -420,38 +505,78 @@ export function SessionApp({ initialState, initialPanelExpanded = true }: Sessio
   const renderZone = (
     title: string,
     zoneKey: "working" | "references" | "archived",
-    items: readonly WorkSessionArtifactRow[],
+    rawItems: readonly WorkSessionArtifactRow[],
   ) => {
+    const visibleItems = filterItems(rawItems);
+
     return (
       <section className={`session-zone session-zone-${zoneKey}`}>
         <div className="session-zone-header">
-          <h4>
-            {title} <span className="session-zone-count">({items.length})</span>
-          </h4>
-          {zoneKey === "working" && (
-            <button
-              type="button"
-              className="session-icon-button session-add-artifact-btn"
-              title="Add Artifact"
-              aria-label="Add Artifact"
-              onClick={handleAddArtifact}
-            >
-              ＋
-            </button>
-          )}
+          <div className="session-zone-header-row">
+            <h4>
+              {title}{" "}
+              <span className="session-zone-count">
+                {isFiltered ? `(${visibleItems.length}/${rawItems.length})` : `(${rawItems.length})`}
+              </span>
+            </h4>
+            {zoneKey === "working" && (
+              <button
+                type="button"
+                className="secondary session-add-artifact-btn"
+                title="Add Artifact"
+                aria-label="Add Artifact"
+                onClick={handleAddArtifact}
+              >
+                <span className="session-add-artifact-icon" aria-hidden="true">＋</span>
+                <span>Add Artifact</span>
+              </button>
+            )}
+          </div>
+          {ZONE_HELPERS[zoneKey] ? (
+            <div className="session-zone-helper">{ZONE_HELPERS[zoneKey]}</div>
+          ) : null}
         </div>
-        {items.length === 0 ? (
-          <div className="session-zone-empty">No artifacts in this zone</div>
+        {zoneKey === "working" && (
+          <div className="session-filter-bar">
+            <input
+              type="text"
+              className="session-filter-search"
+              placeholder="Filter artifacts in session..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              aria-label="Filter artifacts by title"
+            />
+            <select
+              className="session-filter-select"
+              value={kindFilter}
+              onChange={(e) => setKindFilter(e.target.value)}
+              aria-label="Filter by type"
+            >
+              <option value="all">All Types</option>
+              {distinctKinds.map((kind) => (
+                <option key={kind} value={kind}>
+                  {formatArtifactKindLabel(kind)}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+        {visibleItems.length === 0 ? (
+          <div className="session-zone-empty">
+            {isFiltered ? "No matching artifacts" : "No artifacts in this zone"}
+          </div>
         ) : (
           <div className="session-artifact-list">
-            {items.map((artifact, index) => {
+            {visibleItems.map((artifact) => {
               const isMenuOpen = activeCardMenuId === artifact.artifactId;
-              const isFirst = index === 0;
-              const isLast = index === items.length - 1;
+              const rawIndex = rawItems.findIndex((it) => it.artifactId === artifact.artifactId);
+              const isFirst = rawIndex === 0;
+              const isLast = rawIndex === rawItems.length - 1;
 
               return (
                 <div
                   key={artifact.artifactId}
+                  data-artifact-id={artifact.artifactId}
                   className={`session-artifact-card ${artifact.unavailable ? "session-artifact-card-unavailable" : ""}`}
                   onClick={() => {
                     if (artifact.unavailable) return;
@@ -470,10 +595,8 @@ export function SessionApp({ initialState, initialPanelExpanded = true }: Sessio
                   <div className="session-card-header">
                     <div className="session-card-main">
                       <span className="session-card-title">{artifact.title}</span>
-                      {artifact.unavailable ? (
+                      {artifact.unavailable && (
                         <span className="session-card-unavailable-badge">Unavailable</span>
-                      ) : (
-                        <span className="session-card-kind-badge">{formatArtifactKindLabel(artifact.kind)}</span>
                       )}
                     </div>
                     <div
@@ -501,6 +624,22 @@ export function SessionApp({ initialState, initialPanelExpanded = true }: Sessio
                           onClick={(e) => e.stopPropagation()}
                           onKeyDown={(e) => e.stopPropagation()}
                         >
+                          <div className="session-dropdown-header">Artifact</div>
+                          <button
+                            type="button"
+                            className="session-dropdown-item"
+                            onClick={() => handleRenameArtifact(artifact.artifactId)}
+                          >
+                            Rename
+                          </button>
+                          <button
+                            type="button"
+                            className="session-dropdown-item"
+                            onClick={() => handleChangeArtifactType(artifact.artifactId)}
+                          >
+                            Change Type
+                          </button>
+                          <div className="session-dropdown-divider" />
                           <div className="session-dropdown-header">Move to</div>
                           {zoneKey !== "working" && (
                             <button
@@ -559,9 +698,16 @@ export function SessionApp({ initialState, initialPanelExpanded = true }: Sessio
                       )}
                     </div>
                   </div>
+                  {artifact.description && (
+                    <div className="session-card-description">{artifact.description}</div>
+                  )}
                   <div className="session-card-meta">
-                    <span className="session-card-updated">{artifact.updatedAt}</span>
-                    <span className="session-card-id">{artifact.artifactId}</span>
+                    <span className="session-card-updated">
+                      {formatArtifactDate(artifact.updatedAt, artifact.createdAt)}
+                    </span>
+                    {!artifact.unavailable && (
+                      <span className="session-card-kind-badge">{formatArtifactKindLabel(artifact.kind)}</span>
+                    )}
                   </div>
                 </div>
               );
@@ -575,7 +721,7 @@ export function SessionApp({ initialState, initialPanelExpanded = true }: Sessio
   const isArchived = Boolean(data.uiState?.archivedAt);
 
   return (
-    <div className="session-app-container">
+    <div className="session-app-container" data-panel-expanded={panelExpanded ? "true" : "false"}>
       <header className="session-header">
         <div className="session-header-top">
           <div className="session-title-row">
@@ -608,7 +754,7 @@ export function SessionApp({ initialState, initialPanelExpanded = true }: Sessio
             <div className="session-header-actions">
               <button
                 type="button"
-                className={`secondary session-header-btn session-connect-btn${connectCopied ? " copied" : ""}`}
+                className={`primary session-header-btn session-connect-btn${connectCopied ? " copied" : ""}`}
                 onClick={handleCopyConnectPrompt}
                 title={connectCopied ? "Copied!" : "Copy session connect prompt for AI assistant"}
                 aria-label={connectCopied ? "Session connect prompt copied" : "Copy session connect prompt"}
@@ -678,6 +824,34 @@ export function SessionApp({ initialState, initialPanelExpanded = true }: Sessio
                 </button>
                 {moreMenuOpen && (
                   <div className="session-card-dropdown session-header-dropdown" onClick={(e) => e.stopPropagation()}>
+                    <button
+                      type="button"
+                      className="session-dropdown-item"
+                      onClick={() => {
+                        setMoreMenuOpen(false);
+                        handleRenameSession();
+                      }}
+                    >
+                      Rename
+                    </button>
+                    <button
+                      type="button"
+                      className="session-dropdown-item"
+                      onClick={() => {
+                        setMoreMenuOpen(false);
+                        handleSelectType();
+                      }}
+                    >
+                      Change Type
+                    </button>
+                    <div className="session-dropdown-divider" />
+                    <button
+                      type="button"
+                      className="session-dropdown-item"
+                      onClick={handleExportSession}
+                    >
+                      Export
+                    </button>
                     <button
                       type="button"
                       className="session-dropdown-item"
@@ -776,6 +950,7 @@ export function SessionApp({ initialState, initialPanelExpanded = true }: Sessio
                 rows={6}
                 disabled={savingInstructions}
               />
+              <div className="session-zone-helper">{INSTRUCTIONS_HELPER}</div>
               {instructionsError && <div className="session-inline-error">{instructionsError}</div>}
             </div>
 

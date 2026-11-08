@@ -16,6 +16,8 @@ import {
   type ConversationRegistryWatcher,
 } from "../src/extension/conversation-artifact-service";
 import {
+  ARTIFACT_MANIFEST_FILE,
+  ARTIFACT_MARKDOWN_FILE,
   CONVERSATION_REGISTRY_DIRECTORY,
   conversationRegisteredArtifactPath,
   globalArtifactsRoot,
@@ -447,6 +449,75 @@ describe("ConversationArtifactService", () => {
     expect(viewData.working).toHaveLength(1);
     expect(viewData.working[0]?.artifactId).toBe("ghost-artifact-id");
     expect(viewData.working[0]?.unavailable).toBe(true);
+
+    service.dispose();
+  });
+
+  it("WS-F3: resolveSessionViewData marks row unavailable for junction directory and manifest ID mismatch", async () => {
+    const userHome = await makeUserHome();
+    const service = new ConversationArtifactService<TestUri>({
+      uriFromFilePath: (fsPath) => ({ fsPath }),
+      openArtifactReview: vi.fn(),
+      rootOptions: { userHome },
+    });
+    const session = await createSession({
+      title: "Boundary Test Session",
+      userHome,
+    });
+
+    const root = globalArtifactsRoot({ userHome });
+    await mkdir(root, { recursive: true });
+
+    // 1. Linked artifact
+    const outsideDir = path.join(userHome, "outside-svc-art");
+    await mkdir(outsideDir, { recursive: true });
+    await writeFile(
+      path.join(outsideDir, ARTIFACT_MANIFEST_FILE),
+      JSON.stringify({
+        schemaVersion: 6,
+        artifactId: "linked-svc-art",
+        title: "Linked Art",
+        kind: "spec",
+        createdAt: "2026-05-01T10:00:00.000Z",
+        updatedAt: "2026-05-01T11:00:00.000Z",
+        reviewRound: 1,
+        reviewSessionId: "11111111-1111-4111-8111-111111111111",
+      }),
+      "utf8",
+    );
+    await writeFile(path.join(outsideDir, ARTIFACT_MARKDOWN_FILE), "# Linked", "utf8");
+    const linkPath = path.join(root, "linked-svc-art");
+    await symlink(outsideDir, linkPath, process.platform === "win32" ? "junction" : "dir");
+    await registerArtifactInSession(session.sessionId, "linked-svc-art", { userHome });
+
+    // 2. Manifest ID mismatch
+    const mismatchDir = path.join(root, "expected-svc-id");
+    await mkdir(mismatchDir, { recursive: true });
+    await writeFile(
+      path.join(mismatchDir, ARTIFACT_MANIFEST_FILE),
+      JSON.stringify({
+        schemaVersion: 6,
+        artifactId: "different-svc-id",
+        title: "Mismatched Manifest",
+        kind: "spec",
+        createdAt: "2026-05-01T10:00:00.000Z",
+        updatedAt: "2026-05-01T11:00:00.000Z",
+        reviewRound: 1,
+        reviewSessionId: "11111111-1111-4111-8111-111111111111",
+      }),
+      "utf8",
+    );
+    await writeFile(path.join(mismatchDir, ARTIFACT_MARKDOWN_FILE), "# Mismatch", "utf8");
+    await registerArtifactInSession(session.sessionId, "expected-svc-id", { userHome });
+
+    const viewData = await service.resolveSessionViewData(session.sessionId);
+    expect(viewData.working).toHaveLength(2);
+
+    const linkedRow = viewData.working.find((r) => r.artifactId === "linked-svc-art");
+    expect(linkedRow?.unavailable).toBe(true);
+
+    const mismatchRow = viewData.working.find((r) => r.artifactId === "expected-svc-id");
+    expect(mismatchRow?.unavailable).toBe(true);
 
     service.dispose();
   });

@@ -509,6 +509,8 @@
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.5",
     "@types/vscode": "^1.95.0",
+    "@types/yauzl": "^3.4.0",
+    "@types/yazl": "^3.3.1",
     "@vitejs/plugin-react": "^6.1.0",
     "@vscode/vsce": "^3.9.2",
     "esbuild": "^0.28.2",
@@ -525,5 +527,8 @@
     "vite": "^8.2.2",
     "vitest": "^4.1.11",
     "zod": "^4.4.3"
+  },
+  "dependencies": {
+    "yazl": "^2.5.1"
   }
 }
