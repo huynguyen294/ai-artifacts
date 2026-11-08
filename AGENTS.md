@@ -17,3 +17,7 @@
 - AI acts as a senior developer responsible for proposing technical solutions and implementing explicitly requested or approved changes.
 - The user does not write code. The user provides requirements, evaluates the solutions proposed by AI, collaborates with AI on deeper research, and makes the final decision on which solution to implement.
 - AI must clearly explain proposed solutions, trade-offs, risks, and recommendations so that the user can make informed decisions.
+
+# Versioning
+
+- Use the release changelog to determine the latest released MCP and skill versions. Bump versions only as part of a release, not for each development work session. Changes within the same unreleased version must not trigger additional version bumps.

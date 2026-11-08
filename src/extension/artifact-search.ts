@@ -3,6 +3,7 @@ import path from "node:path";
 import { validateArtifactReviewTarget } from "./artifact-review-open";
 import { ARTIFACT_MARKDOWN_FILE, type GlobalArtifactsRootOptions } from "../shared/artifact-files";
 import { ensureSafeGlobalArtifactsRoot } from "../shared/artifact-validation";
+import { getArtifactUiState } from "./artifact-ui-state";
 
 export const MAX_QUICK_PICK_ITEMS = 1000;
 export const DISCOVERY_CONCURRENCY = 16;
@@ -17,6 +18,7 @@ export type SearchableArtifact = {
   createdAt: string;
   updatedAt: string;
   reviewRound: number;
+  isArchived?: boolean;
 };
 
 export type ArtifactDiscoveryResult = {
@@ -84,6 +86,7 @@ export async function discoverSearchableArtifacts(
           candidatePath,
           options,
         );
+        const uiState = await getArtifactUiState(target.artifactId, options).catch(() => undefined);
         artifacts.push({
           artifactDirectory: target.artifactDirectory,
           artifactPath: target.artifactPath,
@@ -94,6 +97,7 @@ export async function discoverSearchableArtifacts(
           createdAt: target.manifest.createdAt,
           updatedAt: target.manifest.updatedAt,
           reviewRound: target.manifest.reviewRound,
+          isArchived: Boolean(uiState?.archivedAt),
         });
       } catch {
         skippedCount++;

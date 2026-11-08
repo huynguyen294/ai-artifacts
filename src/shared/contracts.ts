@@ -8,9 +8,10 @@ export const WORK_SESSION_LAYOUT_SCHEMA_VERSION = 1 as const;
 export const SESSION_TYPES_SCHEMA_VERSION = 1 as const;
 export const DEFAULT_SESSION_TYPE_ID = "conversation" as const;
 export const INTEGRATION_VERSION_SCHEMA_VERSION = 1 as const;
+export const UI_STATE_SCHEMA_VERSION = 1 as const;
 export const MCP_VERSION = 12 as const;
 export const CREATE_REVIEW_ARTIFACT_SKILL_VERSION = 4 as const;
-export const WORK_SESSION_SKILL_VERSION = 2 as const;
+export const WORK_SESSION_SKILL_VERSION = 1 as const;
 export const SKILL_VERSION = 4 as const;
 export const ARTIFACT_ROOT_BLOCK_ID = "__artifact_root__" as const;
 export const ARTIFACT_ROOT_BLOCK_TYPE = "artifact" as const;
@@ -35,6 +36,15 @@ export const integrationVersionManifestSchema = z
   .strict();
 export type InstalledSkillVersions = z.infer<typeof installedSkillVersionsSchema>;
 export type IntegrationVersionManifest = z.infer<typeof integrationVersionManifestSchema>;
+
+export const uiStateSchema = z
+  .object({
+    schemaVersion: z.literal(UI_STATE_SCHEMA_VERSION),
+    pinned: z.boolean().optional(),
+    archivedAt: z.string().datetime().optional(),
+  })
+  .strict();
+export type UiState = z.infer<typeof uiStateSchema>;
 export const conversationNameSchema = z
   .string()
   .min(1)
@@ -269,6 +279,10 @@ export type ReviewState = {
     message?: string;
   };
   submission?: ReviewSubmission;
+  uiState?: {
+    pinned: boolean;
+    archivedAt?: string;
+  };
 };
 
 export const commentDraftSchema = z.object({
@@ -516,6 +530,7 @@ export const webviewToExtensionMessageSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("openConversationArtifact"), artifactId: artifactIdSchema }).strict(),
   z.object({ type: z.literal("openArtifactSessions") }).strict(),
   z.object({ type: z.literal("migrateSelectedConversation"), sessionId: artifactConversationIdSchema }).strict(),
+  z.object({ type: z.literal("restoreArtifact") }).strict(),
   z.object({ type: z.literal("ready") }),
 ]);
 
@@ -533,6 +548,15 @@ export type ExtensionToWebviewMessage =
     }
   | { type: "sendState"; status: SendStatus; message?: string; retryable?: boolean }
   | { type: "artifactConnectPromptCopied" }
+  | {
+      type: "artifactUiStatePatch";
+      artifactId: string;
+      uiState: {
+        pinned: boolean;
+        archivedAt?: string;
+      };
+    }
+  | { type: "artifactDeleted"; artifactId: string }
   | { type: "error"; message: string };
 
 export const workSessionArtifactRowSchema = z
@@ -558,6 +582,12 @@ export const workSessionViewDataSchema = z
     working: z.array(workSessionArtifactRowSchema),
     references: z.array(workSessionArtifactRowSchema),
     archived: z.array(workSessionArtifactRowSchema),
+    uiState: z
+      .object({
+        pinned: z.boolean(),
+        archivedAt: z.string().datetime().optional(),
+      })
+      .optional(),
   })
   .strict();
 export type WorkSessionViewData = z.infer<typeof workSessionViewDataSchema>;
@@ -568,6 +598,8 @@ export type WorkSessionDataChange =
   | { kind: "membership"; sessionId: string; artifactId: string }
   | { kind: "layout"; sessionId: string }
   | { kind: "artifact"; artifactId: string }
+  | { kind: "artifactUiState"; artifactId: string }
+  | { kind: "sessionUiState"; sessionId: string }
   | { kind: "types" }
   | { kind: "support" };
 
@@ -604,6 +636,9 @@ export const sessionWebviewToExtensionMessageSchema = z.discriminatedUnion("type
     .strict(),
   z.object({ type: z.literal("removeArtifact"), artifactId: artifactIdSchema }).strict(),
   z.object({ type: z.literal("setSessionPanelExpanded"), expanded: z.boolean() }).strict(),
+  z.object({ type: z.literal("restoreSession") }).strict(),
+  z.object({ type: z.literal("archiveSession") }).strict(),
+  z.object({ type: z.literal("deleteSession") }).strict(),
 ]);
 export type SessionWebviewToExtensionMessage = z.infer<typeof sessionWebviewToExtensionMessageSchema>;
 
@@ -638,6 +673,14 @@ export type SessionExtensionToWebviewMessage =
   | {
       type: "sessionPanelExpanded";
       expanded: boolean;
+    }
+  | {
+      type: "sessionUiStatePatch";
+      sessionId: string;
+      uiState: {
+        pinned: boolean;
+        archivedAt?: string;
+      };
     }
   | {
       type: "actionError";

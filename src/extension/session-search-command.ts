@@ -4,6 +4,7 @@ import type { SessionType, WorkSession } from "../shared/contracts";
 import { compareIsoTimestampsAsc } from "../shared/conversation-artifact-registry";
 import { listSessionTypes } from "../shared/session-type-registry";
 import { normalizeArtifactTitleSearch } from "./artifact-search";
+import { getSessionUiState } from "./artifact-ui-state";
 
 export interface SessionSearchItem extends vscode.QuickPickItem {
   sessionId: string;
@@ -62,13 +63,22 @@ export async function runSessionSearchCommand(deps: SessionSearchCommandDeps): P
     quickPick.placeholder = "No sessions found";
   }
 
-  const allItems: SessionSearchItem[] = sortedSessions.map((s) => ({
-    label: s.title,
-    description: typeMap.get(s.typeId) ?? s.typeId,
-    detail: `Updated: ${s.updatedAt} · ${s.sessionId}`,
-    sessionId: s.sessionId,
-    alwaysShow: true,
-  }));
+  const uiStates = await Promise.all(
+    sortedSessions.map((s) => getSessionUiState(s.sessionId, deps.rootOptions).catch(() => undefined)),
+  );
+
+  const allItems: SessionSearchItem[] = sortedSessions.map((s, idx) => {
+    const isArchived = Boolean(uiStates[idx]?.archivedAt);
+    const baseType = typeMap.get(s.typeId) ?? s.typeId;
+    const description = isArchived ? `${baseType} · Archived` : baseType;
+    return {
+      label: s.title,
+      description,
+      detail: `Updated: ${s.updatedAt} · ${s.sessionId}`,
+      sessionId: s.sessionId,
+      alwaysShow: true,
+    };
+  });
 
   quickPick.items = allItems;
 

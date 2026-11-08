@@ -51,6 +51,7 @@ import {
   RecentArtifactsTreeDataProvider,
   WorkSessionsTreeDataProvider,
 } from "../src/extension/work-session-sidebar";
+import { patchArtifactUiState, patchSessionUiState } from "../src/extension/artifact-ui-state";
 import { ConversationArtifactService } from "../src/extension/conversation-artifact-service";
 import { createSession, registerArtifactInSession } from "../src/shared/conversation-artifact-registry";
 import { createSessionType } from "../src/shared/session-type-registry";
@@ -300,6 +301,67 @@ describe("WorkSession Sidebar Tree Data Providers", () => {
         arguments: [{ kindFilter: "note" }],
       });
     });
+
+    it("sorts pinned artifacts to the top and hides archived artifacts", async () => {
+      const artifactsDir = globalArtifactsRoot({ userHome: tempHome });
+
+      // Create 3 artifacts:
+      // art-old: older timestamp, but pinned
+      // art-new: newer timestamp, unpinned
+      // art-archived: newest timestamp, but archived
+      const items = [
+        { id: "art-old", time: "2026-04-10T10:00:00.000Z", title: "Old Pinned" },
+        { id: "art-new", time: "2026-04-10T11:00:00.000Z", title: "New Unpinned" },
+        { id: "art-archived", time: "2026-04-10T12:00:00.000Z", title: "Newest Archived" },
+      ];
+
+      for (const item of items) {
+        const dir = path.join(artifactsDir, item.id);
+        await mkdir(dir, { recursive: true });
+        await writeFile(
+          path.join(dir, "artifact.json"),
+          JSON.stringify({
+            schemaVersion: 6,
+            kind: "spec",
+            artifactId: item.id,
+            title: item.title,
+            createdAt: item.time,
+            updatedAt: item.time,
+            reviewRound: 1,
+            reviewSessionId: "00000000-0000-4000-8000-000000000001",
+          }),
+        );
+        await writeFile(path.join(dir, "artifact.md"), "# Content\n");
+      }
+
+      await patchArtifactUiState("art-old", { pinned: true }, { userHome: tempHome });
+      await patchArtifactUiState("art-archived", { archivedAt: "2026-04-10T12:30:00.000Z" }, { userHome: tempHome });
+
+      const provider = new RecentArtifactsTreeDataProvider(service, { userHome: tempHome });
+      const children = await provider.getChildren();
+
+      // art-archived must be hidden! Only art-old and art-new remain.
+      expect(children).toHaveLength(2);
+      expect(children[0]?.type).toBe("artifact");
+      expect(children[1]?.type).toBe("artifact");
+
+      // art-old was pinned, so it should be first despite older timestamp
+      const first = children[0] as any;
+      expect(first.artifact.artifactId).toBe("art-old");
+      expect(first.isPinned).toBe(true);
+      const firstTreeItem = provider.getTreeItem(first);
+      expect(firstTreeItem.contextValue).toBe("artifact.pinned");
+      expect(firstTreeItem.description).toContain("(Pinned)");
+      expect(firstTreeItem.tooltip).toContain("Old Pinned");
+
+      // art-new is second
+      const second = children[1] as any;
+      expect(second.artifact.artifactId).toBe("art-new");
+      expect(second.isPinned).toBe(false);
+      const secondTreeItem = provider.getTreeItem(second);
+      expect(secondTreeItem.contextValue).toBe("artifact");
+      expect(secondTreeItem.description).not.toContain("(Pinned)");
+    });
   });
 
   describe("WorkSessionsTreeDataProvider", () => {
@@ -441,6 +503,45 @@ describe("WorkSession Sidebar Tree Data Providers", () => {
       expect(sessionItems).toHaveLength(2);
     });
 
+    it("sorts pinned sessions to the top and hides archived sessions", async () => {
+      // Create MCP version 12 to enable support
+      const managedDir = path.join(tempHome, ".ai-artifacts", "managed");
+      await mkdir(managedDir, { recursive: true });
+      await writeFile(
+        path.join(managedDir, "integration-version.json"),
+        JSON.stringify({ schemaVersion: 1, mcpVersion: 12, skills: {}, updatedAt: new Date().toISOString() }),
+      );
+
+      const sOld = await createSession({ title: "Old Pinned Session", userHome: tempHome });
+      const sNew = await createSession({ title: "New Unpinned Session", userHome: tempHome });
+      const sArchived = await createSession({ title: "Newest Archived Session", userHome: tempHome });
+
+      await patchSessionUiState(sOld.sessionId, { pinned: true }, { userHome: tempHome });
+      await patchSessionUiState(sArchived.sessionId, { archivedAt: "2026-04-10T12:00:00.000Z" }, { userHome: tempHome });
+
+      const provider = new WorkSessionsTreeDataProvider(service, undefined, { userHome: tempHome });
+      const children = await provider.getChildren();
+
+      // sArchived must be hidden! Only sOld and sNew remain
+      const sessionChildren = children.filter((c) => c.type === "session");
+      expect(sessionChildren).toHaveLength(2);
+
+      const first = sessionChildren[0] as any;
+      expect(first.sessionId).toBe(sOld.sessionId);
+      expect(first.isPinned).toBe(true);
+      const firstItem = provider.getTreeItem(first);
+      expect(firstItem.contextValue).toBe("session.pinned");
+      expect(firstItem.description).toContain("(Pinned)");
+      expect(firstItem.tooltip).toContain("Old Pinned Session");
+
+      const second = sessionChildren[1] as any;
+      expect(second.sessionId).toBe(sNew.sessionId);
+      expect(second.isPinned).toBe(false);
+      const secondItem = provider.getTreeItem(second);
+      expect(secondItem.contextValue).toBe("session");
+      expect(secondItem.description).not.toContain("(Pinned)");
+    });
+
     it("selectively refreshes tree providers based on change kind", () => {
       const recentProvider = new RecentArtifactsTreeDataProvider(service, { userHome: tempHome });
       const sessionProvider = new WorkSessionsTreeDataProvider(service, undefined, { userHome: tempHome });
@@ -458,19 +559,29 @@ describe("WorkSession Sidebar Tree Data Providers", () => {
       expect(refreshRecentSpy).toHaveBeenCalledTimes(1);
       expect(refreshSessionSpy).not.toHaveBeenCalled();
 
-      // 3. Metadata change -> WorkSessions refreshes, Recent does NOT
-      service.notifyChanged([{ kind: "metadata", sessionId: "00000000-0000-4000-8000-000000000001" }]);
-      expect(refreshRecentSpy).toHaveBeenCalledTimes(1);
+      // 3. ArtifactUiState change -> Recent refreshes, WorkSessions does NOT
+      service.notifyChanged([{ kind: "artifactUiState", artifactId: "art-1" }]);
+      expect(refreshRecentSpy).toHaveBeenCalledTimes(2);
+      expect(refreshSessionSpy).not.toHaveBeenCalled();
+
+      // 4. SessionUiState change -> WorkSessions refreshes, Recent does NOT
+      service.notifyChanged([{ kind: "sessionUiState", sessionId: "00000000-0000-4000-8000-000000000001" }]);
+      expect(refreshRecentSpy).toHaveBeenCalledTimes(2);
       expect(refreshSessionSpy).toHaveBeenCalledTimes(1);
 
-      // 4. Types change -> WorkSessions refreshes
-      service.notifyChanged([{ kind: "types" }]);
+      // 5. Metadata change -> WorkSessions refreshes, Recent does NOT
+      service.notifyChanged([{ kind: "metadata", sessionId: "00000000-0000-4000-8000-000000000001" }]);
+      expect(refreshRecentSpy).toHaveBeenCalledTimes(2);
       expect(refreshSessionSpy).toHaveBeenCalledTimes(2);
 
-      // 5. Generic change (empty array) -> both refresh
-      service.notifyChanged([]);
-      expect(refreshRecentSpy).toHaveBeenCalledTimes(2);
+      // 6. Types change -> WorkSessions refreshes
+      service.notifyChanged([{ kind: "types" }]);
       expect(refreshSessionSpy).toHaveBeenCalledTimes(3);
+
+      // 7. Generic change (empty array) -> both refresh
+      service.notifyChanged([]);
+      expect(refreshRecentSpy).toHaveBeenCalledTimes(3);
+      expect(refreshSessionSpy).toHaveBeenCalledTimes(4);
 
       recentProvider.dispose();
       sessionProvider.dispose();

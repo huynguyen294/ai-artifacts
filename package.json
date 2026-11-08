@@ -128,6 +128,100 @@
         "icon": "$(search)"
       },
       {
+        "command": "agentPlus.pinArtifact",
+        "title": "Pin Artifact",
+        "category": "AI Artifacts",
+        "icon": "$(pin)"
+      },
+      {
+        "command": "agentPlus.unpinArtifact",
+        "title": "Unpin Artifact",
+        "category": "AI Artifacts",
+        "icon": "$(pinned)"
+      },
+      {
+        "command": "agentPlus.archiveArtifact",
+        "title": "Archive Artifact",
+        "category": "AI Artifacts",
+        "icon": "$(archive)"
+      },
+      {
+        "command": "agentPlus.restoreArtifact",
+        "title": "Restore Artifact",
+        "category": "AI Artifacts"
+      },
+      {
+        "command": "agentPlus.deleteArtifactPermanently",
+        "title": "Delete Artifact Permanently",
+        "category": "AI Artifacts",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "agentPlus.copyArtifactConnectPromptFromTree",
+        "title": "Copy Connect Prompt",
+        "category": "AI Artifacts",
+        "icon": "$(link)"
+      },
+      {
+        "command": "agentPlus.pinSession",
+        "title": "Pin Session",
+        "category": "AI Artifacts",
+        "icon": "$(pin)"
+      },
+      {
+        "command": "agentPlus.unpinSession",
+        "title": "Unpin Session",
+        "category": "AI Artifacts",
+        "icon": "$(pinned)"
+      },
+      {
+        "command": "agentPlus.archiveSession",
+        "title": "Archive Session",
+        "category": "AI Artifacts",
+        "icon": "$(archive)"
+      },
+      {
+        "command": "agentPlus.restoreSession",
+        "title": "Restore Session",
+        "category": "AI Artifacts"
+      },
+      {
+        "command": "agentPlus.deleteSessionPermanently",
+        "title": "Delete Session Permanently",
+        "category": "AI Artifacts",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "agentPlus.copySessionConnectPromptFromTree",
+        "title": "Copy Connect Prompt",
+        "category": "AI Artifacts",
+        "icon": "$(link)"
+      },
+      {
+        "command": "agentPlus.openSessionInstructionsFileFromTree",
+        "title": "Open Instructions File",
+        "category": "AI Artifacts",
+        "icon": "$(file-code)"
+      },
+      {
+        "command": "agentPlus.copySessionInstructionsFilePathFromTree",
+        "title": "Copy Instructions File Path",
+        "category": "AI Artifacts",
+        "icon": "$(copy)"
+      },
+      {
+        "command": "agentPlus.renameSessionFromTree",
+        "title": "Rename Session",
+        "category": "AI Artifacts",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "agentPlus.changeSessionTypeFromTree",
+        "title": "Change Session Type",
+        "category": "AI Artifacts",
+        "icon": "$(tag)"
+      },
+      {
         "command": "agentPlus.installAllIntegrations",
         "title": "AI Artifacts: Install All Detected Integrations"
       },
@@ -266,6 +360,88 @@
           "command": "agentPlus.manageSessionTypes",
           "when": "view == agentPlus.sessions",
           "group": "navigation@3"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "agentPlus.openArtifact",
+          "when": "view == agentPlus.recentArtifacts && (viewItem == artifact || viewItem == artifact.pinned)",
+          "group": "0_open@1"
+        },
+        {
+          "command": "agentPlus.copyArtifactConnectPromptFromTree",
+          "when": "view == agentPlus.recentArtifacts && (viewItem == artifact || viewItem == artifact.pinned)",
+          "group": "1_actions@1"
+        },
+        {
+          "command": "agentPlus.pinArtifact",
+          "when": "view == agentPlus.recentArtifacts && viewItem == artifact",
+          "group": "2_pin@1"
+        },
+        {
+          "command": "agentPlus.unpinArtifact",
+          "when": "view == agentPlus.recentArtifacts && viewItem == artifact.pinned",
+          "group": "2_pin@1"
+        },
+        {
+          "command": "agentPlus.archiveArtifact",
+          "when": "view == agentPlus.recentArtifacts && (viewItem == artifact || viewItem == artifact.pinned)",
+          "group": "3_archive@1"
+        },
+        {
+          "command": "agentPlus.deleteArtifactPermanently",
+          "when": "view == agentPlus.recentArtifacts && (viewItem == artifact || viewItem == artifact.pinned)",
+          "group": "4_delete@1"
+        },
+        {
+          "command": "agentPlus.openWorkSession",
+          "when": "view == agentPlus.sessions && (viewItem == session || viewItem == session.pinned)",
+          "group": "0_open@1"
+        },
+        {
+          "command": "agentPlus.renameSessionFromTree",
+          "when": "view == agentPlus.sessions && (viewItem == session || viewItem == session.pinned)",
+          "group": "1_modify@1"
+        },
+        {
+          "command": "agentPlus.changeSessionTypeFromTree",
+          "when": "view == agentPlus.sessions && (viewItem == session || viewItem == session.pinned)",
+          "group": "1_modify@2"
+        },
+        {
+          "command": "agentPlus.copySessionConnectPromptFromTree",
+          "when": "view == agentPlus.sessions && (viewItem == session || viewItem == session.pinned)",
+          "group": "2_connect@1"
+        },
+        {
+          "command": "agentPlus.openSessionInstructionsFileFromTree",
+          "when": "view == agentPlus.sessions && (viewItem == session || viewItem == session.pinned)",
+          "group": "2_connect@2"
+        },
+        {
+          "command": "agentPlus.copySessionInstructionsFilePathFromTree",
+          "when": "view == agentPlus.sessions && (viewItem == session || viewItem == session.pinned)",
+          "group": "2_connect@3"
+        },
+        {
+          "command": "agentPlus.pinSession",
+          "when": "view == agentPlus.sessions && viewItem == session",
+          "group": "3_pin@1"
+        },
+        {
+          "command": "agentPlus.unpinSession",
+          "when": "view == agentPlus.sessions && viewItem == session.pinned",
+          "group": "3_pin@1"
+        },
+        {
+          "command": "agentPlus.archiveSession",
+          "when": "view == agentPlus.sessions && (viewItem == session || viewItem == session.pinned)",
+          "group": "4_archive@1"
+        },
+        {
+          "command": "agentPlus.deleteSessionPermanently",
+          "when": "view == agentPlus.sessions && (viewItem == session || viewItem == session.pinned)",
+          "group": "5_delete@1"
         }
       ]
     },

@@ -38,9 +38,11 @@ export interface ArtifactSearchCommandOptions {
 }
 
 export function toQuickPickItem(artifact: SearchableArtifact): ArtifactQuickPickItem {
+  const baseDescription = `${formatArtifactKindLabel(artifact.kind)} · Round ${artifact.reviewRound}`;
+  const description = artifact.isArchived ? `${baseDescription} · Archived` : baseDescription;
   return {
     label: artifact.title,
-    description: `${formatArtifactKindLabel(artifact.kind)} · Round ${artifact.reviewRound}`,
+    description,
     detail: `Updated ${artifact.updatedAt} · Created ${artifact.createdAt} · ${artifact.artifactId}`,
     alwaysShow: true,
     artifact,

@@ -72,6 +72,8 @@ describe("work-session skill contract", () => {
       "| Explicit Join or switch to T | join_session with exact sessionId: T | Adopt T |",
     );
     expect(skill).toContain("Adopt the returned `session.sessionId`, Instructions, path, and catalog only after success");
+    expect(skill).toContain("replace the active Session catalog with the returned catalog; do not merge it with older snapshots");
+    expect(skill).toContain("Preserve retained artifact review handles separately");
   });
 
   it("documents instructions and ordered catalog zones", async () => {
@@ -95,11 +97,13 @@ describe("work-session skill contract", () => {
     const skill = await readFile(path.join(skillDirectory, "SKILL.md"), "utf8");
 
     expect(skill).toContain(
-      "If the target artifact is already known unambiguously by exact ID and catalog path in the current Session context, read its current Markdown directly",
+      "Otherwise, if the target artifact is already known unambiguously by exact ID and catalog path in the current Session context, read its current Markdown directly",
     );
     expect(skill).toContain(
-      "If the target is unknown, the user asks for the Session's contents or recent changes, or the task requires a current overview, call `join_session({ sessionId: activeSessionId })` once",
+      "If the target is unknown, call `join_session({ sessionId: activeSessionId })` once",
     );
+    expect(skill).toContain("before selecting an artifact, even if a previously known artifact has a valid path");
+    expect(skill).toContain("Reuse a fresh catalog already returned for the same request");
   });
 
   it("defines machine-readable session recovery and historical snapshot policy", async () => {

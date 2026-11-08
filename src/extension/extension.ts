@@ -5,7 +5,10 @@ import { ArtifactReviewOpenCoordinator, setupGlobalArtifactConnectionWatcher } f
 import { discoverSearchableArtifacts } from "./artifact-search";
 import {
   aiArtifactsRoot,
+  artifactDirectory,
   ARTIFACT_MANIFEST_FILE,
+  ARTIFACT_MARKDOWN_FILE,
+  ARTIFACT_UI_STATE_FILE,
   CONVERSATION_METADATA_FILE,
   conversationDirectory,
   SESSION_TYPES_FILE,
@@ -60,6 +63,12 @@ import {
 } from "./workspace-integration";
 import { WorkspaceRegistryPublisher } from "./workspace-registry-publisher";
 import { executeArtifactRetentionCleanup } from "./artifact-retention";
+import { executeWorkSessionArchiveCleanup } from "./work-session-retention";
+import {
+  WorkSessionManagementCoordinator,
+  extractSessionId,
+  extractArtifactId,
+} from "./work-session-management-command";
 import { summarizeIntegrationVerification } from "./integration-verification";
 import {
   INSTALLATION_GUIDE_URL,
@@ -182,6 +191,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     }
   };
 
+  const managementCoordinator = new WorkSessionManagementCoordinator({
+    service: conversationArtifactService,
+  });
+
   context.subscriptions.push(
     workspaceRegistryPublisher,
     conversationArtifactService,
@@ -203,6 +216,54 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       webviewOptions: { retainContextWhenHidden: true },
       supportsMultipleEditorsPerDocument: false,
     }),
+    vscode.commands.registerCommand("agentPlus.pinArtifact", async (el) => {
+      await managementCoordinator.pinArtifact(el);
+    }),
+    vscode.commands.registerCommand("agentPlus.unpinArtifact", async (el) => {
+      await managementCoordinator.unpinArtifact(el);
+    }),
+    vscode.commands.registerCommand("agentPlus.archiveArtifact", async (el) => {
+      await managementCoordinator.archiveArtifact(el);
+    }),
+    vscode.commands.registerCommand("agentPlus.restoreArtifact", async (el) => {
+      await managementCoordinator.restoreArtifact(el);
+    }),
+    vscode.commands.registerCommand("agentPlus.deleteArtifactPermanently", async (el) => {
+      await managementCoordinator.deleteArtifactPermanently(el);
+    }),
+    vscode.commands.registerCommand("agentPlus.copyArtifactConnectPromptFromTree", async (el) => {
+      await managementCoordinator.copyArtifactConnectPrompt(el);
+    }),
+    vscode.commands.registerCommand("agentPlus.pinSession", async (el) => {
+      await managementCoordinator.pinSession(el);
+    }),
+    vscode.commands.registerCommand("agentPlus.unpinSession", async (el) => {
+      await managementCoordinator.unpinSession(el);
+    }),
+    vscode.commands.registerCommand("agentPlus.archiveSession", async (el) => {
+      await managementCoordinator.archiveSession(el);
+    }),
+    vscode.commands.registerCommand("agentPlus.restoreSession", async (el) => {
+      await managementCoordinator.restoreSession(el);
+    }),
+    vscode.commands.registerCommand("agentPlus.deleteSessionPermanently", async (el) => {
+      await managementCoordinator.deleteSessionPermanently(el);
+    }),
+    vscode.commands.registerCommand("agentPlus.copySessionConnectPromptFromTree", async (el) => {
+      await managementCoordinator.copySessionConnectPrompt(el);
+    }),
+    vscode.commands.registerCommand("agentPlus.openSessionInstructionsFileFromTree", async (el) => {
+      await managementCoordinator.openSessionInstructionsFile(el);
+    }),
+    vscode.commands.registerCommand("agentPlus.copySessionInstructionsFilePathFromTree", async (el) => {
+      await managementCoordinator.copySessionInstructionsFilePath(el);
+    }),
+    vscode.commands.registerCommand("agentPlus.renameSessionFromTree", async (el) => {
+      await managementCoordinator.renameSession(el);
+    }),
+    vscode.commands.registerCommand("agentPlus.changeSessionTypeFromTree", async (el) => {
+      await managementCoordinator.changeSessionType(el);
+    }),
     vscode.commands.registerCommand("agentPlus.createSession", async () => {
       await runCreateSessionCommand({
         service: conversationArtifactService,
@@ -211,10 +272,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     }),
     vscode.commands.registerCommand("agentPlus.openWorkSession", async (sessionIdCandidate?: unknown) => {
       try {
-        let sessionId: string | undefined;
-        if (typeof sessionIdCandidate === "string") {
-          sessionId = sessionIdCandidate;
-        } else {
+        let sessionId = extractSessionId(sessionIdCandidate);
+        if (!sessionId) {
           const sessions = await conversationArtifactService.listWorkSessions();
           if (sessions.length === 0) {
             void vscode.window.showInformationMessage("No sessions found.");
@@ -284,8 +343,24 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       });
     }),
     vscode.commands.registerCommand("agentPlus.openArtifact", async (resource?: unknown) => {
+      let uri: vscode.Uri | undefined;
       if (resource instanceof vscode.Uri) {
-        await vscode.commands.executeCommand("agentPlus.openArtifactReview", resource);
+        uri = resource;
+      } else if (resource && typeof resource === "object") {
+        if ("resourceUri" in resource && (resource as any).resourceUri instanceof vscode.Uri) {
+          uri = (resource as any).resourceUri;
+        } else if ("artifact" in resource && typeof (resource as any).artifact?.artifactPath === "string") {
+          uri = vscode.Uri.file((resource as any).artifact.artifactPath);
+        } else {
+          const artifactId = extractArtifactId(resource);
+          if (artifactId) {
+            const artDir = artifactDirectory(artifactId);
+            uri = vscode.Uri.file(path.join(artDir, ARTIFACT_MARKDOWN_FILE));
+          }
+        }
+      }
+      if (uri) {
+        await vscode.commands.executeCommand("agentPlus.openArtifactReview", uri);
       }
     }),
     vscode.commands.registerCommand("agentPlus.reinstallIntegration", async () => {
@@ -675,7 +750,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   try {
     const globalRoot = await ensureSafeGlobalArtifactsRoot();
     const manifestWatcher = vscode.workspace.createFileSystemWatcher(
-      new vscode.RelativePattern(vscode.Uri.file(globalRoot), `*/${ARTIFACT_MANIFEST_FILE}`),
+      new vscode.RelativePattern(
+        vscode.Uri.file(globalRoot),
+        `*/{${ARTIFACT_MANIFEST_FILE},${ARTIFACT_UI_STATE_FILE}}`,
+      ),
       false,
       false,
       false,
@@ -684,7 +762,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       recentArtifactsProvider.refresh();
       const artifactId = path.basename(path.dirname(uri.fsPath));
       if (artifactIdSchema.safeParse(artifactId).success) {
-        conversationArtifactService.notifyChanged([{ kind: "artifact", artifactId }]);
+        if (uri.fsPath.endsWith(ARTIFACT_UI_STATE_FILE)) {
+          conversationArtifactService.notifyChanged([{ kind: "artifactUiState", artifactId }]);
+        } else {
+          conversationArtifactService.notifyChanged([{ kind: "artifact", artifactId }]);
+        }
       } else {
         conversationArtifactService.notifyChanged();
       }
@@ -721,9 +803,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const retentionDays = vscode.workspace
     .getConfiguration("agentPlus")
     .get<unknown>("artifactRetentionDays");
-  void executeArtifactRetentionCleanup({ retentionDays }).catch((error) => {
-    console.error("AI Artifacts retention cleanup failed:", error);
-  });
+  void executeArtifactRetentionCleanup({ retentionDays })
+    .then(() => executeWorkSessionArchiveCleanup())
+    .catch((error) => {
+      console.error("AI Artifacts retention cleanup failed:", error);
+    });
 }
 
 export function deactivate(): void {}

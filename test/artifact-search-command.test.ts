@@ -126,6 +126,20 @@ describe("artifact-search-command", () => {
       expect(item.alwaysShow).toBe(true);
       expect(item.artifact).toBe(art);
     });
+
+    it("adds Archived indicator to description when artifact isArchived is true", () => {
+      const art = makeArtifact({
+        artifactId: "plan-42",
+        title: "Kế hoạch triển khai",
+        kind: "implementation-plan",
+        reviewRound: 3,
+        isArchived: true,
+      });
+
+      const item = toQuickPickItem(art);
+
+      expect(item.description).toBe("Implementation plan · Round 3 · Archived");
+    });
   });
 
   describe("updateQuickPickState", () => {

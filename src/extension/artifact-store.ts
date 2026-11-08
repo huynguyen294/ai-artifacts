@@ -31,6 +31,7 @@ import {
   OWNER_ONLY_FILE_MODE,
   type GlobalArtifactsRootOptions,
 } from "../shared/artifact-files";
+import { getArtifactUiState } from "./artifact-ui-state";
 
 function sha256(value: string): string {
   return createHash("sha256").update(value).digest("hex");
@@ -281,6 +282,18 @@ export class ArtifactStore {
       if (errorCode(error) !== "ENOENT") throw error;
     }
 
+    let uiStateData;
+    try {
+      const uiState = await getArtifactUiState(artifact.artifactId, this.globalRootOptions);
+      uiStateData = {
+        pinned: Boolean(uiState.pinned),
+        ...(uiState.archivedAt ? { archivedAt: uiState.archivedAt } : {}),
+      };
+    } catch (err) {
+      console.warn(`[ArtifactStore] Failed to read UI state for ${artifact.artifactId}:`, err);
+      uiStateData = undefined;
+    }
+
     return {
       artifact,
       comments,
@@ -288,6 +301,7 @@ export class ArtifactStore {
       markdown,
       lifecycle: { readOnly: false },
       ...(submission ? { submission } : {}),
+      ...(uiStateData ? { uiState: uiStateData } : {}),
     };
   }
 

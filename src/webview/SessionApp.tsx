@@ -1,4 +1,4 @@
-import { useEffect, useReducer } from "react";
+import { useEffect, useReducer, useRef, useState } from "react";
 import { formatArtifactKindLabel } from "../shared/artifact-kinds";
 import type {
   SessionExtensionToWebviewMessage,
@@ -23,6 +23,7 @@ export interface SessionManagerState {
   draftInstructions: string;
   hasInitializedDraft: boolean;
   savingInstructions: boolean;
+  restoringSession: boolean;
   instructionsError?: string | undefined;
   actionError?: string | undefined;
   activeCardMenuId?: string | undefined;
@@ -33,6 +34,7 @@ export type SessionManagerAction =
   | { type: "message"; message: SessionExtensionToWebviewMessage }
   | { type: "setDraft"; draft: string }
   | { type: "startSaveInstructions" }
+  | { type: "startRestoreSession" }
   | { type: "togglePanel" }
   | { type: "setActiveCardMenu"; menuId: string | undefined }
   | { type: "dismissActionError" }
@@ -48,6 +50,7 @@ export function createInitialSessionManagerState(
     draftInstructions: initialState && initialState.status === "ready" ? initialState.data.instructions : "",
     hasInitializedDraft: initialState && initialState.status === "ready" ? true : false,
     savingInstructions: false,
+    restoringSession: false,
     instructionsError: undefined,
     actionError: undefined,
     activeCardMenuId: undefined,
@@ -72,6 +75,13 @@ export function sessionManagerReducer(
         ...current,
         savingInstructions: true,
         instructionsError: undefined,
+      };
+
+    case "startRestoreSession":
+      return {
+        ...current,
+        restoringSession: true,
+        actionError: undefined,
       };
 
     case "togglePanel":
@@ -113,11 +123,13 @@ export function sessionManagerReducer(
             draftInstructions: nextDraft,
             hasInitializedDraft: true,
             panelExpanded: msg.panelExpanded !== undefined ? msg.panelExpanded : current.panelExpanded,
+            restoringSession: false,
           };
         }
         return {
           ...current,
           state: { status: "error", message: msg.state.message },
+          restoringSession: false,
         };
       }
 
@@ -207,6 +219,22 @@ export function sessionManagerReducer(
         };
       }
 
+      if (msg.type === "sessionUiStatePatch") {
+        if (current.state.status !== "ready") return { ...current, restoringSession: false };
+        if (current.state.data.sessionId !== msg.sessionId) return { ...current, restoringSession: false };
+        return {
+          ...current,
+          restoringSession: false,
+          state: {
+            status: "ready",
+            data: {
+              ...current.state.data,
+              uiState: msg.uiState,
+            },
+          },
+        };
+      }
+
       if (msg.type === "actionError") {
         if (msg.action === "saveSessionInstructions") {
           return {
@@ -217,6 +245,7 @@ export function sessionManagerReducer(
         }
         return {
           ...current,
+          restoringSession: false,
           actionError: msg.message,
         };
       }
@@ -224,6 +253,7 @@ export function sessionManagerReducer(
       if (msg.type === "error") {
         return {
           ...current,
+          restoringSession: false,
           state: { status: "error", message: msg.message },
         };
       }
@@ -241,12 +271,15 @@ export function SessionApp({ initialState, initialPanelExpanded = true }: Sessio
     sessionManagerReducer,
     createInitialSessionManagerState(initialState, initialPanelExpanded),
   );
+  const [moreMenuOpen, setMoreMenuOpen] = useState(false);
+  const moreMenuRef = useRef<HTMLDivElement>(null);
 
   const {
     state,
     panelExpanded,
     draftInstructions,
     savingInstructions,
+    restoringSession,
     instructionsError,
     actionError,
     activeCardMenuId,
@@ -288,6 +321,17 @@ export function SessionApp({ initialState, initialPanelExpanded = true }: Sessio
     };
   }, []);
 
+  useEffect(() => {
+    if (!moreMenuOpen) return;
+    const handleClick = (e: MouseEvent) => {
+      if (moreMenuRef.current && !moreMenuRef.current.contains(e.target as Node)) {
+        setMoreMenuOpen(false);
+      }
+    };
+    window.addEventListener("click", handleClick);
+    return () => window.removeEventListener("click", handleClick);
+  }, [moreMenuOpen]);
+
   if (state.status === "loading") {
     return (
       <div className="session-app loading">
@@ -311,6 +355,21 @@ export function SessionApp({ initialState, initialPanelExpanded = true }: Sessio
 
   const handleRenameSession = () => {
     vscode.postMessage({ type: "renameSession" });
+  };
+
+  const handleRestoreSession = () => {
+    dispatch({ type: "startRestoreSession" });
+    vscode.postMessage({ type: "restoreSession" });
+  };
+
+  const handleArchiveSession = () => {
+    setMoreMenuOpen(false);
+    vscode.postMessage({ type: "archiveSession" });
+  };
+
+  const handleDeleteSession = () => {
+    setMoreMenuOpen(false);
+    vscode.postMessage({ type: "deleteSession" });
   };
 
   const handleTogglePanel = () => {
@@ -513,83 +572,131 @@ export function SessionApp({ initialState, initialPanelExpanded = true }: Sessio
     );
   };
 
+  const isArchived = Boolean(data.uiState?.archivedAt);
+
   return (
     <div className="session-app-container">
       <header className="session-header">
         <div className="session-header-top">
           <div className="session-title-row">
+            {isArchived && <span className="session-archived-badge">Archived</span>}
             <h2 className="session-title">{data.title}</h2>
-            <button
-              type="button"
-              className="session-icon-button"
-              title="Rename session"
-              onClick={handleRenameSession}
-              aria-label="Rename session"
-            >
-              ✎
-            </button>
+            {!isArchived && (
+              <button
+                type="button"
+                className="session-icon-button"
+                title="Rename session"
+                onClick={handleRenameSession}
+                aria-label="Rename session"
+              >
+                ✎
+              </button>
+            )}
           </div>
-          <div className="session-header-actions">
-            <button
-              type="button"
-              className={`secondary session-header-btn session-connect-btn${connectCopied ? " copied" : ""}`}
-              onClick={handleCopyConnectPrompt}
-              title={connectCopied ? "Copied!" : "Copy session connect prompt for AI assistant"}
-              aria-label={connectCopied ? "Session connect prompt copied" : "Copy session connect prompt"}
-            >
-              {connectCopied ? (
-                <>
-                  <svg aria-hidden="true" width="14" height="14" viewBox="0 0 16 16" fill="none">
-                    <path
-                      d="m2.5 8 3.25 3.25 7.75-7.75"
-                      stroke="currentColor"
-                      strokeWidth="1.5"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    />
-                  </svg>
-                  <span>Copied!</span>
-                </>
-              ) : (
-                <>
-                  <svg aria-hidden="true" width="14" height="14" viewBox="0 0 16 16" fill="none">
-                    <path
-                      d="m6.1 9.9-1.2 1.2a2.83 2.83 0 0 1-4-4l2.2-2.2a2.83 2.83 0 0 1 4 0"
-                      stroke="currentColor"
-                      strokeWidth="1.2"
-                      strokeLinecap="round"
-                    />
-                    <path
-                      d="m9.9 6.1 1.2-1.2a2.83 2.83 0 0 1 4 4l-2.2 2.2a2.83 2.83 0 0 1-4 0"
-                      stroke="currentColor"
-                      strokeWidth="1.2"
-                      strokeLinecap="round"
-                    />
-                    <path d="m5.6 10.4 4.8-4.8" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
-                  </svg>
-                  <span>Connect</span>
-                </>
-              )}
-            </button>
-            <button
-              type="button"
-              className="session-icon-button session-panel-toggle-btn"
-              onClick={handleTogglePanel}
-              title={panelExpanded ? "Collapse side panel" : "Expand side panel"}
-              aria-label={panelExpanded ? "Collapse side panel" : "Expand side panel"}
-            >
-              <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
-                <path
-                  fillRule="evenodd"
-                  clipRule="evenodd"
-                  d="M1.5 3C1.5 2.17157 2.17157 1.5 3 1.5H13C13.8284 1.5 14.5 2.17157 14.5 3V13C14.5 13.8284 13.8284 14.5 13 14.5H3C2.17157 14.5 1.5 13.8284 1.5 13V3ZM3 2.5H10V13.5H3C2.72386 13.5 2.5 13.2761 2.5 13V3C2.5 2.72386 2.72386 2.5 3 2.5ZM11 13.5H13C13.2761 13.5 13.5 13.2761 13.5 13V3C13.5 2.72386 13.2761 2.5 13 2.5H11V13.5Z"
-                />
-                {panelExpanded && (
-                  <rect x="11" y="2.5" width="2.5" height="11" fill="currentColor" opacity="0.4" />
+          {isArchived ? (
+            <div className="session-header-actions">
+              <button
+                type="button"
+                className="primary session-header-btn session-restore-btn"
+                disabled={restoringSession}
+                onClick={handleRestoreSession}
+              >
+                {restoringSession ? "Restoring..." : "Restore"}
+              </button>
+            </div>
+          ) : (
+            <div className="session-header-actions">
+              <button
+                type="button"
+                className={`secondary session-header-btn session-connect-btn${connectCopied ? " copied" : ""}`}
+                onClick={handleCopyConnectPrompt}
+                title={connectCopied ? "Copied!" : "Copy session connect prompt for AI assistant"}
+                aria-label={connectCopied ? "Session connect prompt copied" : "Copy session connect prompt"}
+              >
+                {connectCopied ? (
+                  <>
+                    <svg aria-hidden="true" width="14" height="14" viewBox="0 0 16 16" fill="none">
+                      <path
+                        d="m2.5 8 3.25 3.25 7.75-7.75"
+                        stroke="currentColor"
+                        strokeWidth="1.5"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                    </svg>
+                    <span>Copied!</span>
+                  </>
+                ) : (
+                  <>
+                    <svg aria-hidden="true" width="14" height="14" viewBox="0 0 16 16" fill="none">
+                      <path
+                        d="m6.1 9.9-1.2 1.2a2.83 2.83 0 0 1-4-4l2.2-2.2a2.83 2.83 0 0 1 4 0"
+                        stroke="currentColor"
+                        strokeWidth="1.2"
+                        strokeLinecap="round"
+                      />
+                      <path
+                        d="m9.9 6.1 1.2-1.2a2.83 2.83 0 0 1 4 4l-2.2 2.2a2.83 2.83 0 0 1-4 0"
+                        stroke="currentColor"
+                        strokeWidth="1.2"
+                        strokeLinecap="round"
+                      />
+                      <path d="m5.6 10.4 4.8-4.8" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+                    </svg>
+                    <span>Connect</span>
+                  </>
                 )}
-              </svg>
-            </button>
-          </div>
+              </button>
+              <button
+                type="button"
+                className="session-icon-button session-panel-toggle-btn"
+                onClick={handleTogglePanel}
+                title={panelExpanded ? "Collapse side panel" : "Expand side panel"}
+                aria-label={panelExpanded ? "Collapse side panel" : "Expand side panel"}
+              >
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+                  <path
+                    fillRule="evenodd"
+                    clipRule="evenodd"
+                    d="M1.5 3C1.5 2.17157 2.17157 1.5 3 1.5H13C13.8284 1.5 14.5 2.17157 14.5 3V13C14.5 13.8284 13.8284 14.5 13 14.5H3C2.17157 14.5 1.5 13.8284 1.5 13V3ZM3 2.5H10V13.5H3C2.72386 13.5 2.5 13.2761 2.5 13V3C2.5 2.72386 2.72386 2.5 3 2.5ZM11 13.5H13C13.2761 13.5 13.5 13.2761 13.5 13V3C13.5 2.72386 13.2761 2.5 13 2.5H11V13.5Z"
+                  />
+                  {panelExpanded && (
+                    <rect x="11" y="2.5" width="2.5" height="11" fill="currentColor" opacity="0.4" />
+                  )}
+                </svg>
+              </button>
+              <div className="session-header-more-anchor" ref={moreMenuRef}>
+                <button
+                  type="button"
+                  className="session-icon-button session-more-btn"
+                  title="More options"
+                  aria-label="More options"
+                  aria-expanded={moreMenuOpen}
+                  onClick={() => setMoreMenuOpen(!moreMenuOpen)}
+                >
+                  ⋯
+                </button>
+                {moreMenuOpen && (
+                  <div className="session-card-dropdown session-header-dropdown" onClick={(e) => e.stopPropagation()}>
+                    <button
+                      type="button"
+                      className="session-dropdown-item"
+                      onClick={handleArchiveSession}
+                    >
+                      Archive
+                    </button>
+                    <button
+                      type="button"
+                      className="session-dropdown-item session-dropdown-item-danger"
+                      onClick={handleDeleteSession}
+                    >
+                      Delete
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
         </div>
         <div className="session-header-meta">
           <span>Updated: {data.updatedAt}</span>

@@ -152,6 +152,48 @@ describe("SessionApp Webview Component (Phase 3)", () => {
       expect(html).toContain("session-card-menu-anchor");
       expect(html).toContain("session-card-menu-btn");
     });
+
+    it("renders More options button in normal active header", () => {
+      const html = renderToStaticMarkup(
+        <SessionApp
+          initialState={{ status: "ready", data: sampleViewData }}
+          initialPanelExpanded={true}
+        />,
+      );
+      expect(html).toContain('title="More options"');
+      expect(html).toContain("session-more-btn");
+    });
+
+    it("renders Archived badge and only Restore button when session is archived", () => {
+      const archivedViewData: WorkSessionViewData = {
+        ...sampleViewData,
+        uiState: {
+          pinned: false,
+          archivedAt: "2026-04-10T12:00:00.000Z",
+        },
+      };
+
+      const html = renderToStaticMarkup(
+        <SessionApp
+          initialState={{ status: "ready", data: archivedViewData }}
+          initialPanelExpanded={true}
+        />,
+      );
+
+      // Archived badge must be rendered
+      expect(html).toContain("session-archived-badge");
+      expect(html).toContain("Archived");
+
+      // Regular buttons must NOT be rendered in header
+      expect(html).not.toContain('title="Rename session"');
+      expect(html).not.toContain('title="More options"');
+      expect(html).not.toContain("Connect");
+      expect(html).not.toContain("session-panel-toggle-btn");
+
+      // Only Restore button is rendered
+      expect(html).toContain("session-restore-btn");
+      expect(html).toContain("Restore");
+    });
   });
 
   describe("Finding 1 & 3: State Machine & Background Refresh Isolation", () => {
@@ -393,6 +435,89 @@ describe("SessionApp Webview Component (Phase 3)", () => {
         message: { type: "sessionConnectPromptCopied" },
       });
       expect(fromMessage.connectCopied).toBe(true);
+    });
+
+    it("handles sessionUiStatePatch message without resetting draft", () => {
+      const initial = createInitialSessionManagerState({ status: "ready", data: sampleViewData });
+      const withDraft = sessionManagerReducer(initial, {
+        type: "setDraft",
+        draft: "User is typing instructions...",
+      });
+
+      const patched = sessionManagerReducer(withDraft, {
+        type: "message",
+        message: {
+          type: "sessionUiStatePatch",
+          sessionId: sampleViewData.sessionId,
+          uiState: {
+            pinned: true,
+            archivedAt: "2026-04-10T12:00:00.000Z",
+          },
+        },
+      });
+
+      // Draft must NOT be reset!
+      expect(patched.draftInstructions).toBe("User is typing instructions...");
+      // uiState must be updated!
+      expect(patched.state.status).toBe("ready");
+      if (patched.state.status === "ready") {
+        expect(patched.state.data.uiState?.pinned).toBe(true);
+        expect(patched.state.data.uiState?.archivedAt).toBe("2026-04-10T12:00:00.000Z");
+      }
+    });
+
+    it("resets restoringSession on actionError and sessionUiStatePatch to prevent stuck pending state", () => {
+      const initial = createInitialSessionManagerState({
+        status: "ready",
+        data: {
+          ...sampleViewData,
+          uiState: { pinned: false, archivedAt: "2026-04-10T12:00:00.000Z" },
+        },
+      });
+
+      // User clicks restore
+      const restoring = sessionManagerReducer(initial, { type: "startRestoreSession" });
+      expect(restoring.restoringSession).toBe(true);
+
+      // Scenario A: Failure from host
+      const failed = sessionManagerReducer(restoring, {
+        type: "message",
+        message: {
+          type: "actionError",
+          action: "restoreSession",
+          message: "Failed to write UI state",
+        },
+      });
+      expect(failed.restoringSession).toBe(false);
+      expect(failed.actionError).toBe("Failed to write UI state");
+
+      // User retries restore
+      const retrying = sessionManagerReducer(failed, { type: "startRestoreSession" });
+      expect(retrying.restoringSession).toBe(true);
+      expect(retrying.actionError).toBeUndefined();
+
+      // Scenario B: Success from host
+      const succeeded = sessionManagerReducer(retrying, {
+        type: "message",
+        message: {
+          type: "sessionUiStatePatch",
+          sessionId: sampleViewData.sessionId,
+          uiState: { pinned: false },
+        },
+      });
+      expect(succeeded.restoringSession).toBe(false);
+      expect(succeeded.state.status === "ready" && succeeded.state.data.uiState?.archivedAt).toBeUndefined();
+
+      // Scenario C: Re-archiving in the same tab does not leave restore stuck
+      const rearchived = sessionManagerReducer(succeeded, {
+        type: "message",
+        message: {
+          type: "sessionUiStatePatch",
+          sessionId: sampleViewData.sessionId,
+          uiState: { pinned: false, archivedAt: "2026-04-10T13:00:00.000Z" },
+        },
+      });
+      expect(rearchived.restoringSession).toBe(false);
     });
   });
 

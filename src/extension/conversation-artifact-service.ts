@@ -3,9 +3,11 @@ import path from "node:path";
 import {
   ARTIFACT_MANIFEST_FILE,
   ARTIFACT_MARKDOWN_FILE,
+  ARTIFACT_UI_STATE_FILE,
   CONVERSATION_METADATA_FILE,
   CONVERSATION_REGISTERED_ARTIFACTS_DIRECTORY,
   CONVERSATION_V1_BACKUP_FILE,
+  SESSION_UI_STATE_FILE,
   WORK_SESSION_INSTRUCTIONS_FILE,
   WORK_SESSION_LAYOUT_FILE,
   globalArtifactsRoot,
@@ -26,6 +28,7 @@ import {
   type WorkSessionViewData,
   type ArtifactSessionTarget,
 } from "../shared/contracts";
+import { getSessionUiState } from "./artifact-ui-state";
 import {
   createSession as createSessionRegistry,
   ensureSafeConversationRegistryRoot,
@@ -322,11 +325,22 @@ export class ConversationArtifactService<TUri extends ArtifactFileUri> {
       return rows;
     };
 
-    const [working, references, archived] = await Promise.all([
+    const [working, references, archived, uiState] = await Promise.all([
       resolveZone(session.working),
       resolveZone(session.references),
       resolveZone(session.archived),
+      getSessionUiState(sessionId, this.rootOptions).catch((err) => {
+        console.warn(`[ConversationArtifactService] Failed to read UI state for ${sessionId}:`, err);
+        return undefined;
+      }),
     ]);
+
+    const uiStateData = uiState
+      ? {
+          pinned: Boolean(uiState.pinned),
+          ...(uiState.archivedAt ? { archivedAt: uiState.archivedAt } : {}),
+        }
+      : undefined;
 
     return {
       sessionId: session.sessionId,
@@ -339,6 +353,7 @@ export class ConversationArtifactService<TUri extends ArtifactFileUri> {
       working,
       references,
       archived,
+      ...(uiStateData ? { uiState: uiStateData } : {}),
     };
   }
 
@@ -557,6 +572,20 @@ export function classifyWatcherUri(filePath: string): WorkSessionDataChange | "u
     }
   }
 
+  if (filename === SESSION_UI_STATE_FILE) {
+    const sessionDirName = path.basename(path.dirname(normalized));
+    if (artifactConversationIdSchema.safeParse(sessionDirName).success) {
+      return { kind: "sessionUiState", sessionId: sessionDirName };
+    }
+  }
+
+  if (filename === ARTIFACT_UI_STATE_FILE) {
+    const artifactDirName = path.basename(path.dirname(normalized));
+    if (artifactIdSchema.safeParse(artifactDirName).success) {
+      return { kind: "artifactUiState", artifactId: artifactDirName };
+    }
+  }
+
   if (normalized.includes("/" + CONVERSATION_REGISTERED_ARTIFACTS_DIRECTORY + "/")) {
     const artifactIdCandidate = path.basename(normalized, ".json");
     const parentDir = path.dirname(normalized);
@@ -585,6 +614,10 @@ export function changeKey(change: WorkSessionDataChange): string {
       return `layout:${change.sessionId}`;
     case "artifact":
       return `artifact:${change.artifactId}`;
+    case "artifactUiState":
+      return `artifactUiState:${change.artifactId}`;
+    case "sessionUiState":
+      return `sessionUiState:${change.sessionId}`;
     case "types":
       return "types";
     case "support":

@@ -1,6 +1,7 @@
+import { promises as fs } from "node:fs";
 import * as vscode from "vscode";
 import { buildArtifactConnectPrompt } from "../shared/artifact-connect-prompt";
-import type { GlobalArtifactsRootOptions } from "../shared/artifact-files";
+import { ARTIFACT_UI_STATE_FILE, type GlobalArtifactsRootOptions } from "../shared/artifact-files";
 import {
   conversationNameSchema,
   webviewToExtensionMessageSchema,
@@ -13,6 +14,7 @@ import { removeConversation } from "../shared/conversation-artifact-registry";
 import { buildSessionConnectPrompt } from "../shared/session-connect-prompt";
 import { validateArtifactReviewTarget } from "./artifact-review-open";
 import { ArtifactStore } from "./artifact-store";
+import { getArtifactUiState, patchArtifactUiState } from "./artifact-ui-state";
 import { runSingleMigration } from "./session-migration-command";
 import { resolveWorkSessionSupport } from "./work-session-support";
 
@@ -65,6 +67,14 @@ export class ArtifactReviewProvider implements vscode.CustomTextEditorProvider {
         await post({ type: "state", state });
       } catch (error) {
         if (disposed) return;
+        try {
+          await fs.access(store.artifactDirectory);
+        } catch (accessErr: any) {
+          if (accessErr && (accessErr.code === "ENOENT" || accessErr.code === "ENOTDIR")) {
+            await post({ type: "artifactDeleted", artifactId: store.artifactId });
+            return;
+          }
+        }
         await post({ type: "error", message: error instanceof Error ? error.message : String(error) });
       }
     };
@@ -119,6 +129,25 @@ export class ArtifactReviewProvider implements vscode.CustomTextEditorProvider {
             await store.removeComment(message.commentId);
             await refresh();
             return;
+          case "restoreArtifact": {
+            try {
+              const updated = await patchArtifactUiState(store.artifactId, { archivedAt: null }, this.rootOptions);
+              (this.conversationService as any)?.scheduleChangeNotification?.([{ kind: "artifactUiState", artifactId: store.artifactId }]);
+              await post({
+                type: "artifactUiStatePatch",
+                artifactId: store.artifactId,
+                uiState: {
+                  pinned: Boolean(updated.pinned),
+                  ...(updated.archivedAt ? { archivedAt: updated.archivedAt } : {}),
+                },
+              });
+            } catch (error) {
+              const message = error instanceof Error ? error.message : String(error);
+              void vscode.window.showErrorMessage(`Failed to restore artifact: ${message}`);
+              await post({ type: "error", message: `Failed to restore artifact: ${message}` });
+            }
+            return;
+          }
           case "copyArtifactConnectPrompt": {
             const prompt = buildArtifactConnectPrompt(store.artifactDirectory);
             await vscode.env.clipboard.writeText(prompt);
@@ -395,6 +424,31 @@ export class ArtifactReviewProvider implements vscode.CustomTextEditorProvider {
     fileWatcher.onDidChange(() => void refresh());
     fileWatcher.onDidDelete(() => void refresh());
 
+    const uiStateWatcher = vscode.workspace.createFileSystemWatcher(
+      new vscode.RelativePattern(store.artifactDirectory, ARTIFACT_UI_STATE_FILE),
+    );
+    const handleUiStateChange = async () => {
+      if (disposed) return;
+      try {
+        const uiState = await getArtifactUiState(store.artifactId, this.rootOptions);
+        if (disposed) return;
+        await post({
+          type: "artifactUiStatePatch",
+          artifactId: store.artifactId,
+          uiState: {
+            pinned: Boolean(uiState.pinned),
+            ...(uiState.archivedAt ? { archivedAt: uiState.archivedAt } : {}),
+          },
+        });
+      } catch (error) {
+        if (disposed) return;
+        console.warn(`[ArtifactReviewProvider] Failed to read UI state for ${store.artifactId}:`, error);
+      }
+    };
+    uiStateWatcher.onDidCreate(() => void handleUiStateChange());
+    uiStateWatcher.onDidChange(() => void handleUiStateChange());
+    uiStateWatcher.onDidDelete(() => void handleUiStateChange());
+
     const conversationSubscription = this.conversationService?.onDidChange((changes) => {
       if (!changes || changes.length === 0) {
         void refreshSessions();
@@ -409,6 +463,18 @@ export class ArtifactReviewProvider implements vscode.CustomTextEditorProvider {
       if (relevant) {
         void refreshSessions();
       }
+      const hasUiState = changes.some(
+        (c) => c.kind === "artifactUiState" && c.artifactId === store.artifactId,
+      );
+      if (hasUiState) {
+        void handleUiStateChange();
+      }
+      const hasArtifact = changes.some(
+        (c) => c.kind === "artifact" && c.artifactId === store.artifactId,
+      );
+      if (hasArtifact) {
+        void refresh();
+      }
     });
 
     panel.onDidDispose(() => {
@@ -416,6 +482,7 @@ export class ArtifactReviewProvider implements vscode.CustomTextEditorProvider {
       messageSubscription.dispose();
       documentSubscription.dispose();
       fileWatcher.dispose();
+      uiStateWatcher.dispose();
       conversationSubscription?.dispose();
     });
   }

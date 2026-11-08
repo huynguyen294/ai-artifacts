@@ -146,6 +146,8 @@ export function App(props?: ReviewAppProps): ReactNode {
   const [submittingDecision, setSubmittingDecision] = useState<ReviewDecision>();
   const [copied, setCopied] = useState(false);
   const [connectPromptCopied, setConnectPromptCopied] = useState(props?.initialConnectPromptCopied ?? false);
+  const [isRestoring, setIsRestoring] = useState(false);
+  const [isDeleted, setIsDeleted] = useState(false);
   const reviewRoundRef = useRef<number | undefined>(undefined);
   const generalFeedbackButtonRef = useRef<HTMLButtonElement>(null);
   const connectButtonRef = useRef<HTMLButtonElement>(null);
@@ -154,12 +156,24 @@ export function App(props?: ReviewAppProps): ReactNode {
   useEffect(() => {
     const listener = (event: MessageEvent<ExtensionToWebviewMessage>): void => {
       const message = event.data;
+      if (message.type === "artifactUiStatePatch") {
+        setState((current) => {
+          if (!current || current.artifact.artifactId !== message.artifactId) return current;
+          return {
+            ...current,
+            uiState: message.uiState,
+          };
+        });
+        setIsRestoring(false);
+        return;
+      }
       if (message.type === "state") {
         const roundChanged =
           reviewRoundRef.current !== undefined && reviewRoundRef.current !== message.state.artifact.reviewRound;
         reviewRoundRef.current = message.state.artifact.reviewRound;
         setState(message.state);
         setError(undefined);
+        setIsRestoring(false);
         if (roundChanged) {
           setDraft(null);
           setBody("");
@@ -194,8 +208,12 @@ export function App(props?: ReviewAppProps): ReactNode {
       } else if (message.type === "artifactConnectPromptCopied") {
         setConnectPromptCopied(true);
         window.setTimeout(() => setConnectPromptCopied(false), 1600);
+      } else if (message.type === "artifactDeleted") {
+        setIsDeleted(true);
+        setIsRestoring(false);
       } else if (message.type === "error") {
         setError(message.message);
+        setIsRestoring(false);
       }
     };
     window.addEventListener("message", listener);
@@ -326,6 +344,17 @@ export function App(props?: ReviewAppProps): ReactNode {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [drawerOpen]);
 
+  if (isDeleted) {
+    return (
+      <main className="loading artifact-deleted-terminal">
+        <div className="session-error-banner" role="alert">
+          <h3>Artifact Deleted</h3>
+          <p>This artifact has been deleted permanently and is no longer available.</p>
+        </div>
+      </main>
+    );
+  }
+
   if (!state) return <main className="loading">{error ?? "Loading artifact…"}</main>;
 
   const comments = state.comments.comments;
@@ -340,6 +369,7 @@ export function App(props?: ReviewAppProps): ReactNode {
     lifecycleReadOnly: state.lifecycle.readOnly,
     ...(submittingDecision ? { submittingDecision } : {}),
   });
+  const isArchived = Boolean(state.uiState?.archivedAt);
   const selectedComment = activeComment ? comments.find((comment) => comment.id === activeComment.id) : undefined;
   const blockedTitle = state.lifecycle.readOnly
     ? state.lifecycle.message
@@ -352,111 +382,128 @@ export function App(props?: ReviewAppProps): ReactNode {
       <header className="topbar">
         <div className="artifact-heading">
           <span className="eyebrow">
+            {isArchived && <span className="archived-pill">Archived · </span>}
             {formatArtifactKindLabel(state.artifact.kind)} · ROUND {state.artifact.reviewRound}
           </span>
           <h1>{state.artifact.title}</h1>
         </div>
-        <div className="topbar-actions">
-          <div className="topbar-icon-actions">
+        {isArchived ? (
+          <div className="topbar-actions">
             <button
-              className={`icon-button copy-button${copied ? " copied" : ""}`}
-              onClick={() => void copyMarkdown()}
-              aria-label={copied ? "Markdown copied" : "Copy Markdown"}
-              title={copied ? "Copied!" : "Copy Markdown"}
-            >
-              {copied ? (
-                <svg aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="none">
-                  <path
-                    d="m2.5 8 3.25 3.25 7.75-7.75"
-                    stroke="currentColor"
-                    strokeWidth="1.5"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  />
-                </svg>
-              ) : (
-                <svg aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="none">
-                  <rect x="5.5" y="5.5" width="8" height="8" rx="1.5" stroke="currentColor" strokeWidth="1.2" />
-                  <path
-                    d="M10.5 5.5v-2A1.5 1.5 0 0 0 9 2H3.5A1.5 1.5 0 0 0 2 3.5V9a1.5 1.5 0 0 0 1.5 1.5h2"
-                    stroke="currentColor"
-                    strokeWidth="1.2"
-                  />
-                </svg>
-              )}
-            </button>
-            <button
-              className="icon-button copy-button"
-              disabled={actions.save.disabled}
-              aria-label={actions.save.label}
-              title={blockedTitle ?? actions.save.label}
-              onClick={() => submitDecision("save")}
-            >
-              <svg aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="none">
-                <path
-                  d="M2.5 2.5h8.9l2.1 2.1v8.9h-11v-11Z"
-                  stroke="currentColor"
-                  strokeWidth="1.2"
-                  strokeLinejoin="round"
-                />
-                <path d="M5 2.5v4h6v-4M5 13.5V9h6v4.5" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" />
-              </svg>
-            </button>
-            <button
-              ref={connectButtonRef}
-              className={`icon-button copy-button${connectPromptCopied ? " copied" : ""}`}
+              type="button"
+              className="primary"
+              disabled={isRestoring}
               onClick={() => {
-                vscode.postMessage({ type: "copyArtifactConnectPrompt" });
+                setIsRestoring(true);
+                vscode.postMessage({ type: "restoreArtifact" });
               }}
-              aria-label={connectPromptCopied ? "Inspect prompt copied" : "Inspect artifact"}
-              title={connectPromptCopied ? "Inspect prompt copied" : "Inspect artifact"}
             >
-              {connectPromptCopied ? (
-                <svg aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="none">
-                  <path
-                    d="m2.5 8 3.25 3.25 7.75-7.75"
-                    stroke="currentColor"
-                    strokeWidth="1.5"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  />
-                </svg>
-              ) : (
-                <svg aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="none">
-                  <path
-                    d="m6.1 9.9-1.2 1.2a2.83 2.83 0 0 1-4-4l2.2-2.2a2.83 2.83 0 0 1 4 0"
-                    stroke="currentColor"
-                    strokeWidth="1.2"
-                    strokeLinecap="round"
-                  />
-                  <path
-                    d="m9.9 6.1 1.2-1.2a2.83 2.83 0 0 1 4 4l-2.2 2.2a2.83 2.83 0 0 1-4 0"
-                    stroke="currentColor"
-                    strokeWidth="1.2"
-                    strokeLinecap="round"
-                  />
-                  <path d="m5.6 10.4 4.8-4.8" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
-                </svg>
-              )}
+              {isRestoring ? "Restoring..." : "Restore"}
             </button>
           </div>
-          <button
-            className={actions.revise.primary ? "primary" : "ghost"}
-            disabled={actions.revise.disabled}
-            title={blockedTitle}
-            onClick={() => submitDecision("revise")}
-          >
-            {actions.revise.label}
-          </button>
-          <button
-            className={actions.approve.primary ? "primary" : "ghost"}
-            disabled={actions.approve.disabled}
-            title={blockedTitle}
-            onClick={() => submitDecision("approve")}
-          >
-            {actions.approve.label}
-          </button>
-        </div>
+        ) : (
+          <div className="topbar-actions">
+            <div className="topbar-icon-actions">
+              <button
+                className={`icon-button copy-button${copied ? " copied" : ""}`}
+                onClick={() => void copyMarkdown()}
+                aria-label={copied ? "Markdown copied" : "Copy Markdown"}
+                title={copied ? "Copied!" : "Copy Markdown"}
+              >
+                {copied ? (
+                  <svg aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="none">
+                    <path
+                      d="m2.5 8 3.25 3.25 7.75-7.75"
+                      stroke="currentColor"
+                      strokeWidth="1.5"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  </svg>
+                ) : (
+                  <svg aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="none">
+                    <rect x="5.5" y="5.5" width="8" height="8" rx="1.5" stroke="currentColor" strokeWidth="1.2" />
+                    <path
+                      d="M10.5 5.5v-2A1.5 1.5 0 0 0 9 2H3.5A1.5 1.5 0 0 0 2 3.5V9a1.5 1.5 0 0 0 1.5 1.5h2"
+                      stroke="currentColor"
+                      strokeWidth="1.2"
+                    />
+                  </svg>
+                )}
+              </button>
+              <button
+                className="icon-button copy-button"
+                disabled={actions.save.disabled}
+                aria-label={actions.save.label}
+                title={blockedTitle ?? actions.save.label}
+                onClick={() => submitDecision("save")}
+              >
+                <svg aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="none">
+                  <path
+                    d="M2.5 2.5h8.9l2.1 2.1v8.9h-11v-11Z"
+                    stroke="currentColor"
+                    strokeWidth="1.2"
+                    strokeLinejoin="round"
+                  />
+                  <path d="M5 2.5v4h6v-4M5 13.5V9h6v4.5" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" />
+                </svg>
+              </button>
+              <button
+                ref={connectButtonRef}
+                className={`icon-button copy-button${connectPromptCopied ? " copied" : ""}`}
+                onClick={() => {
+                  vscode.postMessage({ type: "copyArtifactConnectPrompt" });
+                }}
+                aria-label={connectPromptCopied ? "Inspect prompt copied" : "Inspect artifact"}
+                title={connectPromptCopied ? "Inspect prompt copied" : "Inspect artifact"}
+              >
+                {connectPromptCopied ? (
+                  <svg aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="none">
+                    <path
+                      d="m2.5 8 3.25 3.25 7.75-7.75"
+                      stroke="currentColor"
+                      strokeWidth="1.5"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  </svg>
+                ) : (
+                  <svg aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="none">
+                    <path
+                      d="m6.1 9.9-1.2 1.2a2.83 2.83 0 0 1-4-4l2.2-2.2a2.83 2.83 0 0 1 4 0"
+                      stroke="currentColor"
+                      strokeWidth="1.2"
+                      strokeLinecap="round"
+                    />
+                    <path
+                      d="m9.9 6.1 1.2-1.2a2.83 2.83 0 0 1 4 4l-2.2 2.2a2.83 2.83 0 0 1-4 0"
+                      stroke="currentColor"
+                      strokeWidth="1.2"
+                      strokeLinecap="round"
+                    />
+                    <path d="m5.6 10.4 4.8-4.8" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+                  </svg>
+                )}
+              </button>
+            </div>
+            <button
+              className={actions.revise.primary ? "primary" : "ghost"}
+              disabled={actions.revise.disabled}
+              title={blockedTitle}
+              onClick={() => submitDecision("revise")}
+            >
+              {actions.revise.label}
+            </button>
+            <button
+              className={actions.approve.primary ? "primary" : "ghost"}
+              disabled={actions.approve.disabled}
+              title={blockedTitle}
+              onClick={() => submitDecision("approve")}
+            >
+              {actions.approve.label}
+            </button>
+          </div>
+        )}
       </header>
 
       {(error || sendMessage || state.lifecycle.message) && (

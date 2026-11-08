@@ -14,6 +14,23 @@ Minor typos, formatting fixes, or cosmetic wording adjustments that do not chang
 
 Each entry includes the date, category, summary of changes, rationale, and affected components or files.
 
+## 2026-11-08 — Normalize the first Work Session skill release to version 1
+
+- Set `WORK_SESSION_SKILL_VERSION` to 1 and synchronized its contract assertion plus current README, architecture, philosophy, and release notes in the working plan. Work Session skill versions 2/3 were development-only values, not published releases; earlier entries remain historical records.
+- Follow the release-based versioning rule in `AGENTS.md`: use the release changelog as the released baseline and keep one asset version throughout an unreleased development cycle. MCP remains 12 and the artifact skill remains 4 for the planned extension 1.2.0 release; the package version bump is deferred.
+- Existing receipt comparison remains unchanged: absent/invalid Session skill versions require installation, version 1 is current, and development receipts at 2/3 require reinstalling the matching version 1 assets. No installed receipts, global skill files, MCP runtime behavior, or file-dialog/editor URI behavior were changed.
+- Validation after normalization: typecheck, production build, and the full test suite passed (52 files, 711 passed, 3 skipped). This is automated verification, not live AI-client installation evidence.
+
+## 2026-11-08 — Session skill freshness and canonical documentation corrections
+
+- Clarified approved Session skill precedence: latest/recent/current-content/overview requests refresh the catalog before artifact selection even when an older exact path is known; reuse fresh context already returned for the same request. Otherwise known exact artifacts are read directly from their current Markdown paths.
+- Successful non-null Session results replace the active catalog instead of merging snapshots; retained artifact review handles remain separate. Updated the Session reference and existing wording checks together. No new tool, background watcher, or conflict-handling mechanism was introduced.
+- Incremented only `WORK_SESSION_SKILL_VERSION` from 2 to 3 so installed Session skills can be detected as stale. MCP remains 12; the artifact skill remains 4. Synchronized current version descriptions in README and canonical docs; earlier entries and frozen planning payloads remain historical records.
+- Corrected current docs for two-skill ownership, standalone/default/New arguments and success-only recovery, Instructions Markdown storage, lock-free Session writes, explicit migration, preservation of empty v2 Sessions, window routing without manifest workspace ownership, and per-skill/per-target receipts/customization boundaries.
+- Replaced obsolete conversation drawer/New-Join prompt instructions with direct artifact Inspect and Start/Sessions navigation. Removed the provider-wide FIFO claim. Corrected Proceed by kind and Save without `nextAction` to match current runtime contracts.
+- This entry covers the approved skill improvements and documentation audit corrections. Concurrent Phase 5 implementation is outside this change; these documentation corrections do not claim its completion or runtime validation.
+- Validation: typecheck and build passed; 113 focused tests passed; the final full-suite run passed 702 tests with 3 skipped. The first full run had one waiter-deletion failure that passed in isolation and in the full rerun; no unrelated runtime fix was made. Session skill audit passed with zero warnings, and Markdown link/fence checks passed. The Python skill validator could not run because PyYAML is absent; no real AI-client behavior validation is claimed.
+
 ## 2026-11-08 — Phase 4.5 Stage 3 implementation: Two-skill installer, independent version receipts & cleanup
 
 - Extended Base Integration installer (`src/extension/workspace-integration.ts`): deploys both `skills/create-review-artifact` and `skills/work-session` to `.agents/skills/`; validates all packaged assets before replacing targets.

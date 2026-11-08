@@ -41,12 +41,12 @@ describe("session-type-registry", () => {
   it("initializes default types when file is missing", async () => {
     const doc = await ensureSessionTypesDocument({ userHome });
     expect(doc.types).toEqual(DEFAULT_SESSION_TYPES);
-    expect(doc.types.map((t) => t.id)).toEqual(["conversation", "project", "feature", "fix"]);
+    expect(doc.types.map((t) => t.id)).toEqual(["conversation", "project", "module", "feature", "fix"]);
   });
 
   it("lists existing session types", async () => {
     const types = await listSessionTypes({ userHome });
-    expect(types.length).toBe(4);
+    expect(types.length).toBe(5);
     expect(types[0]).toEqual({ id: "conversation", label: "Conversation" });
   });
 

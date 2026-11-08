@@ -16,6 +16,8 @@ import {
 } from "../shared/contracts";
 import { buildSessionConnectPrompt } from "../shared/session-connect-prompt";
 import { listSessionTypes } from "../shared/session-type-registry";
+import { deleteSession } from "../shared/conversation-artifact-registry";
+import { getSessionUiState, patchSessionUiState } from "./artifact-ui-state";
 import type { ArtifactReviewOpenCoordinator } from "./artifact-review-open";
 import type { ConversationArtifactService } from "./conversation-artifact-service";
 import { runAddArtifactToSessionQuickPick } from "./session-artifact-add-command";
@@ -139,7 +141,13 @@ export class WorkSessionProvider implements vscode.CustomReadonlyEditorProvider<
         }
 
         const session = await this.service.getWorkSession(document.sessionId).catch(() => undefined);
-        if (!session) return;
+        if (!session) {
+          void post({
+            type: "workSessionState",
+            state: { status: "error", message: "This session has been deleted." },
+          });
+          return;
+        }
 
         const sessionArtifacts = new Set([...session.working, ...session.references, ...session.archived]);
 
@@ -159,6 +167,25 @@ export class WorkSessionProvider implements vscode.CustomReadonlyEditorProvider<
         if (hasSupportOrGeneric) {
           await refreshFull();
           return;
+        }
+
+        const hasSessionUiState = sessionChanges.some(
+          (c) => c.kind === "sessionUiState" && c.sessionId === document.sessionId,
+        );
+        if (hasSessionUiState) {
+          try {
+            const uiState = await getSessionUiState(document.sessionId, this.rootOptions);
+            void post({
+              type: "sessionUiStatePatch",
+              sessionId: document.sessionId,
+              uiState: {
+                pinned: Boolean(uiState.pinned),
+                ...(uiState.archivedAt ? { archivedAt: uiState.archivedAt } : {}),
+              },
+            });
+          } catch {
+            await refreshFull();
+          }
         }
 
         const hasMetadataOrTypes = sessionChanges.some(
@@ -422,6 +449,67 @@ export class WorkSessionProvider implements vscode.CustomReadonlyEditorProvider<
           } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
             void post({ type: "actionError", action: "removeArtifact", message });
+          }
+        } else if (msg.type === "restoreSession") {
+          try {
+            if (!(await ensureSupport("restoreSession"))) {
+              void post({
+                type: "actionError",
+                action: "restoreSession",
+                message: "Restoring sessions requires MCP server version 12 or higher.",
+              });
+              return;
+            }
+            const updated = await patchSessionUiState(document.sessionId, { archivedAt: null }, this.rootOptions);
+            this.service.scheduleChangeNotification([{ kind: "sessionUiState", sessionId: document.sessionId }]);
+            void post({
+              type: "sessionUiStatePatch",
+              sessionId: document.sessionId,
+              uiState: {
+                pinned: Boolean(updated.pinned),
+                ...(updated.archivedAt ? { archivedAt: updated.archivedAt } : {}),
+              },
+            });
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            void post({ type: "actionError", action: "restoreSession", message });
+          }
+        } else if (msg.type === "archiveSession") {
+          try {
+            if (!(await ensureSupport("archiveSession"))) return;
+            const archivedAt = new Date().toISOString();
+            const updated = await patchSessionUiState(document.sessionId, { archivedAt }, this.rootOptions);
+            this.service.scheduleChangeNotification([{ kind: "sessionUiState", sessionId: document.sessionId }]);
+            void post({
+              type: "sessionUiStatePatch",
+              sessionId: document.sessionId,
+              uiState: {
+                pinned: Boolean(updated.pinned),
+                archivedAt,
+              },
+            });
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            void post({ type: "actionError", action: "archiveSession", message });
+          }
+        } else if (msg.type === "deleteSession") {
+          try {
+            if (!(await ensureSupport("deleteSession"))) return;
+            const confirm = await vscode.window.showWarningMessage(
+              "Delete this session permanently? Its artifacts will be kept.",
+              { modal: true },
+              "Delete",
+            );
+            if (confirm !== "Delete") return;
+            await deleteSession(document.sessionId, this.rootOptions);
+            this.service.scheduleChangeNotification([{ kind: "metadata", sessionId: document.sessionId }]);
+            void post({
+              type: "workSessionState",
+              state: { status: "error", message: "This session has been deleted." },
+            });
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            void post({ type: "actionError", action: "deleteSession", message });
           }
         }
       }),

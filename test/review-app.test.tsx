@@ -190,6 +190,28 @@ describe("ReviewApp Webview Component (Phase 4.5)", () => {
   });
 
   describe("Message Contracts", () => {
+    it("renders Archived badge and only Restore button when artifact is archived", () => {
+      const archivedState = createSampleReviewState({
+        uiState: {
+          pinned: false,
+          archivedAt: "2026-11-08T10:00:00.000Z",
+        },
+      });
+
+      const html = renderToStaticMarkup(<ReviewApp initialState={archivedState} />);
+
+      // Eyebrow has Archived pill
+      expect(html).toContain("archived-pill");
+      expect(html).toContain("Archived");
+
+      // Only Restore button is in topbar-actions
+      expect(html).toContain("Restore");
+      expect(html).not.toContain("Approve");
+      expect(html).not.toContain("Request changes");
+      expect(html).not.toContain('title="Save comments"');
+      expect(html).not.toContain('title="Inspect artifact"');
+    });
+
     it("dispatches typed messages for review utility bar and inspect actions", () => {
       mockPostMessage.mockClear();
 
@@ -213,6 +235,22 @@ describe("ReviewApp Webview Component (Phase 4.5)", () => {
       };
       onOpenSessionsClick();
       expect(mockPostMessage).toHaveBeenCalledWith({ type: "openArtifactSessions" });
+    });
+
+    it("renders terminal deleted state when artifact has been deleted", () => {
+      // Direct rendering of deleted terminal state banner
+      const html = renderToStaticMarkup(
+        <main className="loading artifact-deleted-terminal">
+          <div className="session-error-banner" role="alert">
+            <h3>Artifact Deleted</h3>
+            <p>This artifact has been deleted permanently and is no longer available.</p>
+          </div>
+        </main>,
+      );
+
+      expect(html).toContain("artifact-deleted-terminal");
+      expect(html).toContain("Artifact Deleted");
+      expect(html).toContain("This artifact has been deleted permanently and is no longer available.");
     });
   });
 });

@@ -2,7 +2,7 @@
 
 ## Project
 
-Codex Artifacts is a VS Code extension for reviewing Codex-generated Markdown through a local, MCP-owned review lifecycle.
+AI Artifacts is a VS Code extension for reviewing AI-generated Markdown through a local, MCP-owned review lifecycle and organizing shared work across agents and chats in Work Sessions.
 
 - Package version source of truth: `package.json`
 - Current and only supported artifact schema: `v6`
@@ -18,7 +18,7 @@ Before changing behavior, read the smallest relevant set in this order:
 
 1. `docs/PHILOSOPHY.md` for product intent, lifecycle meaning, and non-goals.
 2. `docs/ARCHITECTURE.md` for current boundaries and safety invariants.
-3. `skills/create-review-artifact/SKILL.md` and its referenced contract for agent behavior.
+3. `skills/create-review-artifact/SKILL.md` and its referenced contract for artifact behavior; `skills/work-session/SKILL.md` and its referenced contract for Session entry, Instructions, and context refresh.
 4. The implementation and tests for the area being changed.
 5. `CHANGELOG.md` and any current tracked roadmap for recent migration context and known follow-up work.
 
@@ -34,6 +34,9 @@ If product intent, documentation, tests, and implementation disagree, call out t
 - Review submissions and chat-inspected comments use one feedback policy: answer questions visibly in chat, update Markdown only for requested changes, and preserve Markdown/SHA for question-only rounds.
 - Both waiting tools return the complete validated comments document at `comments` for every submitted decision, with feedback at `comments.comments`. A `revise` result includes `nextAction.type: "process-review-feedback"` and its state-bound token for every artifact kind; agents do not need an extra inspection just to fetch submitted feedback.
 - Proceed on `plan` or `implementation-plan` returns `execute-approved-plan` and authorizes immediate execution in the same turn; acknowledgement without execution is incorrect. For any other fixed or open kind, Proceed returns `approved`, concluding review without automatic code execution.
+- Just save returns the validated `save` decision and comments without a `nextAction` or round token; the artifact skill handles the requested Markdown save without executing the proposed work.
+- Artifact creation/inspection is standalone when both Session arguments are omitted. An active chat Session supplies `artifactConversationId` by default, except for an explicit standalone request, which preserves that active context. Explicit New uses `conversationName` without the old ID; only success replaces active context. Session errors never authorize silently clearing an ID, creating a replacement, or retrying standalone.
+- The Session skill keeps at most one active Session per chat. Successful non-null Session results replace the active catalog, never merge old snapshots, while retained artifact review handles remain separate. Related requests read current Instructions and exact artifact paths; requests for latest artifacts, recent changes, current contents, or an overview refresh the catalog before selection even when an old path is known. Reuse fresh context already returned for the same request. Join-only is read-only and does not inspect, take over, or start an artifact waiter.
 - The MCP server creates schema-v6 artifacts only beneath the canonical global collection, owns the transient waiter registry and round tokens, and commits review-round transitions.
 - The extension host validates bindings and writes user comments and create-once submissions.
 - The skill must not create, edit, repair, or bypass lifecycle files directly.
@@ -50,9 +53,9 @@ If product intent, documentation, tests, and implementation disagree, call out t
 - Preserve unrelated user skills, hooks, MCP configuration, and project files during install, upgrade, cleanup, or migration.
 - Preserve user review data in `~/.ai-artifacts/artifacts/` during integration or extension uninstall. Only exact extension-owned runtime assets under `~/.ai-artifacts/managed/` are removable managed state. Retention cleanup is the only automatic artifact deletion path and runs only when the extension activates, not during uninstall. If the extension is reinstalled after being absent longer than the retention window, activation may delete expired artifacts.
 - Treat artifact Markdown, comments, and decisions as potentially sensitive local data. Preserve owner-only POSIX modes and never claim POSIX-mode guarantees on Windows.
-- Integration reinstall is required only when the bundled numeric `MCP_VERSION` or `SKILL_VERSION` differs from the corresponding verified receipt in `~/.ai-artifacts/managed/integration-version.json`; extension-only changes with current receipts must not force reinstall.
-- `MCP_VERSION` and `SKILL_VERSION` are independent monotonic integers, not SemVer or aliases for the extension package version. Missing, invalid, absent, or mismatched receipt entries are stale.
-- Commit MCP, `.agents`, and `.claude` receipt fields independently and only after the corresponding install and verification succeeds. Never mark a partial failure current.
+- Integration reinstall is required only when the bundled numeric `MCP_VERSION`, `CREATE_REVIEW_ARTIFACT_SKILL_VERSION`, or `WORK_SESSION_SKILL_VERSION` differs from the corresponding verified receipt in `~/.ai-artifacts/managed/integration-version.json`; extension-only changes with current receipts must not force reinstall.
+- These three asset versions are independent monotonic integers, not SemVer or aliases for the extension package version. `SKILL_VERSION` is a compatibility alias for `CREATE_REVIEW_ARTIFACT_SKILL_VERSION`, not the Session skill version. Missing, invalid, absent, or mismatched receipt entries are stale.
+- The receipt stores `mcpVersion`, artifact skill versions in `skills`, and Session skill versions in `sessionSkills`; both maps track `agents` and `claude` independently. Base setup commits the runtime and both Agents skill receipts after all three assets verify; Claude receipts are committed after its own verification. Preserve other entries on partial updates. Never mark a partial failure current.
 - Preserve only the declared skill customization points (`description:` and `USER CUSTOM RULES`) during reinstall of `create-review-artifact`. Work Session skill assets are replaced officially without customization. If target frontmatter or markers cannot be preserved deterministically, fail closed before replacing the target.
 
 ## Change guidelines

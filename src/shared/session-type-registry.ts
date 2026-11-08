@@ -32,6 +32,7 @@ export class SessionTypeError extends Error {
 export const DEFAULT_SESSION_TYPES: readonly SessionType[] = [
   { id: "conversation", label: "Conversation" },
   { id: "project", label: "Project" },
+  { id: "module", label: "Module" },
   { id: "feature", label: "Feature" },
   { id: "fix", label: "Fix" },
 ] as const;

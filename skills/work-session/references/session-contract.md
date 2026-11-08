@@ -8,6 +8,8 @@
 
 A catalog snapshot is a point-in-time read, not a revision archive. Session `updatedAt` is derived from createdAt and membership registeredAt. It does not track every artifact-content or Instructions edit; never use it alone to decide that those contents are unchanged. Artifact kind is independent of Session type.
 
+A successful non-null Session context replaces the active catalog rather than merging with earlier snapshots; retained artifact review handles remain separate. Requests for the latest artifacts, recent changes, current Session contents, or a current overview require a fresh catalog before artifact selection, even when an old exact path is known. Reuse a fresh catalog already returned for the same request. Otherwise, a known exact artifact can be read directly through its current path without refreshing the catalog first.
+
 Instructions come from the exact `instructions.md`; missing file means empty effective Instructions. Legacy inline `instructions` may be accepted by metadata readers but is not a fallback. Read/list does not migrate or rewrite metadata. The raw Markdown file is the user- and AI-editable Instructions source when explicitly requested.
 
 ## Session selection and success-only updates

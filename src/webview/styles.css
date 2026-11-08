@@ -1314,3 +1314,34 @@ button:disabled {
   font-size: 0.75rem;
   color: var(--vscode-descriptionForeground);
 }
+
+.session-header-more-anchor {
+  position: relative;
+  display: inline-flex;
+}
+
+.session-header-dropdown {
+  top: calc(100% + 4px);
+  right: 0;
+}
+
+.session-archived-badge {
+  display: inline-block;
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: var(--vscode-badge-background, rgba(128, 128, 128, 0.2));
+  color: var(--vscode-badge-foreground, var(--vscode-editor-foreground));
+  margin-right: 8px;
+  vertical-align: middle;
+}
+
+.archived-pill {
+  display: inline-block;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: var(--vscode-errorForeground, #f48771);
+}

@@ -1,9 +1,14 @@
+import { promises as fs } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import {
   runSessionSearchCommand,
   type SessionSearchCommandDeps,
   type SessionSearchItem,
 } from "../src/extension/session-search-command";
+import { patchSessionUiState } from "../src/extension/artifact-ui-state";
+import { conversationDirectory } from "../src/shared/artifact-files";
 import type { SessionType, WorkSession } from "../src/shared/contracts";
 
 class FakeQuickPick {
@@ -184,5 +189,45 @@ describe("runSessionSearchCommand", () => {
     fakeQuickPick.hide();
 
     expect(openSession).not.toHaveBeenCalled();
+  });
+
+  it("displays Archived in description when session is archived", async () => {
+    const fakeQuickPick = new FakeQuickPick();
+    const openSession = vi.fn();
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "session-search-archived-"));
+    try {
+      const sDir = conversationDirectory(
+        "00000000-0000-4000-8000-000000000001",
+        { userHome: tempDir },
+      );
+      await fs.mkdir(sDir, { recursive: true });
+
+      await patchSessionUiState(
+        "00000000-0000-4000-8000-000000000001",
+        { archivedAt: "2026-04-01T12:00:00.000Z" },
+        { userHome: tempDir },
+      );
+
+      const deps: SessionSearchCommandDeps = {
+        createQuickPick: () => fakeQuickPick as any,
+        listSessions: async () => sampleSessions,
+        listTypes: async () => sampleTypes,
+        openSession,
+        rootOptions: { userHome: tempDir },
+      };
+
+      void runSessionSearchCommand(deps);
+
+      await vi.waitFor(() => {
+        expect(fakeQuickPick.items.length).toBe(2);
+      });
+
+      const archivedItem = fakeQuickPick.items.find(
+        (i) => i.sessionId === "00000000-0000-4000-8000-000000000001",
+      );
+      expect(archivedItem?.description).toBe("Architecture · Archived");
+    } finally {
+      await fs.rm(tempDir, { recursive: true, force: true }).catch(() => {});
+    }
   });
 });

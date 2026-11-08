@@ -4,13 +4,14 @@ import type { GlobalArtifactsRootOptions } from "../shared/artifact-files";
 import { compareIsoTimestampsAsc } from "../shared/conversation-artifact-registry";
 import { listSessionTypes } from "../shared/session-type-registry";
 import { discoverSearchableArtifacts, type SearchableArtifact } from "./artifact-search";
+import { getArtifactUiState, getSessionUiState } from "./artifact-ui-state";
 import type { ConversationArtifactService } from "./conversation-artifact-service";
 import { resolveWorkSessionSupport, type WorkSessionSupportStatus } from "./work-session-support";
 
 export const MAX_RECENT_ARTIFACTS = 20;
 
 export type RecentTreeElement =
-  | { type: "artifact"; artifact: SearchableArtifact }
+  | { type: "artifact"; artifact: SearchableArtifact; isPinned?: boolean }
   | { type: "viewAll"; totalCount: number; kindFilter?: string | undefined }
   | { type: "empty" }
   | { type: "emptyFilter" };
@@ -27,7 +28,11 @@ export class RecentArtifactsTreeDataProvider implements vscode.TreeDataProvider<
   ) {
     this.disposables.push(
       this.service.onDidChange((changes) => {
-        if (!changes || changes.length === 0 || changes.some((c) => c.kind === "artifact")) {
+        if (
+          !changes ||
+          changes.length === 0 ||
+          changes.some((c) => c.kind === "artifact" || c.kind === "artifactUiState")
+        ) {
           this.refresh();
         }
       }),
@@ -77,11 +82,13 @@ export class RecentArtifactsTreeDataProvider implements vscode.TreeDataProvider<
       return item;
     }
 
-    const { artifact } = element;
+    const { artifact, isPinned } = element;
     const item = new vscode.TreeItem(artifact.title);
-    item.description = formatArtifactKindLabel(artifact.kind);
-    item.tooltip = `Updated: ${artifact.updatedAt} · Created: ${artifact.createdAt} · ${artifact.artifactId}`;
-    item.iconPath = new vscode.ThemeIcon("file-code");
+    const kindLabel = formatArtifactKindLabel(artifact.kind);
+    item.description = isPinned ? `(Pinned) · ${kindLabel}` : kindLabel;
+    item.tooltip = `${artifact.title}\nType: ${kindLabel}\nUpdated: ${artifact.updatedAt} · Created: ${artifact.createdAt} · ${artifact.artifactId}`;
+    item.iconPath = isPinned ? new vscode.ThemeIcon("pin") : new vscode.ThemeIcon("file-code");
+    item.contextValue = isPinned ? "artifact.pinned" : "artifact";
     item.command = {
       command: "agentPlus.openArtifact",
       title: "Open Artifact",
@@ -101,11 +108,27 @@ export class RecentArtifactsTreeDataProvider implements vscode.TreeDataProvider<
         return [{ type: "empty" }];
       }
 
-      let filtered = all;
+      const withUiState = await Promise.all(
+        all.map(async (a) => {
+          const uiState = await getArtifactUiState(a.artifactId, this.rootOptions).catch((err) => {
+            console.warn(`[RecentArtifacts] Failed to read UI state for ${a.artifactId}:`, err);
+            return undefined;
+          });
+          return { artifact: a, uiState };
+        }),
+      );
+
+      const active = withUiState.filter(({ uiState }) => !uiState?.archivedAt);
+
+      if (active.length === 0) {
+        return [{ type: "empty" }];
+      }
+
+      let filtered = active;
       if (this.kindFilter === "other") {
-        filtered = all.filter((a) => !isFixedArtifactKind(a.kind));
+        filtered = active.filter(({ artifact }) => !isFixedArtifactKind(artifact.kind));
       } else if (this.kindFilter) {
-        filtered = all.filter((a) => a.kind === this.kindFilter);
+        filtered = active.filter(({ artifact }) => artifact.kind === this.kindFilter);
       }
 
       if (filtered.length === 0) {
@@ -113,13 +136,20 @@ export class RecentArtifactsTreeDataProvider implements vscode.TreeDataProvider<
       }
 
       const sorted = [...filtered].sort((a, b) => {
-        const diff = compareIsoTimestampsAsc(b.updatedAt, a.updatedAt);
+        const pinA = Boolean(a.uiState?.pinned);
+        const pinB = Boolean(b.uiState?.pinned);
+        if (pinA !== pinB) return pinA ? -1 : 1;
+        const diff = compareIsoTimestampsAsc(b.artifact.updatedAt, a.artifact.updatedAt);
         if (diff !== 0) return diff;
-        return a.artifactId.localeCompare(b.artifactId);
+        return a.artifact.artifactId.localeCompare(b.artifact.artifactId);
       });
 
       const sliced = sorted.slice(0, MAX_RECENT_ARTIFACTS);
-      const result: RecentTreeElement[] = sliced.map((a) => ({ type: "artifact", artifact: a }));
+      const result: RecentTreeElement[] = sliced.map(({ artifact, uiState }) => ({
+        type: "artifact",
+        artifact,
+        isPinned: Boolean(uiState?.pinned),
+      }));
 
       if (sorted.length > MAX_RECENT_ARTIFACTS) {
         result.push({ type: "viewAll", totalCount: sorted.length, kindFilter: this.kindFilter });
@@ -143,6 +173,7 @@ export type SessionTreeElement =
       artifactCount: number;
       updatedAt: string;
       createdAt: string;
+      isPinned?: boolean;
     }
   | { type: "empty" }
   | { type: "emptyFilter" };
@@ -168,7 +199,8 @@ export class WorkSessionsTreeDataProvider implements vscode.TreeDataProvider<Ses
               c.kind === "metadata" ||
               c.kind === "membership" ||
               c.kind === "types" ||
-              c.kind === "support",
+              c.kind === "support" ||
+              c.kind === "sessionUiState",
           )
         ) {
           this.refresh();
@@ -235,9 +267,10 @@ export class WorkSessionsTreeDataProvider implements vscode.TreeDataProvider<Ses
 
     const item = new vscode.TreeItem(element.title);
     const countLabel = `${element.artifactCount} artifact${element.artifactCount !== 1 ? "s" : ""}`;
-    item.description = `${element.typeLabel} · ${countLabel}`;
-    item.tooltip = `Updated: ${element.updatedAt} · Created: ${element.createdAt} · ID: ${element.sessionId}`;
-    item.iconPath = new vscode.ThemeIcon("folder");
+    item.description = element.isPinned ? `(Pinned) · ${element.typeLabel} · ${countLabel}` : `${element.typeLabel} · ${countLabel}`;
+    item.tooltip = `${element.title}\nType: ${element.typeLabel}\nUpdated: ${element.updatedAt} · Created: ${element.createdAt} · ID: ${element.sessionId}`;
+    item.iconPath = element.isPinned ? new vscode.ThemeIcon("pin") : new vscode.ThemeIcon("folder");
+    item.contextValue = element.isPinned ? "session.pinned" : "session";
     item.command = {
       command: "agentPlus.openWorkSession",
       title: "Open Session",
@@ -277,9 +310,21 @@ export class WorkSessionsTreeDataProvider implements vscode.TreeDataProvider<Ses
         }
       }
 
+      const withUiState = await Promise.all(
+        sessions.map(async (s) => {
+          const uiState = await getSessionUiState(s.sessionId, this.rootOptions).catch((err) => {
+            console.warn(`[WorkSessions] Failed to read UI state for ${s.sessionId}:`, err);
+            return undefined;
+          });
+          return { session: s, uiState };
+        }),
+      );
+
+      const active = withUiState.filter(({ uiState }) => !uiState?.archivedAt);
+
       const filteredSessions = this.selectedTypeId
-        ? sessions.filter((s) => s.typeId === this.selectedTypeId)
-        : sessions;
+        ? active.filter(({ session }) => session.typeId === this.selectedTypeId)
+        : active;
 
       const items: SessionTreeElement[] = [];
 
@@ -287,7 +332,16 @@ export class WorkSessionsTreeDataProvider implements vscode.TreeDataProvider<Ses
         items.push({ type: "migrationCandidates", count: candidateCount });
       }
 
-      for (const s of filteredSessions) {
+      const sorted = [...filteredSessions].sort((a, b) => {
+        const pinA = Boolean(a.uiState?.pinned);
+        const pinB = Boolean(b.uiState?.pinned);
+        if (pinA !== pinB) return pinA ? -1 : 1;
+        const diff = compareIsoTimestampsAsc(b.session.updatedAt, a.session.updatedAt);
+        if (diff !== 0) return diff;
+        return a.session.sessionId.localeCompare(b.session.sessionId);
+      });
+
+      for (const { session: s, uiState } of sorted) {
         const typeLabel = typeMap.get(s.typeId) ?? s.typeId;
         const artifactCount = s.working.length + s.references.length + s.archived.length;
         items.push({
@@ -298,11 +352,12 @@ export class WorkSessionsTreeDataProvider implements vscode.TreeDataProvider<Ses
           artifactCount,
           updatedAt: s.updatedAt,
           createdAt: s.createdAt,
+          isPinned: Boolean(uiState?.pinned),
         });
       }
 
       if (filteredSessions.length === 0) {
-        if (sessions.length > 0) {
+        if (active.length > 0) {
           items.push({ type: "emptyFilter" });
         } else if (items.length === 0) {
           items.push({ type: "empty" });

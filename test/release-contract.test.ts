@@ -107,6 +107,88 @@ describe("v1.1.4 release contract", () => {
           group: "navigation@3",
         },
       ],
+      "view/item/context": [
+        {
+          command: "agentPlus.openArtifact",
+          when: "view == agentPlus.recentArtifacts && (viewItem == artifact || viewItem == artifact.pinned)",
+          group: "0_open@1",
+        },
+        {
+          command: "agentPlus.copyArtifactConnectPromptFromTree",
+          when: "view == agentPlus.recentArtifacts && (viewItem == artifact || viewItem == artifact.pinned)",
+          group: "1_actions@1",
+        },
+        {
+          command: "agentPlus.pinArtifact",
+          when: "view == agentPlus.recentArtifacts && viewItem == artifact",
+          group: "2_pin@1",
+        },
+        {
+          command: "agentPlus.unpinArtifact",
+          when: "view == agentPlus.recentArtifacts && viewItem == artifact.pinned",
+          group: "2_pin@1",
+        },
+        {
+          command: "agentPlus.archiveArtifact",
+          when: "view == agentPlus.recentArtifacts && (viewItem == artifact || viewItem == artifact.pinned)",
+          group: "3_archive@1",
+        },
+        {
+          command: "agentPlus.deleteArtifactPermanently",
+          when: "view == agentPlus.recentArtifacts && (viewItem == artifact || viewItem == artifact.pinned)",
+          group: "4_delete@1",
+        },
+        {
+          command: "agentPlus.openWorkSession",
+          when: "view == agentPlus.sessions && (viewItem == session || viewItem == session.pinned)",
+          group: "0_open@1",
+        },
+        {
+          command: "agentPlus.renameSessionFromTree",
+          when: "view == agentPlus.sessions && (viewItem == session || viewItem == session.pinned)",
+          group: "1_modify@1",
+        },
+        {
+          command: "agentPlus.changeSessionTypeFromTree",
+          when: "view == agentPlus.sessions && (viewItem == session || viewItem == session.pinned)",
+          group: "1_modify@2",
+        },
+        {
+          command: "agentPlus.copySessionConnectPromptFromTree",
+          when: "view == agentPlus.sessions && (viewItem == session || viewItem == session.pinned)",
+          group: "2_connect@1",
+        },
+        {
+          command: "agentPlus.openSessionInstructionsFileFromTree",
+          when: "view == agentPlus.sessions && (viewItem == session || viewItem == session.pinned)",
+          group: "2_connect@2",
+        },
+        {
+          command: "agentPlus.copySessionInstructionsFilePathFromTree",
+          when: "view == agentPlus.sessions && (viewItem == session || viewItem == session.pinned)",
+          group: "2_connect@3",
+        },
+        {
+          command: "agentPlus.pinSession",
+          when: "view == agentPlus.sessions && viewItem == session",
+          group: "3_pin@1",
+        },
+        {
+          command: "agentPlus.unpinSession",
+          when: "view == agentPlus.sessions && viewItem == session.pinned",
+          group: "3_pin@1",
+        },
+        {
+          command: "agentPlus.archiveSession",
+          when: "view == agentPlus.sessions && (viewItem == session || viewItem == session.pinned)",
+          group: "4_archive@1",
+        },
+        {
+          command: "agentPlus.deleteSessionPermanently",
+          when: "view == agentPlus.sessions && (viewItem == session || viewItem == session.pinned)",
+          group: "5_delete@1",
+        },
+      ],
     });
   });
 

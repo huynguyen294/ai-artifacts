@@ -3,6 +3,14 @@
 - codex đang dùng MD cho instruction này. Nó làm bằng cách nào? có thể sửa file md và tự động cập nhật lên đây hoặc ngược lại để user ko phải làm trong UI chật chội này.
 - Tree View Recent Artifacts và Sessions: đã chốt menu chuột phải, Pin/Archive/Delete trong Phase 5, cùng UI helper text; chi tiết ở mục Phase 5 của `plan.md`.
 
+## Release 1.2.0 — Version đã chốt và tiến độ (2026-11-08)
+
+- Đợt Work Sessions này dự kiến phát hành extension **1.2.0**. Mốc integration cho cùng release: **MCP 12**, **create-review-artifact skill 4**, **work-session skill 1**. Ghi chú này thay thế các mốc version thử nghiệm trong các ghi chú/phase trước.
+- **Đã thực hiện (2026-11-08):** đưa `WORK_SESSION_SKILL_VERSION` từ 3 về 1 và đồng bộ assertion cùng mô tả version hiện hành trong README/docs. Session skill chưa từng phát hành nên bản đầu dùng version 1. Giữ MCP 12 và artifact skill 4; không tăng thêm theo từng lượt sửa trong cùng bản chưa phát hành. Các entry release lịch sử giữ nguyên.
+- **Còn chờ:** cập nhật package/lock metadata cho extension 1.2.0 khi chuẩn bị release. Việc sửa Session skill version không tự đổi extension version hoặc chỉnh receipt đã cài trên máy.
+- Đã kiểm tra hồi quy với Session skill version yêu cầu là 1: 9 kịch bản trực tiếp và 90 tests liên quan PASS. Receipt thiếu/hỏng, chưa có `sessionSkills`, hoặc thiếu target vẫn yêu cầu cài; không fallback version thiếu thành 1. Receipt version 1 được nhận là current; bản test 2/3 yêu cầu cài lại đúng bản 1.
+- PR cho đợt này mô tả toàn bộ Work Session rollout; giữ trạng thái Draft khi Phase 5 còn phần triển khai/review chưa hoàn tất. Source Session skill version đã là 1; package version vẫn chờ bước chuẩn bị release.
+
 ## Quyết định tiếp nối
 
 - **Phase 4.5 — Artifact độc lập/Session skill:** [hướng dẫn](plan-phase-4.5.md), 6 bước / 3 chặng; Chặng 1 đã triển khai theo xác nhận của Chú (2026-11-08), tiếp tục Chặng 2; làm giữa Phase 4 và Phase 5. Không active/không ID+tên thì standalone; active S tự thêm create/inspect trừ explicit standalone cho request; New phải có tên không ID. Bỏ popup New/Join của Inspect, dùng Start/Sessions/sidebar/manager Connect. Start nhập tên, tạo/đăng ký artifact, mở manager và copy prompt có exact ID; copy không tự kết nối chat.

@@ -718,6 +718,40 @@ export async function removeConversation(
   return true;
 }
 
+/**
+ * Deletes a Work Session directory and all of its metadata, instructions, layout, and memberships.
+ * Artifact files themselves in ~/.ai-artifacts/artifacts/ are NEVER deleted by this function.
+ *
+ * Verifies that the target directory contains valid Work Session v2 metadata matching sessionId
+ * before performing deletion.
+ */
+export async function deleteSession(
+  sessionId: string,
+  options: GlobalArtifactsRootOptions = {},
+): Promise<boolean> {
+  const validatedConvId = artifactConversationIdSchema.parse(sessionId);
+
+  let canonicalConversationDir: string;
+  try {
+    const safeDirs = await ensureSafeConversationDirectory(validatedConvId, options, false);
+    canonicalConversationDir = safeDirs.canonicalConversationDir;
+  } catch (error) {
+    if (error instanceof ConversationNotFoundError) {
+      return false;
+    }
+    throw error;
+  }
+
+  const metadataPath = path.join(canonicalConversationDir, CONVERSATION_METADATA_FILE);
+  await assertSafeRegularFile(metadataPath, false);
+  const rawContent = await fs.readFile(metadataPath, "utf8");
+  const rawJson = JSON.parse(rawContent);
+  parseWorkSessionMetadata(rawJson, validatedConvId);
+
+  await fs.rm(canonicalConversationDir, { recursive: true, force: true });
+  return true;
+}
+
 export async function readSessionInstructions(
   sessionId: string,
   options: GlobalArtifactsRootOptions = {},
