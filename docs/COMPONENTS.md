@@ -129,7 +129,7 @@ The skills must never directly create or edit artifact lifecycle files, includin
 
 **Source**
 
-- [`src/integration/artifact-review-mcp-v4.ts`](../src/integration/artifact-review-mcp-v4.ts)
+- [`src/integration/artifact-review-mcp.ts`](../src/integration/artifact-review-mcp.ts)
 
 **Responsibilities**
 
@@ -608,7 +608,7 @@ The active implementation is:
 
 - `ArtifactReviewProvider`, not `PlanReviewProvider`.
 - `ReviewApp.tsx`, imported by `src/webview/main.tsx`, not the retained `src/webview/App.tsx`.
-- `artifact-review-mcp-v4.ts`, built into `codex-artifacts-review-mcp.mjs` (and deployed as `ai-artifacts-review-mcp.mjs` under `~/.ai-artifacts/managed/runtime/`).
+- `artifact-review-mcp.ts`, built into `codex-artifacts-review-mcp.mjs` (and deployed as `ai-artifacts-review-mcp.mjs` under `~/.ai-artifacts/managed/runtime/`).
 
 Retained legacy sources include:
 

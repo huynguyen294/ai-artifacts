@@ -14,6 +14,12 @@ Minor typos, formatting fixes, or cosmetic wording adjustments that do not chang
 
 Each entry includes the date, category, summary of changes, rationale, and affected components or files.
 
+## 2026-11-08 — Rename MCP server entrypoint to remove obsolete -v4 suffix
+
+- Renamed `src/integration/artifact-review-mcp-v4.ts` to `src/integration/artifact-review-mcp.ts` to reflect the active schema-v6 and numeric MCP version 12 architecture without misleading version-specific source suffixes.
+- Updated the `build:integration` esbuild script in `package.json`, the literal source verification in `test/artifact-link-contract.test.ts`, and component ownership documentation across `docs/INSTRUCTION.md` and `docs/COMPONENTS.md`.
+- No runtime behavior, bundled output path (`dist/integration/codex-artifacts-review-mcp.mjs`), installed managed runtime path (`~/.ai-artifacts/managed/runtime/ai-artifacts-review-mcp.mjs`), or MCP protocol contracts were changed.
+
 ## 2026-11-08 — Agent-directed Session layout organization
 
 - Allowed the Work Session skill to move and reorder existing Session artifacts by directly editing `layout.json` when the user requests organization. Replaced the blanket layout-edit prohibition while retaining the boundaries for Session metadata, membership files, and managed artifact lifecycle files.

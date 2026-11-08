@@ -863,7 +863,7 @@ button:disabled {
   gap: 20px;
 }
 
-@container sessionApp (min-width: 800px) {
+@container sessionApp (min-width: 720px) {
   .session-layout {
     flex-direction: row;
     align-items: flex-start;
@@ -882,7 +882,7 @@ button:disabled {
   gap: 12px;
 }
 
-@container sessionApp (min-width: 800px) {
+@container sessionApp (min-width: 720px) {
   .session-side-panel {
     width: 360px;
     flex-shrink: 0;
@@ -1242,7 +1242,7 @@ button:disabled {
   gap: 12px;
 }
 
-@container sessionApp (min-width: 800px) {
+@container sessionApp (min-width: 720px) {
   .session-app-container[data-panel-expanded="false"] .session-zone-working .session-artifact-list {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -1251,7 +1251,7 @@ button:disabled {
   }
 }
 
-@container sessionApp (min-width: 1100px) {
+@container sessionApp (min-width: 980px) {
   .session-app-container[data-panel-expanded="false"] .session-zone-working .session-artifact-list {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }

@@ -71,7 +71,7 @@ If product intent, documentation, tests, and implementation disagree, call out t
 
 ## Ownership map
 
-- `src/integration/artifact-review-mcp-v4.ts`: historical filename for the current numeric MCP version 12/schema-v6 tools, window resolution, Work Session creation/reuse with fail-closed v1 preflight, connection commits, artifact creation, waiter ownership/takeover, complete review feedback results, round grants, inspection, and transactional round commits.
+- `src/integration/artifact-review-mcp.ts`: numeric MCP version 12/schema-v6 tools, window resolution, Work Session creation/reuse with fail-closed v1 preflight, connection commits, artifact creation, waiter ownership/takeover, complete review feedback results, round grants, inspection, and transactional round commits.
 - `src/shared/conversation-artifact-registry.ts`: schema-v2 Work Session persistence, layout reconciliation, dynamic `updatedAt`, single migration with backup, and retention pruning.
 - `src/shared/session-type-registry.ts`: global session types registry (`~/.ai-artifacts/session-types.json`).
 - `src/extension/work-session-sidebar.ts`: Activity Bar `AI Artifacts` TreeDataProviders for Recent Artifacts (cap 20 + View all) and Work Sessions v2 (including window-local type filtering).
