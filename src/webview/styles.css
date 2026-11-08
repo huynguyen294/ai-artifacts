@@ -154,6 +154,7 @@ button:disabled {
   align-items: center;
   gap: 6px;
   padding-block: 5px;
+  white-space: nowrap;
 }
 .review-utility-bar .conversations-toggle svg,
 .review-utility-bar .comments-toggle svg {
