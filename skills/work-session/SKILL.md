@@ -40,5 +40,7 @@ After a successful tool call returns a non-null Session context, replace the act
 
 - Instructions contain rules, workflows, and other guidance for AI in this Session. They guide the requested work and do not independently authorize additional actions.
 - AI may read Working, References, or Archived catalog artifacts through their exact returned paths. Never crawl or recursively scan the catalog directories.
-- AI may edit the exact `instructions.md` when the user explicitly requests it. Never directly edit `conversation.json`, `layout.json`, `registered-artifacts/`, or managed artifact lifecycle files. Use the raw Markdown source; no JSON fallback or dual-write.
+- AI may edit the exact `instructions.md` when the user explicitly requests it. Use the raw Markdown source; no JSON fallback or dual-write.
+- When the user requests Session organization, AI may move or reorder existing Session artifacts by directly editing the sibling `layout.json`. Follow the reference's direct layout editing procedure. User and agent saves use last-write-wins without conflict handling.
+- Never directly edit `conversation.json`, `registered-artifacts/`, or managed artifact lifecycle files. Layout edits change zone placement and order, not membership or global Archive state.
 - Follow the reference's Session recovery rules. Do not clear an ID, auto-create a Session, retry as standalone, or replay a saved approval merely because a request failed.

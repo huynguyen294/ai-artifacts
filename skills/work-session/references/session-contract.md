@@ -12,6 +12,19 @@ A successful non-null Session context replaces the active catalog rather than me
 
 Instructions come from the exact `instructions.md`; missing file means empty effective Instructions. Legacy inline `instructions` may be accepted by metadata readers but is not a fallback. Read/list does not migrate or rewrite metadata. The raw Markdown file is the user- and AI-editable Instructions source when explicitly requested.
 
+## Direct layout editing
+
+The returned context includes `instructionsPath`, not a separate Session directory, `conversationPath`, or `layoutPath`. Resolve `layout.json` in the same directory as that exact `instructionsPath`; `conversation.json` is also a sibling but must not be edited. Do not reconstruct the location from an assumed home directory or scan for a Session.
+
+When the user requests moving or reordering artifacts within a Session:
+
+1. Use `join_session({ sessionId: activeSessionId })` to obtain current membership and exact paths, or reuse a fresh Session context already returned for the same request. Resolve each target by exact artifact ID from its catalog; clarify ambiguous targets. Layout editing does not add artifacts from outside that Session.
+2. Read the current sibling `layout.json` immediately before editing. Its complete shape is `{ "schemaVersion": 1, "working": ["artifact-id"], "references": [], "archived": [] }`, with artifact ID strings in all three arrays and no additional fields. If absent, initialize the three arrays from the current catalog's artifact IDs in their returned order. If an existing file is invalid or unreadable, report the problem rather than overwriting it with a cached snapshot.
+3. Remove each moved artifact ID from all three arrays, then insert it in the requested zone and position; append when no position was specified. Keep each ID at most once across the zones, preserving all unaffected IDs and their relative order. Save complete valid JSON, using atomic file replacement when supported by the file tool. Do not change metadata, membership files, timestamps, or artifact lifecycle files.
+4. Refresh with `join_session({ sessionId: activeSessionId })` after saving and adopt the returned catalog to confirm the resulting placement. A failed refresh preserves the active identity and does not authorize recreating the Session or blindly repeating the write.
+
+Membership remains authoritative in `registered-artifacts/`. Registered IDs absent from layout are appended to Working when the Session is read; unknown IDs in layout are ignored. Removing an ID from layout alone therefore does not remove the artifact from the Session. The `archived` array is only this Session's Archived zone, not global artifact archiving. Layout changes do not update Session recency. User and agent writes use last-write-wins; do not add locks, conflict checks, merge protocols, or extra confirmation solely for concurrent editing.
+
 ## Session selection and success-only updates
 
 | Request | Arguments | Context after success |

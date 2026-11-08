@@ -85,7 +85,8 @@ describe("work-session skill contract", () => {
     expect(skill).toContain("Instructions contain rules, workflows, and other guidance for AI in this Session");
     expect(skill).toContain("AI may read Working, References, or Archived catalog artifacts through their exact returned paths");
     expect(skill).toContain("AI may edit the exact `instructions.md` when the user explicitly requests it");
-    expect(skill).toContain("Never directly edit `conversation.json`, `layout.json`, `registered-artifacts/`");
+    expect(skill).toContain("Never directly edit `conversation.json`, `registered-artifacts/`");
+    expect(skill).toContain("AI may move or reorder existing Session artifacts by directly editing the sibling `layout.json`");
 
     expect(contract).toContain("Each catalog has ordered `working`, `references`, and `archived` arrays");
     expect(contract).toContain("unavailable: true");

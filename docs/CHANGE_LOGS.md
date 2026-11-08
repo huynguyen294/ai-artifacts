@@ -14,6 +14,14 @@ Minor typos, formatting fixes, or cosmetic wording adjustments that do not chang
 
 Each entry includes the date, category, summary of changes, rationale, and affected components or files.
 
+## 2026-11-08 — Agent-directed Session layout organization
+
+- Allowed the Work Session skill to move and reorder existing Session artifacts by directly editing `layout.json` when the user requests organization. Replaced the blanket layout-edit prohibition while retaining the boundaries for Session metadata, membership files, and managed artifact lifecycle files.
+- Documented deriving the exact layout location from the returned `instructionsPath`, current-layout reads, schema-v1 zone arrays, preservation of unrelated placement, missing-layout initialization from a fresh catalog, and a Join-only refresh after saving. No MCP response fields, tools, runtime code, or storage schemas changed.
+- Kept membership authoritative, Session recency unchanged by layout edits, and local Archived placement separate from global Archive state. User and agent writes use last-write-wins without conflict handling.
+- Synchronized the Session skill reference, existing skill wording assertion, architecture, and contributor instructions. Kept Work Session skill version 1 for the same unreleased 1.2.0 development cycle; installed global skills and user Session files were not modified.
+- Validation: 11 focused skill/context tests passed; the Codex skill audit passed with zero warnings, and local frontmatter/reference checks passed. The skill-creator validator could not run because PyYAML is absent. No live AI-client layout-edit behavior was tested.
+
 ## 2026-11-08 — Normalize the first Work Session skill release to version 1
 
 - Set `WORK_SESSION_SKILL_VERSION` to 1 and synchronized its contract assertion plus current README, architecture, philosophy, and release notes in the working plan. Work Session skill versions 2/3 were development-only values, not published releases; earlier entries remain historical records.
