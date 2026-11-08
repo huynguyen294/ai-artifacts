@@ -99,7 +99,8 @@ The governing lifetime relationship is `artifact lifetime > waiter lifetime > ch
 - Apply one feedback policy to submitted `revise` and chat-inspected comments: answer questions visibly, update Markdown only for requested changes, and advance unchanged Markdown for question-only rounds.
 - For chat escape, inspect the exact interrupted handle with takeover before applying that shared policy.
 - For an explicit chat update on an empty round, inspect the exact handle with `intent: "explicit-chat-update"`, replace the Markdown, and advance without requiring a UI comment or Review submission.
-- Reattach the same round when inspection has no feedback; ask for a path instead of guessing when the exact handle is ambiguous.
+- For direct Session updates, delegate wait-mode selection to the Work Session skill and interpret `waited: false` as a commit confirmation; record its round and continue authorized work without treating absent comments as missing review feedback. Creation always waits, while standalone updates and review-feedback processing keep their existing flow.
+- Reattach the same round when inspection has no feedback and is not an explicit chat update; ask for a path instead of guessing when the exact handle is ambiguous.
 - Use the intent decision table before reconnect/inspection/chat update and never takeover when the intent or exact handle is ambiguous.
 - Reconnect only through `inspect_artifact_review` on the exact handle. Ambiguous window reconnect retries inspect with the selected `connection.selectionToken`.
 - Follow structured lifecycle recovery metadata and retain exact handles. On `CONVERSATION_NOT_FOUND`, `CONVERSATION_REGISTRY_INVALID`, or `CONVERSATION_MIGRATION_REQUIRED`, retain active context and follow Session recovery. Never silently clear an ID, create a replacement Session, retry standalone, or replay an uncertain update.
@@ -122,6 +123,7 @@ The skills must never directly create or edit artifact lifecycle files, includin
 - Read current Instructions from the exact `instructionsPath`, or reuse fresh Instructions already returned for that request. Apply them only to related work. AI may edit that exact Markdown file only when explicitly requested; registry metadata, layout, and memberships remain tool/extension-owned.
 - Refresh the catalog before selecting artifacts for latest/recent/current-overview requests, even when an old path is known. Otherwise read known exact artifacts' current Markdown directly; unknown targets require a current catalog, and ambiguity requires clarification. Reuse fresh context already returned for the same request.
 - Replace the active catalog after successful non-null Session results; never merge old snapshots. Preserve review handles separately. A standalone `session: null` does not clear an active Session.
+- Select the wait mode for explicit chat updates to existing artifacts in the active Session: default to non-waiting unless the user requests review waiting, then delegate lifecycle/result handling to the artifact skill. Creation, standalone requests, and review-feedback processing retain their existing wait behavior.
 - Join-only reads context without takeover, artifact inspection, routing, waiters, or tokens. Explicit Join with artifact uses the shared inspect core; normalize `inspection` before applying the artifact skill.
 - Retain exact Session identity and paths in requested handoffs. No background watcher pushes changes into chat. Session entry and Instructions do not independently authorize unrelated actions.
 

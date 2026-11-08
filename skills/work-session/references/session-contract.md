@@ -41,6 +41,8 @@ Window-selection retries retain the exact original Session intent, IDs, name, ar
 
 ## Optional artifact inspection
 
+For direct updates to existing artifacts, the Session skill owns wait-mode selection and the artifact skill owns token/commit/result handling. Pass the active Session ID as `artifactConversationId` on advance when using `noWait: true`; advance only validates the UUID parameter, not chat Join state or registry membership. A commit result with `waited: false` does not return a new Session context or review decision; retain the active Session context and record the new artifact round separately. Creation still waits for review.
+
 Join-only returns `{ session }`. Adopt it on success and continue the user's request; do not call artifact wait/advance.
 
 Join with an artifact returns `{ session, inspection }`. Read comments at `result.inspection.comments.comments`, the token at `result.inspection.roundToken`, the round at `result.inspection.reviewRound`, and the exact handle at `result.inspection.artifactDirectory`. Adopt `result.session` only after success, then apply the artifact skill to the normalized inspection object. Do not call inspect again merely to fetch comments already returned in this object.

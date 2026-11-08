@@ -1635,6 +1635,7 @@ const ADVANCE_ALLOWED_KEYS: ReadonlySet<string> = new Set([
   "roundToken",
   "markdown",
   "artifactConversationId",
+  "noWait",
 ]);
 
 const JOIN_ALLOWED_KEYS: ReadonlySet<string> = new Set([
@@ -2126,11 +2127,19 @@ async function handleAdvanceAndWaitTool(id: unknown, args: JsonObject | undefine
   pending.set(requestKey(id), controller);
   let claimedToken: string | undefined;
   let committedReviewRound: number | undefined;
+  let noWait = false;
   try {
     pruneRoundGrants();
     assertAllowedToolKeys(ADVANCE_AND_WAIT_TOOL_NAME, args, ADVANCE_ALLOWED_KEYS);
     const expectedReviewRound = parseExpectedReviewRound(args);
     const artifactConversationId = parseOptionalEchoConversationId(args);
+    if (args?.noWait !== undefined && typeof args.noWait !== "boolean") {
+      throw new Error("INVALID_ARTIFACT_INPUT: noWait must be a boolean.");
+    }
+    noWait = args?.noWait === true;
+    if (noWait && artifactConversationId === undefined) {
+      throw new Error("INVALID_ARTIFACT_INPUT: noWait requires artifactConversationId from the active Work Session.");
+    }
     const roundToken = args?.roundToken;
     const markdown = args?.markdown;
     if (typeof roundToken !== "string" || !roundToken) throw new Error("roundToken is required.");
@@ -2282,6 +2291,28 @@ async function handleAdvanceAndWaitTool(id: unknown, args: JsonObject | undefine
     claimedToken = undefined;
     committedReviewRound = committed.manifest.reviewRound;
 
+    if (process.env.NODE_ENV === "test" && process.env.CODEX_ARTIFACTS_TEST_FAIL_UPDATE === "after-commit") {
+      throw new Error("Injected failure after round commit.");
+    }
+    if (noWait) {
+      const artifactUrl = toArtifactFileUrl(context.artifactPath);
+      respond(id, toolResult({
+        artifactId: context.artifactId,
+        artifactDirectory: context.artifactDirectory,
+        artifactPath: context.artifactPath,
+        artifactUrl,
+        artifactLink: formatArtifactLink(committed.manifest.title, artifactUrl),
+        reviewSessionId: context.reviewSessionId,
+        reviewRound: committed.manifest.reviewRound,
+        artifactSha256: committed.artifactSha256,
+        kind: committed.manifest.kind,
+        title: committed.manifest.title,
+        artifactConversationId,
+        waited: false,
+      }));
+      return;
+    }
+
     const updatedContext = await loadArtifactContext(context.artifactDirectory);
     const result = await waitForSubmission(updatedContext, requestKey(id), controller);
     respond(
@@ -2299,10 +2330,10 @@ async function handleAdvanceAndWaitTool(id: unknown, args: JsonObject | undefine
         toolError(
           recoveryError(
             "ADVANCE_COMMITTED",
-            `review round ${committedReviewRound} committed, but the follow-up wait did not complete: ${detail}`,
+            `review round ${committedReviewRound} committed, but ${noWait ? "the update response" : "the follow-up wait"} did not complete: ${detail}`,
             {
               retryable: true,
-              expectedNextTool: WAIT_TOOL_NAME,
+              expectedNextTool: noWait ? INSPECT_TOOL_NAME : WAIT_TOOL_NAME,
               reuseRoundToken: false,
               currentReviewRound: committedReviewRound,
             },
@@ -2336,13 +2367,14 @@ async function handleRequest(message: JsonObject): Promise<void> {
         "Create and inspect without artifactConversationId or conversationName are standalone and return session: null without creating or registering a Work Session. While a chat has an active Session, pass its ID unless the user explicitly requests standalone; a name without an ID explicitly creates a new Session.",
         "Use the work-session skill to join or refresh an exact Session with join_session and sessionId; supply artifactId only when the request also calls for artifact inspection and registration in that Session.",
         "A cancelled waiter never ends or deletes the artifact.",
-        "Both wait_for_artifact_review and advance_and_wait_for_artifact return the complete validated comments document for every submitted decision; read feedback from comments.comments. A revise result also returns nextAction.type=process-review-feedback and a one-time roundToken so feedback can be processed without an additional inspection just to fetch comments.",
+        "Both wait_for_artifact_review and the waiting mode of advance_and_wait_for_artifact return the complete validated comments document for every submitted decision; read feedback from comments.comments. A revise result also returns nextAction.type=process-review-feedback and a one-time roundToken so feedback can be processed without an additional inspection just to fetch comments.",
+        "For explicit direct updates to existing artifacts in the active Work Session, follow the work-session skill's wait-mode selection. advance_and_wait_for_artifact accepts noWait=true only with artifactConversationId: it commits the new round and returns waited=false without attaching a waiter. Record the returned round and continue authorized work; absent decision/comments are expected for this commit result, so do not fetch feedback or start a wait merely because they are absent. Creation, standalone requests, and review-feedback processing keep their existing wait behavior.",
         "Treat comments returned by a Review submission and comments read through inspect_artifact_review with the same policy: answer questions visibly in chat before calling advance_and_wait_for_artifact, update Markdown only for requested changes, omit markdown for question-only feedback, and ask for clarification without consuming the token when needed.",
         "Do not add Review responses to the artifact.",
         "Pure reconnect uses inspect_artifact_review with intent=reconnect on the exact handle and same round; routing prioritizes sole live window, validated advisory artifact-window affinity, and unique focused window, or explicit candidate via selectionToken.",
         "For chat escape, inspect the exact handle with takeover=true.",
-        "If inspection has no comments or submission, reattach with wait_for_artifact_review without advancing.",
-        "When updating an artifact directly from chat on an empty round, inspect with takeover=true, expectedReviewRound, and intent=explicit-chat-update, then advance with replacement markdown.",
+        "If inspection has no comments or submission and is not an explicit chat update, reattach with wait_for_artifact_review without advancing.",
+        "When updating an artifact directly from chat on an empty round, inspect with expectedReviewRound and intent=explicit-chat-update, using takeover=true only when detaching a live waiter is needed for that update, then advance with replacement markdown and the selected wait mode.",
         "Follow structured recovery metadata on lifecycle errors, keep the same exact handle, and never replay when commit state is uncertain.",
         "When Proceed returns approve for kind plan or implementation-plan, obey nextAction and execute the complete approved plan immediately in the same turn; do not stop at acknowledgement or ask for another confirmation.",
         "When Proceed returns approve for any other kind, acknowledge the approval and conclude the review without automatically implementing code or starting another review round.",
@@ -2600,7 +2632,7 @@ async function handleRequest(message: JsonObject): Promise<void> {
           name: ADVANCE_AND_WAIT_TOOL_NAME,
           title: "Advance and wait for artifact review",
           description:
-            "Consume a validated one-time round token, optionally replace the complete Markdown, advance and reset the artifact round transactionally, then wait for the next review. Omitting markdown preserves the artifact bytes and SHA. Return the next round's complete validated comments document at comments, with a process-review-feedback next action and new token for revise, an execute-approved-plan next action for an approved plan, or an approved next action for an approved non-plan.",
+            "Consume a validated one-time round token, optionally replace the complete Markdown, and advance and reset the artifact round transactionally. By default, wait for the next review and return its complete validated comments, decision, and applicable next action/token. With noWait=true and artifactConversationId, return a commit result immediately with the new round/hash, artifact handle/link, and waited=false, without decision, comments, nextAction, or a new token. Continue authorized work after that result. Omitting markdown preserves the artifact bytes and SHA. The work-session skill selects noWait for direct Session updates; creation, standalone requests, and review-feedback processing retain their existing wait behavior.",
           inputSchema: {
             type: "object",
             properties: {
@@ -2608,6 +2640,12 @@ async function handleRequest(message: JsonObject): Promise<void> {
               expectedReviewRound: { type: "integer", minimum: 1 },
               roundToken: { type: "string" },
               markdown: { type: "string", minLength: 1, maxLength: MAX_MARKDOWN_BYTES },
+              noWait: {
+                type: "boolean",
+                default: false,
+                description:
+                  "Optional. When true, commit the next round without attaching a waiter or waiting for review. Requires artifactConversationId from the active Work Session. Defaults to false.",
+              },
               artifactConversationId: {
                 type: "string",
                 format: "uuid",

@@ -60,7 +60,11 @@ Before calling a lifecycle tool, require both a uniquely matching exact handle a
 | Pure reconnect to a target window | Call `inspect_artifact_review` with the exact handle, current round, and `intent: "reconnect"` to rebind an active window and emit an open request. For generic reconnect ("mở/reopen artifact"), pass `connection: { targetMode: "artifact-window", windowInstanceId }` using your cached ID if available; if the user asks to open in the current/focused window, omit `connection` to force sole/focused resolution; if the user specifies window X, resolve active windows and send `connection: { targetMode: "explicit-window", selectionToken }`. Update your cached `windowInstanceId` from the returned connection on success. If the result is `WINDOW_SELECTION_REQUIRED`, choose a returned candidate and retry the same inspect call with `connection: { targetMode: "explicit-window", selectionToken }`. |
 | Resume waiting without reconnecting | Call `wait_for_artifact_review` with the exact handle and current round. |
 | Read saved review comments or submission | Call `inspect_artifact_review` with the exact handle and `takeover: true`. |
-| Explicitly update an empty round from chat | Call inspect with the exact handle, `takeover: true`, `expectedReviewRound`, and `intent: "explicit-chat-update"`. |
+| Explicitly update an empty round from chat | Call inspect with the exact handle, `expectedReviewRound`, and `intent: "explicit-chat-update"`; use `takeover: true` only when detaching a live waiter is needed for that update. |
+
+### Session direct updates
+
+For a Session direct update, follow the [Work Session skill's wait-mode selection](../work-session/SKILL.md#artifacts-while-a-session-is-active). Use the chat-update token to advance with complete changed Markdown and the selected wait mode. This exception applies only to explicit chat updates to existing artifacts as part of the active Session; it does not change the wait after creation or the handling of review feedback.
 
 ### After inspection
 
@@ -68,13 +72,14 @@ Inspection fields are flat: `comments.comments`, `roundToken`, `reviewRound`, an
 
 - Takeover cancels and drains the old waiter; it does not end the artifact, advance the round, or edit lifecycle files.
 - Reconnect evaluates active windows prioritizing sole live window, validated advisory artifact-window affinity (when matching stored connection and live in registry), and unique focused window, or explicit candidate via selectionToken. Mismatch or stale affinity silently falls back to focused resolution and returns the new committed windowInstanceId to update your cache. Do not send or compare `connectionRevision`.
-- If inspection has neither saved comments nor a submission, tell the user no feedback is saved and call `wait_for_artifact_review` for the same round. Do not advance.
+- If inspection has neither saved comments nor a submission and is not an explicit chat update, tell the user no feedback is saved and call `wait_for_artifact_review` for the same round. Do not advance.
 - If feedback exists, process it with **Unified feedback handling**.
 - A chat-update token requires complete replacement Markdown with a different SHA. Never ask the user to create dummy comments or click Review after an explicit chat update request.
 - To reconnect after Proceed or Just save, inspect the exact artifact, advance without Markdown, and wait. Never repeat the previously approved or saved action.
 
 ### Fresh decisions vs saved submission snapshots
 
+- **Commit results:** A `waited: false` result confirms a committed update, not a review decision. Record the returned round and continue the authorized work in the same turn; do not fetch comments or attach a waiter merely because decision or comments are absent. A later update needs a fresh inspection token.
 - **Fresh decisions** arrive directly from `wait_for_artifact_review` or `advance_and_wait_for_artifact`. Handle their `nextAction` under **Create and review**, step 4.
 - **Saved submission snapshots** returned by inspection represent past review submissions, not a new execution directive. If `submission.decision === "approve"`, acknowledge that the artifact was previously approved. Never re-execute approved code or repeat previous implementations when reconnecting.
 
@@ -89,7 +94,7 @@ Follow machine-readable recovery metadata returned by lifecycle errors. Keep the
 | `ROUND_TOKEN_IN_USE` | Do not issue another advance. Wait for the in-flight request, then inspect only if its result is unclear. |
 | `ARTIFACT_ALREADY_WAITING` | Another live waiter already owns the exact artifact. Do not start a second wait. For resume-wait intent, keep awaiting the in-flight call; for pure reconnect, call `inspect_artifact_review` with `intent: "reconnect"` without takeover; use takeover only for saved feedback or an explicit direct update. |
 | `ADVANCE_CANCELLED_BEFORE_COMMIT`, `ADVANCE_ROLLED_BACK` with `reuseRoundToken: true` | Retry the same advance only when the server explicitly confirms the token remains valid. |
-| `ADVANCE_COMMITTED` | Do not replay. Continue with the reported round using the hinted wait flow. |
+| `ADVANCE_COMMITTED` | Do not replay. Follow the hinted operation on the reported round: wait for a waiting advance, or inspect to confirm state for a non-waiting update without automatically starting a waiter. |
 | `WINDOW_NOT_FOUND` | No active VS Code window was found. Ask the user to open VS Code, then retry. |
 | `WINDOW_SELECTION_EXPIRED` | Window selection token expired or window was closed. Retry `create_artifact` or `inspect_artifact_review` without connection to refresh candidate windows. |
 | `WINDOW_CONNECTION_MISMATCH`, `WINDOW_CONNECTION_STALE` | Selected window is stale or closed. Retry without connection token to refresh candidates. |
@@ -108,7 +113,7 @@ Except for explicit non-retryable errors such as `ARTIFACT_CONNECTION_INVALID`, 
 - Round tokens are exact-state, one-time capabilities. After MCP restart, inspect the exact artifact again to obtain a fresh token.
 - Only the MCP server creates artifacts, advances rounds, resets comments, consumes tokens, and writes lifecycle metadata.
 - Never edit `artifact.json`, `comments.json`, `review-submission.json`, or `artifact-connection.json` directly.
-- Write a coherent artifact, not a patch, changelog, task tracker, or progress report.
+- Write a coherent artifact, not a patch, changelog, task tracker, or progress report. For explicit updates to an existing artifact in the active Session, user-requested checklist/progress content may be updated under **Session direct updates**; this does not authorize automatic artifact creation.
 
 ## User Custom Rules
 

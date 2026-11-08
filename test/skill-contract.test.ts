@@ -118,6 +118,30 @@ describe("create-review-artifact skill contract", () => {
     expect(skill).toContain("Never takeover speculatively");
   });
 
+  it("separates Session update commits from review decisions without broadening creation or feedback", async () => {
+    const [skill, contract] = await Promise.all([
+      readFile(path.join(skillDirectory, "SKILL.md"), "utf8"),
+      readFile(path.join(skillDirectory, "references", "artifact-contract.md"), "utf8"),
+    ]);
+    const sessionUpdate = skill.slice(skill.indexOf("### Session direct updates"), skill.indexOf("### After inspection"));
+    expect(sessionUpdate).toContain("../work-session/SKILL.md#artifacts-while-a-session-is-active");
+    expect(sessionUpdate).toContain("explicit chat updates to existing artifacts");
+    expect(sessionUpdate).toContain("does not change the wait after creation or the handling of review feedback");
+    const decisions = skill.slice(skill.indexOf("### Fresh decisions"), skill.indexOf("## Structured recovery"));
+    expect(decisions).toContain("`waited: false`");
+    expect(decisions).toContain("not a review decision");
+    expect(decisions).toContain("continue the authorized work in the same turn");
+    expect(decisions).toContain("do not fetch comments or attach a waiter");
+    expect(decisions).toContain("fresh inspection token");
+    expect(contract).toContain("optional `noWait?: boolean` (default `false`)");
+    expect(contract).toContain("before token claim or mutation");
+    expect(contract).toContain("does not verify Join state, registry existence, or membership");
+    expect(contract).toContain("no `decision`, `comments`, `nextAction`, or new round token");
+    expect(skill).toContain("user-requested checklist/progress content");
+    expect(skill).toContain("this does not authorize automatic artifact creation");
+    expect(skill).toContain("Call `wait_for_artifact_review` immediately on that exact handle and round");
+  });
+
   it("defines schema-v6 global storage without workspace ownership metadata", async () => {
     const [skill, contract] = await Promise.all([
       readFile(path.join(skillDirectory, "SKILL.md"), "utf8"),

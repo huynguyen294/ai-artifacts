@@ -355,6 +355,12 @@ describe("artifact review MCP server v8", () => {
     expect(reconnectTokenDescription).toContain("WINDOW_SELECTION_REQUIRED response");
     expect(reconnectTokenDescription).not.toContain("resolve_artifact_workspace");
 
+    const advanceTool = tools.tools.find((tool: any) => tool.name === "advance_and_wait_for_artifact");
+    expect(advanceTool.inputSchema.properties.noWait).toMatchObject({ type: "boolean", default: false });
+    expect(advanceTool.inputSchema.required).not.toContain("noWait");
+    expect(advanceTool.inputSchema.properties.noWait.description).toContain("Requires artifactConversationId");
+    expect(createTool.inputSchema.properties).not.toHaveProperty("noWait");
+
     const created = await createArtifact(client, fixture.workspace);
     expect(created).toMatchObject({
       reviewRound: 1,
@@ -994,7 +1000,7 @@ describe("artifact review MCP server v8", () => {
     expect(result.content[0].text).toContain("JSON");
   });
 
-  it("returns structured recovery instead of advancing while the artifact already has a waiter", async () => {
+  it.each([false, true])("returns structured recovery while the artifact already has a waiter (noWait=%s)", async (noWait) => {
     const fixture = await workspaceFixture();
     const client = startClient(fixture.registry);
     await initialize(client);
@@ -1020,6 +1026,8 @@ describe("artifact review MCP server v8", () => {
       artifactDirectory: created.artifactDirectory,
       expectedReviewRound: 1,
       roundToken: inspected.structuredContent.roundToken,
+      noWait,
+      ...(noWait ? { artifactConversationId: randomUUID() } : {}),
     });
     expect(blockedAdvance.structuredContent).toMatchObject({
       code: "ARTIFACT_ALREADY_WAITING",
@@ -1162,7 +1170,218 @@ describe("artifact review MCP server v8", () => {
     });
   });
 
-  it("rejects a chat-update token when state changes after inspection", async () => {
+  it("commits consecutive Session updates without waiting and can review the new round afterward", async () => {
+    const fixture = await workspaceFixture();
+    const client = startClient(fixture.registry);
+    await initialize(client);
+    const created = await createArtifact(client, fixture.workspace, {
+      title: "Session progress",
+      kind: "checklist",
+      conversationName: "Non-waiting updates",
+    });
+    const connectionPath = path.join(created.artifactDirectory, "artifact-connection.json");
+    const connectionBefore = await readFile(connectionPath, "utf8");
+    const store = new ArtifactStore(created.artifactPath, { userHome: fixture.userHome });
+
+    for (const reviewRound of [1, 2]) {
+      const inspected = await callTool(client, "inspect_artifact_review", {
+        artifactDirectory: created.artifactDirectory,
+        artifactConversationId: created.artifactConversationId,
+        expectedReviewRound: reviewRound,
+        intent: "explicit-chat-update",
+      });
+      expect(inspected.isError).not.toBe(true);
+      const markdown = `# Progress\n\n- [x] Step ${reviewRound}\n`;
+      const args = {
+        artifactDirectory: created.artifactDirectory,
+        artifactConversationId: created.artifactConversationId,
+        expectedReviewRound: reviewRound,
+        roundToken: inspected.structuredContent.roundToken,
+        markdown,
+        noWait: true,
+      };
+      const updated = await callTool(client, "advance_and_wait_for_artifact", args);
+      expect(updated.isError).not.toBe(true);
+      expect(updated.structuredContent).toEqual({
+        artifactId: created.artifactId,
+        artifactDirectory: created.artifactDirectory,
+        artifactPath: created.artifactPath,
+        artifactUrl: created.artifactUrl,
+        artifactLink: created.artifactLink,
+        reviewSessionId: created.reviewSessionId,
+        reviewRound: reviewRound + 1,
+        artifactSha256: sha256(markdown),
+        kind: created.kind,
+        title: "Session progress",
+        artifactConversationId: created.artifactConversationId,
+        waited: false,
+      });
+      expect(JSON.parse(updated.content[0].text)).toEqual(updated.structuredContent);
+      expect(await readFile(created.artifactPath, "utf8")).toBe(markdown);
+      expect(JSON.parse(await readFile(path.join(created.artifactDirectory, "comments.json"), "utf8")))
+        .toMatchObject({ reviewRound: reviewRound + 1, artifactSha256: sha256(markdown), comments: [] });
+      const loaded = await store.load();
+      expect(loaded.artifact.reviewRound).toBe(reviewRound + 1);
+      expect(loaded.markdown).toBe(markdown);
+      expect(await readFile(connectionPath, "utf8")).toBe(connectionBefore);
+      await expectNoTransactionResidue(created.artifactDirectory);
+
+      const replay = await callTool(client, "advance_and_wait_for_artifact", args);
+      expect(replay.structuredContent).toMatchObject({ code: "ROUND_TOKEN_ALREADY_CONSUMED", reuseRoundToken: false });
+      expect((await waitForRound(created.artifactDirectory, reviewRound + 1)).reviewRound).toBe(reviewRound + 1);
+    }
+
+    const waiting = callToolTracked(client, "wait_for_artifact_review", {
+      artifactDirectory: created.artifactDirectory,
+      artifactConversationId: created.artifactConversationId,
+      expectedReviewRound: 3,
+    });
+    await waiting.sent;
+    await submitDecision(created.artifactDirectory, "revise", ["Review the updated progress."]);
+    const reviewed = await waiting.promise;
+    expect(reviewed.isError).not.toBe(true);
+    expect(reviewed.structuredContent).toMatchObject({
+      reviewRound: 3,
+      decision: "revise",
+      comments: { comments: [expect.objectContaining({ body: "Review the updated progress." })] },
+      nextAction: { type: "process-review-feedback" },
+      roundToken: expect.any(String),
+    });
+  });
+
+  it.each([
+    { label: "missing Session ID", noWait: true, artifactConversationId: undefined, error: "noWait requires artifactConversationId" },
+    { label: "malformed Session ID", noWait: true, artifactConversationId: "invalid", error: "must be a valid UUID" },
+    { label: "string boolean", noWait: "false", artifactConversationId: randomUUID(), error: "noWait must be a boolean" },
+    { label: "numeric boolean", noWait: 1, artifactConversationId: randomUUID(), error: "noWait must be a boolean" },
+    { label: "null boolean", noWait: null, artifactConversationId: randomUUID(), error: "noWait must be a boolean" },
+  ])("rejects $label before mutation or token consumption", async (input) => {
+    const fixture = await workspaceFixture();
+    const client = startClient(fixture.registry);
+    await initialize(client);
+    const created = await createArtifact(client, fixture.workspace);
+    const inspected = await callTool(client, "inspect_artifact_review", {
+      artifactDirectory: created.artifactDirectory,
+      expectedReviewRound: 1,
+      intent: "explicit-chat-update",
+    });
+    const fileNames = ["artifact.json", "artifact.md", "comments.json", "artifact-connection.json"];
+    const before = await Promise.all(fileNames.map((name) => readFile(path.join(created.artifactDirectory, name), "utf8")));
+    const args = {
+      artifactDirectory: created.artifactDirectory,
+      expectedReviewRound: 1,
+      roundToken: inspected.structuredContent.roundToken,
+      markdown: "# Valid update after invalid input\n",
+      noWait: input.noWait,
+      artifactConversationId: input.artifactConversationId,
+    };
+    const rejected = await callTool(client, "advance_and_wait_for_artifact", args);
+    expect(rejected.isError).toBe(true);
+    expect(rejected.content[0].text).toContain(input.error);
+    expect(await Promise.all(fileNames.map((name) => readFile(path.join(created.artifactDirectory, name), "utf8"))))
+      .toEqual(before);
+    await expectNoTransactionResidue(created.artifactDirectory);
+
+    // The Session boundary validates the UUID parameter, without registry writes or membership checks.
+    const retried = await callTool(client, "advance_and_wait_for_artifact", {
+      ...args,
+      noWait: true,
+      artifactConversationId: randomUUID(),
+    });
+    expect(retried.isError).not.toBe(true);
+    expect(retried.structuredContent).toMatchObject({ waited: false, reviewRound: 2 });
+  });
+
+  it.each([
+    { inSession: false, noWait: undefined, decision: "revise" as const },
+    { inSession: false, noWait: false, decision: "approve" as const },
+    { inSession: true, noWait: undefined, decision: "save" as const },
+    { inSession: true, noWait: false, decision: "revise" as const },
+  ])("keeps waiting with noWait=$noWait and inSession=$inSession", async ({ inSession, noWait, decision }) => {
+    const fixture = await workspaceFixture();
+    const client = startClient(fixture.registry);
+    await initialize(client);
+    const created = await createArtifact(client, fixture.workspace, inSession ? { conversationName: "Default wait" } : {});
+    const inspected = await callTool(client, "inspect_artifact_review", {
+      artifactDirectory: created.artifactDirectory,
+      expectedReviewRound: 1,
+      intent: "explicit-chat-update",
+    });
+    const advancing = callToolTracked(client, "advance_and_wait_for_artifact", {
+      artifactDirectory: created.artifactDirectory,
+      expectedReviewRound: 1,
+      roundToken: inspected.structuredContent.roundToken,
+      markdown: "# Keep the review waiter\n",
+      ...(inSession ? { artifactConversationId: created.artifactConversationId } : {}),
+      ...(noWait === undefined ? {} : { noWait }),
+    });
+    let settled = false;
+    void advancing.promise.then(() => { settled = true; });
+    await advancing.sent;
+    await waitForRound(created.artifactDirectory, 2);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(settled).toBe(false);
+    await submitDecision(created.artifactDirectory, decision, ["Feedback remains in the review result."]);
+    const result = await advancing.promise;
+    expect(result.isError).not.toBe(true);
+    expect(result.structuredContent).toMatchObject({
+      decision,
+      reviewRound: 2,
+      comments: { comments: [expect.objectContaining({ body: "Feedback remains in the review result." })] },
+    });
+    expect(result.structuredContent).not.toHaveProperty("waited");
+    expect(JSON.parse(result.content[0].text)).toEqual(result.structuredContent);
+    if (decision === "revise") {
+      expect(result.structuredContent.nextAction.type).toBe("process-review-feedback");
+      expect(result.structuredContent.roundToken).toEqual(expect.any(String));
+    } else if (decision === "approve") {
+      expect(result.structuredContent.nextAction.type).toBe("execute-approved-plan");
+    } else {
+      expect(result.structuredContent).not.toHaveProperty("nextAction");
+    }
+  });
+
+  it("recovers a committed non-waiting update through inspection without replaying or starting a waiter", async () => {
+    const fixture = await workspaceFixture();
+    const client = startClient(fixture.registry, { CODEX_ARTIFACTS_TEST_FAIL_UPDATE: "after-commit" });
+    await initialize(client);
+    const created = await createArtifact(client, fixture.workspace);
+    const inspected = await callTool(client, "inspect_artifact_review", {
+      artifactDirectory: created.artifactDirectory,
+      expectedReviewRound: 1,
+      intent: "explicit-chat-update",
+    });
+    const args = {
+      artifactDirectory: created.artifactDirectory,
+      expectedReviewRound: 1,
+      roundToken: inspected.structuredContent.roundToken,
+      markdown: "# Committed despite the failed response\n",
+      noWait: true,
+      artifactConversationId: randomUUID(),
+    };
+    const result = await callTool(client, "advance_and_wait_for_artifact", args);
+    expect(result.structuredContent).toMatchObject({
+      code: "ADVANCE_COMMITTED",
+      currentReviewRound: 2,
+      expectedNextTool: "inspect_artifact_review",
+      reuseRoundToken: false,
+    });
+    expect(await readFile(created.artifactPath, "utf8")).toBe(args.markdown);
+    expect((await callTool(client, "advance_and_wait_for_artifact", args)).structuredContent.code)
+      .toBe("ROUND_TOKEN_ALREADY_CONSUMED");
+    const recovered = await callTool(client, "inspect_artifact_review", {
+      artifactDirectory: created.artifactDirectory,
+      expectedReviewRound: 2,
+      intent: "explicit-chat-update",
+    });
+    expect(recovered.isError).not.toBe(true);
+    expect(recovered.structuredContent).toMatchObject({ reviewRound: 2, markdown: args.markdown, roundToken: expect.any(String) });
+    await submitDecision(created.artifactDirectory, "save");
+    const saved = await callTool(client, "wait_for_artifact_review", { artifactDirectory: created.artifactDirectory, expectedReviewRound: 2 });
+    expect(saved.structuredContent.decision).toBe("save");
+  });
+
+  it.each([false, true])("rejects a chat-update token when state changes after inspection (noWait=%s)", async (noWait) => {
     const fixture = await workspaceFixture();
     const client = startClient(fixture.registry);
     await initialize(client);
@@ -1179,6 +1398,8 @@ describe("artifact review MCP server v8", () => {
       expectedReviewRound: 1,
       roundToken: inspected.structuredContent.roundToken,
       markdown: "# Artifact\n\nThis update must be rejected.\n",
+      noWait,
+      ...(noWait ? { artifactConversationId: randomUUID() } : {}),
     });
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain("no longer matches the inspected content");
@@ -1291,7 +1512,7 @@ describe("artifact review MCP server v8", () => {
     expect(results.find((result) => result.isError)?.structuredContent.code).toMatch(/ROUND_TOKEN_(IN_USE|ALREADY_CONSUMED)/);
   });
 
-  it("retains the round and token when a transaction rolls back", async () => {
+  it.each([false, true])("retains the round and token when a transaction rolls back (noWait=%s)", async (noWait) => {
     const fixture = await workspaceFixture();
     const client = startClient(fixture.registry, {
       NODE_ENV: "test",
@@ -1306,6 +1527,8 @@ describe("artifact review MCP server v8", () => {
       expectedReviewRound: 1,
       roundToken: inspected.structuredContent.roundToken,
       markdown: "# Must roll back\n",
+      noWait,
+      ...(noWait ? { artifactConversationId: randomUUID() } : {}),
     };
     const failed = await callTool(client, "advance_and_wait_for_artifact", args);
     expect(failed.isError).toBe(true);

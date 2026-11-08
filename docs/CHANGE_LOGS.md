@@ -14,6 +14,15 @@ Minor typos, formatting fixes, or cosmetic wording adjustments that do not chang
 
 Each entry includes the date, category, summary of changes, rationale, and affected components or files.
 
+## 2026-11-08 — Non-waiting direct updates within Work Sessions
+
+- Added optional boolean `noWait` to `advance_and_wait_for_artifact`, defaulting to `false`. The non-waiting mode requires a UUID `artifactConversationId` before token claim or mutation, reuses the existing state-bound transaction and token consumption, and returns the committed round/hash and `waited: false` without registering a waiter or returning review feedback/a new token. The Session ID is a caller-supplied parameter boundary, not verification of Join state, registry existence, or membership.
+- Kept the waiting result unchanged, including complete validated comments and decision directives. Non-waiting post-commit recovery directs inspection of the same handle rather than replaying or automatically waiting. Routing and artifact storage schemas are unchanged.
+- Scoped the Session skill's default to explicit chat updates of existing Session artifacts, with an explicit request to wait taking precedence. Creation always waits; standalone requests and review-feedback processing retain their existing flow. The artifact skill delegates mode selection, distinguishes commit acknowledgements from review decisions, and permits only user-requested checklist/progress updates within this exception. Frontmatter, metadata, and customization markers are preserved.
+- Synchronized both skill references, README, architecture, philosophy, contributor invariants, and component responsibilities. Kept MCP 12, artifact skill 4, and Work Session skill 1 for the same unreleased development cycle. Installed integrations and global user artifacts were not modified.
+- Validation: typecheck, production build, and full suite passed (54 files, 757 passed, 3 skipped); focused lifecycle/skill tests passed (121 passed, 1 skipped). Both skill audits passed without warnings. The Python skill validator could not run because PyYAML is absent; equivalent frontmatter/name/placeholder/reference checks passed using local js-yaml.
+- Runtime boundary: subprocess tests exercised the rebuilt MCP through two non-waiting updates, Extension Store reloads, and later review. Real agent continuation and Extension Host UI were not exercised; this chat's loaded integration still exposes the pre-change tool schema without `noWait`.
+
 ## 2026-11-08 — Rename MCP server entrypoint to remove obsolete -v4 suffix
 
 - Renamed `src/integration/artifact-review-mcp-v4.ts` to `src/integration/artifact-review-mcp.ts` to reflect the active schema-v6 and numeric MCP version 12 architecture without misleading version-specific source suffixes.
