@@ -84,7 +84,6 @@ The governing lifetime relationship is `artifact lifetime > waiter lifetime > ch
 - [`skills/create-review-artifact/SKILL.md`](../skills/create-review-artifact/SKILL.md)
 - [`skills/create-review-artifact/references/artifact-contract.md`](../skills/create-review-artifact/references/artifact-contract.md)
 - [`skills/work-session/SKILL.md`](../skills/work-session/SKILL.md)
-- [`skills/work-session/references/session-contract.md`](../skills/work-session/references/session-contract.md)
 
 **Responsibilities**
 

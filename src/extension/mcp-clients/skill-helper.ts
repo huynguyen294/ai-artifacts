@@ -20,7 +20,6 @@ export const REVIEW_SKILL_ASSETS = [
 
 export const WORK_SESSION_SKILL_ASSETS = [
   "SKILL.md",
-  path.join("references", "session-contract.md"),
   path.join("agents", "openai.yaml"),
 ];
 

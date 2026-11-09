@@ -18,7 +18,7 @@ Before changing behavior, read the smallest relevant set in this order:
 
 1. `docs/PHILOSOPHY.md` for product intent, lifecycle meaning, and non-goals.
 2. `docs/ARCHITECTURE.md` for current boundaries and safety invariants.
-3. `skills/create-review-artifact/SKILL.md` and its referenced contract for artifact behavior; `skills/work-session/SKILL.md` and its referenced contract for Session entry, Instructions, and context refresh.
+3. `skills/create-review-artifact/SKILL.md` and its referenced contract for artifact behavior; `skills/work-session/SKILL.md` for Session entry, Instructions, and context refresh.
 4. The implementation and tests for the area being changed.
 5. `CHANGELOG.md` and any current tracked roadmap for recent migration context and known follow-up work.
 

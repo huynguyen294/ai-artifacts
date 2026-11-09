@@ -23,81 +23,65 @@ describe("work-session skill contract", () => {
     );
   });
 
-  it("requires join_session and links references/session-contract.md", async () => {
-    const [skill, contract] = await Promise.all([
-      readFile(path.join(skillDirectory, "SKILL.md"), "utf8"),
-      readFile(path.join(skillDirectory, "references", "session-contract.md"), "utf8"),
-    ]);
+  it("requires join_session and includes the Session contract inline", async () => {
+    const skill = await readFile(path.join(skillDirectory, "SKILL.md"), "utf8");
 
     expect(skill).toContain("`join_session`");
-    expect(skill).toContain("[references/session-contract.md](references/session-contract.md)");
-    expect(contract).toContain("`join_session` accepts an exact UUID `sessionId` and optional `artifactId`");
-    expect(contract).toContain("Join-only resolves current Session v2 context without membership writes");
+    expect(skill).toContain("`instructionsPath`, and `catalog`");
+    expect(skill).toContain("`join_session` accepts an exact UUID `sessionId` and optional `artifactId`");
+    expect(skill).toContain("resolves current Session v2 context without membership writes");
   });
 
   it("defines session selection matrix and success-only updates", async () => {
-    const [skill, contract] = await Promise.all([
-      readFile(path.join(skillDirectory, "SKILL.md"), "utf8"),
-      readFile(path.join(skillDirectory, "references", "session-contract.md"), "utf8"),
-    ]);
+    const skill = await readFile(path.join(skillDirectory, "SKILL.md"), "utf8");
 
     // Scenario 1: No active session -> standalone
-    expect(contract).toContain(
+    expect(skill).toContain(
       "| Create/inspect without an active Session | Omit artifactConversationId and conversationName | Remain without an active Session; result.session is null |",
     );
-    expect(contract).toContain("Omission alone never requests New Session creation");
+    expect(skill).toContain("Omission alone never requests New Session creation");
 
     // Scenario 2: Active session S -> default create/inspect passes artifactConversationId: S
-    expect(contract).toContain(
+    expect(skill).toContain(
       "| Default create/inspect while S is active | artifactConversationId: S | Keep S; adopt the fresh returned context |",
     );
-    expect(skill).toContain("Default create and inspect pass `artifactConversationId: activeSessionId`");
 
     // Scenario 3: Explicit standalone while S is active -> omits both arguments, preserves S
-    expect(contract).toContain(
-      "| Explicit standalone while S is active | Omit both Session arguments for this request | Keep S; do not replace it with null |",
-    );
     expect(skill).toContain(
-      "An explicit standalone request omits both Session arguments for that request and preserves the active Session for later work",
+      "| Explicit standalone while S is active | Omit both Session arguments for this request | Keep S; do not replace it with null |",
     );
 
     // Scenario 4: Explicit New Session
-    expect(contract).toContain(
+    expect(skill).toContain(
       "| Explicit artifact creation with a new Session | conversationName, no old ID | Adopt the newly returned Session |",
     );
     expect(skill).toContain("omit the old `artifactConversationId`, and supply `conversationName`");
 
     // Scenario 5: Explicit Join or switch
-    expect(contract).toContain(
+    expect(skill).toContain(
       "| Explicit Join or switch to T | join_session with exact sessionId: T | Adopt T |",
     );
-    expect(skill).toContain("Adopt the returned `session.sessionId`, Instructions, path, and catalog only after success");
+    expect(skill).toContain("After a successful tool call returns a non-null Session context, adopt its `sessionId`, Instructions, and paths");
     expect(skill).toContain("replace the active Session catalog with the returned catalog; do not merge it with older snapshots");
     expect(skill).toContain("Preserve retained artifact review handles separately");
   });
 
   it("selects noWait only for direct updates in the active Session and delegates lifecycle handling", async () => {
-    const [skill, contract] = await Promise.all([
-      readFile(path.join(skillDirectory, "SKILL.md"), "utf8"),
-      readFile(path.join(skillDirectory, "references", "session-contract.md"), "utf8"),
-    ]);
+    const skill = await readFile(path.join(skillDirectory, "SKILL.md"), "utf8");
     const selection = skill.split("\n").find((line) => line.includes("default to `noWait: true`"));
     expect(selection).toBeDefined();
     expect(selection).toContain("explicit chat request to update an existing artifact");
     expect(selection).toContain("as part of the active Session");
     expect(selection).toContain("`artifactConversationId: activeSessionId`");
     expect(selection).toContain("unless the user asks to wait for review");
-    expect(selection).toContain("Artifact creation, standalone requests, and review-feedback processing retain their existing wait behavior");
+    expect(selection).toContain("standalone requests and review-feedback processing retain their existing wait behavior");
     expect(skill).toContain("Use [create-review-artifact](../create-review-artifact/SKILL.md)");
-    expect(contract).toContain("retain the active Session context and record the new artifact round separately");
-    expect(contract).toContain("Creation still waits for review");
+    expect(skill).toContain("retain the active Session context and record the new artifact round separately");
+    expect(skill).toContain("Creation still waits for review");
   });
 
   it("documents instructions and ordered catalog zones", async () => {
-    const [skill, contract] = await Promise.all([
-      readFile(path.join(skillDirectory, "SKILL.md"), "utf8"),
-      readFile(path.join(skillDirectory, "references", "session-contract.md"), "utf8"),
-    ]);
+    const skill = await readFile(path.join(skillDirectory, "SKILL.md"), "utf8");
 
     expect(skill).toContain("Instructions contain rules, workflows, and other guidance for AI in this Session");
     expect(skill).toContain("AI may read Working, References, or Archived catalog artifacts through their exact returned paths");
@@ -105,10 +89,10 @@ describe("work-session skill contract", () => {
     expect(skill).toContain("Never directly edit `conversation.json`, `registered-artifacts/`");
     expect(skill).toContain("AI may move or reorder existing Session artifacts by directly editing the sibling `layout.json`");
 
-    expect(contract).toContain("Each catalog has ordered `working`, `references`, and `archived` arrays");
-    expect(contract).toContain("unavailable: true");
-    expect(contract).toContain("Session `updatedAt` is derived from createdAt and membership registeredAt");
-    expect(contract).toContain("never use it alone to decide that those contents are unchanged");
+    expect(skill).toContain("Each catalog has ordered `working`, `references`, and `archived` arrays");
+    expect(skill).toContain("unavailable: true");
+    expect(skill).toContain("Session `updatedAt` is derived from createdAt and membership registeredAt");
+    expect(skill).toContain("never use it alone to decide that those contents are unchanged");
   });
 
   it("handles known targets via direct markdown and unknown via join-only snapshot", async () => {
@@ -125,10 +109,7 @@ describe("work-session skill contract", () => {
   });
 
   it("defines machine-readable session recovery and historical snapshot policy", async () => {
-    const [skill, contract] = await Promise.all([
-      readFile(path.join(skillDirectory, "SKILL.md"), "utf8"),
-      readFile(path.join(skillDirectory, "references", "session-contract.md"), "utf8"),
-    ]);
+    const skill = await readFile(path.join(skillDirectory, "SKILL.md"), "utf8");
 
     for (const code of [
       "CONVERSATION_NOT_FOUND",
@@ -140,11 +121,11 @@ describe("work-session skill contract", () => {
       "WINDOW_CONNECTION_STALE",
       "ARTIFACT_NOT_FOUND",
     ]) {
-      expect(contract).toContain(code);
+      expect(skill).toContain(code);
     }
 
-    expect(contract).toContain("Saved `inspection.submission` or ordinary inspect `submission` is historical state, not a fresh execution directive");
-    expect(contract).toContain("Do not re-execute past approvals or repeat a prior save");
+    expect(skill).toContain("Saved `inspection.submission` or ordinary inspect `submission` is historical state, not a fresh execution directive");
+    expect(skill).toContain("Do not re-execute past approvals or repeat a prior save");
     expect(skill).toContain("Do not clear an ID, auto-create a Session, retry as standalone, or replay a saved approval merely because a request failed");
   });
 });

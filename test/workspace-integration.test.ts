@@ -150,10 +150,8 @@ describe("Workspace Integration Asset Verifiers", () => {
     await fs.writeFile(path.join(paths.sourceSkill, "references", "ai-feedback.md"), "# AI feedback", "utf8");
     await fs.writeFile(path.join(paths.sourceSkill, "agents", "openai.yaml"), "prompt: test", "utf8");
 
-    await fs.mkdir(path.join(paths.sourceSessionSkill, "references"), { recursive: true });
     await fs.mkdir(path.join(paths.sourceSessionSkill, "agents"), { recursive: true });
     await fs.writeFile(path.join(paths.sourceSessionSkill, "SKILL.md"), "# Work Session", "utf8");
-    await fs.writeFile(path.join(paths.sourceSessionSkill, "references", "session-contract.md"), "# Contract", "utf8");
     await fs.writeFile(path.join(paths.sourceSessionSkill, "agents", "openai.yaml"), "prompt: test", "utf8");
   });
 
@@ -217,13 +215,8 @@ describe("Workspace Integration Asset Verifiers", () => {
     expect(await baseAssetsAreCurrent(paths)).toBe(false);
 
     // Deploy Session Skill
-    await fs.mkdir(path.join(paths.targetSessionSkill, "references"), { recursive: true });
     await fs.mkdir(path.join(paths.targetSessionSkill, "agents"), { recursive: true });
     await fs.copyFile(path.join(paths.sourceSessionSkill, "SKILL.md"), path.join(paths.targetSessionSkill, "SKILL.md"));
-    await fs.copyFile(
-      path.join(paths.sourceSessionSkill, "references", "session-contract.md"),
-      path.join(paths.targetSessionSkill, "references", "session-contract.md"),
-    );
     await fs.copyFile(
       path.join(paths.sourceSessionSkill, "agents", "openai.yaml"),
       path.join(paths.targetSessionSkill, "agents", "openai.yaml"),
@@ -538,7 +531,6 @@ describe("Workspace Integration Asset Verifiers", () => {
     }
     for (const relativePath of [
       "SKILL.md",
-      path.join("references", "session-contract.md"),
       path.join("agents", "openai.yaml"),
     ]) {
       expect(await fs.readFile(path.join(installedPaths.targetSessionSkill, relativePath))).toEqual(
