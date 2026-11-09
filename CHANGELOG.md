@@ -6,6 +6,45 @@ Release history has been standardized and tracked starting from version **0.2.6*
 
 ## [1.2.0] - Unreleased
 
+### Multi-Agent Work Sessions
+
+- Added Work Sessions for organizing artifacts and shared instructions across agents and chats, with a dedicated **AI Artifacts** Activity Bar containing **Recent Artifacts** and **Sessions** views.
+- Added a Session Manager with editable title and type, Markdown instructions with Save and Open Instructions File actions, and ordered **Working**, **References**, and **Archived** zones.
+- Added responsive artifact grids, Markdown description snippets, search and kind filters, and menu actions for moving and reordering artifacts. Sidebar search and filters use native VS Code Quick Pick controls.
+- Added global Session type management, including the default Module type, and manual creation of empty Sessions. Existing artifacts can be added to a Session's Working zone through Quick Pick.
+- Added **Start a work session** to standalone artifacts: create a Session from the current artifact, open its manager, and copy a connect prompt for the AI chat. Artifacts already in Sessions expose a **Sessions** navigation button.
+- Added explicit single and bulk migration from legacy v1 conversations to schema-v2 Work Sessions. Session features require MCP 12; legacy conversations remain unchanged until migration is requested.
+
+### Separate Artifact and Session Skills
+
+- Kept artifact creation and inspection standalone when no Session is requested. The artifact Inspect action now copies a direct inspect prompt without a New/Join dialog.
+- Added the independent `work-session` skill and `join_session` MCP tool. Joining returns shared instructions and a zoned artifact catalog with exact Markdown paths; an optional artifact target reuses the existing inspection flow in the same call.
+- A chat keeps one active Session at a time; multiple agents and chats can share the same Session. New artifacts default to the active Session unless explicitly requested as standalone.
+- Added Session context refresh guidance: read current instructions and known artifact files directly, and refresh the catalog when discovering new artifacts or requesting the latest Session contents.
+- Allowed user-requested instruction edits and artifact organization through the exact Session Markdown and layout files, while preserving membership and managed artifact lifecycle boundaries.
+- Added non-waiting updates for existing Session artifacts through `advance_and_wait_for_artifact` with `noWait: true`. Explicit chat updates can commit and continue without starting another wait; creation and review-feedback processing retain their waiting flow.
+
+### Artifact and Session Management
+
+- Added context menus, Pin, Archive, and Delete actions for artifacts and Sessions. Archived items are hidden from normal sidebar lists, remain searchable, and open with a primary Restore action.
+- Added separate UI state files for Pin and Archive without changing the artifact schema. Deleting a Session preserves its artifacts; artifact deletion prunes related Session membership and layout entries.
+- Added activation-time cleanup of Sessions archived for at least 30 days, preserving their artifacts. Empty active v2 Sessions remain available.
+- Added human-readable Session ZIP export with `Instructions.md` and numbered Markdown artifacts grouped into Working, References, and Archived folders.
+
+### Review Editor and Approval Behavior
+
+- Updated the header to show the review round before the artifact kind, with native actions to edit the title and kind. The kind picker supports fixed kinds, discovered open kinds, and creation of new hyphenated kinds.
+- Standardized Proceed behavior: `plan` and `implementation-plan` return `execute-approved-plan`; other fixed and open kinds return `approved` without automatic code execution.
+- Review submission handling reads the current artifact kind so a type change made while an agent is waiting is reflected in the returned result and Proceed action.
+- Updated application labels and native inputs to English, and added scoped Session refreshes so unrelated artifact changes do not replace instruction text being edited.
+
+### Integration Assets and Upgrade Guidance
+
+- This unreleased version bundles numeric MCP version **12**, `create-review-artifact` skill version **4**, and the first `work-session` skill version **1**. Artifact storage remains schema v6.
+- Added independent per-target installation receipts and verification for both skills. Review skill customization remains supported; the Session skill uses the official bundled content.
+- Install or reinstall the affected integration, restart the AI client, and start a fresh chat to load the updated MCP and skills. Uninstall removes both managed skills while preserving user artifacts and Sessions.
+- Updated product branding and README guidance for interactive review and multi-agent Work Sessions.
+
 ### AI-authored Artifact Feedback
 
 - Added an on-demand artifact skill reference for two explicit actions: write AI comments, or write AI comments and submit them for Review (`revise`). Comment-only requests leave the waiter pending; submission delivers the AI's own feedback through the existing lifecycle.
