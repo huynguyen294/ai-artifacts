@@ -33,6 +33,7 @@ type TestClient = {
   request: (method: string, params?: Record<string, unknown>) => Promise<any>;
   requestTracked: (method: string, params?: Record<string, unknown>) => TrackedRequest;
   notify: (method: string, params?: Record<string, unknown>) => void;
+  waitUntilWaiting: (id: number) => Promise<void>;
   stop: () => void;
 };
 
@@ -105,12 +106,17 @@ function startClient(registry: string, extraEnvironment: NodeJS.ProcessEnv = {})
       ...process.env,
       NODE_ENV: "test",
       CODEX_ARTIFACTS_TEST_USER_HOME: userHome,
+      CODEX_ARTIFACTS_TEST_WAIT_READY: "1",
       ...extraEnvironment,
       CODEX_ARTIFACTS_REGISTRY_DIRECTORY: registry,
     },
   });
   processes.push(processHandle);
   let nextId = 1;
+  const readyWaiters = new Set<string>();
+  createInterface({ input: processHandle.stderr }).on("line", (line) => {
+    if (line.startsWith("ARTIFACT_WAITER_READY:")) readyWaiters.add(line.slice("ARTIFACT_WAITER_READY:".length));
+  });
   const pending = new Map<number, { resolve: (value: any) => void; reject: (error: Error) => void }>();
   createInterface({ input: processHandle.stdout }).on("line", (line) => {
     const message = JSON.parse(line);
@@ -139,6 +145,9 @@ function startClient(registry: string, extraEnvironment: NodeJS.ProcessEnv = {})
       return requestTracked(method, params).promise;
     },
     requestTracked,
+    async waitUntilWaiting(id) {
+      await waitUntil(async () => readyWaiters.has(JSON.stringify(id)) ? true : undefined);
+    },
     notify(method, params = {}) {
       processHandle.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", method, params })}\n`);
     },
@@ -309,12 +318,100 @@ async function cancelAndRead(client: TestClient, tracked: TrackedRequest): Promi
   return tracked.promise;
 }
 
+async function updateWithoutWaiting(
+  client: TestClient,
+  artifactDirectory: string,
+  expectedReviewRound: number,
+): Promise<any> {
+  const inspected = await callTool(client, "inspect_artifact_review", {
+    artifactDirectory,
+    expectedReviewRound,
+    intent: "explicit-chat-update",
+  });
+  expect(inspected.isError, inspected.content?.[0]?.text).not.toBe(true);
+  const updated = await callTool(client, "advance_and_wait_for_artifact", {
+    artifactDirectory,
+    expectedReviewRound,
+    roundToken: inspected.structuredContent.roundToken,
+    markdown: `# Updated artifact\n\nRevision ${expectedReviewRound + 1}.\n`,
+    noWait: true,
+    artifactConversationId: randomUUID(),
+  });
+  expect(updated.isError, updated.content?.[0]?.text).not.toBe(true);
+  expect(updated.structuredContent).toMatchObject({ reviewRound: expectedReviewRound + 1, waited: false });
+  expect(updated.structuredContent).not.toHaveProperty("decision");
+  expect(updated.structuredContent).not.toHaveProperty("roundToken");
+  return updated.structuredContent;
+}
+
 afterEach(async () => {
   for (const processHandle of processes.splice(0)) processHandle.kill();
   await Promise.all(temporaryDirectories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })));
 });
 
 describe("artifact review MCP server v8", () => {
+  it("loads AI-authored comments without waking the waiter, then receives the AI's own new batch on Review", async () => {
+    const fixture = await workspaceFixture();
+    const client = startClient(fixture.registry);
+    await initialize(client);
+    const created = await createArtifact(client, undefined, { kind: "analysis" });
+    const manifestPath = path.join(created.artifactDirectory, "artifact.json");
+    const commentsPath = path.join(created.artifactDirectory, "comments.json");
+    const submissionPath = path.join(created.artifactDirectory, "review-submission.json");
+    const manifestRaw = await readFile(manifestPath, "utf8");
+    const manifest = JSON.parse(manifestRaw);
+    const markdown = await readFile(created.artifactPath, "utf8");
+    const feedback = await readFile(path.resolve("skills/create-review-artifact/references/ai-feedback.md"), "utf8");
+    const template = JSON.parse(feedback.match(/```json\r?\n([\s\S]*?)```/)![1]!);
+    const waiting = callToolTracked(client, "wait_for_artifact_review", {
+      artifactDirectory: created.artifactDirectory, expectedReviewRound: manifest.reviewRound,
+    });
+    await client.waitUntilWaiting(waiting.id);
+    let settled = false;
+    void waiting.promise.then(() => { settled = true; }, () => { settled = true; });
+
+    // Follow the reference's Comment action, using its documented general-feedback shape.
+    const comments = {
+      schemaVersion: manifest.schemaVersion,
+      artifactId: manifest.artifactId,
+      reviewRound: manifest.reviewRound,
+      artifactSha256: sha256(markdown),
+      comments: [{ ...template, id: randomUUID(), createdAt: new Date().toISOString(), body: "AI: Clarify recovery." }],
+    };
+    await atomicWrite(commentsPath, `${JSON.stringify(comments, null, 2)}\n`);
+    const store = new ArtifactStore(created.artifactPath, { userHome: fixture.userHome });
+    expect((await store.load()).comments).toEqual(comments);
+    await expect(access(submissionPath)).rejects.toThrow();
+    await new Promise((resolve) => setTimeout(resolve, 1_100));
+    expect(settled).toBe(false);
+
+    // Comment-and-submit generates its own batch, rather than submitting the earlier comments.
+    comments.comments = [{ ...template, id: randomUUID(), createdAt: new Date().toISOString(), body: "AI: Cần nêu rõ cách phục hồi." }];
+    await atomicWrite(commentsPath, `${JSON.stringify(comments, null, 2)}\n`);
+    const savedComments = await readFile(commentsPath, "utf8");
+    const submission = {
+      schemaVersion: manifest.schemaVersion,
+      artifactId: manifest.artifactId,
+      reviewRound: manifest.reviewRound,
+      reviewSessionId: manifest.reviewSessionId,
+      submittedAt: new Date().toISOString(),
+      decision: "revise",
+      artifactSha256: sha256(markdown),
+      commentsSha256: sha256(savedComments),
+    };
+    await atomicWrite(submissionPath, `${JSON.stringify(submission, null, 2)}\n`);
+    expect((await store.load()).submission).toEqual(submission);
+    const reviewed = await waiting.promise;
+    expect(reviewed.isError, reviewed.content?.[0]?.text).not.toBe(true);
+    expect(reviewed.structuredContent).toMatchObject({
+      decision: "revise", reviewRound: manifest.reviewRound, comments,
+      commentsSha256: sha256(savedComments),
+      nextAction: { type: "process-review-feedback" }, roundToken: expect.any(String),
+    });
+    expect(await readFile(manifestPath, "utf8")).toBe(manifestRaw);
+    expect(await readFile(created.artifactPath, "utf8")).toBe(markdown);
+  });
+
   it("lists the resolver plus four lifecycle tools and creates a detached schema-v6 global artifact immediately", async () => {
     const fixture = await workspaceFixture();
     const client = startClient(fixture.registry);
@@ -914,7 +1011,7 @@ describe("artifact review MCP server v8", () => {
     await new Promise((resolve) => setTimeout(resolve, 50));
 
     let settled = false;
-    void waiting.promise.then(() => { settled = true; });
+    void waiting.promise.then(() => { settled = true; }, () => { settled = true; });
     await writeFile(path.join(created.artifactDirectory, "review-submission.json"), Buffer.alloc(256));
     await new Promise((resolve) => setTimeout(resolve, 40));
     expect(settled).toBe(false);
@@ -1000,7 +1097,7 @@ describe("artifact review MCP server v8", () => {
     expect(result.content[0].text).toContain("JSON");
   });
 
-  it.each([false, true])("returns structured recovery while the artifact already has a waiter (noWait=%s)", async (noWait) => {
+  it.each([false, undefined])("blocks a waiting advance while the artifact already has a waiter (noWait=%s)", async (noWait) => {
     const fixture = await workspaceFixture();
     const client = startClient(fixture.registry);
     await initialize(client);
@@ -1027,7 +1124,6 @@ describe("artifact review MCP server v8", () => {
       expectedReviewRound: 1,
       roundToken: inspected.structuredContent.roundToken,
       noWait,
-      ...(noWait ? { artifactConversationId: randomUUID() } : {}),
     });
     expect(blockedAdvance.structuredContent).toMatchObject({
       code: "ARTIFACT_ALREADY_WAITING",
@@ -1037,6 +1133,216 @@ describe("artifact review MCP server v8", () => {
 
     await submitDecision(created.artifactDirectory, "approve", ["Keep this round waiting."]);
     expect((await waiting.promise).structuredContent.decision).toBe("approve");
+  });
+
+  it.each(["wait", "advance", "other-process"])("keeps the %s waiter through consecutive noWait updates and grants the submitted round", async (source) => {
+    const fixture = await workspaceFixture();
+    const client = startClient(fixture.registry);
+    await initialize(client);
+    const created = await createArtifact(client);
+    let waiting: TrackedRequest;
+    let firstRound = 1;
+    if (source === "advance") {
+      await submitDecision(created.artifactDirectory, "revise");
+      const reviewed = await callTool(client, "wait_for_artifact_review", {
+        artifactDirectory: created.artifactDirectory, expectedReviewRound: 1,
+      });
+      waiting = callToolTracked(client, "advance_and_wait_for_artifact", {
+        artifactDirectory: created.artifactDirectory,
+        expectedReviewRound: 1,
+        roundToken: reviewed.structuredContent.roundToken,
+      });
+      firstRound = 2;
+      await waitForRound(created.artifactDirectory, firstRound);
+    } else {
+      waiting = callToolTracked(client, "wait_for_artifact_review", {
+        artifactDirectory: created.artifactDirectory, expectedReviewRound: firstRound,
+      });
+    }
+    await waiting.sent;
+    let settled = false;
+    void waiting.promise.then(() => { settled = true; });
+    const connectionBefore = await readFile(path.join(created.artifactDirectory, "artifact-connection.json"), "utf8");
+    const updater = source === "other-process" ? startClient(fixture.registry) : client;
+    if (updater !== client) await initialize(updater);
+    await client.waitUntilWaiting(waiting.id);
+    await updateWithoutWaiting(updater, created.artifactDirectory, firstRound);
+    const committed = await updateWithoutWaiting(updater, created.artifactDirectory, firstRound + 1);
+    expect(settled).toBe(false);
+    // A second waiter is still rejected after updates; ownership belongs to the original request.
+    const duplicate = await callTool(client, "wait_for_artifact_review", {
+      artifactDirectory: created.artifactDirectory, expectedReviewRound: committed.reviewRound,
+    });
+    expect(duplicate.structuredContent.code).toBe("ARTIFACT_ALREADY_WAITING");
+    await submitDecision(created.artifactDirectory, "revise", ["Feedback on the latest revision."]);
+    const reviewed = await waiting.promise;
+    expect(reviewed.isError, reviewed.content?.[0]?.text).not.toBe(true);
+    expect(reviewed.structuredContent).toMatchObject({
+      reviewRound: committed.reviewRound,
+      artifactSha256: committed.artifactSha256,
+      decision: "revise",
+      comments: { reviewRound: committed.reviewRound, comments: [expect.objectContaining({ body: "Feedback on the latest revision." })] },
+      nextAction: { type: "process-review-feedback" },
+      roundToken: expect.any(String),
+    });
+    expect(JSON.parse(reviewed.content[0].text)).toEqual(reviewed.structuredContent);
+    const args = {
+      artifactDirectory: created.artifactDirectory,
+      expectedReviewRound: committed.reviewRound,
+      roundToken: reviewed.structuredContent.roundToken,
+      noWait: true,
+      artifactConversationId: randomUUID(),
+    };
+    const advanced = await callTool(client, "advance_and_wait_for_artifact", args);
+    expect(advanced.isError, advanced.content?.[0]?.text).not.toBe(true);
+    expect(advanced.structuredContent.reviewRound).toBe(committed.reviewRound + 1);
+    const replay = await callTool(client, "advance_and_wait_for_artifact", args);
+    expect(replay.structuredContent.code).toBe("ROUND_TOKEN_ALREADY_CONSUMED");
+    expect(await readFile(path.join(created.artifactDirectory, "artifact-connection.json"), "utf8")).toBe(connectionBefore);
+  });
+
+  it.each([
+    { kind: "plan", decision: "approve" as const, action: "execute-approved-plan" },
+    { kind: "note", decision: "approve" as const, action: "approved" },
+    { kind: "plan", decision: "save" as const, action: undefined },
+  ])("returns the latest $decision result for $kind after a noWait update", async ({ kind, decision, action }) => {
+    const fixture = await workspaceFixture();
+    const client = startClient(fixture.registry);
+    await initialize(client);
+    const created = await createArtifact(client, undefined, { kind });
+    const waiting = callToolTracked(client, "wait_for_artifact_review", {
+      artifactDirectory: created.artifactDirectory, expectedReviewRound: 1,
+    });
+    await waiting.sent;
+    const committed = await updateWithoutWaiting(client, created.artifactDirectory, 1);
+    await submitDecision(created.artifactDirectory, decision, ["Latest feedback."]);
+    const result = await waiting.promise;
+    expect(result.isError, result.content?.[0]?.text).not.toBe(true);
+    expect(result.structuredContent).toMatchObject({
+      decision, reviewRound: 2, artifactSha256: committed.artifactSha256,
+      comments: { comments: [expect.objectContaining({ body: "Latest feedback." })] },
+    });
+    expect(result.structuredContent.nextAction?.type).toBe(action);
+    expect(result.structuredContent.roundToken).toBeUndefined();
+  });
+
+  it.each(["artifactId", "reviewSessionId", "reviewRound", "artifactSha256"])("rejects a mismatched submission %s after accepting a newer round", async (field) => {
+    const fixture = await workspaceFixture();
+    const client = startClient(fixture.registry);
+    await initialize(client);
+    const created = await createArtifact(client);
+    const waiting = callToolTracked(client, "wait_for_artifact_review", {
+      artifactDirectory: created.artifactDirectory, expectedReviewRound: 1,
+    });
+    await waiting.sent;
+    await updateWithoutWaiting(client, created.artifactDirectory, 1);
+    const commentsRaw = await writeComments(created.artifactDirectory, ["Current feedback."]);
+    const submission = JSON.parse(await createSubmissionDocument(created.artifactDirectory, "revise", commentsRaw));
+    submission[field] = field === "reviewRound" ? 1 : field === "artifactSha256" ? "0".repeat(64) : randomUUID();
+    await atomicWrite(path.join(created.artifactDirectory, "review-submission.json"), `${JSON.stringify(submission)}\n`);
+    const rejected = await waiting.promise;
+    expect(rejected.isError).toBe(true);
+    expect(rejected.structuredContent?.roundToken).toBeUndefined();
+    expect(rejected.content[0].text).not.toContain("Artifact manifest identity or round mismatch");
+  });
+
+  it("preserves a live waiter when a noWait update rolls back", async () => {
+    const fixture = await workspaceFixture();
+    const client = startClient(fixture.registry, { CODEX_ARTIFACTS_TEST_FAIL_UPDATE: "after-backup" });
+    await initialize(client);
+    const created = await createArtifact(client);
+    const waiting = callToolTracked(client, "wait_for_artifact_review", {
+      artifactDirectory: created.artifactDirectory, expectedReviewRound: 1,
+    });
+    await waiting.sent;
+    const inspected = await callTool(client, "inspect_artifact_review", {
+      artifactDirectory: created.artifactDirectory, expectedReviewRound: 1, intent: "explicit-chat-update",
+    });
+    const failed = await callTool(client, "advance_and_wait_for_artifact", {
+      artifactDirectory: created.artifactDirectory, expectedReviewRound: 1,
+      roundToken: inspected.structuredContent.roundToken, markdown: "# Rolled back\n",
+      noWait: true, artifactConversationId: randomUUID(),
+    });
+    expect(failed.structuredContent).toMatchObject({ code: "ADVANCE_ROLLED_BACK", reuseRoundToken: true });
+    await expectNoTransactionResidue(created.artifactDirectory);
+    await submitDecision(created.artifactDirectory, "save");
+    expect((await waiting.promise).structuredContent).toMatchObject({ decision: "save", reviewRound: 1 });
+  });
+
+  it.each(["commit", "rollback", "delete"])("keeps a waiter pending while the updater replaces its manifest, then handles %s", async (outcome) => {
+    const fixture = await workspaceFixture();
+    const client = startClient(fixture.registry);
+    await initialize(client);
+    const created = await createArtifact(client);
+    const waiting = callToolTracked(client, "wait_for_artifact_review", {
+      artifactDirectory: created.artifactDirectory, expectedReviewRound: 1,
+    });
+    await waiting.sent;
+    // Confirm the waiter owns the artifact before holding the transaction open across a timer tick.
+    await client.waitUntilWaiting(waiting.id);
+    const duplicate = await callTool(client, "wait_for_artifact_review", {
+      artifactDirectory: created.artifactDirectory, expectedReviewRound: 1,
+    });
+    expect(duplicate.structuredContent.code).toBe("ARTIFACT_ALREADY_WAITING");
+    const lock = path.join(created.artifactDirectory, ".artifact-update.lock");
+    const manifest = path.join(created.artifactDirectory, "artifact.json");
+    const backup = `${manifest}.previous-test`;
+    await atomicWrite(lock, "{}\n");
+    await rename(manifest, backup);
+    let settled = false;
+    void waiting.promise.then(() => { settled = true; }, () => { settled = true; });
+    await new Promise((resolve) => setTimeout(resolve, 1_200));
+    expect(settled).toBe(false);
+    if (outcome === "delete") {
+      await rm(created.artifactDirectory, { recursive: true, force: true });
+      expect((await waiting.promise).structuredContent).toMatchObject({
+        code: "ARTIFACT_NOT_FOUND", retryable: false, useSameArtifactHandle: false,
+      });
+      return;
+    }
+    if (outcome === "commit") {
+      const nextManifest = { ...JSON.parse(await readFile(backup, "utf8")), reviewRound: 2 };
+      await atomicWrite(manifest, `${JSON.stringify(nextManifest)}\n`);
+      await writeComments(created.artifactDirectory, []);
+      await rm(backup);
+    } else {
+      await rename(backup, manifest);
+    }
+    await rm(lock);
+    await submitDecision(created.artifactDirectory, "save");
+    expect((await waiting.promise).structuredContent).toMatchObject({
+      decision: "save", reviewRound: outcome === "commit" ? 2 : 1,
+    });
+  });
+
+  it.each(["cancel", "takeover"])("supports %s after preserving a waiter through a noWait update", async (action) => {
+    const fixture = await workspaceFixture();
+    const client = startClient(fixture.registry);
+    await initialize(client);
+    const created = await createArtifact(client);
+    const waiting = callToolTracked(client, "wait_for_artifact_review", {
+      artifactDirectory: created.artifactDirectory, expectedReviewRound: 1,
+    });
+    await waiting.sent;
+    await updateWithoutWaiting(client, created.artifactDirectory, 1);
+    const files = ["artifact.json", "artifact.md", "comments.json", "artifact-connection.json"];
+    const before = await Promise.all(files.map((file) => readFile(path.join(created.artifactDirectory, file), "utf8")));
+    if (action === "takeover") {
+      const inspected = await callTool(client, "inspect_artifact_review", {
+        artifactDirectory: created.artifactDirectory, takeover: true,
+      });
+      expect(inspected.isError).not.toBe(true);
+    } else {
+      client.notify("notifications/cancelled", { requestId: waiting.id });
+    }
+    expect((await waiting.promise).content[0].text).toContain("cancelled");
+    expect(await Promise.all(files.map((file) => readFile(path.join(created.artifactDirectory, file), "utf8")))).toEqual(before);
+    const replacement = callToolTracked(client, "wait_for_artifact_review", {
+      artifactDirectory: created.artifactDirectory, expectedReviewRound: 2,
+    });
+    await replacement.sent;
+    await submitDecision(created.artifactDirectory, "save");
+    expect((await replacement.promise).structuredContent).toMatchObject({ decision: "save", reviewRound: 2 });
   });
 
   it("validates arguments when intent is explicit-chat-update", async () => {
@@ -2893,11 +3199,12 @@ describe("artifact review MCP server v8", () => {
     await waiting.sent;
 
     // Simulate retention cleanup deleting the artifact while waiting
+    await client.waitUntilWaiting(waiting.id);
     await rm(created.artifactDirectory, { recursive: true, force: true });
 
     const result = await waiting.promise;
     expect(result.isError).toBe(true);
-    expect(result.structuredContent).toMatchObject({
+    expect(result.structuredContent, result.content?.[0]?.text).toMatchObject({
       code: "ARTIFACT_NOT_FOUND",
       retryable: false,
       reuseRoundToken: false,

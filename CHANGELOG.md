@@ -4,6 +4,21 @@ All notable changes to the **AI Artifacts** (`agent-plus`) project will be docum
 
 Release history has been standardized and tracked starting from version **0.2.6**. Package builds prior to this version are not considered part of the official changelog.
 
+## [1.2.0] - Unreleased
+
+### AI-authored Artifact Feedback
+
+- Added an on-demand artifact skill reference for two explicit actions: write AI comments, or write AI comments and submit them for Review (`revise`). Comment-only requests leave the waiter pending; submission delivers the AI's own feedback through the existing lifecycle.
+- Limited direct writes to `comments.json` and the `revise` submission, with current-round bindings and exact file hashes. No new MCP tool, schema, conflict handling, or standalone submission of other people's comments was added.
+
+### Preserve Active Waiters During Non-waiting Updates
+
+- `advance_and_wait_for_artifact` with `noWait: true` can commit while an existing waiter remains attached. Waiting advances and duplicate waits still reject another waiter in the same MCP process.
+- Both waiting tools validate the current submitted round and issue Review tokens from that result, allowing an original wait request to receive feedback after non-waiting round advances. `expectedReviewRound` remains an attachment precondition.
+- Waiters use the existing update lock to stay pending while lifecycle files are replaced, and still terminate when their artifact directory is deleted.
+- Updated `create-review-artifact` and its contract to preserve waiters during `noWait` updates and use the submitted round and token. Kept the existing Work Session wait-mode selection unchanged.
+- Synchronized lifecycle documentation without changing schemas, version counters, or takeover behavior.
+
 ## [1.1.4] - 2026-11-04
 
 ### Complete Review Feedback Across MCP Clients

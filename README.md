@@ -242,7 +242,7 @@ A file link in the agent's response is a regular file link, not a deep link, and
 
 If you haven't saved any comments or submitted a decision for the current round, you can request a change directly in chat—for example, “add a rollout phase to this artifact.” The agent updates the document and opens the next review round.
 
-For a direct update to an existing artifact as part of the chat's active Work Session, the agent commits the update and continues working by default. Ask explicitly to update and wait for review when you want it to pause. New artifacts always wait for review; standalone updates and processing saved review feedback keep their existing review flow. The agent can wait on the current round later when you request review.
+For a direct update to an existing artifact as part of the chat's active Work Session, the agent commits the update and continues working by default. Ask explicitly to update and wait for review when you want it to pause. New artifacts always wait for review; standalone updates and processing saved review feedback keep their existing review flow. If an AI request is already waiting on that artifact, the update keeps it waiting and your next submission returns the updated round and feedback to that request. The agent can attach a waiter later when none is active and you request review.
 
 ### Search & Reconnect Artifacts
 

@@ -16,10 +16,11 @@ describe("create-review-artifact skill contract", () => {
       "Create or update a reviewable Markdown artifact and wait for the user's decision in the same Codex turn. Use only when the user explicitly asks to create or update an artifact.",
       "Create, update, inspect, or reconnect an explicitly requested reviewable Markdown artifact and coordinate its review rounds.",
       "Create, update, inspect, or reconnect an explicitly requested reviewable Markdown artifact, join work sessions, and coordinate review rounds.",
+      "Create, update, inspect, or reconnect an explicitly requested reviewable Markdown artifact and coordinate its review rounds. Also use when explicitly asked to comment on an artifact, with or without submitting Review.",
     ];
 
     expect(OFFICIAL_SKILL_DESCRIPTIONS).toEqual(expectedOfficialDescriptions);
-    expect(skill).toContain(`description: ${expectedOfficialDescriptions[1]}`);
+    expect(skill).toContain(`description: ${expectedOfficialDescriptions.at(-1)}`);
     expect(skill.match(new RegExp(USER_CUSTOM_RULES_BEGIN.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g"))).toHaveLength(1);
     expect(skill.match(new RegExp(USER_CUSTOM_RULES_END.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g"))).toHaveLength(1);
     expect(skill.slice(
@@ -29,7 +30,7 @@ describe("create-review-artifact skill contract", () => {
     expect(skill).toContain("override the default rules in this skill when they conflict");
   });
 
-  it("triggers only for explicit artifact creation, review inspection, or reconnect", async () => {
+  it("triggers only for explicit artifact creation, inspection, reconnect, or AI feedback", async () => {
     const [skill, metadata] = await Promise.all([
       readFile(path.join(skillDirectory, "SKILL.md"), "utf8"),
       readFile(path.join(skillDirectory, "agents", "openai.yaml"), "utf8"),
@@ -41,6 +42,24 @@ describe("create-review-artifact skill contract", () => {
     expect(skill).not.toContain("Use automatically for substantive implementation plans");
     expect(skill).not.toContain("Create a plan artifact whenever");
     expect(metadata).toContain("Create, inspect, and review Markdown artifacts");
+  });
+
+  it("routes AI-authored comments to two adjacent actions without entering the lifecycle wait flow", async () => {
+    const [skill, feedback, contract] = await Promise.all([
+      readFile(path.join(skillDirectory, "SKILL.md"), "utf8"),
+      readFile(path.join(skillDirectory, "references", "ai-feedback.md"), "utf8"),
+      readFile(path.join(skillDirectory, "references", "artifact-contract.md"), "utf8"),
+    ]);
+    expect(skill).toContain("follow [references/ai-feedback.md](references/ai-feedback.md)");
+    expect(skill).toContain("do not enter the create/advance/wait flow");
+    expect(feedback.match(/^## /gm)).toHaveLength(2);
+    expect(feedback).toContain("## 1. Comment");
+    expect(feedback).toContain("## 2. Comment and submit Review");
+    expect(feedback).toContain("inspect_artifact_review` without takeover");
+    expect(feedback).toContain("only this request's AI-generated batch");
+    expect(feedback).toContain("commentsSha256");
+    expect(feedback).toContain('`decision: "revise"`');
+    expect(contract).toContain("[AI-authored feedback](ai-feedback.md)");
   });
 
   it("documents focused-window routing and resolve_artifact_window discovery", async () => {
@@ -140,6 +159,9 @@ describe("create-review-artifact skill contract", () => {
     expect(skill).toContain("user-requested checklist/progress content");
     expect(skill).toContain("this does not authorize automatic artifact creation");
     expect(skill).toContain("Call `wait_for_artifact_review` immediately on that exact handle and round");
+    expect(contract).toContain("`expectedReviewRound` is checked at attachment only");
+    expect(sessionUpdate).toContain("leave any existing waiter attached");
+    expect(contract).toContain("An existing waiter is preserved");
   });
 
   it("defines schema-v6 global storage without workspace ownership metadata", async () => {

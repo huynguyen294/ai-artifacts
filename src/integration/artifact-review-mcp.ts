@@ -156,7 +156,6 @@ type RoundGrant = {
 
 type ActiveArtifactWaiter = {
   requestKey: string;
-  reviewRound: number;
   controller: AbortController;
   settled: Promise<void>;
 };
@@ -914,10 +913,9 @@ async function readValidatedSubmissionOnce(context: ArtifactContext): Promise<Re
   const currentManifest = parseArtifactManifest(JSON.parse(currentManifestRaw));
   if (
     currentManifest.artifactId !== context.artifactId ||
-    currentManifest.reviewSessionId !== context.reviewSessionId ||
-    currentManifest.reviewRound !== context.reviewRound
+    currentManifest.reviewSessionId !== context.reviewSessionId
   ) {
-    throw new Error("Artifact manifest identity or round mismatch.");
+    throw new Error("Artifact manifest identity or review session mismatch.");
   }
   const effectiveKind = currentManifest.kind;
   const effectiveTitle = currentManifest.title;
@@ -927,13 +925,13 @@ async function readValidatedSubmissionOnce(context: ArtifactContext): Promise<Re
   const currentComments = parseBoundCommentsDocument(JSON.parse(currentCommentsRaw), {
     schemaVersion: ARTIFACT_SCHEMA_VERSION,
     artifactId: context.artifactId,
-    reviewRound: context.reviewRound,
+    reviewRound: currentManifest.reviewRound,
     artifactSha256: currentArtifactSha256,
   });
   const submission = parseBoundReviewSubmission(JSON.parse(submissionRaw), {
     schemaVersion: ARTIFACT_SCHEMA_VERSION,
     artifactId: context.artifactId,
-    reviewRound: context.reviewRound,
+    reviewRound: currentManifest.reviewRound,
     reviewSessionId: context.reviewSessionId,
     artifactSha256: currentArtifactSha256,
     commentsSha256: currentCommentsSha256,
@@ -948,7 +946,7 @@ async function readValidatedSubmissionOnce(context: ArtifactContext): Promise<Re
     kind: effectiveKind,
     title: effectiveTitle,
     reviewSessionId: context.reviewSessionId,
-    reviewRound: context.reviewRound,
+    reviewRound: currentManifest.reviewRound,
     artifactSha256: currentArtifactSha256,
     commentsSha256: currentCommentsSha256,
     comments: currentComments,
@@ -963,6 +961,33 @@ async function readValidatedSubmissionOnce(context: ArtifactContext): Promise<Re
 
 async function readValidatedSubmission(context: ArtifactContext): Promise<ReviewWaitResult | undefined> {
   return retryTransientLifecycleJson(() => readValidatedSubmissionOnce(context));
+}
+
+async function readWaitSubmission(context: ArtifactContext): Promise<ReviewWaitResult | undefined> {
+  const lockPath = path.join(context.artifactDirectory, ARTIFACT_UPDATE_LOCK_FILE);
+  try {
+    await ensureSafeGlobalArtifactDirectory(context.artifactId, context.artifactDirectory, globalRootOptions());
+    if (await managedFileExists(context.artifactDirectory, lockPath)) return undefined;
+    await ensureSafeManagedArtifactFile(context.artifactDirectory, context.manifestPath);
+    return await readValidatedSubmission(context);
+  } catch (error) {
+    // On Windows a concurrent deletion can also invalidate realpath validation, not just yield ENOENT.
+    try {
+      await fs.access(context.artifactDirectory);
+    } catch (directoryError) {
+      if (errorCode(directoryError) !== "ENOENT") throw directoryError;
+      throw recoveryError("ARTIFACT_NOT_FOUND", "the artifact directory no longer exists.", {
+        retryable: false,
+        reuseRoundToken: false,
+        useSameArtifactHandle: false,
+      });
+    }
+    if (errorCode(error) === "ENOENT") {
+      // The updater may acquire its lock after the first check and temporarily move the manifest.
+      if (await managedFileExists(context.artifactDirectory, lockPath)) return undefined;
+    }
+    throw error;
+  }
 }
 
 async function readArtifactInspection(context: ArtifactContext): Promise<{
@@ -1034,7 +1059,6 @@ function reserveArtifactWaiter(
   });
   const waiter: ActiveArtifactWaiter = {
     requestKey: waiterRequestKey,
-    reviewRound,
     controller,
     settled,
   };
@@ -1079,14 +1103,14 @@ async function waitForSubmission(
   const waiter =
     reservedWaiter ??
     reserveArtifactWaiter(context.artifactDirectory, waiterRequestKey, context.reviewRound, controller);
-  if (activeArtifactWaiters.get(key) !== waiter || waiter.reviewRound !== context.reviewRound) {
-    throw new Error("ARTIFACT_WAITER_MISMATCH: waiter ownership does not match the validated artifact round.");
+  if (activeArtifactWaiters.get(key) !== waiter) {
+    throw new Error("ARTIFACT_WAITER_MISMATCH: waiter ownership does not match the artifact request.");
   }
   try {
     if (controller.signal.aborted) {
       throw Object.assign(new Error("Artifact review wait was cancelled."), { name: "AbortError" });
     }
-    const existing = await readValidatedSubmission(context);
+    const existing = await readWaitSubmission(context);
     if (existing) return existing;
     return await new Promise((resolve, reject) => {
       let settled = false;
@@ -1100,32 +1124,13 @@ async function waitForSubmission(
         if (error) reject(error);
         else if (value) resolve(value);
       };
-      const notFoundError = (): ArtifactRecoveryError =>
-        recoveryError("ARTIFACT_NOT_FOUND", "the artifact directory or manifest no longer exists.", {
-          retryable: false,
-          reuseRoundToken: false,
-          useSameArtifactHandle: false,
-        });
-
       const check = async (): Promise<void> => {
         if (settled || checking) return;
         checking = true;
         try {
-          try {
-            await fs.access(context.manifestPath);
-          } catch (accessError) {
-            if (errorCode(accessError) === "ENOENT") {
-              finish(notFoundError());
-              return;
-            }
-          }
-          const submission = await readValidatedSubmission(context);
+          const submission = await readWaitSubmission(context);
           if (submission) finish(undefined, submission);
         } catch (error) {
-          if (errorCode(error) === "ENOENT") {
-            finish(notFoundError());
-            return;
-          }
           finish(error);
         } finally {
           checking = false;
@@ -1138,13 +1143,16 @@ async function waitForSubmission(
       });
       watcher.on("error", (error) => {
         if (errorCode(error) === "ENOENT") {
-          finish(notFoundError());
+          void check();
           return;
         }
         finish(error);
       });
       const interval = setInterval(() => void check(), 1000);
       controller.signal.addEventListener("abort", onAbort, { once: true });
+      if (process.env.NODE_ENV === "test" && process.env.CODEX_ARTIFACTS_TEST_WAIT_READY === "1") {
+        process.stderr.write(`ARTIFACT_WAITER_READY:${waiterRequestKey}\n`);
+      }
       if (controller.signal.aborted) onAbort();
     });
   } finally {
@@ -1346,9 +1354,9 @@ function grantSubmittedRound(
   roundGrants.set(roundToken, {
     source: "submitted-review",
     artifactDirectory: context.artifactDirectory,
-    artifactId: context.artifactId,
-    reviewSessionId: context.reviewSessionId,
-    reviewRound: context.reviewRound,
+    artifactId: result.artifactId,
+    reviewSessionId: result.reviewSessionId,
+    reviewRound: result.reviewRound,
     artifactSha256: result.artifactSha256,
     commentsSha256: result.commentsSha256,
     submissionExpected: true,
@@ -2232,11 +2240,11 @@ async function handleAdvanceAndWaitTool(id: unknown, args: JsonObject | undefine
     if (grant.source === "submitted-review" && inspection.submission?.decision !== "revise") {
       throw new Error("The current artifact round was not submitted for Review.");
     }
-    if (activeArtifactWaiters.has(samePathKey(context.artifactDirectory))) {
+    if (!noWait && activeArtifactWaiters.has(samePathKey(context.artifactDirectory))) {
       roundGrants.delete(roundToken);
       throw recoveryError(
         "ARTIFACT_ALREADY_WAITING",
-        "detach the live waiter only when the user's intent requires inspection or a direct chat update.",
+        "another live waiter exists; use noWait for a non-waiting Session update, or intentionally detach it before starting another wait.",
         {
           retryable: true,
           reuseRoundToken: false,
@@ -2366,15 +2374,15 @@ async function handleRequest(message: JsonObject): Promise<void> {
         "Create returns the exact artifactDirectory, reviewRound, and committed connection metadata; retain them and call wait_for_artifact_review. A non-null Work Session context is returned only when a Session is selected or explicitly created.",
         "Create and inspect without artifactConversationId or conversationName are standalone and return session: null without creating or registering a Work Session. While a chat has an active Session, pass its ID unless the user explicitly requests standalone; a name without an ID explicitly creates a new Session.",
         "Use the work-session skill to join or refresh an exact Session with join_session and sessionId; supply artifactId only when the request also calls for artifact inspection and registration in that Session.",
-        "A cancelled waiter never ends or deletes the artifact.",
+        "A cancelled waiter never ends or deletes the artifact. expectedReviewRound is checked when attaching; an attached waiter can receive a later round after noWait updates, with the result and token bound to that submitted round.",
         "Both wait_for_artifact_review and the waiting mode of advance_and_wait_for_artifact return the complete validated comments document for every submitted decision; read feedback from comments.comments. A revise result also returns nextAction.type=process-review-feedback and a one-time roundToken so feedback can be processed without an additional inspection just to fetch comments.",
-        "For explicit direct updates to existing artifacts in the active Work Session, follow the work-session skill's wait-mode selection. advance_and_wait_for_artifact accepts noWait=true only with artifactConversationId: it commits the new round and returns waited=false without attaching a waiter. Record the returned round and continue authorized work; absent decision/comments are expected for this commit result, so do not fetch feedback or start a wait merely because they are absent. Creation, standalone requests, and review-feedback processing keep their existing wait behavior.",
+        "For explicit direct updates to existing artifacts in the active Work Session, follow the work-session skill's wait-mode selection. advance_and_wait_for_artifact accepts noWait=true only with artifactConversationId: it commits the new round and returns waited=false without attaching a waiter, preserving any existing waiter. Do not take over an existing waiter just to perform this non-waiting update. Record the returned round and continue authorized work; absent decision/comments are expected for this commit result, so do not fetch feedback or start a wait merely because they are absent. Creation, standalone requests, and review-feedback processing keep their existing wait behavior.",
         "Treat comments returned by a Review submission and comments read through inspect_artifact_review with the same policy: answer questions visibly in chat before calling advance_and_wait_for_artifact, update Markdown only for requested changes, omit markdown for question-only feedback, and ask for clarification without consuming the token when needed.",
         "Do not add Review responses to the artifact.",
         "Pure reconnect uses inspect_artifact_review with intent=reconnect on the exact handle and same round; routing prioritizes sole live window, validated advisory artifact-window affinity, and unique focused window, or explicit candidate via selectionToken.",
         "For chat escape, inspect the exact handle with takeover=true.",
         "If inspection has no comments or submission and is not an explicit chat update, reattach with wait_for_artifact_review without advancing.",
-        "When updating an artifact directly from chat on an empty round, inspect with expectedReviewRound and intent=explicit-chat-update, using takeover=true only when detaching a live waiter is needed for that update, then advance with replacement markdown and the selected wait mode.",
+        "When updating an artifact directly from chat on an empty round, inspect with expectedReviewRound and intent=explicit-chat-update, using takeover=true only when intentionally replacing a live waiter for a waiting update; preserve it for noWait updates, then advance with replacement markdown and the selected wait mode.",
         "Follow structured recovery metadata on lifecycle errors, keep the same exact handle, and never replay when commit state is uncertain.",
         "When Proceed returns approve for kind plan or implementation-plan, obey nextAction and execute the complete approved plan immediately in the same turn; do not stop at acknowledgement or ask for another confirmation.",
         "When Proceed returns approve for any other kind, acknowledge the approval and conclude the review without automatically implementing code or starting another review round.",
@@ -2462,12 +2470,15 @@ async function handleRequest(message: JsonObject): Promise<void> {
           name: WAIT_TOOL_NAME,
           title: "Wait for artifact review",
           description:
-            "Attach one transient waiter to an exact artifact round. Return an existing submission immediately, or wait for Review, Proceed, or Just save. Every decision returns the complete validated comments document; read comments.comments. Review returns a process-review-feedback next action and round token. An approved plan returns an execute-approved-plan next action. An approved non-plan returns an approved next action. Takeover safely detaches the previous waiter.",
+            "Attach one transient waiter to an exact artifact. expectedReviewRound is an attachment precondition only; the waiter survives noWait advances and returns the current validated submission round and its token. Return an existing submission immediately, or wait for Review, Proceed, or Just save. Every decision returns the complete validated comments document; read comments.comments. Review returns a process-review-feedback next action and round token. An approved plan returns an execute-approved-plan next action. An approved non-plan returns an approved next action. Takeover safely detaches the previous waiter.",
           inputSchema: {
             type: "object",
             properties: {
               artifactDirectory: { type: "string" },
-              expectedReviewRound: { type: "integer", minimum: 1 },
+              expectedReviewRound: {
+                type: "integer", minimum: 1,
+                description: "Expected round when attaching, not a restriction on the round returned after non-waiting updates.",
+              },
               takeover: { type: "boolean", default: false },
               artifactConversationId: {
                 type: "string",
@@ -2632,7 +2643,7 @@ async function handleRequest(message: JsonObject): Promise<void> {
           name: ADVANCE_AND_WAIT_TOOL_NAME,
           title: "Advance and wait for artifact review",
           description:
-            "Consume a validated one-time round token, optionally replace the complete Markdown, and advance and reset the artifact round transactionally. By default, wait for the next review and return its complete validated comments, decision, and applicable next action/token. With noWait=true and artifactConversationId, return a commit result immediately with the new round/hash, artifact handle/link, and waited=false, without decision, comments, nextAction, or a new token. Continue authorized work after that result. Omitting markdown preserves the artifact bytes and SHA. The work-session skill selects noWait for direct Session updates; creation, standalone requests, and review-feedback processing retain their existing wait behavior.",
+            "Consume a validated one-time round token, optionally replace the complete Markdown, and advance and reset the artifact round transactionally. By default, wait for the next review and return its complete validated comments, decision, and applicable next action/token. With noWait=true and artifactConversationId, return a commit result immediately with the new round/hash, artifact handle/link, and waited=false, without decision, comments, nextAction, or a new token. An existing waiter is preserved only in noWait mode; a waiting advance is rejected while another waiter exists in this process. Continue authorized work after that result. Omitting markdown preserves the artifact bytes and SHA. The work-session skill selects noWait for direct Session updates; creation, standalone requests, and review-feedback processing retain their existing wait behavior.",
           inputSchema: {
             type: "object",
             properties: {
@@ -2644,7 +2655,7 @@ async function handleRequest(message: JsonObject): Promise<void> {
                 type: "boolean",
                 default: false,
                 description:
-                  "Optional. When true, commit the next round without attaching a waiter or waiting for review. Requires artifactConversationId from the active Work Session. Defaults to false.",
+                  "Optional. When true, commit the next round without attaching a waiter or waiting for review, preserving any existing waiter. Requires artifactConversationId from the active Work Session. Defaults to false.",
               },
               artifactConversationId: {
                 type: "string",

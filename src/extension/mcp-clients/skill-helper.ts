@@ -8,11 +8,13 @@ export const OFFICIAL_SKILL_DESCRIPTIONS: readonly string[] = [
   "Create or update a reviewable Markdown artifact and wait for the user's decision in the same Codex turn. Use only when the user explicitly asks to create or update an artifact.",
   "Create, update, inspect, or reconnect an explicitly requested reviewable Markdown artifact and coordinate its review rounds.",
   "Create, update, inspect, or reconnect an explicitly requested reviewable Markdown artifact, join work sessions, and coordinate review rounds.",
+  "Create, update, inspect, or reconnect an explicitly requested reviewable Markdown artifact and coordinate its review rounds. Also use when explicitly asked to comment on an artifact, with or without submitting Review.",
 ];
 
 export const REVIEW_SKILL_ASSETS = [
   "SKILL.md",
   path.join("references", "artifact-contract.md"),
+  path.join("references", "ai-feedback.md"),
   path.join("agents", "openai.yaml"),
 ];
 

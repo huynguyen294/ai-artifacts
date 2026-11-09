@@ -1,11 +1,15 @@
 ---
 name: create-review-artifact
-description: Create, update, inspect, or reconnect an explicitly requested reviewable Markdown artifact and coordinate its review rounds.
+description: Create, update, inspect, or reconnect an explicitly requested reviewable Markdown artifact and coordinate its review rounds. Also use when explicitly asked to comment on an artifact, with or without submitting Review.
 ---
 
 # Create Review Artifact
 
 Coordinate one reviewable Markdown artifact for one explicit user request.
+
+## Author AI feedback
+
+When asked to comment on an artifact, with or without submitting Review, follow [references/ai-feedback.md](references/ai-feedback.md). This authors feedback rather than processes saved user feedback; do not enter the create/advance/wait flow for this request.
 
 ## Tools and Window Routing
 
@@ -60,11 +64,11 @@ Before calling a lifecycle tool, require both a uniquely matching exact handle a
 | Pure reconnect to a target window | Call `inspect_artifact_review` with the exact handle, current round, and `intent: "reconnect"` to rebind an active window and emit an open request. For generic reconnect ("mở/reopen artifact"), pass `connection: { targetMode: "artifact-window", windowInstanceId }` using your cached ID if available; if the user asks to open in the current/focused window, omit `connection` to force sole/focused resolution; if the user specifies window X, resolve active windows and send `connection: { targetMode: "explicit-window", selectionToken }`. Update your cached `windowInstanceId` from the returned connection on success. If the result is `WINDOW_SELECTION_REQUIRED`, choose a returned candidate and retry the same inspect call with `connection: { targetMode: "explicit-window", selectionToken }`. |
 | Resume waiting without reconnecting | Call `wait_for_artifact_review` with the exact handle and current round. |
 | Read saved review comments or submission | Call `inspect_artifact_review` with the exact handle and `takeover: true`. |
-| Explicitly update an empty round from chat | Call inspect with the exact handle, `expectedReviewRound`, and `intent: "explicit-chat-update"`; use `takeover: true` only when detaching a live waiter is needed for that update. |
+| Explicitly update an empty round from chat | Call inspect with the exact handle, `expectedReviewRound`, and `intent: "explicit-chat-update"`; use `takeover: true` only when replacing a live waiter for a waiting update. |
 
 ### Session direct updates
 
-For a Session direct update, follow the [Work Session skill's wait-mode selection](../work-session/SKILL.md#artifacts-while-a-session-is-active). Use the chat-update token to advance with complete changed Markdown and the selected wait mode. This exception applies only to explicit chat updates to existing artifacts as part of the active Session; it does not change the wait after creation or the handling of review feedback.
+For a Session direct update, follow the [Work Session skill's wait-mode selection](../work-session/SKILL.md#artifacts-while-a-session-is-active). Use the chat-update token to advance with complete changed Markdown and the selected wait mode. For `noWait: true`, inspect without takeover and leave any existing waiter attached. This exception applies only to explicit chat updates to existing artifacts as part of the active Session; it does not change the wait after creation or the handling of review feedback.
 
 ### After inspection
 
@@ -92,7 +96,7 @@ Follow machine-readable recovery metadata returned by lifecycle errors. Keep the
 | `WINDOW_SELECTION_REQUIRED` | Ambiguous window context. If `expectedNextTool: "create_artifact"`, present candidates using window labels, ask user if ambiguous, and retry `create_artifact` with `connection: { targetMode: "explicit-window", selectionToken }`. If `expectedNextTool: "inspect_artifact_review"`, retry `inspect_artifact_review` on the same handle with `intent: "reconnect"` and `connection: { targetMode: "explicit-window", selectionToken }`. |
 | `ROUND_TOKEN_INVALID_OR_EXPIRED`, `ROUND_TOKEN_ALREADY_CONSUMED`, `ROUND_MISMATCH`, `ROUND_STATE_CHANGED` | Inspect the same exact handle for current state and a fresh token. Do not replay old Markdown or actions. |
 | `ROUND_TOKEN_IN_USE` | Do not issue another advance. Wait for the in-flight request, then inspect only if its result is unclear. |
-| `ARTIFACT_ALREADY_WAITING` | Another live waiter already owns the exact artifact. Do not start a second wait. For resume-wait intent, keep awaiting the in-flight call; for pure reconnect, call `inspect_artifact_review` with `intent: "reconnect"` without takeover; use takeover only for saved feedback or an explicit direct update. |
+| `ARTIFACT_ALREADY_WAITING` | Another live waiter already owns the exact artifact. Do not start a second wait. For resume-wait intent, keep awaiting the in-flight call; for pure reconnect, call `inspect_artifact_review` with `intent: "reconnect"` without takeover; use takeover only for saved feedback or an explicit direct update that replaces the waiter. |
 | `ADVANCE_CANCELLED_BEFORE_COMMIT`, `ADVANCE_ROLLED_BACK` with `reuseRoundToken: true` | Retry the same advance only when the server explicitly confirms the token remains valid. |
 | `ADVANCE_COMMITTED` | Do not replay. Follow the hinted operation on the reported round: wait for a waiting advance, or inspect to confirm state for a non-waiting update without automatically starting a waiter. |
 | `WINDOW_NOT_FOUND` | No active VS Code window was found. Ask the user to open VS Code, then retry. |
@@ -112,7 +116,7 @@ Except for explicit non-retryable errors such as `ARTIFACT_CONNECTION_INVALID`, 
 - Advancing replaces the same `artifact.md` only when Markdown is supplied, increments the round, resets handled comments, and removes the old submission. It does not create revision history.
 - Round tokens are exact-state, one-time capabilities. After MCP restart, inspect the exact artifact again to obtain a fresh token.
 - Only the MCP server creates artifacts, advances rounds, resets comments, consumes tokens, and writes lifecycle metadata.
-- Never edit `artifact.json`, `comments.json`, `review-submission.json`, or `artifact-connection.json` directly.
+- Never edit lifecycle files directly, except `comments.json` and `review-submission.json` for explicitly requested **Author AI feedback**. Keep artifact creation, content updates and round management in the MCP tools.
 - Write a coherent artifact, not a patch, changelog, task tracker, or progress report. For explicit updates to an existing artifact in the active Session, user-requested checklist/progress content may be updated under **Session direct updates**; this does not authorize automatic artifact creation.
 
 ## User Custom Rules

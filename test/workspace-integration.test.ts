@@ -147,6 +147,7 @@ describe("Workspace Integration Asset Verifiers", () => {
     await fs.mkdir(path.join(paths.sourceSkill, "agents"), { recursive: true });
     await fs.writeFile(path.join(paths.sourceSkill, "SKILL.md"), SOURCE_SKILL_MARKDOWN, "utf8");
     await fs.writeFile(path.join(paths.sourceSkill, "references", "artifact-contract.md"), "# Contract", "utf8");
+    await fs.writeFile(path.join(paths.sourceSkill, "references", "ai-feedback.md"), "# AI feedback", "utf8");
     await fs.writeFile(path.join(paths.sourceSkill, "agents", "openai.yaml"), "prompt: test", "utf8");
 
     await fs.mkdir(path.join(paths.sourceSessionSkill, "references"), { recursive: true });
@@ -200,6 +201,10 @@ describe("Workspace Integration Asset Verifiers", () => {
     await fs.copyFile(
       path.join(paths.sourceSkill, "references", "artifact-contract.md"),
       path.join(paths.targetSkill, "references", "artifact-contract.md"),
+    );
+    await fs.copyFile(
+      path.join(paths.sourceSkill, "references", "ai-feedback.md"),
+      path.join(paths.targetSkill, "references", "ai-feedback.md"),
     );
     await fs.copyFile(
       path.join(paths.sourceSkill, "agents", "openai.yaml"),
@@ -516,6 +521,7 @@ describe("Workspace Integration Asset Verifiers", () => {
     for (const relativePath of [
       "SKILL.md",
       path.join("references", "artifact-contract.md"),
+      path.join("references", "ai-feedback.md"),
       path.join("agents", "openai.yaml"),
     ]) {
       if (relativePath === "SKILL.md") {

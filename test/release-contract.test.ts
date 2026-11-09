@@ -243,14 +243,16 @@ describe("v1.1.4 release contract", () => {
     expect(contract).toContain("AI Artifacts: Install All Detected Integrations");
     expect(changelog).toContain("## [1.1.4] - 2026-11-04");
     expect(changelog).toContain("## [1.1.3] - 2026-11-02");
-    expect(changelog).not.toContain("## [Unreleased]");
+    expect(changelog).toContain("### Preserve Active Waiters During Non-waiting Updates");
+    expect(changelog.indexOf("### Preserve Active Waiters During Non-waiting Updates"))
+      .toBeLessThan(changelog.indexOf("## [1.1.4] - 2026-11-04"));
     expect(changelog).toContain("Skill Customization & Independent Integration Versioning");
     expect(changelog).toContain("## [1.1.2] - 2026-10-18");
     expect(changelog).toContain("## [1.1.0] - 2026-10-18");
     expect(changelog).toContain("## [1.0.1] - 2026-09-21");
     expect(changelog).toContain("## [1.0.0] - 2026-09-20");
     expect(changelog).toContain("MCP server 9.0.0");
-    expect(changelog).not.toContain("## [1.2.0]");
+    expect(changelog.match(/^## \[[^\]]+\] - \d{4}-\d{2}-\d{2}$/m)?.[0]).toBe("## [1.1.4] - 2026-11-04");
     expect(changelog).toContain("MCP server 10.0.0");
     expect(documentationChanges).toContain("Skill Customization & Independent Integration Asset Versioning");
     expect(documentationChanges).toContain("Automatic artifact retention cleanup and bounded lifetime model");

@@ -97,6 +97,7 @@ The governing lifetime relationship is `artifact lifetime > waiter lifetime > ch
 - Call `create_artifact` with a chosen fixed or open `kind` (defaulting to plan kinds when applicable), retain exact review handles, any returned Session context, and connection metadata, then call `wait_for_artifact_review` for the default flow.
 - Interpret the returned decision.
 - Apply one feedback policy to submitted `revise` and chat-inspected comments: answer questions visibly, update Markdown only for requested changes, and advance unchanged Markdown for question-only rounds.
+- For explicitly requested AI-authored feedback, write the AI's own comments and optionally a `revise` submission using the artifact skill's reference, without taking over or starting a waiter.
 - For chat escape, inspect the exact interrupted handle with takeover before applying that shared policy.
 - For an explicit chat update on an empty round, inspect the exact handle with `intent: "explicit-chat-update"`, replace the Markdown, and advance without requiring a UI comment or Review submission.
 - For direct Session updates, delegate wait-mode selection to the Work Session skill and interpret `waited: false` as a commit confirmation; record its round and continue authorized work without treating absent comments as missing review feedback. Creation always waits, while standalone updates and review-feedback processing keep their existing flow.
@@ -110,8 +111,8 @@ The governing lifetime relationship is `artifact lifetime > waiter lifetime > ch
 **Does not own**
 
 - Artifact IDs, review session IDs, or round numbers.
-- Lifecycle-file creation or repair.
-- Comment or submission persistence.
+- Lifecycle-file creation or repair outside the explicit AI-feedback exception.
+- Comment or submission persistence outside that explicitly requested AI-feedback workflow.
 - Token creation or validation.
 - Waiter ownership, cancellation, or takeover mechanics.
 
@@ -252,8 +253,8 @@ Each artifact is a direct child of the global per-user collection:
 | ------------------------ | ---------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
 | `artifact.json`          | MCP                                                        | Identify the artifact and bind kind, title, reviewSessionId, timestamps, and current round; no Work Session membership field |
 | `artifact.md`            | MCP                                                        | Store the complete Markdown for the current round                                                  |
-| `comments.json`          | Artifact Store during review; MCP when opening a new round | Store block-bound comments and bind them to the current artifact hash and round                    |
-| `review-submission.json` | Artifact Store                                             | Record the immutable `revise`, `approve`, or `save` decision for one round                         |
+| `comments.json`          | Artifact Store or explicitly requested AI reviewer; MCP when opening a new round | Store comments and bind them to the current artifact hash and round                    |
+| `review-submission.json` | Artifact Store; AI reviewer for explicitly requested `revise` | Record the immutable `revise`, `approve`, or `save` decision for one round                         |
 | `artifact-connection.json` | MCP                                                      | Store only target window, connection revision, open-request ID, source, and timestamp              |
 | `.artifact-connection.lock` | MCP                                                      | Serialize connection commits without changing lifecycle state                                      |
 | `.artifact-update.lock`  | MCP                                                        | Prevent readers from observing an incomplete multi-file update                                     |
