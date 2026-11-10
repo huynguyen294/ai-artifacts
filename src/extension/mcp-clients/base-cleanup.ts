@@ -26,6 +26,8 @@ export async function cleanupBaseMcpServer(options?: { userHome?: string }): Pro
   const targetLegacySkill = path.join(home, ".agents", "skills", "create-plan-artifact");
   const claudeSkill = path.join(home, ".claude", "skills", "create-review-artifact");
   const claudeSessionSkill = path.join(home, ".claude", "skills", "work-session");
+  const antigravitySkill = path.join(home, ".gemini", "config", "skills", "create-review-artifact");
+  const antigravitySessionSkill = path.join(home, ".gemini", "config", "skills", "work-session");
 
   await Promise.allSettled([
     safeRemoveTarget(managedDirectory),
@@ -35,5 +37,7 @@ export async function cleanupBaseMcpServer(options?: { userHome?: string }): Pro
     safeRemoveTarget(targetLegacySkill),
     safeRemoveTarget(claudeSkill),
     safeRemoveTarget(claudeSessionSkill),
+    safeRemoveTarget(antigravitySkill),
+    safeRemoveTarget(antigravitySessionSkill),
   ]);
 }

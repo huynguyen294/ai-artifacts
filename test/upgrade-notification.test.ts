@@ -363,12 +363,237 @@ describe("upgrade notification", () => {
       "mcp",
       "skill:agents",
       "skill:claude",
+      "skill:antigravity",
+      "session-skill:antigravity",
     ]);
     expect(message).toContain("MCP runtime");
     expect(message).toContain("shared agent skill (.agents)");
     expect(message).toContain("Claude skill (.claude)");
+    expect(message).toContain("Antigravity review skill (.gemini/config)");
+    expect(message).toContain("Antigravity work session skill (.gemini/config)");
     expect(message).toContain("customizations will be preserved");
     expect(message).toContain("restart your AI client");
+  });
+
+  it("reports only missing or stale Antigravity review and session skills accurately without leaking Claude labels", async () => {
+    const onlyReviewDeps = makeDeps({
+      bundledVersions: { mcpVersion: 10, skillVersion: 2, sessionSkillVersion: 1 },
+      skillTargets: ["agents", "antigravity"],
+      getInstalledIntegrationVersion: vi.fn(() =>
+        validInstalledState(
+          manifest(10, { agents: 2 }, { agents: 1, antigravity: 1 }),
+        )),
+    });
+    await maybeShowUpgradeNotification(onlyReviewDeps);
+    expect(onlyReviewDeps.setLastNotifiedIntegrationState).toHaveBeenCalledWith({
+      mcpVersion: 10,
+      skillVersion: 2,
+      sessionSkillVersion: 1,
+      staleAssets: ["skill:antigravity"],
+    });
+    const reviewMsg = vi.mocked(onlyReviewDeps.showInformationMessage).mock.calls[0]?.[0];
+    expect(reviewMsg).toContain("Antigravity review skill (.gemini/config)");
+    expect(reviewMsg).not.toContain("Antigravity work session skill (.gemini/config)");
+    expect(reviewMsg).not.toContain("Claude");
+    expect(reviewMsg).not.toContain("MCP runtime");
+
+    const onlySessionDeps = makeDeps({
+      bundledVersions: { mcpVersion: 10, skillVersion: 2, sessionSkillVersion: 1 },
+      skillTargets: ["agents", "antigravity"],
+      getInstalledIntegrationVersion: vi.fn(() =>
+        validInstalledState(
+          manifest(10, { agents: 2, antigravity: 2 }, { agents: 1 }),
+        )),
+    });
+    await maybeShowUpgradeNotification(onlySessionDeps);
+    expect(onlySessionDeps.setLastNotifiedIntegrationState).toHaveBeenCalledWith({
+      mcpVersion: 10,
+      skillVersion: 2,
+      sessionSkillVersion: 1,
+      staleAssets: ["session-skill:antigravity"],
+    });
+    const sessionMsg = vi.mocked(onlySessionDeps.showInformationMessage).mock.calls[0]?.[0];
+    expect(sessionMsg).toContain("Antigravity work session skill (.gemini/config)");
+    expect(sessionMsg).not.toContain("Antigravity review skill (.gemini/config)");
+    expect(sessionMsg).not.toContain("Claude");
+    expect(sessionMsg).not.toContain("MCP runtime");
+
+    const bothAntigravityDeps = makeDeps({
+      bundledVersions: { mcpVersion: 10, skillVersion: 2, sessionSkillVersion: 1 },
+      skillTargets: ["agents", "antigravity"],
+      getInstalledIntegrationVersion: vi.fn(() =>
+        validInstalledState(manifest(10, { agents: 2 }, { agents: 1 }))),
+    });
+    await maybeShowUpgradeNotification(bothAntigravityDeps);
+    expect(bothAntigravityDeps.setLastNotifiedIntegrationState).toHaveBeenCalledWith({
+      mcpVersion: 10,
+      skillVersion: 2,
+      sessionSkillVersion: 1,
+      staleAssets: ["skill:antigravity", "session-skill:antigravity"],
+    });
+    const bothMsg = vi.mocked(bothAntigravityDeps.showInformationMessage).mock.calls[0]?.[0];
+    expect(bothMsg).toContain("Antigravity review skill (.gemini/config)");
+    expect(bothMsg).toContain("Antigravity work session skill (.gemini/config)");
+    expect(bothMsg).not.toContain("Claude");
+  });
+
+  it("handles current three-target receipts, undetected Antigravity entries, and omitted sessionSkillVersion", async () => {
+    const allCurrentDeps = makeDeps({
+      bundledVersions: { mcpVersion: 10, skillVersion: 2, sessionSkillVersion: 1 },
+      skillTargets: ["agents", "claude", "antigravity"],
+      getInstalledIntegrationVersion: vi.fn(() =>
+        validInstalledState(
+          manifest(
+            10,
+            { agents: 2, claude: 2, antigravity: 2 },
+            { agents: 1, claude: 1, antigravity: 1 },
+          ),
+        )),
+    });
+    await maybeShowUpgradeNotification(allCurrentDeps);
+    expect(allCurrentDeps.setLastNotifiedIntegrationState).toHaveBeenCalledWith({
+      mcpVersion: 10,
+      skillVersion: 2,
+      sessionSkillVersion: 1,
+      staleAssets: [],
+    });
+    expect(allCurrentDeps.showInformationMessage).not.toHaveBeenCalled();
+
+    const undetectedAntigravityDeps = makeDeps({
+      bundledVersions: { mcpVersion: 10, skillVersion: 2, sessionSkillVersion: 1 },
+      skillTargets: ["agents", "claude"],
+      getInstalledIntegrationVersion: vi.fn(() =>
+        validInstalledState(
+          manifest(10, { agents: 2, claude: 2, antigravity: 1 }, { agents: 1, claude: 1 }),
+        )),
+    });
+    await maybeShowUpgradeNotification(undetectedAntigravityDeps);
+    expect(undetectedAntigravityDeps.setLastNotifiedIntegrationState).toHaveBeenCalledWith({
+      mcpVersion: 10,
+      skillVersion: 2,
+      sessionSkillVersion: 1,
+      staleAssets: [],
+    });
+    expect(undetectedAntigravityDeps.showInformationMessage).not.toHaveBeenCalled();
+
+    const withoutSessionVersionDeps = makeDeps({
+      bundledVersions: { mcpVersion: 10, skillVersion: 2 },
+      skillTargets: ["agents", "antigravity"],
+      getInstalledIntegrationVersion: vi.fn(() =>
+        validInstalledState(manifest(10, { agents: 2, antigravity: 1 }))),
+    });
+    await maybeShowUpgradeNotification(withoutSessionVersionDeps);
+    expect(withoutSessionVersionDeps.setLastNotifiedIntegrationState).toHaveBeenCalledWith({
+      mcpVersion: 10,
+      skillVersion: 2,
+      staleAssets: ["skill:antigravity"],
+    });
+  });
+
+  it("canonicalizes duplicate and reordered skillTargets so fingerprint and order remain deterministic", async () => {
+    let storedState: IntegrationNotificationState | undefined;
+    const showInformationMessage = vi.fn(async () => LATER_ACTION);
+    const reorderedDeps = makeDeps({
+      bundledVersions: { mcpVersion: 10, skillVersion: 2, sessionSkillVersion: 1 },
+      skillTargets: ["antigravity", "claude", "agents", "antigravity", "claude"],
+      getInstalledIntegrationVersion: vi.fn(() => missingInstalledState()),
+      getLastNotifiedIntegrationState: () => storedState,
+      setLastNotifiedIntegrationState: async (state) => {
+        storedState = state;
+      },
+      showInformationMessage,
+    });
+
+    await maybeShowUpgradeNotification(reorderedDeps);
+    expect(storedState).toEqual({
+      mcpVersion: 10,
+      skillVersion: 2,
+      sessionSkillVersion: 1,
+      staleAssets: [
+        "mcp",
+        "skill:agents",
+        "session-skill:agents",
+        "skill:claude",
+        "session-skill:claude",
+        "skill:antigravity",
+        "session-skill:antigravity",
+      ],
+    });
+
+    const canonicalDeps = makeDeps({
+      bundledVersions: { mcpVersion: 10, skillVersion: 2, sessionSkillVersion: 1 },
+      skillTargets: ["agents", "claude", "antigravity"],
+      getInstalledIntegrationVersion: vi.fn(() => missingInstalledState()),
+      getLastNotifiedIntegrationState: () => storedState,
+      setLastNotifiedIntegrationState: vi.fn(async () => undefined),
+      showInformationMessage,
+    });
+    await maybeShowUpgradeNotification(canonicalDeps);
+    expect(canonicalDeps.setLastNotifiedIntegrationState).not.toHaveBeenCalled();
+    expect(showInformationMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it("suppresses Antigravity stale fingerprint after Later, notifies again after partial install, and clears once repaired", async () => {
+    let installed: InstalledIntegrationVersionState = validInstalledState(
+      manifest(10, { agents: 2 }, { agents: 1 }),
+    );
+    let storedState: IntegrationNotificationState | undefined;
+    const showInformationMessage = vi.fn(async () => LATER_ACTION);
+    const deps = makeDeps({
+      bundledVersions: { mcpVersion: 10, skillVersion: 2, sessionSkillVersion: 1 },
+      skillTargets: ["agents", "antigravity"],
+      getInstalledIntegrationVersion: () => installed,
+      getLastNotifiedIntegrationState: () => storedState,
+      setLastNotifiedIntegrationState: async (state) => {
+        storedState = state;
+      },
+      showInformationMessage,
+    });
+
+    await maybeShowUpgradeNotification(deps);
+    await maybeShowUpgradeNotification(deps);
+    expect(showInformationMessage).toHaveBeenCalledTimes(1);
+    expect(storedState?.staleAssets).toEqual(["skill:antigravity", "session-skill:antigravity"]);
+
+    installed = validInstalledState(
+      manifest(10, { agents: 2, antigravity: 2 }, { agents: 1 }),
+    );
+    await maybeShowUpgradeNotification(deps);
+    expect(showInformationMessage).toHaveBeenCalledTimes(2);
+    expect(storedState?.staleAssets).toEqual(["session-skill:antigravity"]);
+
+    installed = validInstalledState(
+      manifest(10, { agents: 2, antigravity: 2 }, { agents: 1, antigravity: 1 }),
+    );
+    await maybeShowUpgradeNotification(deps);
+    await maybeShowUpgradeNotification(deps);
+    expect(showInformationMessage).toHaveBeenCalledTimes(2);
+    expect(storedState?.staleAssets).toEqual([]);
+  });
+
+  it("invokes runInstaller once when Run Installer is chosen for stale Antigravity skills, and not on Later or dismiss", async () => {
+    const runDeps = makeDeps({
+      bundledVersions: { mcpVersion: 10, skillVersion: 2, sessionSkillVersion: 1 },
+      skillTargets: ["agents", "antigravity"],
+      getInstalledIntegrationVersion: vi.fn(() =>
+        validInstalledState(manifest(10, { agents: 2 }, { agents: 1 }))),
+      showInformationMessage: vi.fn(async () => RUN_INSTALLER_ACTION),
+    });
+    await maybeShowUpgradeNotification(runDeps);
+    expect(runDeps.runInstaller).toHaveBeenCalledTimes(1);
+    expect(runDeps.openInstallationGuide).not.toHaveBeenCalled();
+
+    for (const action of [LATER_ACTION, undefined] as const) {
+      const noRunDeps = makeDeps({
+        bundledVersions: { mcpVersion: 10, skillVersion: 2, sessionSkillVersion: 1 },
+        skillTargets: ["agents", "antigravity"],
+        getInstalledIntegrationVersion: vi.fn(() =>
+          validInstalledState(manifest(10, { agents: 2 }, { agents: 1 }))),
+        showInformationMessage: vi.fn(async () => action),
+      });
+      await maybeShowUpgradeNotification(noRunDeps);
+      expect(noRunDeps.runInstaller).not.toHaveBeenCalled();
+    }
   });
 
   it("keeps the integration-state key and installation guide target", () => {

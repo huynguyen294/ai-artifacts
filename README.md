@@ -4,7 +4,7 @@
 
 📦 [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=huynguyen294.ai-artifacts) · 🌐 [Open VSX](https://open-vsx.org/extension/huynguyen294/ai-artifacts) · 🐙 [GitHub](https://github.com/huynguyen294/ai-artifacts)
 
-**AI Artifacts** is an interactive artifact review editor that lets AI coding agents such as Cursor, Codex, Claude, GitHub Copilot, Cline, and Windsurf create planning artifacts, Markdown specs, and technical write-ups directly in your IDE. Add inline comments, request revisions, and approve plans for execution through MCP and agent skills.
+**AI Artifacts** is an interactive artifact review editor that lets AI coding agents such as Cursor, Codex, Claude, GitHub Copilot, Cline, Windsurf, and Antigravity create planning artifacts, Markdown specs, and technical write-ups directly in your IDE. Add inline comments, request revisions, and approve plans for execution through MCP and agent skills.
 
 **Multi-Agent Work Sessions** keep related artifacts and shared instructions together across agents and chats. Organize ongoing work, define rules and workflows, and connect another agent to continue with the session’s latest artifacts and instructions.
 
@@ -55,8 +55,8 @@ Keep related artifacts and shared instructions in one Work Session, then connect
 
 ## Requirements & compatibility
 
-- VS Code 1.95.0 or newer (or compatible editors like Cursor, Windsurf, VSCodium).
-- An AI Agent or extension supporting MCP / Skills (e.g. Codex extension, Cursor Agent, GitHub Copilot, Windsurf Cascade).
+- VS Code 1.95.0 or newer (or compatible editors like Cursor, Windsurf, Antigravity, VSCodium).
+- An AI Agent or extension supporting MCP / Skills (e.g. Codex extension, Cursor Agent, GitHub Copilot, Windsurf Cascade, Claude, Antigravity).
 - Node.js available as `node` in `PATH`; the installed MCP integration is launched with this command.
 - The extension host and MCP process must run as the same OS user and see the same user filesystem. Remote or split-host topologies are unsupported in v1.1.x.
 - When building from source: Node.js `^20.19.0 || >=22.12.0` and npm.
@@ -72,6 +72,7 @@ AI Artifacts connects to your favorite AI coding agents using the Model Context 
 | **Claude (VS Code Extension / MCP)** | MCP Server (`claude.json`) + Skill             |
 | **GitHub Copilot** (VS Code)         | MCP Server (`mcp.json`) + Skill                |
 | **Cline** (VS Code Extension)        | MCP Server (`cline_mcp_settings.json`) + Skill |
+| **Antigravity**                      | MCP Server (`mcp_config.json`) + Skills        |
 | **Windsurf**                         | MCP Server (`mcp_config.json`)                 |
 
 ## Getting started
@@ -92,14 +93,15 @@ To build the VSIX yourself from source, follow [Development](#development) below
 
 Open the Command Palette (`Ctrl+Shift+P` on Windows/Linux or `Cmd+Shift+P` on macOS) and choose your preferred setup command:
 
-- **`AI Artifacts: Install All Detected Integrations`**: Installs the MCP runtime and review skill, and configures all detected AI clients.
+- **`AI Artifacts: Install All Detected Integrations`**: Installs the MCP runtime and bundled skills, and configures all detected AI clients (including Antigravity when detected).
 - Or choose the dedicated installer for your specific AI client:
   - **`AI Artifacts: Install Integration for Cursor`**: Automatically configures `~/.cursor/mcp.json`.
   - **`AI Artifacts: Install Integration for Codex`**: Automatically configures `~/.codex/config.toml`.
-  - **`AI Artifacts: Install Integration for Claude`**: Automatically configures `~/.claude.json` and deploys the `create-review-artifact` Agent Skill to `~/.claude/skills/create-review-artifact/`.
+  - **`AI Artifacts: Install Integration for Claude`**: Automatically configures `~/.claude.json` and deploys `create-review-artifact` and `work-session` to `~/.claude/skills/`.
   - **`AI Artifacts: Install Integration for GitHub Copilot`**: Automatically configures VS Code User global configuration (`Code/User/mcp.json`) for GitHub Copilot.
   - **`AI Artifacts: Install Integration for Cline`**: Automatically configures the Cline VS Code extension's `cline_mcp_settings.json`.
   - **`AI Artifacts: Install Integration for Windsurf`**: Automatically configures `~/.codeium/windsurf/mcp_config.json`.
+  - **`AI Artifacts: Install Integration for Antigravity`**: Automatically configures `~/.gemini/config/mcp_config.json` and deploys `create-review-artifact` and `work-session` to `~/.gemini/config/skills/`.
 - Or run **`AI Artifacts: Copy MCP Configuration JSON`** to copy the ready-to-use JSON configuration snippet directly to your clipboard to paste into any MCP-compatible editor.
 - Or run **`AI Artifacts: Copy create-review-artifact Skill Markdown`** to copy the full agent review skill instructions directly to your clipboard to paste into custom agent prompts, system instructions, or skill files.
 
@@ -111,8 +113,13 @@ Open the Command Palette (`Ctrl+Shift+P` on Windows/Linux or `Cmd+Shift+P` on ma
 ~/.ai-artifacts/managed/runtime/ai-artifacts-review-mcp.mjs  # Centralized MCP runtime server
 ~/.ai-artifacts/managed/workspaces/                          # Live workspace heartbeat registry
 ~/.ai-artifacts/managed/integration-version.json             # Installed MCP/skill version receipt
-~/.agents/skills/create-review-artifact/                     # Shared agent skill & instructions
-~/.claude/skills/create-review-artifact/                     # Claude Code agent skill
+~/.agents/skills/create-review-artifact/                     # Shared review artifact skill & instructions
+~/.agents/skills/work-session/                               # Shared work session skill & instructions
+~/.claude/skills/create-review-artifact/                     # Claude Code review artifact skill
+~/.claude/skills/work-session/                               # Claude Code work session skill
+~/.gemini/config/mcp_config.json                             # Antigravity MCP server config
+~/.gemini/config/skills/create-review-artifact/              # Antigravity review artifact skill
+~/.gemini/config/skills/work-session/                        # Antigravity work session skill
 ```
 
 </details>
@@ -142,18 +149,47 @@ MCP version 12 is reserved for the unreleased Work Session feature and remains i
 
 </details>
 
+### Optional: Antigravity global rule
+
+The AI Artifacts installer manages `~/.gemini/config/mcp_config.json` and both skills (`create-review-artifact` and `work-session`). Any global rule is **optional** and **user-managed**—AI Artifacts never reads, writes, checks, or removes your Antigravity rule files.
+
+Without a global rule, explicit skill invocations still work directly. However, when you type an ordinary prompt without tagging a skill—for example, `"Create a review artifact for this API design."`—Antigravity may prefer its built-in artifact workflow instead of `create-review-artifact`. Adding a short rule prioritizes AI Artifacts only when you explicitly ask to create an artifact (general planning or documentation requests are unaffected). Not configuring this rule is not an installer error and does not affect `Ready` status.
+
+Choose **one** of the following options (do not duplicate both):
+
+**Preferred — modular global rule file (`~/.gemini/config/rules/ai-artifacts.md`):** Create `~/.gemini/config/rules/ai-artifacts.md` and copy the exact content below:
+
+```markdown
+---
+trigger: always_on
+---
+
+# Artifact Creation Policy
+
+- For every explicit request to create an artifact, use the
+  `create-review-artifact` skill through the `ai_artifacts` MCP server.
+- Do not use Antigravity's built-in artifact creation workflow
+  for these requests.
+```
+
+**Alternative — append to `~/.gemini/GEMINI.md`:** Append only the Markdown section starting from `# Artifact Creation Policy` (omit the first three `---` / `trigger: always_on` / `---` YAML frontmatter lines) to `~/.gemini/GEMINI.md`, keeping your existing rules intact.
+
+See [Antigravity rules](https://antigravity.google/docs/rules) for rule placement details: modular rule files under `~/.gemini/config/rules/` require a valid `trigger` frontmatter (`always_on`), whereas `~/.gemini/GEMINI.md` does not use YAML frontmatter.
+
 ## Customizing the Review Skill
 
-The installer maintains two independent copies of the skill when their clients are present:
+The installer maintains independent copies of `create-review-artifact` for each detected skill target:
 
 - `~/.agents/skills/create-review-artifact/SKILL.md` for Codex, Cursor, GitHub Copilot, Cline, and other clients that use the shared agent-skills directory.
 - `~/.claude/skills/create-review-artifact/SKILL.md` for Claude Code. Its customization is preserved independently and is not copied from `.agents`.
+- `~/.gemini/config/skills/create-review-artifact/SKILL.md` for Antigravity. Its customization is also preserved independently and is not copied from `.agents` or `.claude`.
 
-Open either file directly in your editor (replace `code` with `cursor` when appropriate):
+Open any copy directly in your editor (replace `code` with `cursor` when appropriate):
 
 ```shell
 code ~/.agents/skills/create-review-artifact/SKILL.md
 code ~/.claude/skills/create-review-artifact/SKILL.md
+code ~/.gemini/config/skills/create-review-artifact/SKILL.md
 ```
 
 The installer preserves two supported customization regions across skill updates:
@@ -163,13 +199,17 @@ The installer preserves two supported customization regions across skill updates
 
    ```markdown
    <!-- >>> USER CUSTOM RULES >>> -->
+
    Write artifacts in Vietnamese. Keep implementation plans component-oriented.
+
    <!-- <<< USER CUSTOM RULES <<< -->
    ```
 
    Rules in this block override conflicting default skill rules. You may fully customize behavior here, including document language, chat response language, plan layout, or workspace file conventions. They cannot override system or developer instructions enforced by the AI host.
 
-`Ready` means the packaged skill assets are current after merging these supported customization regions. It does not prove that custom rules remain semantically compatible with the official artifact lifecycle.
+The sibling `work-session` skill (`~/.agents/skills/work-session/`, `~/.claude/skills/work-session/`, and `~/.gemini/config/skills/work-session/`) is updated directly from official bundled assets without customization merging.
+
+`Ready` means the packaged skill assets and client configuration are current after merging these supported customization regions. It does not prove that custom rules remain semantically compatible with the official artifact lifecycle, and it does not check user-managed client rules or MCP permission policies.
 
 If the installer reports malformed YAML or custom-rule markers, it stops before replacing the installed skill. Back up the custom description and rules, then run **AI Artifacts: Copy create-review-artifact Skill Markdown** to obtain a clean official `SKILL.md`, or restore/reinstall the skill and add customizations back incrementally.
 
@@ -181,19 +221,22 @@ To ensure AI Artifacts is ready, verify the components and consult common troubl
 
 Run **`AI Artifacts: Verify All Integrations`** from the Command Palette (`Ctrl+Shift+P` / `Cmd+Shift+P`):
 
-- **Skill (.agents):** Must report **Ready** (confirms the official `create-review-artifact` assets are current in `~/.agents/skills/` after preserving supported customization regions; it does not validate custom-rule semantics).
+- **Review skill / Work session skill (.agents):** Must report **Ready** (confirms the bundled `create-review-artifact` assets—after preserving supported customization regions—and `work-session` assets are current in `~/.agents/skills/`; it does not validate custom-rule semantics or client rule/permission policies).
 - **Base (.vscode):** Must report **Ready** (confirms central MCP runtime server is deployed to `~/.ai-artifacts/managed/runtime/`).
-- **Clients:** Shows detected configuration state for each AI editor.
+- **Clients:** Shows detected configuration and managed skill status for each supported AI editor (including Claude and Antigravity). `Ready` confirms on-disk config and managed skill files, not whether optional user global rules or permission policies are active.
 
 ### 2. Agent customization check (or manual setup)
 
 If the verify command reports `missing` (or you prefer manual setup), check directly in your Agent's **Customization / Settings** view:
 
 - **MCP Server:** Confirm `ai_artifacts` is enabled with tools like `create_artifact` and `inspect_artifact_review`. If missing, run **`AI Artifacts: Copy MCP Configuration JSON`** from the Command Palette and paste the snippet into your agent's MCP settings.
-- **Skills:** Confirm `create-review-artifact` is available (type `$create-review-artifact` in chat or check active skills). If missing, run **`AI Artifacts: Copy create-review-artifact Skill Markdown`** to copy the skill instructions directly to your clipboard, configure your agent to load skills from `~/.agents/skills/`, or copy `~/.agents/skills/create-review-artifact/` into your agent/workspace skills directory.
+- **Skills:** Confirm `create-review-artifact` is available (type `$create-review-artifact` in chat or check active skills). If missing, run **`AI Artifacts: Copy create-review-artifact Skill Markdown`** to copy the skill instructions directly to your clipboard, configure your agent to load skills from `~/.agents/skills/` (or `~/.gemini/config/skills/` in Antigravity), or copy `~/.agents/skills/create-review-artifact/` into your agent/workspace skills directory. If Antigravity defaults to its built-in workflow on untagged artifact prompts, see [Optional: Antigravity global rule](#optional-antigravity-global-rule).
 
 > [!NOTE]
 > **Prerequisites:** Requires **Node.js** in `PATH` to run the MCP server. Always reload the window and start a fresh chat turn after changing configurations.
+
+> [!TIP]
+> **Optional Antigravity MCP permission policy:** Antigravity MCP tool calls may require confirmation depending on your permission policy. If you trust the local `ai_artifacts` server and want to reduce repeated prompts across review rounds, you can optionally configure an Allow rule for `ai_artifacts` using the documented permission policy pattern `mcp(ai_artifacts/*)`—see [Antigravity MCP permissions](https://antigravity.google/docs/mcp#mcp-permissions-and-access-control). `mcp(ai_artifacts/*)` is a permission policy pattern, **not** a JSON field for `mcp_config.json` and not a shell command; do not add it to `mcp_config.json` or turn on global allow-all settings for unrelated servers. This is user-managed and optional—authorizing MCP calls does not replace **Review** or **Proceed** actions in AI Artifacts.
 
 ### 3. Common runtime errors & recovery
 
@@ -343,7 +386,7 @@ Work Sessions organize artifacts independently of their review lifecycles and AI
 
 - Version 1.1.0 supports only schema v6 stored under `~/.ai-artifacts/artifacts/`.
 - The current integration uses numeric `MCP_VERSION = 12`, `CREATE_REVIEW_ARTIFACT_SKILL_VERSION = 4` (`SKILL_VERSION = 4`), and `WORK_SESSION_SKILL_VERSION = 1`. These are independent monotonic asset versions, not SemVer and not the extension package version.
-- Successful installation records the verified MCP runtime, shared `.agents` skills (`skills` and `sessionSkills`), and detected Claude skills independently in `~/.ai-artifacts/managed/integration-version.json`. A missing or invalid receipt is treated as stale.
+- Successful installation records the verified MCP runtime, shared `.agents` skills (`skills` and `sessionSkills`), and detected Claude and Antigravity skills independently in `~/.ai-artifacts/managed/integration-version.json`. A missing or invalid receipt is treated as stale, and activation checks detected targets so stale assets trigger a reinstall notification.
 - Schema v3/v4/v5 and workspace-local `.ai-artifacts` or `.codex-artifacts` lifecycles are not opened, advanced, or migrated by v1.1.x. Existing files remain untouched on disk.
 - This is a hard compatibility cutoff. A rollback to a 0.9.x extension also requires reinstalling the matching older runtime and skill; do not use a 0.9.x runtime with v1.1.x artifacts.
 - Reinstall only when the extension reports a stale MCP or skill asset because its numeric version changed. Extension-only updates with current receipts do not create another reinstall notification.
@@ -354,13 +397,13 @@ Work Sessions organize artifacts independently of their review lifecycles and AI
 
 AI Artifacts provides two comprehensive ways to remove MCP configurations and runtime assets:
 
-- **Automatic Cleanup upon Extension Uninstall:** When you uninstall the AI Artifacts extension from VS Code or Cursor (`Extensions -> Uninstall`), an automated lifecycle hook (`vscode:uninstall`) runs a standalone script that automatically removes the `ai_artifacts` MCP configuration from all detected AI clients and completely deletes base runtime assets (`~/.ai-artifacts/managed/`, legacy `~/.vscode/ai-artifacts/`, `~/.agents/skills/create-review-artifact/`, `~/.agents/skills/work-session/`, `~/.claude/skills/create-review-artifact/`, and `~/.claude/skills/work-session/`).
+- **Automatic Cleanup upon Extension Uninstall:** When you uninstall the AI Artifacts extension from VS Code or Cursor (`Extensions -> Uninstall`), an automated lifecycle hook (`vscode:uninstall`) runs a standalone script that automatically removes the `ai_artifacts` MCP configuration from all detected AI clients and completely deletes managed runtime and skill assets (`~/.ai-artifacts/managed/`, legacy `~/.vscode/ai-artifacts/`, `~/.agents/skills/create-review-artifact/`, `~/.agents/skills/work-session/`, `~/.claude/skills/create-review-artifact/`, `~/.claude/skills/work-session/`, `~/.gemini/config/skills/create-review-artifact/`, and `~/.gemini/config/skills/work-session/`).
 - **Manual Cleanup via Command Palette:** If you want to disconnect MCP integrations while keeping the VS Code extension active, open the Command Palette (`Ctrl+Shift+P` / `Cmd+Shift+P`):
-  - **`AI Artifacts: Uninstall All Detected Integrations`**: Removes MCP configs from all detected editors and clears base runtime assets.
-  - Or choose a specific client: **`AI Artifacts: Uninstall Integration for Cursor`**, **`... for Codex`**, **`... for Claude`**, **`... for GitHub Copilot`**, **`... for Cline`**, or **`... for Windsurf`**.
+  - **`AI Artifacts: Uninstall All Detected Integrations`**: Removes MCP configs from all detected editors and clears managed runtime and skill assets.
+  - Or choose a specific client: **`AI Artifacts: Uninstall Integration for Cursor`**, **`... for Codex`**, **`... for Claude`**, **`... for GitHub Copilot`**, **`... for Cline`**, **`... for Windsurf`**, or **`... for Antigravity`**.
 
 > [!IMPORTANT]
-> **Artifact Data Is Retained on Uninstall:** Neither uninstall method deletes user review data in `~/.ai-artifacts/artifacts/`. Uninstall removes only managed client configuration, installed MCP runtime assets (`~/.ai-artifacts/managed/`), legacy `~/.vscode/ai-artifacts/`, and the managed skill. Delete the global artifact collection separately only when you intentionally want to erase review data.
+> **Artifact Data and User Rules Are Retained on Uninstall:** Neither uninstall method deletes user review data in `~/.ai-artifacts/artifacts/`, Work Sessions in `~/.ai-artifacts/conversation-registry/`, or user-managed global rules (`~/.gemini/config/rules/`, `~/.gemini/GEMINI.md`). Uninstall removes only managed client configuration, installed MCP runtime assets (`~/.ai-artifacts/managed/`), legacy `~/.vscode/ai-artifacts/`, and the managed skills. Delete the global artifact collection separately only when you intentionally want to erase review data.
 
 ## Development
 

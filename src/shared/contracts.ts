@@ -23,6 +23,7 @@ export const installedSkillVersionsSchema = z
   .object({
     agents: z.number().int().positive().optional(),
     claude: z.number().int().positive().optional(),
+    antigravity: z.number().int().positive().optional(),
   })
   .strict();
 export const integrationVersionManifestSchema = z

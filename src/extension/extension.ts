@@ -46,6 +46,7 @@ import {
   getMcpConfigSnippet,
   getReviewSkillMarkdown,
   installAllDetectedIntegrations,
+  installAntigravityIntegration,
   installClaudeIntegration,
   installCodexIntegration,
   installCopilotIntegration,
@@ -54,6 +55,7 @@ import {
   installClineIntegration,
   readInstalledIntegrationVersion,
   uninstallAllDetectedIntegrations,
+  uninstallAntigravityIntegration,
   uninstallClaudeIntegration,
   uninstallCodexIntegration,
   uninstallCopilotIntegration,
@@ -523,6 +525,19 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       }
     }),
 
+    // Antigravity
+    vscode.commands.registerCommand("agentPlus.installAntigravityIntegration", async () => {
+      try {
+        await installAntigravityIntegration(context);
+        refreshViewsAndService();
+        void vscode.window.showInformationMessage(
+          "AI Artifacts MCP and skills (create-review-artifact, work-session) installed for Antigravity (~/.gemini/config/mcp_config.json). Please restart Antigravity and start a new chat to activate.",
+        );
+      } catch (error) {
+        void vscode.window.showErrorMessage(error instanceof Error ? error.message : String(error));
+      }
+    }),
+
     // 8. Copy MCP Configuration JSON
     vscode.commands.registerCommand("agentPlus.copyMcpConfig", async () => {
       try {
@@ -669,6 +684,24 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
           );
         } else {
           void vscode.window.showInformationMessage("AI Artifacts MCP was not found in Cline configuration.");
+        }
+      } catch (error) {
+        void vscode.window.showErrorMessage(error instanceof Error ? error.message : String(error));
+      }
+    }),
+
+    // Uninstall Antigravity
+    vscode.commands.registerCommand("agentPlus.uninstallAntigravityIntegration", async () => {
+      try {
+        const removed = await uninstallAntigravityIntegration();
+        if (removed) {
+          void vscode.window.showInformationMessage(
+            "AI Artifacts MCP and skills uninstalled for Antigravity (~/.gemini/config/mcp_config.json). Please restart Antigravity to apply changes.",
+          );
+        } else {
+          void vscode.window.showInformationMessage(
+            "AI Artifacts integration was not found in Antigravity configuration.",
+          );
         }
       } catch (error) {
         void vscode.window.showErrorMessage(error instanceof Error ? error.message : String(error));
