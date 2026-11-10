@@ -13,8 +13,10 @@ export type StaleIntegrationAsset =
   | "mcp"
   | "skill:agents"
   | "skill:claude"
+  | "skill:antigravity"
   | "session-skill:agents"
-  | "session-skill:claude";
+  | "session-skill:claude"
+  | "session-skill:antigravity";
 
 export type IntegrationNotificationState = {
   mcpVersion: number;
@@ -66,7 +68,10 @@ function reportDiagnosticSafely(
 function requiredSkillTargets(
   targets: readonly IntegrationSkillTarget[],
 ): IntegrationSkillTarget[] {
-  return targets.includes("claude") ? ["agents", "claude"] : ["agents"];
+  const required: IntegrationSkillTarget[] = ["agents"];
+  if (targets.includes("claude")) required.push("claude");
+  if (targets.includes("antigravity")) required.push("antigravity");
+  return required;
 }
 
 export function computeStaleIntegrationAssets(
@@ -107,11 +112,22 @@ function isSameNotificationState(
 }
 
 function assetLabel(asset: StaleIntegrationAsset): string {
-  if (asset === "mcp") return "MCP runtime";
-  if (asset === "skill:agents") return "shared agent skill (.agents)";
-  if (asset === "skill:claude") return "Claude skill (.claude)";
-  if (asset === "session-skill:agents") return "shared work session skill (.agents)";
-  return "Claude work session skill (.claude)";
+  switch (asset) {
+    case "mcp":
+      return "MCP runtime";
+    case "skill:agents":
+      return "shared agent skill (.agents)";
+    case "skill:claude":
+      return "Claude skill (.claude)";
+    case "skill:antigravity":
+      return "Antigravity review skill (.gemini/config)";
+    case "session-skill:agents":
+      return "shared work session skill (.agents)";
+    case "session-skill:claude":
+      return "Claude work session skill (.claude)";
+    case "session-skill:antigravity":
+      return "Antigravity work session skill (.gemini/config)";
+  }
 }
 
 export function buildUpgradeNotificationMessage(

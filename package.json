@@ -71,6 +71,7 @@
     "onCommand:agentPlus.installClaudeIntegration",
     "onCommand:agentPlus.installWindsurfIntegration",
     "onCommand:agentPlus.installClineIntegration",
+    "onCommand:agentPlus.installAntigravityIntegration",
     "onCommand:agentPlus.copyMcpConfig",
     "onCommand:agentPlus.copyReviewSkill",
     "onCommand:agentPlus.verifyGlobalIntegration",
@@ -80,7 +81,8 @@
     "onCommand:agentPlus.uninstallCursorIntegration",
     "onCommand:agentPlus.uninstallClaudeIntegration",
     "onCommand:agentPlus.uninstallWindsurfIntegration",
-    "onCommand:agentPlus.uninstallClineIntegration"
+    "onCommand:agentPlus.uninstallClineIntegration",
+    "onCommand:agentPlus.uninstallAntigravityIntegration"
   ],
   "main": "./dist/extension.cjs",
   "contributes": {
@@ -250,6 +252,10 @@
         "title": "AI Artifacts: Install Integration for Cline"
       },
       {
+        "command": "agentPlus.installAntigravityIntegration",
+        "title": "AI Artifacts: Install Integration for Antigravity"
+      },
+      {
         "command": "agentPlus.copyMcpConfig",
         "title": "AI Artifacts: Copy MCP Configuration JSON"
       },
@@ -288,6 +294,10 @@
       {
         "command": "agentPlus.uninstallClineIntegration",
         "title": "AI Artifacts: Uninstall Integration for Cline"
+      },
+      {
+        "command": "agentPlus.uninstallAntigravityIntegration",
+        "title": "AI Artifacts: Uninstall Integration for Antigravity"
       }
     ],
     "viewsContainers": {

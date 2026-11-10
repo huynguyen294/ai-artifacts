@@ -40,10 +40,11 @@ Release history has been standardized and tracked starting from version **0.2.6*
 
 ### Integration Assets and Upgrade Guidance
 
+- Added Antigravity client support: installs `~/.gemini/config/mcp_config.json` (`timeoutSeconds: 3600`) and manages both `create-review-artifact` and `work-session` under `~/.gemini/config/skills/` via dedicated install/uninstall commands, `Install All Detected Integrations`, activation upgrade notifications, independent `antigravity` receipts, and extension uninstall cleanup, without modifying user-managed Antigravity rules.
 - This unreleased version bundles numeric MCP version **12**, `create-review-artifact` skill version **4**, and the first `work-session` skill version **1**. Artifact storage remains schema v6.
 - Added independent per-target installation receipts and verification for both skills. Review skill customization remains supported; the Session skill uses the official bundled content.
-- Install or reinstall the affected integration, restart the AI client, and start a fresh chat to load the updated MCP and skills. Uninstall removes both managed skills while preserving user artifacts and Sessions.
-- Updated product branding and README guidance for interactive review and multi-agent Work Sessions.
+- Install or reinstall the affected integration, restart the AI client, and start a fresh chat to load the updated MCP and skills. Uninstall removes both managed skills while preserving user artifacts, Sessions, and user-managed rules.
+- Updated product branding and README guidance (including optional user-managed Antigravity global rule and MCP permission guidance) for interactive review and multi-agent Work Sessions.
 
 ### AI-authored Artifact Feedback
 

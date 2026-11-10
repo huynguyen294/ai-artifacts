@@ -504,14 +504,14 @@ This layer is the protocol source of truth. A contract change must be propagated
 
 - Deploy the centralized MCP server runtime into `~/.ai-artifacts/managed/runtime/`.
 - Deploy both bundled skills into sibling directories `~/.agents/skills/create-review-artifact/` and `~/.agents/skills/work-session/`.
-- Deploy both independently into the corresponding sibling directories under `~/.claude/skills/` when Claude is installed.
-- Provide dedicated, non-destructive configuration drivers for Codex (`config.toml`), Cursor (`mcp.json`), Claude Code (`.claude.json`), Windsurf (`mcp_config.json`), GitHub Copilot (`Code/User/mcp.json`), and Cline (`cline_mcp_settings.json`).
+- Deploy both independently into the corresponding sibling directories under `~/.claude/skills/` when Claude is installed and `~/.gemini/config/skills/` when Antigravity is installed.
+- Provide dedicated, non-destructive configuration drivers for Codex (`config.toml`), Cursor (`mcp.json`), Claude Code (`.claude.json`), Windsurf (`mcp_config.json`), GitHub Copilot (`Code/User/mcp.json`), Cline (`cline_mcp_settings.json`), and Antigravity (`~/.gemini/config/mcp_config.json`).
 - Expose dedicated setup commands plus `AI Artifacts: Install All Detected Integrations` and `AI Artifacts: Copy MCP Configuration JSON`.
 - Verify whether installed assets and client configurations match the extension requirements.
 - Report ready, missing, outdated, or configuration-conflict states across environments.
 - Replace stale installed skill/runtime assets with the packaged source and remove obsolete files during reinstall.
-- Preserve a valid non-official YAML `description:` and `USER CUSTOM RULES` only for `create-review-artifact`, independently for `.agents` and `.claude`; fail closed before swapping when those regions cannot be preserved. Replace `work-session` with official assets atomically without customization merging.
-- Record verified MCP, `.agents`, and `.claude` versions independently in `~/.ai-artifacts/managed/integration-version.json`: `mcpVersion`, artifact `skills`, and `sessionSkills` maps. Base setup commits runtime and both Agents skill receipts after all three assets verify; Claude commits both after its own verification. Partial updates preserve other entries; missing/mismatched entries remain stale.
+- Preserve a valid non-official YAML `description:` and `USER CUSTOM RULES` only for `create-review-artifact`, independently for `.agents`, `.claude`, and Antigravity (`.gemini/config`); fail closed before swapping when those regions cannot be preserved. Replace `work-session` with official assets atomically without customization merging.
+- Record verified MCP, `.agents`, `.claude`, and Antigravity (`.gemini/config`) versions independently in `~/.ai-artifacts/managed/integration-version.json`: `mcpVersion`, artifact `skills`, and `sessionSkills` maps. Base setup commits runtime and both Agents skill receipts after all three assets verify; Claude and Antigravity each commit both after their own verification. Partial updates preserve other entries; missing/mismatched entries remain stale.
 - Treat `Ready` as asset synchronization after customization merge, not proof that arbitrary custom rules remain semantically compatible with the official lifecycle.
 - Remove only recognized legacy Codex Artifacts hooks, scripts, legacy `.vscode/ai-artifacts/` assets, and skill directories.
 - Preserve unrelated user configuration and all global user review data (`~/.ai-artifacts/artifacts/`) during uninstall.
@@ -642,7 +642,7 @@ Tests document the expected responsibility boundaries:
 | Installed skill contracts                                                              | `test/skill-contract.test.ts`, `test/work-session-skill.test.ts`, `test/work-session-context.test.ts` |
 | Connection watcher, targeted unfocused auto-open, dedupe, exact-handle command, and open coordination | `test/artifact-review-open.test.ts`, `test/artifact-link-contract.test.ts`          |
 | Extension-local artifact search core, discovery, limit cap, and Quick Pick controller | `test/artifact-search.test.ts`, `test/artifact-search-command.test.ts`                         |
-| Six-client install/reinstall/verify/uninstall, version receipts, customization merge, and artifact retention | `test/workspace-integration.test.ts`, `test/mcp-client-drivers.test.ts`, `test/skill-contract.test.ts`, `test/artifact-retention.test.ts` |
+| Seven-client install/reinstall/verify/uninstall, version receipts, customization merge, and artifact retention | `test/workspace-integration.test.ts`, `test/mcp-client-drivers.test.ts`, `test/skill-contract.test.ts`, `test/artifact-retention.test.ts` |
 | Integration upgrade notification and release-facing documentation contract            | `test/upgrade-notification.test.ts`, `test/release-contract.test.ts`                                |
 
 For responsibility or protocol changes, update the shared contract first, trace every producer and consumer, and run:

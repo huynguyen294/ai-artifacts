@@ -5,6 +5,7 @@ import { ClaudeClientDriver } from "./claude-client";
 import { WindsurfClientDriver } from "./windsurf-client";
 import { CopilotClientDriver } from "./copilot-client";
 import { ClineClientDriver } from "./cline-client";
+import { AntigravityClientDriver } from "./antigravity-client";
 
 export interface McpClientDriver {
   readonly id: string;
@@ -22,6 +23,11 @@ export { ClaudeClientDriver } from "./claude-client";
 export { WindsurfClientDriver } from "./windsurf-client";
 export { CopilotClientDriver, getVsCodeUserDirectory, getVsCodeUserMcpPath } from "./copilot-client";
 export { ClineClientDriver, getClineSettingsPath } from "./cline-client";
+export {
+  AntigravityClientDriver,
+  ANTIGRAVITY_MCP_TIMEOUT_SECONDS,
+  type AntigravityClientDriverOptions,
+} from "./antigravity-client";
 
 export function getAllClientDrivers(
   copilotConfigPath?: string,
@@ -36,6 +42,10 @@ export function getAllClientDrivers(
     new ClaudeClientDriver(undefined, undefined, sourceSkillDirectory, undefined, sourceSessionSkillDirectory),
     new WindsurfClientDriver(),
     new ClineClientDriver(clineConfigPath),
+    new AntigravityClientDriver({
+      sourceSkillDirectory,
+      sourceSessionSkillDirectory,
+    }),
   ];
 }
 

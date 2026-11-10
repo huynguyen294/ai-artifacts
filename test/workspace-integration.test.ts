@@ -39,7 +39,9 @@ import {
   baseAssetsAreCurrent,
   baseScriptIsCurrent,
   checkAllIntegrations,
+  getDetectedSkillTargets,
   installAllDetectedIntegrations,
+  installAntigravityIntegration,
   installClaudeIntegration,
   readInstalledIntegrationVersion,
   sessionSkillAssetsAreCurrent,
@@ -47,6 +49,7 @@ import {
   getReviewSkillMarkdown,
   setupBaseMcpServer,
   uninstallAllDetectedIntegrations,
+  uninstallAntigravityIntegration,
   writeInstalledIntegrationVersion,
   type BaseIntegrationPaths,
 } from "../src/extension/workspace-integration";
@@ -402,19 +405,37 @@ describe("Workspace Integration Asset Verifiers", () => {
       skills: { agents: SKILL_VERSION },
       sessionSkills: { agents: 1 },
     }, { userHome: targetDir });
+    const legacyWithoutAntigravity = await readInstalledIntegrationVersion({ userHome: targetDir });
+    expect(legacyWithoutAntigravity.status).toBe("valid");
+
     await writeInstalledIntegrationVersion({
       skills: { claude: SKILL_VERSION },
       sessionSkills: { claude: 1 },
+    }, { userHome: targetDir });
+    await writeInstalledIntegrationVersion({
+      skills: { antigravity: CREATE_REVIEW_ARTIFACT_SKILL_VERSION },
+      sessionSkills: { antigravity: WORK_SESSION_SKILL_VERSION },
     }, { userHome: targetDir });
     const complete = await readInstalledIntegrationVersion({ userHome: targetDir });
     expect(complete).toMatchObject({
       status: "valid",
       manifest: {
         mcpVersion: MCP_VERSION,
-        skills: { agents: SKILL_VERSION, claude: SKILL_VERSION },
-        sessionSkills: { agents: 1, claude: 1 },
+        skills: {
+          agents: SKILL_VERSION,
+          claude: SKILL_VERSION,
+          antigravity: CREATE_REVIEW_ARTIFACT_SKILL_VERSION,
+        },
+        sessionSkills: {
+          agents: 1,
+          claude: 1,
+          antigravity: WORK_SESSION_SKILL_VERSION,
+        },
       },
     });
+    if (complete.status === "valid") {
+      expect(Number.isNaN(Date.parse(complete.manifest.updatedAt))).toBe(false);
+    }
 
     await fs.writeFile(managedIntegrationVersionPath({ userHome: targetDir }), "{ invalid json", "utf8");
     expect((await readInstalledIntegrationVersion({ userHome: targetDir })).status).toBe("invalid");
@@ -731,12 +752,87 @@ describe("Workspace Integration Asset Verifiers", () => {
     });
   });
 
+  it("commits the Antigravity receipt only after Antigravity install and verification succeed and preserves prior entries on failure", async () => {
+    const repositoryRoot = path.resolve(import.meta.dirname, "..");
+    vi.spyOn(os, "homedir").mockReturnValue(targetDir);
+    const context = {
+      extensionUri: { fsPath: repositoryRoot },
+      globalStorageUri: { fsPath: path.join(tempDir, "storage") },
+    } as any;
+
+    await writeInstalledIntegrationVersion(
+      {
+        mcpVersion: MCP_VERSION,
+        skills: { agents: CREATE_REVIEW_ARTIFACT_SKILL_VERSION, antigravity: 1 },
+        sessionSkills: { agents: WORK_SESSION_SKILL_VERSION, antigravity: 1 },
+      },
+      { userHome: targetDir },
+    );
+
+    const antigravitySkillDir = path.join(targetDir, ".gemini", "config", "skills", "create-review-artifact");
+    const malformedAntigravitySkill = SOURCE_SKILL_MARKDOWN.replace(USER_CUSTOM_RULES_END, "");
+    await fs.mkdir(antigravitySkillDir, { recursive: true });
+    await fs.writeFile(path.join(antigravitySkillDir, "SKILL.md"), malformedAntigravitySkill, "utf8");
+
+    await expect(installAntigravityIntegration(context)).rejects.toThrow("run the installer command again");
+    const partial = await readInstalledIntegrationVersion({ userHome: targetDir });
+    expect(partial).toMatchObject({
+      status: "valid",
+      manifest: {
+        mcpVersion: MCP_VERSION,
+        skills: { agents: CREATE_REVIEW_ARTIFACT_SKILL_VERSION, antigravity: 1 },
+        sessionSkills: { agents: WORK_SESSION_SKILL_VERSION, antigravity: 1 },
+      },
+    });
+    await expect(fs.readFile(path.join(antigravitySkillDir, "SKILL.md"), "utf8")).resolves.toBe(
+      malformedAntigravitySkill,
+    );
+
+    await fs.rm(antigravitySkillDir, { recursive: true, force: true });
+    const { AntigravityClientDriver } = await import("../src/extension/mcp-clients/index");
+    vi.spyOn(AntigravityClientDriver.prototype, "check").mockResolvedValueOnce({
+      status: "outdated",
+      detail: "injected check failure",
+    });
+    await expect(installAntigravityIntegration(context)).rejects.toThrow(
+      "Antigravity integration verification failed after installation: injected check failure",
+    );
+    const afterCheckFailure = await readInstalledIntegrationVersion({ userHome: targetDir });
+    expect(afterCheckFailure).toMatchObject({
+      status: "valid",
+      manifest: {
+        mcpVersion: MCP_VERSION,
+        skills: { agents: CREATE_REVIEW_ARTIFACT_SKILL_VERSION, antigravity: 1 },
+        sessionSkills: { agents: WORK_SESSION_SKILL_VERSION, antigravity: 1 },
+      },
+    });
+
+    await installAntigravityIntegration(context);
+    expect(await readInstalledIntegrationVersion({ userHome: targetDir })).toMatchObject({
+      status: "valid",
+      manifest: {
+        mcpVersion: MCP_VERSION,
+        skills: {
+          agents: CREATE_REVIEW_ARTIFACT_SKILL_VERSION,
+          antigravity: CREATE_REVIEW_ARTIFACT_SKILL_VERSION,
+        },
+        sessionSkills: {
+          agents: WORK_SESSION_SKILL_VERSION,
+          antigravity: WORK_SESSION_SKILL_VERSION,
+        },
+      },
+    });
+    expect(await uninstallAntigravityIntegration()).toBe(true);
+    expect(await uninstallAntigravityIntegration()).toBe(false);
+  });
+
   it("reinstalls all detected clients from current assets and uninstalls without touching artifacts or unrelated config", async () => {
     const repositoryRoot = path.resolve(import.meta.dirname, "..");
     const codexHome = path.join(targetDir, ".codex");
     const cursorConfig = path.join(targetDir, ".cursor", "mcp.json");
     const claudeConfig = path.join(targetDir, ".claude.json");
     const windsurfConfig = path.join(targetDir, ".codeium", "windsurf", "mcp_config.json");
+    const antigravityConfig = path.join(targetDir, ".gemini", "config", "mcp_config.json");
     const globalStoragePath = path.join(targetDir, "Code", "User", "globalStorage", "huynguyen294.ai-artifacts");
     const copilotConfig = path.resolve(globalStoragePath, "..", "..", "mcp.json");
     const clineConfig = path.resolve(globalStoragePath, "..", "saoudrizwan.claude-dev", "settings", "cline_mcp_settings.json");
@@ -747,6 +843,11 @@ describe("Workspace Integration Asset Verifiers", () => {
     const unrelatedSiblingFile = path.join(productRoot, "unrelated-sibling.txt");
     const unrelatedSkill = path.join(targetDir, ".agents", "skills", "unrelated-skill", "SKILL.md");
     const unrelatedClaudeSkill = path.join(targetDir, ".claude", "skills", "unrelated-claude", "SKILL.md");
+    const unrelatedAntigravitySkill = path.join(targetDir, ".gemini", "config", "skills", "unrelated-antigravity", "SKILL.md");
+    const antigravityRule = path.join(targetDir, ".gemini", "config", "rules", "artifact-review-policy.md");
+    const geminiRulesDoc = path.join(targetDir, ".gemini", "GEMINI.md");
+    const antigravitySkill = path.join(targetDir, ".gemini", "config", "skills", "create-review-artifact", "SKILL.md");
+    const antigravitySessionSkill = path.join(targetDir, ".gemini", "config", "skills", "work-session", "SKILL.md");
     const claudeSkill = path.join(targetDir, ".claude", "skills", "create-review-artifact", "SKILL.md");
     const claudeSessionSkill = path.join(targetDir, ".claude", "skills", "work-session", "SKILL.md");
     const originalCodexHome = process.env.CODEX_HOME;
@@ -760,6 +861,9 @@ describe("Workspace Integration Asset Verifiers", () => {
         fs.mkdir(codexHome, { recursive: true }),
         fs.mkdir(path.join(targetDir, ".claude"), { recursive: true }),
         fs.mkdir(path.dirname(windsurfConfig), { recursive: true }),
+        fs.mkdir(path.dirname(antigravityConfig), { recursive: true }),
+        fs.mkdir(path.dirname(antigravityRule), { recursive: true }),
+        fs.mkdir(path.dirname(unrelatedAntigravitySkill), { recursive: true }),
         fs.mkdir(path.dirname(copilotConfig), { recursive: true }),
         fs.mkdir(path.dirname(clineConfig), { recursive: true }),
         fs.mkdir(path.dirname(retainedArtifact), { recursive: true }),
@@ -785,6 +889,14 @@ describe("Workspace Integration Asset Verifiers", () => {
           `${JSON.stringify({ telemetry: false, mcpServers: { keep_windsurf: { command: "keep" } } }, null, 2)}\n`,
           "utf8",
         ),
+        fs.writeFile(
+          antigravityConfig,
+          `${JSON.stringify({ customRoot: true, mcpServers: { keep_antigravity: { command: "keep" } } }, null, 2)}\n`,
+          "utf8",
+        ),
+        fs.writeFile(geminiRulesDoc, "# Keep Antigravity GEMINI rules\n", "utf8"),
+        fs.writeFile(antigravityRule, "# Keep Antigravity rule\n", "utf8"),
+        fs.writeFile(unrelatedAntigravitySkill, "# Unrelated Antigravity skill\n", "utf8"),
         fs.writeFile(
           copilotConfig,
           `${JSON.stringify({ inputs: [{ id: "keep-input" }], servers: { keep_copilot: { type: "http", url: "https://example.test" } } }, null, 2)}\n`,
@@ -825,6 +937,7 @@ describe("Workspace Integration Asset Verifiers", () => {
         "Claude",
         "Windsurf",
         "Cline",
+        "Antigravity",
       ]);
       await expect(
         fs.access(path.join(targetDir, ".vscode", "ai-artifacts", "codex-artifacts-review-mcp.mjs")),
@@ -832,12 +945,22 @@ describe("Workspace Integration Asset Verifiers", () => {
       await expect(fs.access(path.join(targetDir, ".agents", "skills", "create-plan-artifact"))).rejects.toThrow();
       await expect(fs.access(claudeSkill)).resolves.toBeUndefined();
       await expect(fs.access(claudeSessionSkill)).resolves.toBeUndefined();
+      await expect(fs.access(antigravitySkill)).resolves.toBeUndefined();
+      await expect(fs.access(antigravitySessionSkill)).resolves.toBeUndefined();
       expect(await readInstalledIntegrationVersion({ userHome: targetDir })).toMatchObject({
         status: "valid",
         manifest: {
           mcpVersion: MCP_VERSION,
-          skills: { agents: CREATE_REVIEW_ARTIFACT_SKILL_VERSION, claude: CREATE_REVIEW_ARTIFACT_SKILL_VERSION },
-          sessionSkills: { agents: WORK_SESSION_SKILL_VERSION, claude: WORK_SESSION_SKILL_VERSION },
+          skills: {
+            agents: CREATE_REVIEW_ARTIFACT_SKILL_VERSION,
+            claude: CREATE_REVIEW_ARTIFACT_SKILL_VERSION,
+            antigravity: CREATE_REVIEW_ARTIFACT_SKILL_VERSION,
+          },
+          sessionSkills: {
+            agents: WORK_SESSION_SKILL_VERSION,
+            claude: WORK_SESSION_SKILL_VERSION,
+            antigravity: WORK_SESSION_SKILL_VERSION,
+          },
         },
       });
 
@@ -852,7 +975,14 @@ describe("Workspace Integration Asset Verifiers", () => {
         "ready",
         "ready",
         "ready",
+        "ready",
       ]);
+
+      // Making one Antigravity skill stale should mark only Antigravity non-ready while shared assets remain current
+      await fs.writeFile(antigravitySessionSkill, "# Stale Antigravity work-session\n", "utf8");
+      const staleAntigravityReport = await checkAllIntegrations(context);
+      expect(staleAntigravityReport.baseCurrent).toBe(true);
+      expect(staleAntigravityReport.clients.find((client) => client.id === "antigravity")?.status).toBe("outdated");
 
       const currentSetup = await setupBaseMcpServer(context);
       expect(currentSetup.assetsUpdated).toBe(false);
@@ -872,6 +1002,7 @@ describe("Workspace Integration Asset Verifiers", () => {
         "outdated",
         "outdated",
         "outdated",
+        "outdated",
       ]);
 
       await installAllDetectedIntegrations(context);
@@ -885,11 +1016,13 @@ describe("Workspace Integration Asset Verifiers", () => {
         "ready",
         "ready",
         "ready",
+        "ready",
       ]);
 
       const cursorBeforeUninstall = JSON.parse(await fs.readFile(cursorConfig, "utf8"));
       const claudeBeforeUninstall = JSON.parse(await fs.readFile(claudeConfig, "utf8"));
       const windsurfBeforeUninstall = JSON.parse(await fs.readFile(windsurfConfig, "utf8"));
+      const antigravityBeforeUninstall = JSON.parse(await fs.readFile(antigravityConfig, "utf8"));
       const copilotBeforeUninstall = JSON.parse(await fs.readFile(copilotConfig, "utf8"));
       const clineBeforeUninstall = JSON.parse(await fs.readFile(clineConfig, "utf8"));
       const codexBeforeUninstall = await fs.readFile(codexConfig, "utf8");
@@ -901,6 +1034,13 @@ describe("Workspace Integration Asset Verifiers", () => {
       expect(windsurfBeforeUninstall).toMatchObject({
         telemetry: false,
         mcpServers: { keep_windsurf: { command: "keep" } },
+      });
+      expect(antigravityBeforeUninstall).toMatchObject({
+        customRoot: true,
+        mcpServers: {
+          keep_antigravity: { command: "keep" },
+          ai_artifacts: { command: "node", timeoutSeconds: 3600 },
+        },
       });
       expect(copilotBeforeUninstall).toMatchObject({
         inputs: [{ id: "keep-input" }],
@@ -927,10 +1067,15 @@ describe("Workspace Integration Asset Verifiers", () => {
       await expect(fs.access(path.join(targetDir, ".vscode", "ai-artifacts"))).rejects.toThrow();
       await expect(fs.access(path.dirname(claudeSkill))).rejects.toThrow();
       await expect(fs.access(path.dirname(claudeSessionSkill))).rejects.toThrow();
+      await expect(fs.access(path.dirname(antigravitySkill))).rejects.toThrow();
+      await expect(fs.access(path.dirname(antigravitySessionSkill))).rejects.toThrow();
       await expect(fs.access(productRoot)).resolves.toBeUndefined();
       await expect(fs.readFile(unrelatedSiblingFile, "utf8")).resolves.toBe("do not touch me\n");
       await expect(fs.readFile(unrelatedSkill, "utf8")).resolves.toBe("# Unrelated skill\n");
       await expect(fs.readFile(unrelatedClaudeSkill, "utf8")).resolves.toBe("# Unrelated Claude skill\n");
+      await expect(fs.readFile(unrelatedAntigravitySkill, "utf8")).resolves.toBe("# Unrelated Antigravity skill\n");
+      await expect(fs.readFile(geminiRulesDoc, "utf8")).resolves.toBe("# Keep Antigravity GEMINI rules\n");
+      await expect(fs.readFile(antigravityRule, "utf8")).resolves.toBe("# Keep Antigravity rule\n");
 
       const afterHash = crypto
         .createHash("sha256")
@@ -945,6 +1090,7 @@ describe("Workspace Integration Asset Verifiers", () => {
       const cursorAfterUninstall = JSON.parse(await fs.readFile(cursorConfig, "utf8"));
       const claudeAfterUninstall = JSON.parse(await fs.readFile(claudeConfig, "utf8"));
       const windsurfAfterUninstall = JSON.parse(await fs.readFile(windsurfConfig, "utf8"));
+      const antigravityAfterUninstall = JSON.parse(await fs.readFile(antigravityConfig, "utf8"));
       const copilotAfterUninstall = JSON.parse(await fs.readFile(copilotConfig, "utf8"));
       const clineAfterUninstall = JSON.parse(await fs.readFile(clineConfig, "utf8"));
       const codexAfterUninstall = await fs.readFile(codexConfig, "utf8");
@@ -957,6 +1103,10 @@ describe("Workspace Integration Asset Verifiers", () => {
         telemetry: false,
         mcpServers: { keep_windsurf: { command: "keep" } },
       });
+      expect(antigravityAfterUninstall).toMatchObject({
+        customRoot: true,
+        mcpServers: { keep_antigravity: { command: "keep" } },
+      });
       expect(copilotAfterUninstall).toMatchObject({
         inputs: [{ id: "keep-input" }],
         servers: { keep_copilot: { type: "http" } },
@@ -967,6 +1117,7 @@ describe("Workspace Integration Asset Verifiers", () => {
       expect(cursorAfterUninstall.mcpServers.ai_artifacts).toBeUndefined();
       expect(claudeAfterUninstall.mcpServers.ai_artifacts).toBeUndefined();
       expect(windsurfAfterUninstall.mcpServers.ai_artifacts).toBeUndefined();
+      expect(antigravityAfterUninstall.mcpServers.ai_artifacts).toBeUndefined();
       expect(copilotAfterUninstall.servers.ai_artifacts).toBeUndefined();
       expect(clineAfterUninstall.mcpServers.ai_artifacts).toBeUndefined();
       expect(codexAfterUninstall).toContain("[mcp_servers.keep_codex]");
@@ -978,5 +1129,29 @@ describe("Workspace Integration Asset Verifiers", () => {
         process.env.CODEX_HOME = originalCodexHome;
       }
     }
+  });
+
+  it("detects skill targets in fixed order across Agents, Claude, and Antigravity without reading receipts or skill-only directories", async () => {
+    vi.spyOn(os, "homedir").mockReturnValue(targetDir);
+    await fs.mkdir(targetDir, { recursive: true });
+    expect(getDetectedSkillTargets()).toEqual(["agents"]);
+
+    await fs.mkdir(path.join(targetDir, ".gemini", "config", "skills", "create-review-artifact"), {
+      recursive: true,
+    });
+    await fs.mkdir(path.join(targetDir, ".gemini", "config", "rules"), { recursive: true });
+    expect(getDetectedSkillTargets()).toEqual(["agents"]);
+
+    const antigravityConfigPath = path.join(targetDir, ".gemini", "config", "mcp_config.json");
+    await fs.writeFile(antigravityConfigPath, "{}\n", "utf8");
+    expect(getDetectedSkillTargets()).toEqual(["agents", "antigravity"]);
+
+    await fs.rm(antigravityConfigPath);
+    const antigravityDir = path.join(targetDir, ".gemini", "antigravity");
+    await fs.mkdir(antigravityDir, { recursive: true });
+    expect(getDetectedSkillTargets()).toEqual(["agents", "antigravity"]);
+
+    await fs.mkdir(path.join(targetDir, ".claude"), { recursive: true });
+    expect(getDetectedSkillTargets()).toEqual(["agents", "claude", "antigravity"]);
   });
 });

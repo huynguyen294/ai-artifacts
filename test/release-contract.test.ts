@@ -192,6 +192,29 @@ describe("v1.1.4 release contract", () => {
     });
   });
 
+  it("contributes Antigravity install and uninstall commands with matching activation events", async () => {
+    const packageJson = JSON.parse(await read("package.json"));
+
+    expect(packageJson.activationEvents).toEqual(
+      expect.arrayContaining([
+        "onCommand:agentPlus.installAntigravityIntegration",
+        "onCommand:agentPlus.uninstallAntigravityIntegration",
+      ]),
+    );
+    expect(packageJson.contributes.commands).toEqual(
+      expect.arrayContaining([
+        {
+          command: "agentPlus.installAntigravityIntegration",
+          title: "AI Artifacts: Install Integration for Antigravity",
+        },
+        {
+          command: "agentPlus.uninstallAntigravityIntegration",
+          title: "AI Artifacts: Uninstall Integration for Antigravity",
+        },
+      ]),
+    );
+  });
+
   it("keeps release-facing docs on global v6 and independent integration versions", async () => {
     const [readme, philosophy, architecture, components, instructions, contract, changelog, documentationChanges] =
       await Promise.all([
@@ -234,7 +257,7 @@ describe("v1.1.4 release contract", () => {
     expect(architecture).toContain("Both wait and advance preserve existing connection state");
     expect(components).toContain("WINDOW_SELECTION_REQUIRED");
     expect(components).toContain("numeric `MCP_VERSION` / `SKILL_VERSION`");
-    expect(components).toContain("Record verified MCP, `.agents`, and `.claude` versions independently");
+    expect(components).toContain("Record verified MCP, `.agents`, `.claude`, and Antigravity (`.gemini/config`) versions independently");
     expect(instructions).toContain("Focus is only a ranking hint");
     expect(instructions).toContain("Artifacts are owned by review sessions");
     expect(instructions).toContain("extension-only changes with current receipts must not force reinstall");

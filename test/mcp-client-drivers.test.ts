@@ -1,7 +1,7 @@
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   hasJsonMcpServer,
   readJsonConfig,
@@ -9,6 +9,11 @@ import {
   upsertJsonMcpServer,
   writeJsonConfig,
 } from "../src/extension/mcp-clients/json-mcp-helper";
+import {
+  ANTIGRAVITY_MCP_TIMEOUT_SECONDS,
+  AntigravityClientDriver,
+  getAllClientDrivers,
+} from "../src/extension/mcp-clients/index";
 import { CursorClientDriver } from "../src/extension/mcp-clients/cursor-client";
 import { ClaudeClientDriver } from "../src/extension/mcp-clients/claude-client";
 import { WindsurfClientDriver } from "../src/extension/mcp-clients/windsurf-client";
@@ -17,6 +22,7 @@ import { CopilotClientDriver } from "../src/extension/mcp-clients/copilot-client
 import { ClineClientDriver, getClineSettingsPath } from "../src/extension/mcp-clients/cline-client";
 import { cleanupBaseMcpServer } from "../src/extension/mcp-clients/base-cleanup";
 import { runUninstall } from "../src/extension/uninstall-entry";
+import { USER_CUSTOM_RULES_END } from "../src/extension/mcp-clients/skill-helper";
 
 describe("JSON MCP Helper", () => {
   let tempDir: string;
@@ -126,6 +132,7 @@ describe("Client Drivers", () => {
   });
 
   afterEach(async () => {
+    vi.restoreAllMocks();
     await fs.rm(tempHome, { recursive: true, force: true }).catch(() => {});
   });
 
@@ -628,6 +635,233 @@ describe("Client Drivers", () => {
     expect(content.mcpServers.other_tool).toBeDefined();
     expect(content.mcpServers.ai_artifacts).toBeUndefined();
   });
+
+  it("Antigravity driver detects config or .gemini/antigravity specifically and installs cleanly on an empty home", async () => {
+    const emptyDriver = new AntigravityClientDriver({ userHome: tempHome });
+    expect(emptyDriver.isDetected()).toBe(false);
+
+    await fs.mkdir(path.join(tempHome, ".gemini", "config"), { recursive: true });
+    expect(emptyDriver.isDetected()).toBe(false);
+
+    const antigravityDir = path.join(tempHome, ".gemini", "antigravity");
+    await fs.mkdir(antigravityDir, { recursive: true });
+    expect(emptyDriver.isDetected()).toBe(true);
+    await fs.rm(antigravityDir, { recursive: true, force: true });
+    expect(emptyDriver.isDetected()).toBe(false);
+
+    const scriptPath = "C:\\Users\\Test\\.ai-artifacts\\managed\\runtime\\ai-artifacts-review-mcp.mjs";
+    await emptyDriver.install(scriptPath);
+    expect(emptyDriver.isDetected()).toBe(true);
+    expect((await emptyDriver.check(scriptPath)).status).toBe("ready");
+
+    const installedConfig = await readJsonConfig(emptyDriver.configPath);
+    expect(installedConfig).toEqual({
+      mcpServers: {
+        ai_artifacts: {
+          command: "node",
+          args: ["C:/Users/Test/.ai-artifacts/managed/runtime/ai-artifacts-review-mcp.mjs"],
+          timeoutSeconds: ANTIGRAVITY_MCP_TIMEOUT_SECONDS,
+        },
+      },
+    });
+    expect(await fs.stat(path.join(emptyDriver.skillDirectory, "references", "artifact-contract.md"))).toBeDefined();
+    expect(await fs.stat(path.join(emptyDriver.skillDirectory, "references", "ai-feedback.md"))).toBeDefined();
+    expect(await fs.stat(path.join(emptyDriver.skillDirectory, "agents", "openai.yaml"))).toBeDefined();
+    expect(await fs.stat(path.join(emptyDriver.sessionSkillDirectory, "SKILL.md"))).toBeDefined();
+    expect(await fs.stat(path.join(emptyDriver.sessionSkillDirectory, "agents", "openai.yaml"))).toBeDefined();
+  });
+
+  it("Antigravity driver preserves mcpServers siblings, root keys, custom entry fields, and rejects corrupt JSON", async () => {
+    const driver = new AntigravityClientDriver({ userHome: tempHome });
+    await writeJsonConfig(driver.configPath, {
+      theme: "dark",
+      servers: {
+        unrelated_root_servers: { type: "http", url: "https://example.test" },
+      },
+      mcpServers: {
+        "dhis2-docs": { command: "npx", args: ["-y", "dhis2-mcp"] },
+        ai_artifacts: {
+          command: "node",
+          args: ["/old/path/server.mjs"],
+          timeoutSeconds: 180,
+          disabled: false,
+          disabledTools: ["join_session"],
+          env: { LOG_LEVEL: "info" },
+        },
+      },
+    });
+
+    const scriptPath = "/Users/test/.ai-artifacts/managed/runtime/ai-artifacts-review-mcp.mjs";
+    await driver.install(scriptPath);
+    expect((await driver.check(scriptPath)).status).toBe("ready");
+
+    const updated = await readJsonConfig(driver.configPath);
+    expect(updated.theme).toBe("dark");
+    expect(updated.servers).toEqual({
+      unrelated_root_servers: { type: "http", url: "https://example.test" },
+    });
+    expect(updated.mcpServers["dhis2-docs"]).toEqual({ command: "npx", args: ["-y", "dhis2-mcp"] });
+    expect(updated.mcpServers.ai_artifacts).toEqual({
+      command: "node",
+      args: [scriptPath],
+      timeoutSeconds: ANTIGRAVITY_MCP_TIMEOUT_SECONDS,
+      disabled: false,
+      disabledTools: ["join_session"],
+      env: { LOG_LEVEL: "info" },
+    });
+    expect(updated.mcpServers.ai_artifacts.enabledTools).toBeUndefined();
+    expect(updated.mcpServers.ai_artifacts.tools).toBeUndefined();
+
+    // Corrupt JSON must error cleanly without being overwritten
+    const corruptRaw = "{ mcpServers: broken";
+    await fs.writeFile(driver.configPath, corruptRaw, "utf8");
+    await expect(driver.install(scriptPath)).rejects.toThrow("Invalid JSON syntax");
+    await expect(fs.readFile(driver.configPath, "utf8")).resolves.toBe(corruptRaw);
+  });
+
+  it("Antigravity driver checks timeout, missing skills, outdated assets, source availability, and preserves customizations independently from .agents", async () => {
+    const agentsSkillDir = path.join(tempHome, ".agents", "skills", "create-review-artifact");
+    await fs.mkdir(agentsSkillDir, { recursive: true });
+    await fs.writeFile(
+      path.join(agentsSkillDir, "SKILL.md"),
+      "# Contaminated .agents skill that must not leak into Antigravity\n",
+      "utf8",
+    );
+
+    const driver = new AntigravityClientDriver({ userHome: tempHome });
+    const scriptPath = "D:/runtime/ai-artifacts-review-mcp.mjs";
+
+    // Obsolete files in existing work-session directory should be removed during install
+    await fs.mkdir(path.join(driver.sessionSkillDirectory, "references"), { recursive: true });
+    await fs.writeFile(
+      path.join(driver.sessionSkillDirectory, "references", "session-contract.md"),
+      "# Obsolete session file\n",
+      "utf8",
+    );
+
+    await driver.install(scriptPath);
+    await expect(
+      fs.access(path.join(driver.sessionSkillDirectory, "references", "session-contract.md")),
+    ).rejects.toThrow();
+
+    const installedSkill = await fs.readFile(path.join(driver.skillDirectory, "SKILL.md"), "utf8");
+    expect(installedSkill).not.toContain("Contaminated .agents skill");
+
+    // Customize Antigravity review skill with CRLF and verify ready + preserved across reinstall
+    const customized = installedSkill
+      .replace(/^description:.*$/m, "description: Antigravity explicit review artifacts only.")
+      .replace(
+        USER_CUSTOM_RULES_END,
+        `- Always check Antigravity rules.\n${USER_CUSTOM_RULES_END}`,
+      )
+      .replaceAll("\n", "\r\n");
+    await fs.writeFile(path.join(driver.skillDirectory, "SKILL.md"), customized, "utf8");
+    expect((await driver.check(scriptPath)).status).toBe("ready");
+
+    await driver.install(scriptPath);
+    const reinstalledSkill = await fs.readFile(path.join(driver.skillDirectory, "SKILL.md"), "utf8");
+    expect(reinstalledSkill).toContain("description: Antigravity explicit review artifacts only.");
+    expect(reinstalledSkill).toContain("- Always check Antigravity rules.");
+
+    // Mismatched runtime path or wrong command -> missing
+    expect((await driver.check("D:/other/runtime.mjs")).status).toBe("missing");
+
+    const wrongCmdCfg = await readJsonConfig(driver.configPath);
+    wrongCmdCfg.mcpServers.ai_artifacts.command = "python";
+    await writeJsonConfig(driver.configPath, wrongCmdCfg);
+    expect((await driver.check(scriptPath)).status).toBe("missing");
+    await driver.install(scriptPath);
+
+    // Missing or mismatched timeoutSeconds -> outdated with reinstall detail
+    const cfg = await readJsonConfig(driver.configPath);
+    delete cfg.mcpServers.ai_artifacts.timeoutSeconds;
+    await writeJsonConfig(driver.configPath, cfg);
+    const missingTimeout = await driver.check(scriptPath);
+    expect(missingTimeout.status).toBe("outdated");
+    expect(missingTimeout.detail).toContain("timeoutSeconds");
+
+    cfg.mcpServers.ai_artifacts.timeoutSeconds = 180;
+    await writeJsonConfig(driver.configPath, cfg);
+    expect((await driver.check(scriptPath)).status).toBe("outdated");
+
+    // Restore valid timeout, then test missing skills & outdated reference files
+    cfg.mcpServers.ai_artifacts.timeoutSeconds = ANTIGRAVITY_MCP_TIMEOUT_SECONDS;
+    await writeJsonConfig(driver.configPath, cfg);
+
+    await fs.rm(path.join(driver.skillDirectory, "SKILL.md"));
+    const missingReview = await driver.check(scriptPath);
+    expect(missingReview.status).toBe("missing");
+    expect(missingReview.detail).toContain("Antigravity skill directory is missing SKILL.md");
+    await driver.install(scriptPath);
+
+    await fs.rm(path.join(driver.sessionSkillDirectory, "SKILL.md"));
+    const missingSession = await driver.check(scriptPath);
+    expect(missingSession.status).toBe("missing");
+    expect(missingSession.detail).toContain("work-session");
+
+    await driver.install(scriptPath);
+    await fs.writeFile(
+      path.join(driver.skillDirectory, "references", "artifact-contract.md"),
+      "# Outdated reference\n",
+      "utf8",
+    );
+    expect((await driver.check(scriptPath)).status).toBe("outdated");
+
+    await driver.install(scriptPath);
+    await fs.writeFile(path.join(driver.sessionSkillDirectory, "SKILL.md"), "# Outdated session\n", "utf8");
+    expect((await driver.check(scriptPath)).status).toBe("outdated");
+
+    // Missing packaged source must error instead of reporting ready
+    await driver.install(scriptPath);
+    const missingSourceDriver = new AntigravityClientDriver({
+      userHome: tempHome,
+      sourceSkillDirectory: path.join(tempHome, "nonexistent-source"),
+    });
+    await expect(missingSourceDriver.install(scriptPath)).rejects.toThrow("unavailable or incomplete");
+    await expect(missingSourceDriver.check(scriptPath)).rejects.toThrow("unavailable or incomplete");
+  });
+
+  it("Antigravity driver uninstalls only ai_artifacts and its two skills while preserving global rules and unrelated assets", async () => {
+    const driver = new AntigravityClientDriver({ userHome: tempHome });
+    const geminiRulesDoc = path.join(tempHome, ".gemini", "GEMINI.md");
+    const globalRuleFile = path.join(tempHome, ".gemini", "config", "rules", "artifact-review-policy.md");
+    const unrelatedSkillFile = path.join(tempHome, ".gemini", "config", "skills", "unrelated-skill", "SKILL.md");
+    const managedRuntimeFile = path.join(tempHome, ".ai-artifacts", "managed", "runtime", "ai-artifacts-review-mcp.mjs");
+
+    await fs.mkdir(path.dirname(geminiRulesDoc), { recursive: true });
+    await fs.mkdir(path.dirname(globalRuleFile), { recursive: true });
+    await fs.mkdir(path.dirname(unrelatedSkillFile), { recursive: true });
+    await fs.mkdir(path.dirname(managedRuntimeFile), { recursive: true });
+    await fs.writeFile(geminiRulesDoc, "# Global GEMINI rules\n", "utf8");
+    await fs.writeFile(globalRuleFile, "# Custom artifact review policy\n", "utf8");
+    await fs.writeFile(unrelatedSkillFile, "# Keep this skill\n", "utf8");
+    await fs.writeFile(managedRuntimeFile, "// shared runtime\n", "utf8");
+    await writeJsonConfig(driver.configPath, {
+      mcpServers: {
+        keep_me: { command: "node", args: ["keep.js"] },
+      },
+    });
+
+    await driver.install(managedRuntimeFile);
+    expect((await driver.check(managedRuntimeFile)).status).toBe("ready");
+
+    const uninstalled = await driver.uninstall();
+    expect(uninstalled).toBe(true);
+    expect((await driver.check(managedRuntimeFile)).status).toBe("missing");
+    await expect(fs.access(driver.skillDirectory)).rejects.toThrow();
+    await expect(fs.access(driver.sessionSkillDirectory)).rejects.toThrow();
+
+    const remainingConfig = await readJsonConfig(driver.configPath);
+    expect(remainingConfig.mcpServers.ai_artifacts).toBeUndefined();
+    expect(remainingConfig.mcpServers.keep_me).toBeDefined();
+    await expect(fs.readFile(geminiRulesDoc, "utf8")).resolves.toBe("# Global GEMINI rules\n");
+    await expect(fs.readFile(globalRuleFile, "utf8")).resolves.toBe("# Custom artifact review policy\n");
+    await expect(fs.readFile(unrelatedSkillFile, "utf8")).resolves.toBe("# Keep this skill\n");
+    await expect(fs.readFile(managedRuntimeFile, "utf8")).resolves.toBe("// shared runtime\n");
+
+    expect(await driver.uninstall()).toBe(false);
+    expect(getAllClientDrivers().at(-1)?.id).toBe("antigravity");
+  });
 });
 
 describe("Uninstall & Base Assets Cleanup", () => {
@@ -639,6 +873,7 @@ describe("Uninstall & Base Assets Cleanup", () => {
   });
 
   afterEach(async () => {
+    vi.restoreAllMocks();
     await fs.rm(tempHome, { recursive: true, force: true }).catch(() => {});
   });
 
@@ -649,6 +884,13 @@ describe("Uninstall & Base Assets Cleanup", () => {
     const legacySkillDir = path.join(tempHome, ".agents", "skills", "create-plan-artifact");
     const claudeSkillDir = path.join(tempHome, ".claude", "skills", "create-review-artifact");
     const claudeSessionSkillDir = path.join(tempHome, ".claude", "skills", "work-session");
+    const antigravitySkillDir = path.join(tempHome, ".gemini", "config", "skills", "create-review-artifact");
+    const antigravitySessionSkillDir = path.join(tempHome, ".gemini", "config", "skills", "work-session");
+    const geminiRules = path.join(tempHome, ".gemini", "GEMINI.md");
+    const antigravityRule = path.join(tempHome, ".gemini", "config", "rules", "custom.md");
+    const antigravityMcpConfig = path.join(tempHome, ".gemini", "config", "mcp_config.json");
+    const unrelatedAntigravitySkill = path.join(tempHome, ".gemini", "config", "skills", "unrelated", "SKILL.md");
+    const retainedArtifact = path.join(tempHome, ".ai-artifacts", "artifacts", "a1", "artifact.md");
 
     await fs.mkdir(baseDir, { recursive: true });
     await fs.writeFile(path.join(baseDir, "ai-artifacts-review-mcp.mjs"), "// server", "utf8");
@@ -662,6 +904,19 @@ describe("Uninstall & Base Assets Cleanup", () => {
     await fs.writeFile(path.join(claudeSkillDir, "SKILL.md"), "# Claude Skill", "utf8");
     await fs.mkdir(claudeSessionSkillDir, { recursive: true });
     await fs.writeFile(path.join(claudeSessionSkillDir, "SKILL.md"), "# Claude Session Skill", "utf8");
+    await fs.mkdir(antigravitySkillDir, { recursive: true });
+    await fs.writeFile(path.join(antigravitySkillDir, "SKILL.md"), "# Antigravity Skill", "utf8");
+    await fs.mkdir(antigravitySessionSkillDir, { recursive: true });
+    await fs.writeFile(path.join(antigravitySessionSkillDir, "SKILL.md"), "# Antigravity Session Skill", "utf8");
+    await fs.mkdir(path.dirname(geminiRules), { recursive: true });
+    await fs.writeFile(geminiRules, "# GEMINI rules\n", "utf8");
+    await fs.mkdir(path.dirname(antigravityRule), { recursive: true });
+    await fs.writeFile(antigravityRule, "# User rule\n", "utf8");
+    await fs.writeFile(antigravityMcpConfig, '{"mcpServers":{}}\n', "utf8");
+    await fs.mkdir(path.dirname(unrelatedAntigravitySkill), { recursive: true });
+    await fs.writeFile(unrelatedAntigravitySkill, "# Keep skill\n", "utf8");
+    await fs.mkdir(path.dirname(retainedArtifact), { recursive: true });
+    await fs.writeFile(retainedArtifact, "# Keep artifact\n", "utf8");
 
     await cleanupBaseMcpServer({ userHome: tempHome });
 
@@ -671,6 +926,13 @@ describe("Uninstall & Base Assets Cleanup", () => {
     expect(await fs.stat(legacySkillDir).catch(() => null)).toBeNull();
     expect(await fs.stat(claudeSkillDir).catch(() => null)).toBeNull();
     expect(await fs.stat(claudeSessionSkillDir).catch(() => null)).toBeNull();
+    expect(await fs.stat(antigravitySkillDir).catch(() => null)).toBeNull();
+    expect(await fs.stat(antigravitySessionSkillDir).catch(() => null)).toBeNull();
+    await expect(fs.readFile(geminiRules, "utf8")).resolves.toBe("# GEMINI rules\n");
+    await expect(fs.readFile(antigravityRule, "utf8")).resolves.toBe("# User rule\n");
+    await expect(fs.readFile(antigravityMcpConfig, "utf8")).resolves.toBe('{"mcpServers":{}}\n');
+    await expect(fs.readFile(unrelatedAntigravitySkill, "utf8")).resolves.toBe("# Keep skill\n");
+    await expect(fs.readFile(retainedArtifact, "utf8")).resolves.toBe("# Keep artifact\n");
   });
 
   it("cleanupBaseMcpServer does not throw when folders do not exist", async () => {
@@ -679,22 +941,36 @@ describe("Uninstall & Base Assets Cleanup", () => {
 
   it("runUninstall executes cleanups and returns uninstalled clients", async () => {
     const originalCodexHome = process.env.CODEX_HOME;
-    process.env.CODEX_HOME = tempHome;
+    const originalAppData = process.env.APPDATA;
+    vi.spyOn(os, "homedir").mockReturnValue(tempHome);
+    process.env.CODEX_HOME = path.join(tempHome, ".codex");
+    process.env.APPDATA = path.join(tempHome, "AppData", "Roaming");
     try {
       const codexDriver = new CodexClientDriver();
       await codexDriver.install("C:/test/server.mjs");
+
+      const antigravityDriver = new AntigravityClientDriver({ userHome: tempHome });
+      await antigravityDriver.install("C:/test/server.mjs");
 
       const baseDir = path.join(tempHome, ".vscode", "ai-artifacts");
       await fs.mkdir(baseDir, { recursive: true });
 
       const result = await runUninstall({ userHome: tempHome });
       expect(result.uninstalledClients).toContain("Codex");
+      expect(result.uninstalledClients).toContain("Antigravity");
       expect(await fs.stat(baseDir).catch(() => null)).toBeNull();
+      expect(await fs.stat(antigravityDriver.skillDirectory).catch(() => null)).toBeNull();
+      expect(await fs.stat(antigravityDriver.sessionSkillDirectory).catch(() => null)).toBeNull();
     } finally {
       if (originalCodexHome === undefined) {
         delete process.env.CODEX_HOME;
       } else {
         process.env.CODEX_HOME = originalCodexHome;
+      }
+      if (originalAppData === undefined) {
+        delete process.env.APPDATA;
+      } else {
+        process.env.APPDATA = originalAppData;
       }
     }
   });

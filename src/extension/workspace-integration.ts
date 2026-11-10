@@ -7,6 +7,7 @@ import {
   type IntegrationCheck,
 } from "./global-integration-status";
 import {
+  AntigravityClientDriver,
   ClaudeClientDriver,
   ClineClientDriver,
   CodexClientDriver,
@@ -91,6 +92,7 @@ export function getClineConfigPath(context?: vscode.ExtensionContext): string {
 export function getDetectedSkillTargets(): Array<keyof InstalledSkillVersions> {
   const targets: Array<keyof InstalledSkillVersions> = ["agents"];
   if (new ClaudeClientDriver().isDetected()) targets.push("claude");
+  if (new AntigravityClientDriver().isDetected()) targets.push("antigravity");
   return targets;
 }
 
@@ -302,6 +304,26 @@ export async function getReviewSkillMarkdown(context: vscode.ExtensionContext): 
   }
 }
 
+async function verifyAndRecordAntigravityIntegration(
+  driver: McpClientDriver,
+  targetMcpScript: string,
+  userHome = os.homedir(),
+): Promise<void> {
+  const check = await driver.check(targetMcpScript);
+  if (check.status !== "ready") {
+    throw new Error(
+      `Antigravity integration verification failed after installation: ${check.detail ?? check.status}`,
+    );
+  }
+  await writeInstalledIntegrationVersion(
+    {
+      skills: { antigravity: CREATE_REVIEW_ARTIFACT_SKILL_VERSION },
+      sessionSkills: { antigravity: WORK_SESSION_SKILL_VERSION },
+    },
+    { userHome },
+  );
+}
+
 // 1. All detected
 export async function installAllDetectedIntegrations(
   context: vscode.ExtensionContext,
@@ -333,6 +355,8 @@ export async function installAllDetectedIntegrations(
           },
           { userHome: os.homedir() },
         );
+      } else if (driver.id === "antigravity") {
+        await verifyAndRecordAntigravityIntegration(driver, paths.targetMcpScript);
       }
     }
   }
@@ -429,6 +453,19 @@ export async function installClineIntegration(
   await clineDriver.install(paths.targetMcpScript);
 }
 
+// 8. Antigravity
+export async function installAntigravityIntegration(
+  context: vscode.ExtensionContext,
+): Promise<void> {
+  const { paths } = await setupBaseMcpServer(context);
+  const antigravityDriver = new AntigravityClientDriver({
+    sourceSkillDirectory: paths.sourceSkill,
+    sourceSessionSkillDirectory: paths.sourceSessionSkill,
+  });
+  await antigravityDriver.install(paths.targetMcpScript);
+  await verifyAndRecordAntigravityIntegration(antigravityDriver, paths.targetMcpScript);
+}
+
 // 8. Uninstall all detected integrations
 export async function uninstallAllDetectedIntegrations(
   context?: vscode.ExtensionContext,
@@ -489,6 +526,11 @@ export async function uninstallClineIntegration(
 ): Promise<boolean> {
   const clineConfigPath = getClineConfigPath(context);
   const driver = new ClineClientDriver(clineConfigPath);
+  return driver.uninstall();
+}
+
+export async function uninstallAntigravityIntegration(): Promise<boolean> {
+  const driver = new AntigravityClientDriver();
   return driver.uninstall();
 }
 
