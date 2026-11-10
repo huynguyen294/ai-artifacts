@@ -14,6 +14,335 @@ Minor typos, formatting fixes, or cosmetic wording adjustments that do not chang
 
 Each entry includes the date, category, summary of changes, rationale, and affected components or files.
 
+## 2026-11-09 — Minimal AI-authored comment and Review guidance
+
+- Added a short route in `create-review-artifact` and one on-demand `references/ai-feedback.md` with two adjacent actions: generate AI comments only, or generate AI comments and submit that batch as `revise`. The reviewer preserves the existing waiter and does not enter the create/advance/wait flow or process other people's saved feedback.
+- Scoped the direct-file exception to `comments.json` and the `revise` submission. The reference documents current manifest bindings, the existing general-feedback shape, exact file-byte hashes and atomic UTF-8 writes. Comment-only stops before submission; comment-and-submit generates its own batch. User/AI conflict handling and standalone submission of others' comments are excluded.
+- Updated only the conflicting ownership statements and explicit trigger guidance in the artifact contract, Session skill, contributor instructions, architecture, component ownership and philosophy. Added the reference asset and official description to the installer's existing static lists so the reference is actually installed and its description is not mistaken for user customization. MCP, Artifact Store, schemas, installer algorithms and version counters are unchanged.
+- Validation: typecheck, production build and full tests passed (54 files, 775 passed, 3 skipped). An isolated fixture used the reference's JSON comment template, verified Store loading and a pending waiter for comment-only, then verified delivery of a new AI batch and a valid Review token after direct submission. Installation tests verified the new reference is copied.
+- Both skill audits passed with zero warnings. The Python validator could not run because PyYAML is absent; equivalent local YAML/frontmatter/name/placeholder checks passed. No installed integration or actual user artifact was modified; real IDE/agent UI behavior was not exercised.
+
+## 2026-11-09 — Preserve waiters across non-waiting round advances
+
+- Detached active waiter ownership from the attachment round. Both waiting tools validate the current manifest, Markdown, comments and submission already read from disk; Review tokens now bind the validated result's round and hashes. `expectedReviewRound` remains an attachment precondition, and writes retain their existing expected-round/token/state checks.
+- Allowed `advance_and_wait_for_artifact` with `noWait: true` to commit while preserving an existing waiter. Waiting advances and duplicate waits still reject an existing waiter in the same MCP process. The UUID Session parameter boundary, commit result, token consumption, rollback and routing behavior are unchanged.
+- Reused the existing artifact update lock so wait checks stay pending while lifecycle files are replaced. Deleted artifact directories still produce non-retryable `ARTIFACT_NOT_FOUND`; filesystem/snapshot errors outside an update are not silently ignored. No snapshot reload, notification protocol or new lockfile was added to the product flow.
+- Clarified the existing Session direct-update skill flow without adding an inspect branch or changing takeover: inspection for a non-waiting update need not detach a waiter. Updated README, architecture, philosophy, contributor invariants and unreleased release notes. Kept package/MCP/skill versions and schemas unchanged.
+- Consolidated the agent guidance in `create-review-artifact` and its contract: removed repeated explanations and lockfile internals, and kept the Work Session skill/reference unchanged. Runtime lock behavior remains documented in architecture; this wording cleanup does not change MCP behavior.
+- Wording cleanup validation: 27 skill/release contract tests passed; both Codex skill audits passed with zero warnings. The Python skill validator could not run because PyYAML is absent; equivalent local YAML/frontmatter/name/placeholder checks passed using js-yaml. Net added wording across the four skill/reference files was reduced from 278 to 50 words relative to the pre-feature version.
+- Added 16 regression cases, including both waiter entry points, sequential updates from another MCP process, current-round Review token usability/replay, terminal decisions, binding validation, commit/rollback lock windows, deletion and cancellation/takeover. A test-only stderr readiness marker makes active-waiter deletion tests deterministic; it is disabled outside the opted-in test process.
+- Validation: `npm.cmd run check`, `npm.cmd test` (54 files, 773 passed, 3 skipped), and `npm.cmd run build` passed. The active-waiter deletion regression also passed 20 consecutive runs after synchronizing actual attachment.
+- Runtime boundary: tests exercised the rebuilt MCP and Extension Store using isolated temporary artifact fixtures. Real agent/Extension Host manual acceptance, installed integration updates and restarting current MCP processes were not performed. Existing user artifacts were not touched. Concurrent advance/submit, multiple writers and stale-lock recovery remain outside this change.
+
+## 2026-11-08 — Non-waiting direct updates within Work Sessions
+
+- Added optional boolean `noWait` to `advance_and_wait_for_artifact`, defaulting to `false`. The non-waiting mode requires a UUID `artifactConversationId` before token claim or mutation, reuses the existing state-bound transaction and token consumption, and returns the committed round/hash and `waited: false` without registering a waiter or returning review feedback/a new token. The Session ID is a caller-supplied parameter boundary, not verification of Join state, registry existence, or membership.
+- Kept the waiting result unchanged, including complete validated comments and decision directives. Non-waiting post-commit recovery directs inspection of the same handle rather than replaying or automatically waiting. Routing and artifact storage schemas are unchanged.
+- Scoped the Session skill's default to explicit chat updates of existing Session artifacts, with an explicit request to wait taking precedence. Creation always waits; standalone requests and review-feedback processing retain their existing flow. The artifact skill delegates mode selection, distinguishes commit acknowledgements from review decisions, and permits only user-requested checklist/progress updates within this exception. Frontmatter, metadata, and customization markers are preserved.
+- Synchronized both skill references, README, architecture, philosophy, contributor invariants, and component responsibilities. Kept MCP 12, artifact skill 4, and Work Session skill 1 for the same unreleased development cycle. Installed integrations and global user artifacts were not modified.
+- Validation: typecheck, production build, and full suite passed (54 files, 757 passed, 3 skipped); focused lifecycle/skill tests passed (121 passed, 1 skipped). Both skill audits passed without warnings. The Python skill validator could not run because PyYAML is absent; equivalent frontmatter/name/placeholder/reference checks passed using local js-yaml.
+- Runtime boundary: subprocess tests exercised the rebuilt MCP through two non-waiting updates, Extension Store reloads, and later review. Real agent continuation and Extension Host UI were not exercised; this chat's loaded integration still exposes the pre-change tool schema without `noWait`.
+
+## 2026-11-08 — Rename MCP server entrypoint to remove obsolete -v4 suffix
+
+- Renamed `src/integration/artifact-review-mcp-v4.ts` to `src/integration/artifact-review-mcp.ts` to reflect the active schema-v6 and numeric MCP version 12 architecture without misleading version-specific source suffixes.
+- Updated the `build:integration` esbuild script in `package.json`, the literal source verification in `test/artifact-link-contract.test.ts`, and component ownership documentation across `docs/INSTRUCTION.md` and `docs/COMPONENTS.md`.
+- No runtime behavior, bundled output path (`dist/integration/codex-artifacts-review-mcp.mjs`), installed managed runtime path (`~/.ai-artifacts/managed/runtime/ai-artifacts-review-mcp.mjs`), or MCP protocol contracts were changed.
+
+## 2026-11-08 — Agent-directed Session layout organization
+
+- Allowed the Work Session skill to move and reorder existing Session artifacts by directly editing `layout.json` when the user requests organization. Replaced the blanket layout-edit prohibition while retaining the boundaries for Session metadata, membership files, and managed artifact lifecycle files.
+- Documented deriving the exact layout location from the returned `instructionsPath`, current-layout reads, schema-v1 zone arrays, preservation of unrelated placement, missing-layout initialization from a fresh catalog, and a Join-only refresh after saving. No MCP response fields, tools, runtime code, or storage schemas changed.
+- Kept membership authoritative, Session recency unchanged by layout edits, and local Archived placement separate from global Archive state. User and agent writes use last-write-wins without conflict handling.
+- Synchronized the Session skill reference, existing skill wording assertion, architecture, and contributor instructions. Kept Work Session skill version 1 for the same unreleased 1.2.0 development cycle; installed global skills and user Session files were not modified.
+- Validation: 11 focused skill/context tests passed; the Codex skill audit passed with zero warnings, and local frontmatter/reference checks passed. The skill-creator validator could not run because PyYAML is absent. No live AI-client layout-edit behavior was tested.
+
+## 2026-11-08 — Normalize the first Work Session skill release to version 1
+
+- Set `WORK_SESSION_SKILL_VERSION` to 1 and synchronized its contract assertion plus current README, architecture, philosophy, and release notes in the working plan. Work Session skill versions 2/3 were development-only values, not published releases; earlier entries remain historical records.
+- Follow the release-based versioning rule in `AGENTS.md`: use the release changelog as the released baseline and keep one asset version throughout an unreleased development cycle. MCP remains 12 and the artifact skill remains 4 for the planned extension 1.2.0 release; the package version bump is deferred.
+- Existing receipt comparison remains unchanged: absent/invalid Session skill versions require installation, version 1 is current, and development receipts at 2/3 require reinstalling the matching version 1 assets. No installed receipts, global skill files, MCP runtime behavior, or file-dialog/editor URI behavior were changed.
+- Validation after normalization: typecheck, production build, and the full test suite passed (52 files, 711 passed, 3 skipped). This is automated verification, not live AI-client installation evidence.
+
+## 2026-11-08 — Session skill freshness and canonical documentation corrections
+
+- Clarified approved Session skill precedence: latest/recent/current-content/overview requests refresh the catalog before artifact selection even when an older exact path is known; reuse fresh context already returned for the same request. Otherwise known exact artifacts are read directly from their current Markdown paths.
+- Successful non-null Session results replace the active catalog instead of merging snapshots; retained artifact review handles remain separate. Updated the Session reference and existing wording checks together. No new tool, background watcher, or conflict-handling mechanism was introduced.
+- Incremented only `WORK_SESSION_SKILL_VERSION` from 2 to 3 so installed Session skills can be detected as stale. MCP remains 12; the artifact skill remains 4. Synchronized current version descriptions in README and canonical docs; earlier entries and frozen planning payloads remain historical records.
+- Corrected current docs for two-skill ownership, standalone/default/New arguments and success-only recovery, Instructions Markdown storage, lock-free Session writes, explicit migration, preservation of empty v2 Sessions, window routing without manifest workspace ownership, and per-skill/per-target receipts/customization boundaries.
+- Replaced obsolete conversation drawer/New-Join prompt instructions with direct artifact Inspect and Start/Sessions navigation. Removed the provider-wide FIFO claim. Corrected Proceed by kind and Save without `nextAction` to match current runtime contracts.
+- This entry covers the approved skill improvements and documentation audit corrections. Concurrent Phase 5 implementation is outside this change; these documentation corrections do not claim its completion or runtime validation.
+- Validation: typecheck and build passed; 113 focused tests passed; the final full-suite run passed 702 tests with 3 skipped. The first full run had one waiter-deletion failure that passed in isolation and in the full rerun; no unrelated runtime fix was made. Session skill audit passed with zero warnings, and Markdown link/fence checks passed. The Python skill validator could not run because PyYAML is absent; no real AI-client behavior validation is claimed.
+
+## 2026-11-08 — Phase 4.5 Stage 3 implementation: Two-skill installer, independent version receipts & cleanup
+
+- Extended Base Integration installer (`src/extension/workspace-integration.ts`): deploys both `skills/create-review-artifact` and `skills/work-session` to `.agents/skills/`; validates all packaged assets before replacing targets.
+- Enforced customization boundaries: `create-review-artifact` preserves user customizations (`description:` and `USER CUSTOM RULES`) via `replaceSkillDirectory`; `work-session` installs official assets atomically via `replaceOfficialSkillDirectory` without customization merge.
+- Added Claude integration support for two skills (`src/extension/mcp-clients/claude-client.ts`): deploys and verifies both skills under `.claude/skills/`, ensuring relative sibling links resolve correctly.
+- Implemented independent version receipts: records `skills` (version 4) and `sessionSkills` (version 2) independently per target (`agents` and `claude`) in `~/.ai-artifacts/managed/integration-version.json`.
+- Enhanced upgrade notification (`src/extension/upgrade-notification.ts`, `src/extension/extension.ts`): detects stale `sessionSkills` independently from `skills` and MCP runtime when upgrading from older installations; alerts user to run installer.
+- Enhanced verification report (`src/extension/integration-verification.ts`, `src/extension/workspace-integration.ts`): reports separate status for "Review skill" and "Work session skill", providing granular error details when base assets are missing or outdated.
+- Synchronized canonical docs and release contract (`README.md`, `docs/ARCHITECTURE.md`, `docs/PHILOSOPHY.md`, `docs/COMPONENTS.md`, `docs/INSTRUCTION.md`, `test/release-contract.test.ts`): normalized version constants (`MCP_VERSION = 12`, `SKILL_VERSION = 4`, `WORK_SESSION_SKILL_VERSION = 2`), removed legacy `ArtifactConnectDialog` references, documented 6 MCP lifecycle tools (including `join_session`), and verified release contract assertions.
+- Updated cleanup routine (`src/extension/mcp-clients/base-cleanup.ts`): uninstalls both `create-review-artifact` and `work-session` across `.agents/skills/` and `.claude/skills/` without touching unrelated user skills or review data.
+- Updated integration verification and test suites (`test/workspace-integration.test.ts`, `test/mcp-client-drivers.test.ts`, `test/upgrade-notification.test.ts`, `test/integration-verification.test.ts`, `test/release-contract.test.ts`): validated full lifecycle installation, partial install state handling, and clean uninstallation.
+
+## 2026-11-08 — Phase 4.5 Stage 2 implementation: Start Work Session, direct Inspect, two skills split & webview tests
+
+- Implemented `startWorkSession` flow (`src/extension/artifact-review-provider.ts`, `src/webview/ReviewApp.tsx`): enables promoting standalone artifacts into a multi-artifact Work Session; prompts native input box prefilled with artifact title, creates session, registers artifact into Working zone, copies 3-line session connect prompt to clipboard, opens Session Manager tab, and safely rolls back newly created session on failure.
+- Streamlined direct Inspect flow: removed `ArtifactConnectDialog.tsx` modal; clicking `Inspect artifact` directly copies exact 2-line inspect prompt template from `src/shared/artifact-connect-prompt.ts`.
+- Enhanced Review App toolbar to handle 4 session states: unsupported MCP (< 12) disabled, loading disabled, zero sessions rendering "Start a work session" button with helper text, and 1+ sessions rendering "Sessions" toggle with count badge.
+- Packaged frozen skill assets: split into two independent skills — standalone review lifecycle `skills/create-review-artifact/` (skill version 4) and multi-agent coordination `skills/work-session/` (session skill version 2), matching 100% SHA-256 LF hashes from `phase-4.5-wording/manifest.json`.
+- Added Webview component test suite (`test/review-app.test.tsx`) asserting loading state, 4 toolbar session states, direct inspect button copied feedback, and absence of modal dialogs.
+- Fixed `tsconfig.json` `include` list to add `"test/**/*.tsx"`, ensuring all React webview test suites are strictly typechecked by `npm run check`.
+- Updated dev sandbox harness (`dev/main.tsx`) to mock `startWorkSession` and 2-line `copyArtifactConnectPrompt`.
+- Synchronized package branding in `package.json` and `README.md` (`displayName`, 274-character description preserving all supported AI clients, Contents sub-navigation).
+
+## 2026-11-08 — Phase 5 implementation: List Management, Archiving, Grid, Edit Metadata, Export & Cleanup
+
+- Implemented Chặng 1 & 2: schema v1 UI state (`artifact-ui-state.json`, `session-ui-state.json`) with atomic read/write; single-artifact deletion coordinator and session deletion preserving artifacts; context menus for Recent Artifacts and Sessions views; Pin/Archive sorting; Search Archived in Quick Pick; Restore-only header for archived artifacts and sessions; and automatic cleanup of sessions archived for >= 30 days during extension activation.
+- Hardened Chặng 1 & 2 findings (F1–F6 & 2 Lows): pre-validation of metadata schema v2 and exact ID in `deleteSession`; retention skips corrupt sessions; tree item normalizer for right-click context menus; reducer-backed `restoringSession` reset on error/patch; deletion commit point at staging rename; canonical root parent and regular file checks preventing symlink traverse; terminal deleted state message on ENOENT; scoped `artifactUiState` watcher events; diagnostic warnings replacing silent swallows.
+- Implemented Chặng 3:
+  - Responsive container-query grid layout for Working zone (1 col < 800px; 2 cols 800-1099px closed / 1 col open; 3 cols 1100px+ closed / 2 cols open) and fixed 2-column grid for side panel References/Archived zones.
+  - In-session search input and kind filter selector across all zones; distinct kinds dynamically computed; helper texts for Working, References, Archived, and Instructions blocks.
+  - Two-line description snippet rendered on artifact cards from Markdown plain text.
+  - ReviewApp header order (`ROUND {round} · {kind}`) with native inline edit pencil buttons for renaming and changing artifact type (fixed kinds + discovered open kinds + Create new type with lowercase hyphenated validation); hidden when globally archived.
+  - MCP review submission processing re-reads latest on-disk manifest to immediately reflect dynamic kind updates in `nextAction` (`execute-approved-plan` for plans vs `approved` for non-plans) across both wait flows.
+  - Work Session ZIP export via `yazl`: exports root `Instructions.md` and numbered artifact Markdown files in `Working/`, `References/`, and `Archived/` folders to user-selected archive.
+- Added comprehensive test suites: `test/work-session-export.test.ts`, `test/artifact-metadata-command.test.ts`, `test/session-app.test.tsx` (cards/grid/filter), `test/artifact-store.test.ts` (`updateMetadata`), and `test/review-wait-mcp.test.ts` (dynamic kind re-read during wait).
+
+## 2026-11-08 — Phase 5 artifact metadata editing plan
+
+- Extended Phase 5 Step 6 / Stage 3 with Review App header order (`ROUND` before type), native rename and type selection, and creation of open kinds using the existing artifact kind schema. No separate type registry is planned.
+- Specified extension-owned patches limited to artifact `title` and `kind`, atomic writes with last-write-wins, unchanged `updatedAt`/review round/Markdown/comments/memberships, scoped metadata updates, and hidden edit controls in the globally archived header.
+- Added the accompanying MCP result change: re-read and validate the same artifact/round manifest when processing a submission, using its current kind for both the returned kind and existing Proceed action policy across both wait flows. No new submission field, waiter restart, ownership change, or replay of historical approval.
+- Detailed affected files, picker wording, implementation sequence, regression checks, and completion criteria; synchronized the main roadmap and notes. Planning-only update: no source implementation, runtime/global-data changes, or feature test results claimed. MCP Resources/Composer Mentions remain outside this addition.
+
+## 2026-11-08 — Phase 4.5 Stage 2 README and branding specification
+
+- Added `plans/work-session-artifact/phase-4.5-wording/readme-branding.md` with approved verbatim display name, package description retaining supported clients, README introduction, Work Session GIF caption, and Features & Usage contents structure.
+- Scheduled this documentation/metadata work in Stage 2 after its UI/skill steps; Stage 3 retains final installer/version documentation verification. Existing skill payloads and hashes are unchanged.
+- Recorded Stage 1 completion as owner-confirmed; no implementation review, tests, runtime validation, README/package edits, or GIF creation was performed in this planning update.
+
+## 2026-11-07 — Phase 4.5 implementation guide and frozen skill wording
+
+- Added `plans/work-session-artifact/plan-phase-4.5.md`: six steps in three stages for standalone artifacts, explicit Session creation/reuse, direct artifact Inspect, Start Session with open/copy, separate skills, independent version receipts, and validation. Phase 5 remains separate and follows the 4.5 baseline.
+- Added six complete proposed skill assets under `phase-4.5-wording/`, an exact embedded-agent/UI text payload, and a normalized SHA-256 manifest. Future implementation must copy this wording rather than paraphrase it; supported installed artifact customization remains the sole exception.
+- Scoped artifact editorial changes to the previously reviewed deduplication/reorganization. Session extraction and standalone semantics are listed separately from behavior-preserving editorial work. Review/feedback/token/Proceed/reconnect rules remain protected.
+- Planned artifact skill version 7 and Work Session skill version 1, with independent per-target receipts. Existing artifact customization is retained; Session skill uses official assets without customization or a generalized customization framework. MCP stays at the reserved unreleased version 12.
+- Updated the main roadmap, notes, the Phase 4 successor notice, and Phase 5 dependency. Documentation/wording proposals only; no application source, live integrations, runtime or global data was changed, and no implementation feature tests are claimed by this entry.
+- Planning validation: both skill audits passed with zero warnings; seven frozen-content hashes, three unchanged live skill baselines, sixty relative links and twenty-three verbatim protected artifact clauses passed local checks. The Python skill validator could not run because PyYAML is absent; equivalent structural checks passed, without claiming that validator passed. Diff/whitespace checks passed; runtime/AI client behavior remains unverified.
+
+## 2026-11-07 — Phase 4 Stage 3 implementation & review hardening: Instructions UI, Connect manager, native kind filters, Skill v6 bump and docs
+
+- Implemented Instructions UI integration in Session Manager (`src/webview/SessionApp.tsx`): added "Open Markdown File" button to open `instructions.md` in external editor, scoped event synchronizer to handle instructions updates, and error banner dismiss.
+- Added session connect prompt generator (`src/shared/session-connect-prompt.ts`) and "Connect" button in Session header: styled with synchronized chain link SVG icon, copying a single-call `join_session(sessionId)` directive for AI assistants.
+- Added 8px left margin to the `＋` Add Artifact button next to `Working` in Session Manager.
+- Hardened `openSessionInstructionsFile` in `src/extension/work-session-provider.ts`: injected safe `openTextDocument` using VS Code `showTextDocument` directly instead of `ArtifactReviewOpenCoordinator.open` (which rejected non-artifact Markdown files), adding session verification, symlink check, and atomic file creation `{ flag: "wx", mode: 0o600 }`.
+- Decoupled session creation from document opening in `src/extension/session-create-command.ts`: failure to open the newly created session editor warns the user but returns the created `sessionId`.
+- Enhanced `agentPlus.addSessionArtifact` in `src/extension/session-artifact-add-command.ts`: formatted kind labels in quick pick item descriptions, enabled dynamic query filtering with `alwaysShow: true`, and added pre-addition validation with `validateArtifactReviewTarget`.
+- Hardened Recent Artifacts kind filtering in `src/extension/artifact-kind-filter-command.ts`: exported `ArtifactKindFilter` and type guard `isArtifactKindFilter` to validate filter inputs before propagation.
+- Updated Codex MCP config (`src/extension/mcp-config.ts`): registered `[mcp_servers.ai_artifacts.tools.join_session]` in tool definitions and added `join_session` to `requiredTools`.
+- Aligned `buildArtifactConnectPrompt` for new sessions (`src/shared/artifact-connect-prompt.ts`): prompts agent to call `inspect_artifact_review` with `takeover: true`, omits prior `artifactConversationId`, and instructs updating active session with returned `session.sessionId`.
+- Skill contract updates (`skills/create-review-artifact/SKILL.md` & `references/artifact-contract.md`): declared `CONVERSATION_NOT_FOUND` as non-retryable, specified response normalization across entry tools, distinguished fresh execution directives from historical saved submissions, removed deprecated `instructions` field from schema-v2 metadata docs, and restored explicit `` `kind: "implementation-plan"` `` while retaining flexible fixed/open kinds.
+- Unified artifact kind formatting: replaced raw slug display across `ReviewApp`, `SessionApp`, sidebar items, and search quick pick with `formatArtifactKindLabel`.
+- Added native kind filter to Recent Artifacts tree view (`agentPlus.filterRecentArtifacts` in `src/extension/artifact-kind-filter-command.ts`): provides All Types, 10 fixed kinds, and Other, applying filter before recency sort and 20 cap; propagated active filter to `agentPlus.searchArtifact`.
+- Switched Recent Artifacts view to `vscode.window.createTreeView` to dynamically render active filter indicator in view description (`Type: <Label>`).
+- Audited and updated all product-owned UI wording, titles, tooltips, and aria-labels to English across Review App, Session Manager, Connect dialog, Tree Views, and Quick Picks.
+- Incremented numeric `SKILL_VERSION` from 5 to 6 in `src/shared/contracts.ts` (keeping `MCP_VERSION = 12`); appended official Skill v6 description to `OFFICIAL_SKILL_DESCRIPTIONS` in `src/extension/mcp-clients/skill-helper.ts`.
+- Synchronized canonical documentation (`README.md`, `docs/INSTRUCTION.md`, `docs/PHILOSOPHY.md`, `docs/ARCHITECTURE.md`, `docs/COMPONENTS.md`) and updated release contract assertions in `test/release-contract.test.ts`.
+
+## 2026-11-07 — Phase 4 Stage 2 implementation: join_session, inspect core, session context & proceed directives
+
+- Implemented MCP tool 6 `join_session` (`src/integration/artifact-review-mcp-v4.ts`): supports join-only (returning `{ session: SessionContext }` read-only without touching waiters or seeding `session-types.json`) and join+artifact (returning `{ session, inspection }` in a single tool call sharing `executeInspectCore`).
+- Extracted shared `executeInspectCore`: unified entry orchestration for `inspect_artifact_review` and `join_session`, including exact artifact handles, preflights, window routing, and selective takeover.
+- Wrapped `readArtifactConnection` and session context resolution in the session/membership rollback boundary before connection commit, ensuring atomic cleanup on failure.
+- Deferred in-memory token grants (`grantInspectedRound`) to after successful session commit, context resolution, and connection read, preventing token leaks on mid-flight failures.
+- Enforced strict `join_session` input parsing: `takeover` must be a boolean; rejected `connection` when `intent !== "reconnect"` with `INVALID_ARTIFACT_INPUT`.
+- Standardized review proceed directives: `isPlanProceedKind` emits `{ type: "execute-approved-plan", instruction: "Execute the approved plan immediately in this same turn..." }` for `plan` and `implementation-plan`; emits `{ type: "approved", instruction: "The user has approved this artifact. Acknowledge the approval and conclude the review. Do not automatically implement code or start another review round." }` for all non-plan kinds (`idea`, `checklist`, `spec`, `workaround`, etc.).
+- Kept numeric `MCP_VERSION = 12` and deferred client driver/installer updates to Stage 3.
+- Added comprehensive regression tests in `test/mcp-join-session.test.ts` (14/14 tests passed) and `test/session-type-registry.test.ts` (7/7 tests passed).
+- Validation: full test suite passed (44 files, 626 passed, 3 skipped), `npm run check` clean, and all build bundles cleanly generated.
+
+## 2026-11-07 — Detailed Phase 5 guide and confirmed UI/cleanup decisions
+
+- Added `plans/work-session-artifact/plan-phase-5.md`: eight implementation steps in three reviewable stages covering separate UI state, shared deletion primitives, sidebar menus/search, Archived/Restore headers, archived Session cleanup, grid/cards/filter/helper text, human-readable ZIP export, and validation.
+- Replaced the masonry proposal with ordered row-flow grid: Working uses 3/2/1 columns with the panel closed and 2/1/1 with it open; References/Archived remain two columns. Recorded modest equal side-panel padding and reuse of existing array-based menu ordering.
+- Confirmed Archived editors hide other header actions and show a primary Restore button; Module is added only to the fresh types seed, without backfilling existing files or changing Conversation as the default assignment.
+- Verified retention already calls `cleanupStaleConversations` to prune stale memberships/layout while preserving empty v2 Sessions. Planned reuse of that scanner and extraction of single-target deletion, keeping expiry selection in retention and reference cleanup best-effort.
+- Synchronized the main roadmap, notes and the Phase 4 out-of-scope reference. Documentation only: no implementation, installed runtime, global data or Phase 4 progress was changed. No automated feature tests or Extension Host validation were run for this planning update.
+
+## 2026-11-07 — Refined Phase 4 Stage 2–3 guide after source review
+
+- Reviewed current MCP entry/commit/recovery paths, shared context/type lookup, provider events, existing prompt/skill assumptions and recent manager UI edits without changing application code.
+- Added review checkpoints within the existing seven steps: mechanical inspect extraction before Join, frozen flat/nested response shapes, context resolution inside existing rollback boundaries before connection commits, entry-aware recovery and read-only context type lookup. These are pending implementation guidance, not claims that Join now exists.
+- Detailed mixed Instructions event handling, typed host actions, prompt routing, manual Session/artifact Add flows, kind filter propagation from View all to Search, and skill normalization/fresh-decision handling while preserving user-owned chip/layout changes.
+- Kept MCP 12, Stage 1 progress and all Phase 5 work separate. No ownership/transaction framework, locks, conflict handling or new migration was added to scope.
+- Baseline verification: 8 existing test suites passed (145 tests passed, 1 skipped); no new runtime, Extension Host or AI client validation. Updated only `plans/work-session-artifact/plan-phase-4.md`, `plan.md`, `note.md`, and this documentation log; the user's separate Stage 1 review remains unchanged.
+
+## 2026-11-07 — Phase 4 Stage 1 correction: MCP 12 and readable legacy Session metadata
+
+- Restored numeric MCP_VERSION and the installed Work Session gate from the internal development bump 13 to the reserved, unreleased feature version 12. Provider/sidebar messages, assertions and gate fixtures now use 12, with 11 as the unsupported version. Skill remains 5; its planned update is separate.
+- Kept strict Session v2 metadata validation while accepting an optional legacy `instructions` string, including empty and non-empty values. Existing Sessions are no longer rejected solely because that known field is present; unknown fields and invalid types remain invalid.
+- Effective Instructions still come only from `instructions.md` (empty if missing). Reads/listing neither migrate nor rewrite legacy metadata. New metadata writes omit inline instructions; Instructions-only saves leave metadata untouched. No fallback, dual-write or global user-data conversion was added.
+- Added isolated regression coverage for legacy metadata listing, absent Markdown, Markdown precedence, read-only behavior, and title/type writers omitting the old field while preserving Markdown and recency. Initial focused validation: 5 files / 93 tests passed. Final validation results are recorded in the Phase 4 correction checkpoint.
+- Final correction validation: typecheck and all build targets passed; full test suite passed (43 files, 611 tests passed, 3 skipped). The release-contract check remains intact; historical versioned release notes were not changed. No real installed runtime, global Session data or Extension Host UI was modified or validated by these checks.
+- Updated current README/architecture/project instructions/philosophy and roadmap/notes. The prior Stage 1 completion remains recorded; the correction does not implement Stage 2/3 or modify the user's separate review findings. Historical release notes and earlier planning records remain history; this entry supersedes their planned MCP 13 target and rejection of inline metadata.
+
+## 2026-11-07 — Place Session Add actions in Phase 4 and More/Export in Phase 5
+
+- Assigned manual empty Session creation from the Sessions view title and existing-artifact selection from Working to Phase 4 Step 5/Stage 3, reusing completed Stage 1 storage and membership APIs. This supersedes the earlier no-manual-Session restriction without reopening Stage 1.
+- Kept manager More → Export ZIP/Archive/Delete in Phase 5, following the original phase allocation. The agreed human-readable ZIP layout does not add export work to Phase 4.
+- Synchronized stale plan headers/notes with the recorded completion of Phase 4 Stage 1. MCP 13 exists in source; Skill remains 5 pending the planned bump to 6. No new tests or runtime validation are claimed by this documentation edit.
+- Updated `plans/work-session-artifact/plan-phase-4.md`, `plan.md`, and `note.md`; no application code or user-owned review notes were modified.
+
+## 2026-11-07 — Human-readable Session ZIP export format
+
+- Recorded the agreed export format: a Session-title root folder, `Instructions.md`, and Working/References/Archived folders containing all artifact Markdown files, numbered in each zone's layout order and named from artifact titles with valid filesystem characters.
+- Export preserves Markdown contents and excludes metadata JSON, memberships, lifecycle manifests, comments/submissions/review state and artifact IDs in filenames. This is a document package for human readers, with no lifecycle import/restore requirement or state/recency mutation.
+- Planning only; updated `plans/work-session-artifact/plan.md` and `plans/work-session-artifact/note.md`. No application code or in-progress implementation was modified by this update.
+
+## 2026-11-07 — Detailed Phase 4 implementation guide
+
+- Extended planned Step 5 to audit all app, dialog, Tree View and native UI wording for remaining product-owned Vietnamese strings and convert them to English while preserving user-authored titles, types and content. Confirmed remaining strings in ArtifactConnectDialog, ReviewApp Session tooltips and Recent Artifacts sidebar states.
+- Corrected planned Connect descriptions: New starts a work session from the same artifact; Join inspects it and continues one of its existing Sessions with that Session's full metadata/Instructions/catalog context. This does not transfer another AI chat transcript or merely link an artifact. Wording changes are planned with Phase 4 Connect implementation, not shipped by this documentation edit.
+- Added `plans/work-session-artifact/plan-phase-4.md` with seven pending steps in three reviewable stages: Instructions/shared context and kinds; MCP Join and Proceed contracts; UI Connect/filter, skill and validation. This is planning only, with no application code or installed asset changes.
+- Specified the final unpublished Session v2 format: metadata without inline instructions, a primary `instructions.md` file, raw Markdown textarea/Save/Open, and direct producer/consumer/fixture updates. Superseded the earlier inline-JSON fallback proposal; no runtime fallback, dual-write, schema v3 or read-time migration is planned.
+- Defined a new `join_session` tool for Session-only context or optional artifact inspection through the shared inspect core in one call. Create/inspect also return context; catalog paths support selective filesystem reads without reference takeover or replaying prior approval.
+- Recorded ten fixed artifact kinds plus open kinds, common labels, Recent All Types/fixed/Other filtering, execute-approved-plan for the two plan kinds, and approved for all other kinds while preserving complete feedback comments.
+- Planned MCP 13 / Skill 6 from the verified source baseline 12 / 5, preserving artifact schema 6, Session schema 2 and installed-file checks. Those target versions are not yet implemented.
+- Synchronized the roadmap and notes; Phase 5 UI organization and lifecycle controls remain separate. Validation of this documentation update is limited to document consistency, local links and diff checks, not runtime or implementation test results.
+
+## 2026-11-07 — Planned Phase 5 sidebar menus, Pin/Archive and archived Session cleanup
+
+- Assigned Recent Artifacts and Sessions item context menus, Pin/Unpin, Archive, Delete, and Search-to-editor Restore to Phase 5. Default-list context menus omit Restore because archived items are hidden there. Reuse the Phase 4 Connect and Instructions actions.
+- Planned full sidebar item tooltips: artifact title plus kind label for Recent Artifacts, Session title plus Session type label for Sessions. Tooltip values are not truncated when the visible tree row is shortened.
+- Search Artifacts and Search Sessions include existing archived items with an Archived description label. Opening a result does not restore it or reset cleanup eligibility. Archived artifacts show Restore in Review App; archived Sessions show Restore in Session Manager. Restore clears `archivedAt`, preserves pin state, and refreshes sidebar visibility under the current filter. No Restore button in Quick Pick or separate Archived management page is required.
+- Planned extension-owned `artifact-ui-state.json` and `session-ui-state.json` beside their respective entities, with independent schema version 1, optional `pinned` (default false), and optional `archivedAt`. These do not modify strict MCP artifact/session metadata or require a MCP/schema bump solely for UI state.
+- Pinned items sort first within the existing list limits; archive hides items regardless of pin state without changing membership, layout, or recency. Global artifact archive is separate from a Session's Archived layout zone.
+- Planned activation-time deletion of Sessions archived for at least 30 days, measured from `archivedAt`; pin does not exempt cleanup. Deleting a Session removes only its own data and memberships, never the shared artifacts. Other Session cleanup policies remain deferred.
+- Artifact Delete is global and removes referencing memberships/layout entries. Existing artifact retention remains based on manifest `updatedAt` and its configured retention period, with no pin/archive exemption.
+- Planning only; no runtime changes. Affected files: `plans/work-session-artifact/plan.md` and `plans/work-session-artifact/note.md`.
+
+## 2026-11-07 — Planned Instructions Markdown storage and Phase 5 helper text
+
+- Recorded the Phase 4 decision to use a real `instructions.md` file as the primary instructions source, with the existing textarea and an Open Markdown file action. The agent context/skill should point to that file rather than instruct agents to edit session metadata. This storage change is planned, not implemented.
+- Deferred fixed UI helper text for Working, References, Archived, and Instructions to Phase 5. Instructions describe rules, workflows, and other guidance for AI in the session; artifact descriptions for the Phase 4 catalog remain separate.
+- Recorded the legacy inline-JSON fallback/migration approach as a proposal awaiting the detailed Phase 4 plan, not a committed schema change.
+- Affected planning files: `plans/work-session-artifact/plan.md` and `plans/work-session-artifact/note.md`.
+
+## 2026-11-07 — Work Session roadmap scope and upgrade guidance
+
+- Extended the Phase 3 plan with a pending Step 7 in Stage 3 for the active Session contract: each AI chat keeps at most one default Session; explicit New/Join replaces that default after success. Preserved the recorded completion and validation of Steps 1–6; no skill/runtime change is shipped by this documentation update.
+- Removed drag-and-drop and dnd-kit implementation requirements from the roadmap. Retained native Quick Pick type selection, Input Box title editing, textarea + Save instructions, and menu-based artifact move/reorder as the accepted interaction model.
+- Removed the obsolete Phase 1+2 requirement to render session instructions through the artifact Markdown renderer.
+- Added a short apology and explanation to README upgrade guidance for releases that require MCP or skill updates, preserving the existing rule that extension-only updates do not require integration reinstall.
+- Affected files: `README.md`, `plans/work-session-artifact/plan.md`, `plan-phase-3.md`, `plan-phase-1-2.md`, `analyzed.md`, and `ideas.md`. Historical chat transcripts remain reference material.
+
+## 2026-11-07 — Work Session Phase 3 Implementation (Session Manager, Scoped Refresh, Sidebar Filter/Search & English Quick Input)
+
+### Changes
+
+- **Scoped Change Pipeline & Partial Webview Refresh**:
+  - Extended `ConversationArtifactService` (`src/extension/conversation-artifact-service.ts`) with typed `WorkSessionDataChange` batches (`metadata`, `membership`, `layout`, `artifact`, `types`, `support`), URI classification ignoring temporary/backup files, and deduplicated debounce scheduling.
+  - Updated `WorkSessionProvider`, `ArtifactReviewProvider`, `RecentArtifactsTreeDataProvider`, and `WorkSessionsTreeDataProvider` to subscribe to scoped changes so unrelated updates never trigger full reloads or overwrite in-progress user input.
+  - Added `workSessionSummaryPatch`, `workSessionArtifactsPatch`, and `workSessionInstructionsPatch` messages in `src/shared/contracts.ts`. `WorkSessionProvider` tracks `lastPersistedInstructions` per open session and emits `workSessionInstructionsPatch` only when `instructions` in `conversation.json` changes on disk (supporting external/AI edits to session instructions while ignoring title/type-only metadata writes and own-save echo events).
+- **Active Session Contract & Skill v5 Bump (Step 7)**:
+  - Standardized AI chat session tracking: each chat conversation maintains at most one active Work Session (`artifactConversationId`) in memory; default reuse continues unless the user explicitly requests New Session or Join Session.
+  - Enforced success-only replacement: active session ID is updated only after lifecycle tool calls succeed; failures never cause unintended fallback or premature context switching.
+  - Changing active session preserves all per-artifact handle mappings (`artifactDirectory -> { reviewRound, windowInstanceId }`); an artifact may belong to multiple Work Sessions concurrently.
+  - Prompts in `artifact-connect-prompt.ts` updated to explicitly instruct agents on success-only replacement for `new` and `join` modes.
+  - Bumped numeric `SKILL_VERSION` from 4 to 5 (keeping `MCP_VERSION = 12`).
+- **Two-Column Work Session Manager (`SessionApp.tsx` & `WorkSessionProvider`)**:
+  - Upgraded the `agentPlus.workSession` tab into an interactive manager while keeping `CustomReadonlyEditorProvider` and existing document URIs.
+  - Main column renders the `Working` artifact zone (expanding when the side panel is collapsed); collapsible side panel renders `Session Type` → `Instructions` (fixed-height Markdown textarea with explicit **Save**) → `References` → `Archived`.
+  - Per-session side panel expanded/collapsed preference is stored in extension `globalState` (`workSessions.panelExpanded.<sessionId>`, default `true`).
+  - Added host-validated manager actions (`renameSession`, `saveSessionInstructions`, `selectSessionType` with quick type creation, `moveArtifact`, `reorderArtifact`, `removeArtifact`, `setSessionPanelExpanded`), gated on installed MCP version >= 12, with inline error reporting (`instructionsError` and dismissible `actionError` banner).
+- **Sidebar Filter & Search Sessions**:
+  - Registered `agentPlus.sessions` via `vscode.window.createTreeView` to display active filter indicators (`Type: <Label>`) on the view header description.
+  - Added `AI Artifacts: Filter Sessions` (`agentPlus.filterSessions` in `src/extension/session-filter-command.ts`) to filter the Sessions tree view in-memory per window by a single session type or `All Types`, preselecting the active item and automatically resetting if the filtered type is deleted.
+  - Added `AI Artifacts: Search Sessions` (`agentPlus.searchSessions` in `src/extension/session-search-command.ts`) to search across all v2 Work Sessions by normalized title (case- and diacritic-insensitive, `alwaysShow: true`, title-only matching) independent of the active sidebar filter.
+- **Unified English Quick Input Wording & Stable Button Identity**:
+  - Standardized all Session Quick Input titles, placeholders, confirmations, and notifications across `session-type-command.ts`, `session-filter-command.ts`, `session-search-command.ts`, `session-migration-command.ts`, `artifact-review-provider.ts`, and `extension.ts` in English while preserving user-provided session titles, instructions, and type labels.
+  - Replaced tooltip-based button detection in `session-type-command.ts` with typed `SessionTypeActionButton` (`actionId: "rename" | "delete"`).
+
+### Rationale
+
+- Turns the read-only session viewer into a complete Work Session Manager without introducing a second editor tab or custom save/lock machinery.
+- Scoped refresh events and `lastPersistedInstructions` comparison allow users to type session instructions without background artifact/membership/metadata updates clobbering their draft, while still receiving external instructions updates written to `conversation.json`.
+- Native Quick Pick filter and search on the Sessions sidebar scale navigation across growing session lists while keeping all Session Quick Input flows consistent in English.
+
+### Affected components or files
+
+- Shared Contracts: `src/shared/contracts.ts`.
+- Extension Host: `src/extension/conversation-artifact-service.ts`, `src/extension/work-session-provider.ts`, `src/extension/work-session-sidebar.ts`, `src/extension/session-type-command.ts`, `src/extension/session-filter-command.ts`, `src/extension/session-search-command.ts`, `src/extension/session-migration-command.ts`, `src/extension/artifact-review-provider.ts`, `src/extension/extension.ts`, `package.json`.
+- Webview: `src/webview/SessionApp.tsx`, `src/webview/styles.css`.
+- Documentation: `README.md`, `docs/ARCHITECTURE.md`, `docs/COMPONENTS.md`, `docs/INSTRUCTION.md`, `docs/CHANGE_LOGS.md`, `plans/work-session-artifact/plan-phase-3.md`.
+- Tests: `test/artifact-contracts.test.ts`, `test/conversation-artifact-service.test.ts`, `test/work-session-provider.test.ts`, `test/session-app.test.tsx`, `test/work-session-sidebar.test.ts`, `test/session-type-command.test.ts`, `test/session-filter-command.test.ts`, `test/session-search-command.test.ts`, `test/session-migration-command.test.ts`, `test/artifact-review-provider.test.ts`, `test/release-contract.test.ts`.
+
+## 2026-11-07 — Fix AI Artifacts Activity Bar registration
+
+- Changed the container ID and its `contributes.views` key to `agentPlus-artifacts`; VS Code rejects dots in container IDs and otherwise falls back to placing the views in Explorer.
+- Preserved the `AI Artifacts` title and the two existing Tree View IDs. Switched the Activity Bar icon from `layers` to the built-in `library` Codicon at the owner's request. Added a release-contract regression check for the container ID, view bindings, and icon selection.
+- Synchronized the container ID in component documentation and the Phase 1+2 plan.
+
+## 2026-11-07 — Work Session Phase 1+2 Implementation (Model v2, Sidebar Navigation, Connect Dialog & Migration)
+
+### Changes
+
+- **Work Session Schema v2 & Storage Architecture**:
+  - Upgraded conversation registry to schema v2 (`WORK_SESSION_SCHEMA_VERSION = 2`), recording `sessionId`, `title`, `instructions` (Markdown string), `typeId`, and `createdAt` in `conversation.json`.
+  - Separated layout into `layout.json` (`WORK_SESSION_LAYOUT_SCHEMA_VERSION = 1`) managing artifact ordering across three zones: `working`, `references`, and `archived`. Reconciled unassigned registered artifacts to the end of `working`.
+  - Eliminated `.conversation.lock` and all file locks in favor of atomic writes (`writeAtomicJsonFile`) with last-write-wins semantics.
+  - Dynamic `updatedAt`: computed on read from `max(createdAt, ...registeredAt)` across `registered-artifacts/<artifactId>.json`, preserving automatic recency sorting without metadata churn.
+  - Global Session Types: stored in `~/.ai-artifacts/session-types.json` (`SESSION_TYPES_SCHEMA_VERSION = 1`) with seed defaults (`conversation`, `project`, `feature`, `fix`). Supported CRUD operations with case-insensitive uniqueness and safe re-assignment to default when deleting custom types in use.
+  - Retention Cleanup: preserved empty v2 Work Sessions during periodic activation cleanup while pruning expired artifacts and legacy v1 entries.
+- **MCP v12 Server & Skill v4 Fail-Closed Contract**:
+  - Updated MCP server (`artifact-review-mcp-v4.ts`) to numeric `MCP_VERSION = 12` and skill to `SKILL_VERSION = 4`.
+  - Implemented fail-closed preflight for both `create_artifact` and `inspect_artifact_review`: calls specifying a legacy v1 conversation ID immediately throw `ConversationMigrationRequiredError` with code `CONVERSATION_MIGRATION_REQUIRED` before mutating state or granting tokens.
+  - Updated `create-review-artifact` skill to guide the AI to either advise the user to migrate the conversation or create a new Work Session.
+- **Activity Bar "AI Artifacts" Sidebar**:
+  - Contributed `agentPlus-artifacts` container to the Activity Bar with Codicons `layers` SVG icon (24×24, transparent background).
+  - Provided two tree views defaulting to visible (`visibility: "visible"`):
+    - `RecentArtifactsTreeDataProvider`: sorts artifacts by `updatedAt` desc, capped at 20 items, with a "View all..." item delegating to artifact search.
+    - `WorkSessionsTreeDataProvider`: gated on installed MCP version >= 12, lists all v2 sessions with type badges, item count, and dynamic recency. Displays a migration banner item when legacy v1 conversations exist.
+  - Contributed gear menu (`agentPlus.manageSessionTypes`) to the Sessions view header using a native VS Code QuickPick controller.
+- **Dedicated Read-only Session Editor (`agentPlus.workSession`)**:
+  - Implemented `WorkSessionProvider` (`CustomReadonlyEditorProvider`) opening `conversation.json`.
+  - Multi-app webview discriminator (`data-app="session" | "review"`) in `webview-html.ts` allowing a single Vite build bundle (`dist/webview/review.js`) to render either `ReviewApp` or `SessionApp`.
+  - `SessionApp` displays session metadata header, instructions rendered via Markdown, and artifact cards across `Working`, `References`, and `Archived` zones. Clicking cards safely opens the artifact review editor.
+- **Review App Navigation, Connect Dialog & Migration Coordinator**:
+  - Retired and deleted `ConversationArtifactsDrawer.tsx` and related CSS/tests.
+  - Added a **Sessions** header toggle in `ReviewApp` (gated on MCP version >= 12) that reveals or opens the artifact's session.
+  - Replaced direct copy on MCP version >= 12 with `ArtifactConnectDialog`, supporting **New Session** (omits previous session ID) and **Join Session** (selects an existing v2 session; legacy v1 targets are disabled with "Cần chuyển đổi v2" badge and tooltip).
+  - Created `session-migration-command.ts` coordinating single migration (migrates v1 to v2 with `conversation.v1.backup.json` and opens the session) and bulk migration (native confirmation dialog, progress notification, and comprehensive result summary).
+
+### Rationale
+
+- Decouples MCP artifact registration from UI organization without locking files.
+- Provides a centralized Activity Bar workspace navigation experience.
+- Guarantees backward-safe data migration from v1 to v2 without data loss or silent schema mutations.
+
+### Affected components or files
+
+- Contracts & Shared: `src/shared/contracts.ts`, `src/shared/artifact-files.ts`, `src/shared/session-type-registry.ts`, `src/shared/conversation-artifact-registry.ts`, `src/shared/artifact-connect-prompt.ts`.
+- MCP & Skill: `src/integration/artifact-review-mcp-v4.ts`, `skills/create-review-artifact/SKILL.md`, `skills/create-review-artifact/references/artifact-contract.md`.
+- Extension Host: `src/extension/work-session-support.ts`, `src/extension/work-session-sidebar.ts`, `src/extension/session-type-command.ts`, `src/extension/session-migration-command.ts`, `src/extension/work-session-provider.ts`, `src/extension/conversation-artifact-service.ts`, `src/extension/artifact-review-provider.ts`, `src/extension/extension.ts`, `package.json`, `media/layers.svg`.
+- Webview: `src/webview/SessionApp.tsx`, `src/webview/ArtifactConnectDialog.tsx`, `src/webview/ReviewApp.tsx`, `src/webview/main.tsx`, `src/webview/styles.css`, `dev/main.tsx`, `dev/mock-data.ts`.
+- Deleted: `src/webview/ConversationArtifactsDrawer.tsx`, `test/conversation-artifacts-drawer.test.tsx`.
+- Test Suites: `test/session-type-registry.test.ts`, `test/work-session-sidebar.test.ts`, `test/work-session-provider.test.ts`, `test/session-type-command.test.ts`, `test/session-migration-command.test.ts`, `test/artifact-connect-dialog.test.tsx`, `test/artifact-connect-prompt.test.ts`, `test/artifact-review-provider.test.ts`, `test/conversation-artifact-registry.test.ts`, `test/review-wait-mcp.test.ts`.
+
+## 2026-11-06 — MCP Version 12 Preparation for Work Session Testing
+
+- Increased the bundled numeric `MCP_VERSION` from 11 to 12 at the owner's request, allowing installed-version freshness tests to distinguish the old and new runtime assets. Kept the extension package at 1.1.4, skill at 3, and conversation registry at schema v1.
+- Synchronized current-version references and existing contract assertions. This change only prepares the version marker; Session v2, UI gates, migration, and the proposed legacy-conversation inspect behavior are not implemented by this bump. No global integration assets are installed or replaced by this source change.
+- Updated the Work Session plans: create against a v1 conversation requires migration or an explicit choice to create/open a new Session; clarified the proposed inspect branch that preserves artifact feedback/reconnect without mutating v1 membership. Session type assignment UI remains in Phase 3.
+
+## 2026-11-06 — Work Session Phase 1+2 Planning (Not Implemented)
+
+- Combined the Session model and sidebar/navigation implementation plans in `plans/work-session-artifact/plan-phase-1.md`, with proposed storage/migration, affected components, and validation scope.
+- Documented global session types (`typeId` plus a user-level type list), management from the Sessions header settings action, and the explicit absence of a manual create-session button. Proposed a minimal read-only session editor as the navigation destination before the full manager phase.
+- Synchronized `plan.md` and added the latest decisions to `analyzed.md`. This is planning documentation only: no runtime, schema, dependency, installed data, or release version has changed.
+
 ## 2026-11-04 — Version 1.1.4 Release Preparation
 
 - Set the extension version to `1.1.4` in package and lock metadata, updated the README VSIX installation example, and synchronized the release-contract assertions with the existing `1.1.4` changelog entry.

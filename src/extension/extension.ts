@@ -1,11 +1,44 @@
+import path from "node:path";
 import * as vscode from "vscode";
 import { ArtifactReviewProvider } from "./artifact-review-provider";
 import { ArtifactReviewOpenCoordinator, setupGlobalArtifactConnectionWatcher } from "./artifact-review-open";
 import { discoverSearchableArtifacts } from "./artifact-search";
 import {
+  aiArtifactsRoot,
+  artifactDirectory,
+  ARTIFACT_MANIFEST_FILE,
+  ARTIFACT_MARKDOWN_FILE,
+  ARTIFACT_UI_STATE_FILE,
+  CONVERSATION_METADATA_FILE,
+  conversationDirectory,
+  SESSION_TYPES_FILE,
+} from "../shared/artifact-files";
+import {
+  RecentArtifactsTreeDataProvider,
+  WorkSessionsTreeDataProvider,
+} from "./work-session-sidebar";
+import { WorkSessionProvider } from "./work-session-provider";
+import {
+  runManageSessionTypesCommand,
+  type SessionTypeQuickPickItem,
+} from "./session-type-command";
+import { runSessionFilterCommand } from "./session-filter-command";
+import { runSessionSearchCommand } from "./session-search-command";
+import { runCreateSessionCommand } from "./session-create-command";
+import {
+  isArtifactKindFilter,
+  runArtifactKindFilterCommand,
+  type ArtifactKindFilterQuickPickItem,
+} from "./artifact-kind-filter-command";
+import { formatArtifactKindLabel } from "../shared/artifact-kinds";
+import { listSessionTypes } from "../shared/session-type-registry";
+import { resolveWorkSessionSupport } from "./work-session-support";
+import {
   runArtifactSearchCommand,
   type ArtifactQuickPickItem,
 } from "./artifact-search-command";
+import { runBulkMigration } from "./session-migration-command";
+import { migrateConversationToSession } from "../shared/conversation-artifact-registry";
 import { ensureSafeGlobalArtifactsRoot } from "../shared/artifact-validation";
 import {
   checkAllIntegrations,
@@ -30,6 +63,12 @@ import {
 } from "./workspace-integration";
 import { WorkspaceRegistryPublisher } from "./workspace-registry-publisher";
 import { executeArtifactRetentionCleanup } from "./artifact-retention";
+import { executeWorkSessionArchiveCleanup } from "./work-session-retention";
+import {
+  WorkSessionManagementCoordinator,
+  extractSessionId,
+  extractArtifactId,
+} from "./work-session-management-command";
 import { summarizeIntegrationVerification } from "./integration-verification";
 import {
   INSTALLATION_GUIDE_URL,
@@ -37,7 +76,13 @@ import {
   maybeShowUpgradeNotification,
   type IntegrationNotificationState,
 } from "./upgrade-notification";
-import { MCP_VERSION, SKILL_VERSION } from "../shared/contracts";
+import {
+  artifactIdSchema,
+  CREATE_REVIEW_ARTIFACT_SKILL_VERSION,
+  MCP_VERSION,
+  SKILL_VERSION,
+  WORK_SESSION_SKILL_VERSION,
+} from "../shared/contracts";
 import {
   ConversationArtifactService,
   setupConversationRegistryWatcher,
@@ -70,9 +115,27 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     },
   });
   const provider = new ArtifactReviewProvider(context, conversationArtifactService);
+  const workSessionProvider = new WorkSessionProvider(
+    context,
+    conversationArtifactService,
+    artifactReviewOpenCoordinator,
+  );
+  const recentArtifactsProvider = new RecentArtifactsTreeDataProvider(conversationArtifactService);
+  const workSessionsProvider = new WorkSessionsTreeDataProvider(
+    conversationArtifactService,
+    context,
+  );
+
+  const refreshViewsAndService = (): void => {
+    workSessionsProvider.refresh();
+    recentArtifactsProvider.refresh();
+    conversationArtifactService.notifyChanged([{ kind: "support" }]);
+  };
+
   const installAllDetectedIntegrationsAndNotify = async (): Promise<void> => {
     try {
       await installAllDetectedIntegrations(context);
+      refreshViewsAndService();
       const verification = await checkAllIntegrations(context);
       const summary = summarizeIntegrationVerification(verification);
       if (summary.severity === "warning") {
@@ -87,12 +150,243 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     }
   };
 
+  const sessionsTreeView = vscode.window.createTreeView("agentPlus.sessions", {
+    treeDataProvider: workSessionsProvider,
+  });
+
+  const recentArtifactsTreeView = vscode.window.createTreeView("agentPlus.recentArtifacts", {
+    treeDataProvider: recentArtifactsProvider,
+  });
+
+  const updateSessionsFilterDescription = async (): Promise<void> => {
+    const filterId = workSessionsProvider.getTypeFilter();
+    if (!filterId) {
+      sessionsTreeView.description = "";
+      return;
+    }
+    try {
+      const types = await listSessionTypes();
+      const matched = types.find((t) => t.id === filterId);
+      if (!matched) {
+        workSessionsProvider.setTypeFilter(undefined);
+        sessionsTreeView.description = "";
+      } else {
+        sessionsTreeView.description = `Type: ${matched.label}`;
+      }
+    } catch {
+      sessionsTreeView.description = "";
+    }
+  };
+
+  const updateRecentFilterDescription = (): void => {
+    const filterKind = recentArtifactsProvider.getKindFilter();
+    if (!filterKind) {
+      recentArtifactsTreeView.description = "";
+      return;
+    }
+    if (filterKind === "other") {
+      recentArtifactsTreeView.description = "Type: Other";
+    } else {
+      recentArtifactsTreeView.description = `Type: ${formatArtifactKindLabel(filterKind)}`;
+    }
+  };
+
+  const managementCoordinator = new WorkSessionManagementCoordinator({
+    service: conversationArtifactService,
+  });
+
   context.subscriptions.push(
     workspaceRegistryPublisher,
     conversationArtifactService,
+    recentArtifactsProvider,
+    workSessionsProvider,
+    sessionsTreeView,
+    recentArtifactsTreeView,
+    workSessionsProvider.onDidChangeTreeData(() => {
+      void updateSessionsFilterDescription();
+    }),
+    recentArtifactsProvider.onDidChangeTreeData(() => {
+      updateRecentFilterDescription();
+    }),
     vscode.window.registerCustomEditorProvider(ArtifactReviewProvider.viewType, provider, {
       webviewOptions: { retainContextWhenHidden: true },
       supportsMultipleEditorsPerDocument: false,
+    }),
+    vscode.window.registerCustomEditorProvider(WorkSessionProvider.viewType, workSessionProvider, {
+      webviewOptions: { retainContextWhenHidden: true },
+      supportsMultipleEditorsPerDocument: false,
+    }),
+    vscode.commands.registerCommand("agentPlus.pinArtifact", async (el) => {
+      await managementCoordinator.pinArtifact(el);
+    }),
+    vscode.commands.registerCommand("agentPlus.unpinArtifact", async (el) => {
+      await managementCoordinator.unpinArtifact(el);
+    }),
+    vscode.commands.registerCommand("agentPlus.archiveArtifact", async (el) => {
+      await managementCoordinator.archiveArtifact(el);
+    }),
+    vscode.commands.registerCommand("agentPlus.restoreArtifact", async (el) => {
+      await managementCoordinator.restoreArtifact(el);
+    }),
+    vscode.commands.registerCommand("agentPlus.deleteArtifactPermanently", async (el) => {
+      await managementCoordinator.deleteArtifactPermanently(el);
+    }),
+    vscode.commands.registerCommand("agentPlus.copyArtifactConnectPromptFromTree", async (el) => {
+      await managementCoordinator.copyArtifactConnectPrompt(el);
+    }),
+    vscode.commands.registerCommand("agentPlus.pinSession", async (el) => {
+      await managementCoordinator.pinSession(el);
+    }),
+    vscode.commands.registerCommand("agentPlus.unpinSession", async (el) => {
+      await managementCoordinator.unpinSession(el);
+    }),
+    vscode.commands.registerCommand("agentPlus.archiveSession", async (el) => {
+      await managementCoordinator.archiveSession(el);
+    }),
+    vscode.commands.registerCommand("agentPlus.restoreSession", async (el) => {
+      await managementCoordinator.restoreSession(el);
+    }),
+    vscode.commands.registerCommand("agentPlus.deleteSessionPermanently", async (el) => {
+      await managementCoordinator.deleteSessionPermanently(el);
+    }),
+    vscode.commands.registerCommand("agentPlus.copySessionConnectPromptFromTree", async (el) => {
+      await managementCoordinator.copySessionConnectPrompt(el);
+    }),
+    vscode.commands.registerCommand("agentPlus.openSessionInstructionsFileFromTree", async (el) => {
+      await managementCoordinator.openSessionInstructionsFile(el);
+    }),
+    vscode.commands.registerCommand("agentPlus.copySessionInstructionsFilePathFromTree", async (el) => {
+      await managementCoordinator.copySessionInstructionsFilePath(el);
+    }),
+    vscode.commands.registerCommand("agentPlus.renameSessionFromTree", async (el) => {
+      await managementCoordinator.renameSession(el);
+    }),
+    vscode.commands.registerCommand("agentPlus.changeSessionTypeFromTree", async (el) => {
+      await managementCoordinator.changeSessionType(el);
+    }),
+    vscode.commands.registerCommand("agentPlus.createSession", async () => {
+      await runCreateSessionCommand({
+        service: conversationArtifactService,
+        context,
+      });
+    }),
+    vscode.commands.registerCommand("agentPlus.openWorkSession", async (sessionIdCandidate?: unknown) => {
+      try {
+        let sessionId = extractSessionId(sessionIdCandidate);
+        if (!sessionId) {
+          const sessions = await conversationArtifactService.listWorkSessions();
+          if (sessions.length === 0) {
+            void vscode.window.showInformationMessage("No sessions found.");
+            return;
+          }
+          const selected = await vscode.window.showQuickPick(
+            sessions.map((s) => ({ label: s.title, description: s.sessionId })),
+            { title: "Select Session to Open" },
+          );
+          if (!selected) return;
+          sessionId = selected.description;
+        }
+
+        const session = await conversationArtifactService.getWorkSession(sessionId);
+        const sessionDir = conversationDirectory(session.sessionId);
+        const metadataUri = vscode.Uri.file(path.join(sessionDir, CONVERSATION_METADATA_FILE));
+        await vscode.commands.executeCommand("vscode.openWith", metadataUri, WorkSessionProvider.viewType);
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        void vscode.window.showErrorMessage(`Failed to open session: ${msg}`);
+      }
+    }),
+    vscode.commands.registerCommand("agentPlus.manageSessionTypes", async () => {
+      await runManageSessionTypesCommand({
+        createQuickPick: () => vscode.window.createQuickPick<SessionTypeQuickPickItem>(),
+        showInputBox: (options) => vscode.window.showInputBox(options),
+        showWarningMessage: (message, ...items) => vscode.window.showWarningMessage(message, ...items),
+        showErrorMessage: (message) => vscode.window.showErrorMessage(message),
+        onDidUpdate: () => {
+          workSessionsProvider.refresh();
+          conversationArtifactService.notifyChanged([{ kind: "types" }]);
+        },
+      });
+    }),
+    vscode.commands.registerCommand("agentPlus.filterSessions", async () => {
+      const support = await resolveWorkSessionSupport({}, context);
+      if (!support.supported) {
+        void vscode.window.showWarningMessage(
+          support.reason ?? "Filtering sessions requires MCP server version 12 or higher.",
+        );
+        return;
+      }
+      await runSessionFilterCommand({
+        createQuickPick: () => vscode.window.createQuickPick(),
+        currentTypeId: workSessionsProvider.getTypeFilter(),
+        onFilterChanged: (selectedTypeId) => {
+          workSessionsProvider.setTypeFilter(selectedTypeId);
+          void updateSessionsFilterDescription();
+        },
+      });
+    }),
+    vscode.commands.registerCommand("agentPlus.searchSessions", async () => {
+      const support = await resolveWorkSessionSupport({}, context);
+      if (!support.supported) {
+        void vscode.window.showWarningMessage(
+          support.reason ?? "Searching sessions requires MCP server version 12 or higher.",
+        );
+        return;
+      }
+      await runSessionSearchCommand({
+        createQuickPick: () => vscode.window.createQuickPick(),
+        listSessions: () => conversationArtifactService.listWorkSessions(),
+        listTypes: () => listSessionTypes(),
+        openSession: async (sessionId) => {
+          await vscode.commands.executeCommand("agentPlus.openWorkSession", sessionId);
+        },
+      });
+    }),
+    vscode.commands.registerCommand("agentPlus.openArtifact", async (resource?: unknown) => {
+      let uri: vscode.Uri | undefined;
+      if (resource instanceof vscode.Uri) {
+        uri = resource;
+      } else if (resource && typeof resource === "object") {
+        if ("resourceUri" in resource && (resource as any).resourceUri instanceof vscode.Uri) {
+          uri = (resource as any).resourceUri;
+        } else if ("artifact" in resource && typeof (resource as any).artifact?.artifactPath === "string") {
+          uri = vscode.Uri.file((resource as any).artifact.artifactPath);
+        } else {
+          const artifactId = extractArtifactId(resource);
+          if (artifactId) {
+            const artDir = artifactDirectory(artifactId);
+            uri = vscode.Uri.file(path.join(artDir, ARTIFACT_MARKDOWN_FILE));
+          }
+        }
+      }
+      if (uri) {
+        await vscode.commands.executeCommand("agentPlus.openArtifactReview", uri);
+      }
+    }),
+    vscode.commands.registerCommand("agentPlus.reinstallIntegration", async () => {
+      await vscode.commands.executeCommand("agentPlus.installAllIntegrations");
+    }),
+    vscode.commands.registerCommand("agentPlus.migrateConversations", async () => {
+      await runBulkMigration({
+        listCandidates: () => conversationArtifactService.listCandidates(),
+        migrateCandidate: (sessionId) => migrateConversationToSession(sessionId),
+        showWarningMessage: (message, ...items) => vscode.window.showWarningMessage(message, ...items),
+        showInformationMessage: (message) => vscode.window.showInformationMessage(message),
+        withProgress: async (title, task) => {
+          await vscode.window.withProgress(
+            {
+              location: vscode.ProgressLocation.Notification,
+              title,
+              cancellable: false,
+            },
+            (progress) => task((update) => progress.report(update)),
+          );
+        },
+        onDidMigrate: () => {
+          workSessionsProvider.refresh();
+          conversationArtifactService.notifyChanged();
+        },
+      });
     }),
     vscode.commands.registerCommand("agentPlus.openArtifactReview", async (resource?: unknown) => {
       if (resource instanceof vscode.Uri) {
@@ -118,17 +412,31 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
           )?.[0]);
       if (selected) await artifactReviewOpenCoordinator.open(selected);
     }),
-    vscode.commands.registerCommand("agentPlus.searchArtifact", async () => {
-      await runArtifactSearchCommand({
-        createQuickPick: () => vscode.window.createQuickPick<ArtifactQuickPickItem>(),
-        discoverArtifacts: () => discoverSearchableArtifacts(),
-        openArtifact: async (artifactPath) => {
-          await artifactReviewOpenCoordinator.open(vscode.Uri.file(artifactPath));
-        },
-        showErrorMessage: (message) => {
-          void vscode.window.showErrorMessage(message);
+    vscode.commands.registerCommand("agentPlus.filterRecentArtifacts", async () => {
+      await runArtifactKindFilterCommand({
+        createQuickPick: () => vscode.window.createQuickPick<ArtifactKindFilterQuickPickItem>(),
+        currentKindFilter: recentArtifactsProvider.getKindFilter(),
+        onFilterChanged: (selectedKind) => {
+          recentArtifactsProvider.setKindFilter(selectedKind);
         },
       });
+    }),
+    vscode.commands.registerCommand("agentPlus.searchArtifact", async (options?: { kindFilter?: string }) => {
+      await runArtifactSearchCommand(
+        {
+          createQuickPick: () => vscode.window.createQuickPick<ArtifactQuickPickItem>(),
+          discoverArtifacts: () => discoverSearchableArtifacts(),
+          openArtifact: async (artifactPath) => {
+            await artifactReviewOpenCoordinator.open(vscode.Uri.file(artifactPath));
+          },
+          showErrorMessage: (message) => {
+            void vscode.window.showErrorMessage(message);
+          },
+        },
+        typeof options === "object" && options !== null && isArtifactKindFilter(options.kindFilter)
+          ? { kindFilter: options.kindFilter }
+          : undefined,
+      );
     }),
 
     // 1. All Detected
@@ -141,6 +449,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.commands.registerCommand("agentPlus.installCopilotIntegration", async () => {
       try {
         const result = await installCopilotIntegration(context);
+        refreshViewsAndService();
         void vscode.window.showInformationMessage(
           `AI Artifacts MCP installed for GitHub Copilot in VS Code User configuration (${result.userConfigPath}).`,
         );
@@ -153,6 +462,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.commands.registerCommand("agentPlus.installCodexIntegration", async () => {
       try {
         await installCodexIntegration(context);
+        refreshViewsAndService();
         void vscode.window.showInformationMessage(
           "AI Artifacts MCP installed for Codex (~/.codex/config.toml). Please restart Codex to activate.",
         );
@@ -165,6 +475,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.commands.registerCommand("agentPlus.installCursorIntegration", async () => {
       try {
         await installCursorIntegration(context);
+        refreshViewsAndService();
         void vscode.window.showInformationMessage(
           "AI Artifacts MCP installed for Cursor (~/.cursor/mcp.json). Please restart Cursor to activate.",
         );
@@ -177,6 +488,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.commands.registerCommand("agentPlus.installClaudeIntegration", async () => {
       try {
         await installClaudeIntegration(context);
+        refreshViewsAndService();
         void vscode.window.showInformationMessage(
           "AI Artifacts MCP installed for Claude (~/.claude.json). Please restart Claude to activate.",
         );
@@ -189,6 +501,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.commands.registerCommand("agentPlus.installWindsurfIntegration", async () => {
       try {
         await installWindsurfIntegration(context);
+        refreshViewsAndService();
         void vscode.window.showInformationMessage(
           "AI Artifacts MCP installed for Windsurf (~/.codeium/windsurf/mcp_config.json). Please restart Windsurf to activate.",
         );
@@ -201,6 +514,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.commands.registerCommand("agentPlus.installClineIntegration", async () => {
       try {
         await installClineIntegration(context);
+        refreshViewsAndService();
         void vscode.window.showInformationMessage(
           "AI Artifacts MCP installed for Cline (cline_mcp_settings.json). Please reload Cline or window to activate.",
         );
@@ -371,6 +685,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     bundledVersions: {
       mcpVersion: MCP_VERSION,
       skillVersion: SKILL_VERSION,
+      sessionSkillVersion: WORK_SESSION_SKILL_VERSION,
     },
     skillTargets: getDetectedSkillTargets(),
     getInstalledIntegrationVersion: () => readInstalledIntegrationVersion(),
@@ -432,13 +747,67 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     console.error("Starting the conversation registry watcher failed:", error);
   }
 
+  try {
+    const globalRoot = await ensureSafeGlobalArtifactsRoot();
+    const manifestWatcher = vscode.workspace.createFileSystemWatcher(
+      new vscode.RelativePattern(
+        vscode.Uri.file(globalRoot),
+        `*/{${ARTIFACT_MANIFEST_FILE},${ARTIFACT_UI_STATE_FILE}}`,
+      ),
+      false,
+      false,
+      false,
+    );
+    const onManifestChange = (uri: vscode.Uri) => {
+      recentArtifactsProvider.refresh();
+      const artifactId = path.basename(path.dirname(uri.fsPath));
+      if (artifactIdSchema.safeParse(artifactId).success) {
+        if (uri.fsPath.endsWith(ARTIFACT_UI_STATE_FILE)) {
+          conversationArtifactService.notifyChanged([{ kind: "artifactUiState", artifactId }]);
+        } else {
+          conversationArtifactService.notifyChanged([{ kind: "artifact", artifactId }]);
+        }
+      } else {
+        conversationArtifactService.notifyChanged();
+      }
+    };
+    manifestWatcher.onDidCreate(onManifestChange);
+    manifestWatcher.onDidChange(onManifestChange);
+    manifestWatcher.onDidDelete(onManifestChange);
+    context.subscriptions.push(manifestWatcher);
+  } catch (error) {
+    console.error("Starting manifest watcher failed:", error);
+  }
+
+  try {
+    const productRoot = aiArtifactsRoot();
+    const sessionTypesWatcher = vscode.workspace.createFileSystemWatcher(
+      new vscode.RelativePattern(vscode.Uri.file(productRoot), SESSION_TYPES_FILE),
+      false,
+      false,
+      false,
+    );
+    const onTypesChange = () => {
+      workSessionsProvider.refresh();
+      conversationArtifactService.notifyChanged([{ kind: "types" }]);
+    };
+    sessionTypesWatcher.onDidCreate(onTypesChange);
+    sessionTypesWatcher.onDidChange(onTypesChange);
+    sessionTypesWatcher.onDidDelete(onTypesChange);
+    context.subscriptions.push(sessionTypesWatcher);
+  } catch (error) {
+    console.error("Starting session types watcher failed:", error);
+  }
+
   // Best-effort asynchronous retention cleanup (does not block extension activation)
   const retentionDays = vscode.workspace
     .getConfiguration("agentPlus")
     .get<unknown>("artifactRetentionDays");
-  void executeArtifactRetentionCleanup({ retentionDays }).catch((error) => {
-    console.error("AI Artifacts retention cleanup failed:", error);
-  });
+  void executeArtifactRetentionCleanup({ retentionDays })
+    .then(() => executeWorkSessionArchiveCleanup())
+    .catch((error) => {
+      console.error("AI Artifacts retention cleanup failed:", error);
+    });
 }
 
 export function deactivate(): void {}

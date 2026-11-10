@@ -1,10 +1,12 @@
 > This project was built through vibe coding with AI.
 
-# AI Artifacts - Interactive Planning & Review
+# AI Artifacts - Interactive Review & Multi-Agent Work Sessions
 
 📦 [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=huynguyen294.ai-artifacts) · 🌐 [Open VSX](https://open-vsx.org/extension/huynguyen294/ai-artifacts) · 🐙 [GitHub](https://github.com/huynguyen294/ai-artifacts)
 
-**AI Artifacts** is an **interactive artifact review** editor that lets AI coding agents such as **Cursor**, **Codex**, **Claude**, **GitHub Copilot**, **Cline**, and **Windsurf** create dedicated planning artifacts and markdown specs directly in your IDE. Use it for implementation plans, design proposals, or technical write-ups. Add inline comments and let your agent revise the document based on your feedback. It connects to your agent through **MCP** and the **create-review-artifact** skill.
+**AI Artifacts** is an interactive artifact review editor that lets AI coding agents such as Cursor, Codex, Claude, GitHub Copilot, Cline, and Windsurf create planning artifacts, Markdown specs, and technical write-ups directly in your IDE. Add inline comments, request revisions, and approve plans for execution through MCP and agent skills.
+
+**Multi-Agent Work Sessions** keep related artifacts and shared instructions together across agents and chats. Organize ongoing work, define rules and workflows, and connect another agent to continue with the session’s latest artifacts and instructions.
 
 ## Contents
 
@@ -13,7 +15,12 @@
 - [Getting started](#getting-started)
 - [Customizing the Review Skill](#customizing-the-review-skill)
 - [Verification & troubleshooting](#verification--troubleshooting)
-- [Usage](#usage)
+- [Features & Usage](#features--usage)
+  - [Create & Review Artifacts](#create--review-artifacts)
+  - [Search & Reconnect Artifacts](#search--reconnect-artifacts)
+  - [Multi-Agent Work Sessions](#multi-agent-work-sessions)
+  - [Organize Session Artifacts](#organize-session-artifacts)
+  - [Shared Instructions](#shared-instructions)
 - [Storage, behavior and security](#storage-behavior-and-security)
 - [Compatibility and upgrades](#compatibility-and-upgrades)
 - [Uninstalling and cleanup](#uninstalling-and-cleanup)
@@ -41,6 +48,10 @@
 **Pick it up in a new chat**
 
 ![Search for an artifact and reconnect it to a new chat](media/reconnect.gif)
+
+**Continue the same work across agents and chats**
+
+Keep related artifacts and shared instructions in one Work Session, then connect another agent to continue.
 
 ## Requirements & compatibility
 
@@ -119,11 +130,15 @@ After installing the integration, reload your editor and restart your agent to l
 
 > [!NOTE]
 > **After an extension update:** reinstall only when AI Artifacts reports that the installed MCP runtime or skill is stale. Extension-only UI or documentation updates do not require integration reinstall. After reinstalling an asset, restart the affected AI client and start a new chat.
+>
+> We're sorry for the extra steps when a release requires you to update the MCP server or review skill. These updates support new features and improvements, keeping the extension and AI tools working together. Thank you for your patience and understanding as AI Artifacts evolves.
 
 <details>
 <summary>Runtime version and expected tools</summary>
 
-The current source bundles numeric MCP version 11 and skill version 3. The MCP catalog contains exactly five tools: `resolve_artifact_window`, `create_artifact`, `wait_for_artifact_review`, `inspect_artifact_review`, and `advance_and_wait_for_artifact`. A client that reports a different MCP version or exposes an older catalog must be reinstalled and restarted.
+The current source bundles numeric MCP version 12, review skill version 4, and work session skill version 1 (with `SKILL_VERSION = 4` bridge constant). The MCP catalog contains exactly six tools: `resolve_artifact_window`, `create_artifact`, `wait_for_artifact_review`, `inspect_artifact_review`, `advance_and_wait_for_artifact`, and `join_session`. A client that reports a different MCP version or exposes an older catalog must be reinstalled and restarted.
+
+MCP version 12 is reserved for the unreleased Work Session feature and remains its release version across implementation stages. The current runtime supports schema-v2 Sessions and explicit migration from legacy v1 conversations. Session instructions are read from `instructions.md`; existing v2 metadata may still contain an optional inline `instructions` string, which is accepted but not used as the instructions source. New metadata writes omit that field. Updating a test runtime bundle still requires reinstalling the changed runtime even when its numeric version remains 12.
 
 </details>
 
@@ -188,9 +203,11 @@ If the verify command reports `missing` (or you prefer manual setup), check dire
 - **A round token expired or the MCP restarted:** The existing content remains intact. Ask the AI agent to inspect the exact artifact path again to obtain a fresh token and reconnect.
 - **A configuration conflict is reported:** Remove or rename the unmanaged `[mcp_servers.ai_artifacts]` entry in your configuration file, then run the installer again.
 
-## Usage
+## Features & Usage
 
-### 1. Ask your AI to create a review artifact
+### Create & Review Artifacts
+
+#### Ask your AI to create a review artifact
 
 In your AI chat (Codex, Cursor, etc.), request a review artifact for your task:
 
@@ -201,7 +218,7 @@ Use $create-review-artifact to draft an implementation plan before writing code.
 
 Asking for a plan or Markdown document without explicitly requesting an artifact does not activate the review lifecycle. Explicit requests to inspect saved feedback or reconnect a known artifact can resume an existing lifecycle.
 
-### 2. Open the Artifact Review editor
+#### Open the Artifact Review editor
 
 The review editor opens automatically in the focused IDE window, or the only open window. If the target window is unclear, the agent asks you to choose one.
 
@@ -209,14 +226,14 @@ If it doesn't open, run **AI Artifacts: Open Artifact Review**. You can control 
 
 A file link in the agent's response is a regular file link, not a deep link, and may open `artifact.md` in the default Markdown text editor instead of the review editor. To reopen that artifact in the review editor, right-click `artifact.md` in Explorer, in the Markdown editor, or on its editor tab and choose **Open Artifact Review**. The command validates the artifact before opening it. The target may be unfocused; other windows ignore the event.
 
-### 3. Review, annotate, and drive execution
+#### Review, annotate, and drive execution
 
 1. **Highlight text:** Select any paragraph, heading, list item, quote, code block, or table cell.
 2. **Add inline comments:** Type your feedback in the floating comment popover. Press `Enter` or click **Comment** to save your feedback.
-3. **Inspect feedback & conversation artifacts:** Open the **Comments (N)** drawer to jump between annotated passages, or open the **Artifacts in Conversation** drawer to browse and open/switch to other artifacts created or reconnected in the same chat session.
+3. **Browse feedback:** Open the **Comments (N)** drawer to jump between annotated passages.
 4. **Submit your decision:**
    - **Review (Revise):** Sends your full batch comments and continuation instructions directly to the waiting AI, including after each advanced round. The agent answers questions in chat, updates the Markdown where changes were requested, and opens the next review round. If your comments only ask questions, the agent answers in chat and opens the next round without changing the document.
-   - **Proceed:** Approves the plan and concludes the review. For plans, the agent starts carrying out the approved work immediately.
+   - **Proceed:** Approves the artifact and concludes the review. For `plan` and `implementation-plan`, the agent starts carrying out the approved work immediately. For other artifact kinds, the agent acknowledges approval without automatically executing code.
    - **Just save:** Saves the Markdown to a designated workspace path without executing code.
    - **Copy Markdown:** Copies the document's Markdown to your clipboard without ending the review.
 
@@ -225,12 +242,62 @@ A file link in the agent's response is a regular file link, not a deep link, and
 
 If you haven't saved any comments or submitted a decision for the current round, you can request a change directly in chat—for example, “add a rollout phase to this artifact.” The agent updates the document and opens the next review round.
 
-### 4. Search and reconnect an artifact
+For a direct update to an existing artifact as part of the chat's active Work Session, the agent commits the update and continues working by default. Ask explicitly to update and wait for review when you want it to pause. New artifacts always wait for review; standalone updates and processing saved review feedback keep their existing review flow. If an AI request is already waiting on that artifact, the update keeps it waiting and your next submission returns the updated round and feedback to that request. The agent can attach a waiter later when none is active and you request review.
+
+### Search & Reconnect Artifacts
 
 1. Run **AI Artifacts: Search Artifact** from the Command Palette.
 2. Search by title and select an artifact to open it.
-3. Click **Connect** in the review header to copy its connection prompt.
+3. Click **Inspect artifact** in the review editor to copy the prompt for that exact artifact.
 4. Paste the prompt into your AI chat to reconnect.
+
+Inspect focuses on the selected artifact. If the chat is already connected to a Work Session, the agent also adds or refreshes that artifact in the active session. Ask explicitly to inspect it as a standalone artifact when you want to leave its session memberships unchanged.
+
+### Multi-Agent Work Sessions
+
+Use a Work Session for ongoing work that spans multiple artifacts, agents, or chats. A session keeps its artifacts and shared instructions together, so you can move from planning with one agent to implementation or review with another.
+
+#### Start from an artifact
+
+1. Open an artifact that does not yet belong to a session and click **Start a work session**.
+2. Enter a name. The session is created with the default **Conversation** type, and the current artifact is added to **Working**.
+3. The Session Manager opens and its Connect prompt is copied to your clipboard.
+4. Paste the prompt into your AI chat. The agent uses the `work-session` skill to join the session and receive its instructions and artifact catalog.
+
+If the artifact already belongs to sessions, use **Sessions** to open or choose one. Legacy conversations offer migration to Work Sessions before you use them as sessions; migrate an individual conversation there or use the migration entry in the Sessions sidebar.
+
+#### Continue with another agent or chat
+
+Open the session from the **Sessions** sidebar or an artifact’s **Sessions** button, click **Connect** in the Session Manager, and paste the prompt into the other AI chat. After joining successfully, that chat uses the same session’s artifacts and instructions. Each chat retains its own conversation history.
+
+A chat has at most one active Work Session, while a session can be used by multiple agents and chats. Copying a prompt or opening the manager connects the chat only after the agent successfully joins through MCP. Joining another session replaces the chat’s active session after success.
+
+Once connected, artifacts created or inspected in that chat are automatically added to the active session. You can request a standalone artifact for an individual task while keeping the session active for later requests. A chat without an active session can create and review standalone artifacts without starting a Work Session.
+
+For related work, the Session skill reads the latest shared instructions and relevant artifact Markdown. When it needs to find a new artifact or get a session overview, it refreshes the catalog with `join_session`. Reading a reference document through its catalog path leaves its review lifecycle unchanged.
+
+### Organize Session Artifacts
+
+1. Open the **AI Artifacts** view container in the Activity Bar to access **Recent Artifacts** and **Sessions**.
+2. In **Recent Artifacts**, use the filter to select an artifact kind or **Other** for custom kinds. Use **View all** to search beyond the recent list.
+3. In the **Sessions** header, use **Add Session** to create an empty session, **Filter Sessions** to filter by session type, **Search Sessions** to find a session by name, or **Manage Session Types** to add, rename, or delete global session types.
+4. Select a session to open the Session Manager. Rename it or change/quick-create its **Session Type** independently of artifact kinds.
+5. Click **＋** beside **Working** to choose an existing artifact from a Quick Pick. The selected artifact is added to the end of Working; it can belong to more than one session.
+6. Use artifact menus to move items between **Working**, **References**, and **Archived**, reorder them with **Move Up** / **Move Down**, or **Remove from session** without deleting the artifact itself.
+7. Use the in-session filter bar to search artifacts by title or filter by artifact kind across all zones. Cards display title, kind badge, a 2-line description snippet, and updatedAt timestamp.
+8. Use the More (`⋯`) menu in the Session Manager header to **Export** the session to a `.zip` archive containing `Instructions.md` and organized folders (`Working/`, `References/`, `Archived/`) with numbered Markdown files, or to **Archive** or **Delete** the session.
+
+Working occupies the main column with a responsive grid layout. References and Archived appear in the collapsible side panel (fixed 2 columns), whose visibility is remembered separately for each session. The in-session Archived zone is a layout zone within the session; it differs from global artifact archiving. Global session archives are automatically pruned after 30 days of archiving.
+
+### Shared Instructions
+
+Session Instructions hold rules, workflows, and other guidance for agents working in that session. For example, describe the module’s conventions, the preferred development workflow, or which design decisions agents should follow.
+
+- Edit Markdown directly in the **Instructions** text area and click **Save**.
+- Use **Open Markdown File** to edit the session’s `instructions.md` in your editor. You can also ask an agent to update that file explicitly.
+- Closing or reloading the manager before clicking Save discards unsaved text. Changes saved to `instructions.md` outside the manager are reflected in the open Instructions field.
+
+The `work-session` skill applies the latest instructions to related requests and uses the artifact catalog to find supporting plans, references, or other documents. Instructions are stored in `instructions.md` inside the session directory; the file is separate from session metadata and artifact review state.
 
 ## Storage, behavior and security
 
@@ -246,12 +313,16 @@ The AI agent calls the MCP `create_artifact` tool, which generates an isolated s
   review-submission.json  # Present after a decision is submitted
   artifact-connection.json # Optional schema-v1 target-window routing state
 
-~/.ai-artifacts/conversation-registry/<conversation-id>/
-  conversation.json       # Schema-v1 conversation metadata
-  registered-artifacts/   # Registered artifact index files
+~/.ai-artifacts/conversation-registry/<session-id>/
+  conversation.json       # Schema-v2 Work Session metadata
+  instructions.md         # Shared Markdown instructions; empty if absent
+  layout.json             # Ordered Working, References, and Archived zones
+  registered-artifacts/   # Independent artifact membership records
 ```
 
-`artifact.json` records the schema-v6 manifest `{ schemaVersion: 6, kind, artifactId, title, createdAt, updatedAt, reviewRound, reviewSessionId }` without workspace ownership fields. Artifacts are owned by review sessions, not repository paths. Optional `artifact-connection.json` contains only UI-routing state (`windowInstanceId`, connection revision, open-request ID, source, and timestamp); it never replaces the manifest. The conversation registry groups artifacts from the same chat for the webview drawer and is cleaned up alongside expired artifacts.
+`artifact.json` records the schema-v6 manifest `{ schemaVersion: 6, kind, artifactId, title, createdAt, updatedAt, reviewRound, reviewSessionId }` without workspace ownership fields. Artifacts are owned by review sessions, not repository paths. Optional `artifact-connection.json` contains only UI-routing state (`windowInstanceId`, connection revision, open-request ID, source, and timestamp); it never replaces the manifest.
+
+Work Sessions organize artifacts independently of their review lifecycles and AI chat histories. A standalone artifact needs no session registry entry, and an artifact can belong to multiple Work Sessions. Retention cleanup removes expired artifact references from session membership and layout while preserving empty v2 sessions.
 
 ### Automatic retention cleanup
 
@@ -271,8 +342,8 @@ The AI agent calls the MCP `create_artifact` tool, which generates an isolated s
 ## Compatibility and upgrades
 
 - Version 1.1.0 supports only schema v6 stored under `~/.ai-artifacts/artifacts/`.
-- The current integration uses numeric `MCP_VERSION = 11` and `SKILL_VERSION = 3`. These are independent monotonic asset versions, not SemVer and not the extension package version.
-- Successful installation records the verified MCP runtime, shared `.agents` skill, and detected Claude skill independently in `~/.ai-artifacts/managed/integration-version.json`. A missing or invalid receipt is treated as stale.
+- The current integration uses numeric `MCP_VERSION = 12`, `CREATE_REVIEW_ARTIFACT_SKILL_VERSION = 4` (`SKILL_VERSION = 4`), and `WORK_SESSION_SKILL_VERSION = 1`. These are independent monotonic asset versions, not SemVer and not the extension package version.
+- Successful installation records the verified MCP runtime, shared `.agents` skills (`skills` and `sessionSkills`), and detected Claude skills independently in `~/.ai-artifacts/managed/integration-version.json`. A missing or invalid receipt is treated as stale.
 - Schema v3/v4/v5 and workspace-local `.ai-artifacts` or `.codex-artifacts` lifecycles are not opened, advanced, or migrated by v1.1.x. Existing files remain untouched on disk.
 - This is a hard compatibility cutoff. A rollback to a 0.9.x extension also requires reinstalling the matching older runtime and skill; do not use a 0.9.x runtime with v1.1.x artifacts.
 - Reinstall only when the extension reports a stale MCP or skill asset because its numeric version changed. Extension-only updates with current receipts do not create another reinstall notification.
@@ -283,7 +354,7 @@ The AI agent calls the MCP `create_artifact` tool, which generates an isolated s
 
 AI Artifacts provides two comprehensive ways to remove MCP configurations and runtime assets:
 
-- **Automatic Cleanup upon Extension Uninstall:** When you uninstall the AI Artifacts extension from VS Code or Cursor (`Extensions -> Uninstall`), an automated lifecycle hook (`vscode:uninstall`) runs a standalone script that automatically removes the `ai_artifacts` MCP configuration from all detected AI clients and completely deletes base runtime assets (`~/.ai-artifacts/managed/`, legacy `~/.vscode/ai-artifacts/`, `~/.agents/skills/create-review-artifact/`, and `~/.claude/skills/create-review-artifact/`).
+- **Automatic Cleanup upon Extension Uninstall:** When you uninstall the AI Artifacts extension from VS Code or Cursor (`Extensions -> Uninstall`), an automated lifecycle hook (`vscode:uninstall`) runs a standalone script that automatically removes the `ai_artifacts` MCP configuration from all detected AI clients and completely deletes base runtime assets (`~/.ai-artifacts/managed/`, legacy `~/.vscode/ai-artifacts/`, `~/.agents/skills/create-review-artifact/`, `~/.agents/skills/work-session/`, `~/.claude/skills/create-review-artifact/`, and `~/.claude/skills/work-session/`).
 - **Manual Cleanup via Command Palette:** If you want to disconnect MCP integrations while keeping the VS Code extension active, open the Command Palette (`Ctrl+Shift+P` / `Cmd+Shift+P`):
   - **`AI Artifacts: Uninstall All Detected Integrations`**: Removes MCP configs from all detected editors and clears base runtime assets.
   - Or choose a specific client: **`AI Artifacts: Uninstall Integration for Cursor`**, **`... for Codex`**, **`... for Claude`**, **`... for GitHub Copilot`**, **`... for Cline`**, or **`... for Windsurf`**.

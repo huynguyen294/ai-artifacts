@@ -1,6 +1,6 @@
 # Components and Responsibilities
 
-This document describes the technical components that participate in the current Codex Artifacts review workflow. It explains what each component owns, how components communicate, and which responsibilities must remain outside each boundary.
+This document describes the technical components in the current AI Artifacts review and Work Session workflows. It explains what each component owns, how components communicate, and which responsibilities must remain outside each boundary.
 
 It complements the existing documentation:
 
@@ -15,6 +15,9 @@ flowchart LR
     User[User]
     Codex[Codex]
     Skill[Create Review Artifact Skill]
+    SessionSkill[Work Session Skill]
+    SessionProvider[Work Session Provider]
+    SessionFiles[Session Metadata, Instructions, Layout and Memberships]
     MCP[Artifact Review MCP]
     Registry[Workspace Registry]
     Files[Artifact Files]
@@ -28,6 +31,12 @@ flowchart LR
 
     Codex --> Skill
     Skill --> MCP
+    Codex --> SessionSkill
+    SessionSkill --> MCP
+    MCP --> SessionFiles
+    Extension --> SessionProvider
+    SessionProvider <--> Webview
+    SessionProvider --> SessionFiles
     Extension --> Registry
     MCP --> Registry
     MCP --> Files
@@ -38,6 +47,7 @@ flowchart LR
     Webview --> Markdown
     User --> Webview
     Installer --> Skill
+    Installer --> SessionSkill
     Installer --> MCP
 
     Shared -. schemas .-> MCP
@@ -50,77 +60,93 @@ The core responsibility split is:
 
 | Component                | Primary responsibility                        | State or resources it owns                                                   |
 | ------------------------ | --------------------------------------------- | ---------------------------------------------------------------------------- |
-| Codex skill              | Agent-side lifecycle and chat policy           | Exact artifact handle, complete proposed Markdown, and current tool result    |
+| Artifact skill           | Agent-side artifact lifecycle and chat policy | Exact artifact handles, complete proposed Markdown, and current tool result |
+| Work Session skill       | Shared Session context across related requests | One active Session ID, current Instructions and catalog paths, separate from review handles |
 | Artifact Review MCP      | Artifact persistence, routing, and waiters     | Artifact creation, connection commits, waiter registry, grants, transactions |
 | Workspace Registry       | Evidence of currently open VS Code workspaces | Short-lived, per-window workspace snapshots                                  |
-| Conversation Registry    | Conversation-scoped artifact grouping         | Schema-v1 conversation manifests and registered artifact indexes             |
+| Work Session Registry    | Work Session organization and zones           | Schema-v2 metadata, instructions.md, layout.json zones, registered artifact indexes, and global session types |
 | Artifact file protocol   | Persistent lifecycle and routing communication | Manifest, Markdown, comments, decision, and optional connection state         |
-| Extension entry          | VS Code activation and composition            | Commands, watchers, and provider registration                                |
-| Artifact Review Provider | Webview/extension orchestration               | One custom-editor session, async message queue, and its subscriptions        |
+| Extension entry          | VS Code activation and composition            | Commands, watchers, Activity Bar views, and provider registration            |
+| Artifact Review Provider | Webview/extension orchestration               | One custom-editor session, submission guard, and its subscriptions        |
+| Work Session Provider    | Work Session management orchestration         | `agentPlus.workSession` custom readonly editor, scoped patches, per-session panel state, and host actions |
 | Artifact Store           | Trusted artifact persistence adapter          | Validated review state, comments, and submission writes                      |
-| Review Webview           | Human review interaction                      | Ephemeral UI state, drawers, and typed user intent                           |
+| Review Webview & Session Tab | Human review and Work Session management  | Ephemeral UI state, ReviewApp, SessionApp (two-column manager), and typed user intent |
 | Markdown review pipeline | Document rendering and comment anchoring      | Parsed blocks and rendered annotations                                       |
 | Shared contracts         | Cross-process protocol definition             | Schemas, types, filenames, and binding rules                                 |
-| Integration manager      | Installation and verification                 | Extension-managed MCP runtime, skill, and supported-client configuration     |
+| Integration manager      | Installation and verification                 | Extension-managed MCP runtime, both skills, and supported-client configuration     |
 
 The governing lifetime relationship is `artifact lifetime > waiter lifetime > chat-turn lifetime`. Artifact lifetime is bounded by configured retention (`agentPlus.artifactRetentionDays`); expired artifacts are permanently deleted when the extension activates. Artifact files persist across cancellation, takeover, chat completion, and MCP restart until the retention window expires. The MCP waiter registry is temporary process state, while the skill retains the exact artifact handle needed to inspect or reconnect that persistent state.
 
-## 1. Codex skill
+## 1. Agent skills
 
 **Source**
 
 - [`skills/create-review-artifact/SKILL.md`](../skills/create-review-artifact/SKILL.md)
 - [`skills/create-review-artifact/references/artifact-contract.md`](../skills/create-review-artifact/references/artifact-contract.md)
+- [`skills/work-session/SKILL.md`](../skills/work-session/SKILL.md)
 
 **Responsibilities**
 
 - Decide whether an explicit user request should create/update an artifact, inspect saved feedback, or reconnect an exact artifact.
-- Track `artifactConversationId` across the conversation lifecycle and pass `artifactConversationId` (or `conversationName`) when creating or inspecting artifacts.
+- Keep lifecycle handling in the artifact skill and use its short Session bridge for optional arguments. No active Session means standalone; active S supplies `artifactConversationId: S` by default, except for explicit standalone, which preserves S. Explicit New supplies `conversationName` without the old ID.
 - Produce one complete Markdown document.
 - By default, call `create_artifact` directly; the MCP server automatically targets the currently focused live VS Code window (or sole live window).
 - When multiple windows exist and focus is ambiguous, handle `WINDOW_SELECTION_REQUIRED` and retry with `connection: { targetMode: "explicit-window", selectionToken }`.
 - Call `resolve_artifact_window` when proactive window discovery or candidate inspection is needed before creation.
-- Call `create_artifact` with `kind: "implementation-plan"`, retain an exact handle mapping, `artifactConversationId`, and returned connection metadata, then call `wait_for_artifact_review` for the default flow.
+- Call `create_artifact` with a chosen fixed or open `kind` (defaulting to plan kinds when applicable), retain exact review handles, any returned Session context, and connection metadata, then call `wait_for_artifact_review` for the default flow.
 - Interpret the returned decision.
 - Apply one feedback policy to submitted `revise` and chat-inspected comments: answer questions visibly, update Markdown only for requested changes, and advance unchanged Markdown for question-only rounds.
+- For explicitly requested AI-authored feedback, write the AI's own comments and optionally a `revise` submission using the artifact skill's reference, without taking over or starting a waiter.
 - For chat escape, inspect the exact interrupted handle with takeover before applying that shared policy.
 - For an explicit chat update on an empty round, inspect the exact handle with `intent: "explicit-chat-update"`, replace the Markdown, and advance without requiring a UI comment or Review submission.
-- Reattach the same round when inspection has no feedback; ask for a path instead of guessing when the exact handle is ambiguous.
+- For direct Session updates, delegate wait-mode selection to the Work Session skill and interpret `waited: false` as a commit confirmation; record its round and continue authorized work without treating absent comments as missing review feedback. Creation always waits, while standalone updates and review-feedback processing keep their existing flow.
+- Reattach the same round when inspection has no feedback and is not an explicit chat update; ask for a path instead of guessing when the exact handle is ambiguous.
 - Use the intent decision table before reconnect/inspection/chat update and never takeover when the intent or exact handle is ambiguous.
 - Reconnect only through `inspect_artifact_review` on the exact handle. Ambiguous window reconnect retries inspect with the selected `connection.selectionToken`.
-- Follow structured lifecycle recovery metadata, keep the same handle, and never replay an update whose commit state is uncertain; on `CONVERSATION_NOT_FOUND`, clear the cached conversation ID and re-initialize.
-- For `approve` on `plan` or `implementation-plan`, obey the MCP `execute-approved-plan` directive and execute the complete approved plan immediately; for other kinds, continue only with the action implied by the original request.
+- Follow structured lifecycle recovery metadata and retain exact handles. On `CONVERSATION_NOT_FOUND`, `CONVERSATION_REGISTRY_INVALID`, or `CONVERSATION_MIGRATION_REQUIRED`, retain active context and follow Session recovery. Never silently clear an ID, create a replacement Session, retry standalone, or replay an uncertain update.
+- For `approve` on `plan` or `implementation-plan`, obey `execute-approved-plan` immediately; for other fixed or open kinds, acknowledge `approved` and conclude review without automatic implementation.
 - For `save`, ask for a destination and copy the Markdown without performing the proposed work.
 
 **Does not own**
 
 - Artifact IDs, review session IDs, or round numbers.
-- Lifecycle-file creation or repair.
-- Comment or submission persistence.
+- Lifecycle-file creation or repair outside the explicit AI-feedback exception.
+- Comment or submission persistence outside that explicitly requested AI-feedback workflow.
 - Token creation or validation.
 - Waiter ownership, cancellation, or takeover mechanics.
 
-The skill must never create or edit `artifact.json`, `comments.json`, `review-submission.json`, or `artifact-connection.json` directly.
+The skills must never directly create or edit artifact lifecycle files, including `artifact.md`, `artifact.json`, `comments.json`, `review-submission.json`, and `artifact-connection.json`.
+
+**Work Session skill responsibilities**
+
+- Require `join_session` for Session entry/refresh; the artifact skill requires only its five artifact tools. Keep at most one active Session per chat, adopting New/Join/switch context only after success. Memberships do not choose the active Session, and the MCP stores no per-chat active ID.
+- Read current Instructions from the exact `instructionsPath`, or reuse fresh Instructions already returned for that request. Apply them only to related work. AI may edit that exact Markdown file only when explicitly requested; registry metadata, layout, and memberships remain tool/extension-owned.
+- Refresh the catalog before selecting artifacts for latest/recent/current-overview requests, even when an old path is known. Otherwise read known exact artifacts' current Markdown directly; unknown targets require a current catalog, and ambiguity requires clarification. Reuse fresh context already returned for the same request.
+- Replace the active catalog after successful non-null Session results; never merge old snapshots. Preserve review handles separately. A standalone `session: null` does not clear an active Session.
+- Select the wait mode for explicit chat updates to existing artifacts in the active Session: default to non-waiting unless the user requests review waiting, then delegate lifecycle/result handling to the artifact skill. Creation, standalone requests, and review-feedback processing retain their existing wait behavior.
+- Join-only reads context without takeover, artifact inspection, routing, waiters, or tokens. Explicit Join with artifact uses the shared inspect core; normalize `inspection` before applying the artifact skill.
+- Retain exact Session identity and paths in requested handoffs. No background watcher pushes changes into chat. Session entry and Instructions do not independently authorize unrelated actions.
 
 ## 2. Artifact Review MCP
 
 **Source**
 
-- [`src/integration/artifact-review-mcp-v4.ts`](../src/integration/artifact-review-mcp-v4.ts)
+- [`src/integration/artifact-review-mcp.ts`](../src/integration/artifact-review-mcp.ts)
 
 **Responsibilities**
 
-- Expose one window resolver plus four lifecycle tools (numeric MCP version 11):
+- Expose one window resolver, four artifact lifecycle tools, and one Session entry tool (numeric MCP version 12):
   - `resolve_artifact_window`
   - `create_artifact`
   - `wait_for_artifact_review`
   - `inspect_artifact_review`
   - `advance_and_wait_for_artifact`
+  - `join_session`
 - Validate tool arguments, artifact kind, title, and Markdown size.
 - Group fresh window candidates and issue short-lived, single-use window selection tokens.
 - Generate the artifact ID and `reviewSessionId`.
 - Create a schema-v6 artifact beneath the global per-user collection at review round 1.
-- Manage schema-v1 conversation registry (`~/.ai-artifacts/conversation-registry/<artifactConversationId>/`): accept optional flat fields `artifactConversationId?: string` and `conversationName?: string` on create and inspect, register artifacts with atomic lockfiles (`.conversation.lock`), rollback conversation registration if connection commits fail, and echo or return `artifactConversationId` across lifecycle tools.
+- Manage schema-v2 Work Sessions beneath `~/.ai-artifacts/conversation-registry/<sessionId>/`: support standalone create/inspect (default when no session params are passed), accept optional `artifactConversationId` or `conversationName`, handle preflight migration checks for legacy v1 conversations (`CONVERSATION_MIGRATION_REQUIRED`), rollback session registration if connection commits fail, and serve read-only session inspection via `join_session`.
 - Select the focused live target window (or explicit selection token), atomically commit connection state, and return the persistent artifact handle plus connection metadata before attaching any waiter.
 - Attach one transient tool call to `review-submission.json`, or return an existing submission immediately.
 - Detect a submission through filesystem watching with periodic polling as a fallback.
@@ -134,7 +160,7 @@ The skill must never create or edit `artifact.json`, `comments.json`, `review-su
 - Transactionally preserve or replace Markdown, increment `reviewRound`, reset comments, remove the previous submission, and wait for the next decision.
 - Consume the token only after a successful commit; leave a newly committed round detached if its waiter is cancelled.
 - Roll back a failed round transition.
-- Return additive machine-readable recovery metadata for token, round, state, waiter, transaction, conversation, and workspace failures while preserving readable error text.
+- Return additive machine-readable recovery metadata for token, round, state, waiter, transaction, Session, and window-selection failures while preserving readable error text.
 
 **Owns and may write**
 
@@ -158,6 +184,7 @@ The skill must never create or edit `artifact.json`, `comments.json`, `review-su
 
 - Publisher: [`src/extension/workspace-registry-publisher.ts`](../src/extension/workspace-registry-publisher.ts)
 - Contract and resolver: [`src/shared/workspace-registry.ts`](../src/shared/workspace-registry.ts)
+- Active window routing: [`src/shared/window-routing.ts`](../src/shared/window-routing.ts)
 
 This component has two cooperating halves.
 
@@ -178,12 +205,12 @@ It refreshes on workspace, active-editor, or focus changes and also sends a peri
 The MCP-side resolver:
 
 - Reads only fresh, schema-valid snapshots.
-- Canonicalizes the requested workspace and rejects stale or unregistered roots.
 - Preserves each fresh snapshot as a window group with stable instance ID, focus hint, snapshot context, and folder candidates.
-- Normalizes common name separators and resolves exact-path, exact-name, and similar-name folder candidates across groups; a sole registered folder is returned as `single-folder` and selected without agent inference.
-- Returns fresh folders grouped as `available` when no query match exists and `not-found` only when the fresh scope is empty. Multiple windows are not an error by themselves; focus influences ordering but does not erase window identity.
-- Validates either `tagged-file` containment or an MCP-owned `resolved-workspace` grant.
-- Fails closed when evidence, selection context, registration, or containment is stale or invalid.
+- Uses `src/shared/window-routing.ts` for window candidates, query matching, and single-use selection tokens. Create targets the sole live or unique focused window unless an explicit token selects one.
+- Generic reconnect prioritizes sole live window, validated advisory artifact-window affinity, then unique focused window. Ambiguity returns `WINDOW_SELECTION_REQUIRED` before mutation; focus is not artifact ownership or authorization.
+- Validates token identity, expiry, and current window state. Artifacts are global and contain no workspace ownership field; exact artifact identity and path safety are checked separately.
+
+Retained workspace-evidence helpers in `workspace-registry.ts` are not the active create/reconnect ownership contract.
 
 **Does not own**
 
@@ -191,7 +218,7 @@ The MCP-side resolver:
 - Artifact selection based on cwd, folder order, package markers, untagged active files, or recency.
 - Persistent workspace configuration.
 
-The registry proves that a workspace is currently available and that the supplied evidence selects it; it does not decide when an artifact should be created.
+The registry supplies current window and folder facts for routing; it neither establishes artifact workspace ownership nor decides when an artifact should be created.
 
 ## 4. Artifact file protocol
 
@@ -214,32 +241,34 @@ Each artifact is a direct child of the global per-user collection:
 └── .artifact-update.lock   # temporary during a round update
 
 ~/.ai-artifacts/conversation-registry/<artifactConversationId>/
-├── conversation.json        # schema-v1 conversation metadata
-├── .conversation.lock      # temporary during registration/update
+├── conversation.json      # schema-v2 Session metadata
+├── instructions.md        # effective Instructions (empty when absent)
+├── layout.json            # optional schema-v1 zone ordering
 └── registered-artifacts/   # per-artifact index entries
     └── <artifactId>.json
 ```
 
 | File                     | Responsible writer                                         | Responsibility                                                                                     |
 | ------------------------ | ---------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
-| `artifact.json`          | MCP                                                        | Identify the artifact and bind kind, title, session, timestamps, and current round |
+| `artifact.json`          | MCP                                                        | Identify the artifact and bind kind, title, reviewSessionId, timestamps, and current round; no Work Session membership field |
 | `artifact.md`            | MCP                                                        | Store the complete Markdown for the current round                                                  |
-| `comments.json`          | Artifact Store during review; MCP when opening a new round | Store block-bound comments and bind them to the current artifact hash and round                    |
-| `review-submission.json` | Artifact Store                                             | Record the immutable `revise`, `approve`, or `save` decision for one round                         |
+| `comments.json`          | Artifact Store or explicitly requested AI reviewer; MCP when opening a new round | Store comments and bind them to the current artifact hash and round                    |
+| `review-submission.json` | Artifact Store; AI reviewer for explicitly requested `revise` | Record the immutable `revise`, `approve`, or `save` decision for one round                         |
 | `artifact-connection.json` | MCP                                                      | Store only target window, connection revision, open-request ID, source, and timestamp              |
 | `.artifact-connection.lock` | MCP                                                      | Serialize connection commits without changing lifecycle state                                      |
 | `.artifact-update.lock`  | MCP                                                        | Prevent readers from observing an incomplete multi-file update                                     |
-| `conversation.json`      | MCP                                                        | Group artifacts by conversation (`schemaVersion: 1`, `artifactConversationId`, `conversationName`) |
-| `.conversation.lock`     | MCP / Extension                                            | Serialize conversation registry writes across processes                                            |
-| `registered-artifacts/<id>.json` | MCP                                                | Record registration of artifact in conversation (`schemaVersion: 1`, timestamps)                   |
+| `conversation.json`      | Shared registry via MCP creation or Extension metadata actions | Session v2 identity, title, typeId, createdAt; MCP registration does not rewrite metadata |
+| `instructions.md`        | Extension; AI for explicit instruction-edit requests | Effective raw Markdown Instructions; no inline JSON fallback |
+| `layout.json`            | Shared registry via Extension organization/migration/cleanup | Ordered zone IDs, reconciled with membership |
+| `registered-artifacts/<id>.json` | MCP / Extension via shared registry | Membership and registeredAt; create/inspect registration refreshes Session activity |
 
 The protocol is the communication medium between the independently running MCP process and VS Code extension. It is not a revision-history store.
 
-`artifact.json` stores the schema-v6 manifest without repository ownership fields. Schemas v3/v4 and workspace-local artifact directories are rejected and are not live-migrated.
+`artifact.json` stores the schema-v6 manifest without repository ownership fields. Schemas v3/v4/v5 and workspace-local artifact directories are rejected and are not live-migrated.
 
 `artifact.json` remains the source of truth for artifact identity. Optional `artifact-connection.json` is routing state only: revisions order successful create/reconnect commits, and open-request IDs deduplicate watcher events. Wait and advance preserve it unchanged.
 
-`conversation.json` is schema-v1 grouping metadata for the conversation artifacts drawer. Pruned during automatic retention cleanup.
+`conversation.json` is schema-v2 metadata (`schemaVersion`, `sessionId`, `title`, `typeId`, `createdAt`). Its strict parser accepts optional legacy inline `instructions`, but effective Instructions come only from `instructions.md` (empty if absent); new metadata writes omit that field, and reads never migrate or rewrite it. `layout.json` is schema-v1 state (`working`, `references`, `archived`); independent membership files are authoritative. Session `updatedAt` derives from `max(createdAt, ...registeredAt)`. Writes are atomic without Session lockfiles; layout uses last-write-wins. Cleanup preserves empty v2 Sessions. Legacy v1 migration is explicitly triggered through single/bulk UI and retains `conversation.v1.backup.json`; MCP access to v1 fails with `CONVERSATION_MIGRATION_REQUIRED`.
 
 ## 5. VS Code extension entry
 
@@ -251,8 +280,9 @@ The protocol is the communication medium between the independently running MCP p
 **Responsibilities**
 
 - Activate the extension.
-- Construct the review provider and workspace-registry publisher.
-- Register the `agentPlus.artifactReview` custom editor.
+- Construct the review provider, session provider, work session sidebar providers, and workspace-registry publisher.
+- Register the `agentPlus.artifactReview` custom editor and `agentPlus.workSession` custom readonly editor.
+- Register the Activity Bar container `agentPlus-artifacts` (built-in Codicon `library`) with `agentPlus.recentArtifacts` and `agentPlus.sessions` TreeDataProviders (using `createTreeView` for `agentPlus.sessions` to display active session type filter descriptions).
 - Ensure and validate the global collection root before registering direct-child `artifact-connection.json` create/change events.
 - Revalidate the connection path, manifest binding, and linked-path safety on each bounded read attempt; ignore events whose target instance ID does not match the current window.
 - Automatically open the corresponding `artifact.md` when configured and targeted, even if that window is unfocused. Disabling auto-open does not undo the MCP connection commit.
@@ -260,6 +290,11 @@ The protocol is the communication medium between the independently running MCP p
 - Register commands to:
   - Open an artifact review from a selected `artifact.md`, an active Markdown or Artifact Review editor, or the global-collection file-picker fallback. Expose **Open Artifact Review** in Explorer, Markdown editor, and editor-tab context menus for file-backed `artifact.md`, then use the shared safe open coordinator rather than bypassing artifact validation.
   - Search artifacts by title in the global collection (`agentPlus.searchArtifact`).
+  - Open a work session (`agentPlus.openWorkSession`).
+  - Filter the Sessions sidebar view by session type or All Types (`agentPlus.filterSessions`).
+  - Search all v2 Work Sessions by title (`agentPlus.searchSessions`).
+  - Manage global session types via native QuickPick (`agentPlus.manageSessionTypes`).
+  - Run single and bulk conversation migration (`agentPlus.migrateConversations`).
   - Install, verify, and uninstall all supported integrations or one specific client.
   - Copy the current MCP configuration or production skill.
 - Compare bundled numeric MCP/skill versions with `~/.ai-artifacts/managed/integration-version.json`, determine the exact stale assets, and show the existing installer action only for a new stale-state fingerprint.
@@ -292,10 +327,12 @@ This is the composition root for the extension host, not the business-logic laye
   - `addComment` to the store.
   - `removeComment` to the store.
   - `submitReview` to the store.
-  - `listConversationArtifacts` to `ConversationArtifactService` with monotonic request ID tracking.
-  - `openConversationArtifact` to `ArtifactReviewOpenCoordinator.open(..., { preview, preserveFocus })`.
+  - `openArtifactSessions` to reveal or open the artifact's session via VS Code commands.
+  - `migrateSelectedConversation` to run single migration and open the newly migrated session.
+  - `copyArtifactConnectPrompt` to copy the direct artifact Inspect prompt without a Session-mode dialog.
+  - `startWorkSession` to collect a title, create a default-type Session, register the current artifact, then open/copy its Connect prompt.
   - Allowed external links to VS Code.
-- Maintain an asynchronous FIFO queue for state mutations (`addComment`, `removeComment`, `submitReview`) while running read queries concurrently.
+- Dispatch validated messages to their handlers. There is no provider-wide FIFO mutation queue; the async callback does not promise cross-message serialization.
 - Serialize submission attempts within the editor using the local `sending` guard.
 - Watch artifact lifecycle files and refresh the webview after external changes.
 - Dispose message handlers and filesystem watchers when the editor closes.
@@ -319,7 +356,7 @@ The provider is the orchestration bridge between an untrusted webview and truste
 
 - Wait briefly for an MCP round-update transaction to complete before reading.
 - Load Markdown and manifest data.
-- Verify that the artifact directory matches the manifest's declared workspace and ID.
+- Verify canonical placement beneath the global collection and the match between directory ID and manifest ID; no manifest workspace field exists.
 - Calculate the current Markdown hash.
 - Parse and bind `comments.json` to schema, artifact ID, round, and Markdown hash.
 - Parse and bind a submission to the artifact, session/thread, round, Markdown hash, and comments hash.
@@ -346,35 +383,36 @@ The provider is the orchestration bridge between an untrusted webview and truste
 
 Only schema-v6 artifacts at exact validated global handles are loaded. Schemas v3/v4/v5 and workspace-local artifacts are rejected before review state is exposed.
 
-## 8. Review Webview
+## 8. Review Webview & Session Tab
 
 **Source**
 
-- Entry: [`src/webview/main.tsx`](../src/webview/main.tsx)
-- Application: [`src/webview/ReviewApp.tsx`](../src/webview/ReviewApp.tsx)
-- Conversation drawer: [`src/webview/ConversationArtifactsDrawer.tsx`](../src/webview/ConversationArtifactsDrawer.tsx)
+- Entry & discriminator: [`src/webview/main.tsx`](../src/webview/main.tsx)
+- Review Application: [`src/webview/ReviewApp.tsx`](../src/webview/ReviewApp.tsx)
+- Session Application: [`src/webview/SessionApp.tsx`](../src/webview/SessionApp.tsx)
+- Comments drawer: [`src/webview/CommentsDrawer.tsx`](../src/webview/CommentsDrawer.tsx)
 - Focus management: [`src/webview/focus-trap.ts`](../src/webview/focus-trap.ts)
 - Action policy: [`src/webview/review-actions.ts`](../src/webview/review-actions.ts)
 - VS Code messaging adapter: [`src/webview/vscode-api.ts`](../src/webview/vscode-api.ts)
 
 **Responsibilities**
 
-- Request initial state from the provider.
-- Render the artifact title, kind, round, Markdown, comments, and lifecycle notices.
-- Provide top header buttons for Comments drawer and Conversation Artifacts drawer with mutual exclusion.
-- In `ConversationArtifactsDrawer.tsx`, render registered artifacts in the conversation with search filter, keyboard navigation, status badges (`Current`, `Waiting`, `Approved`, `Revised`, `Saved`), preview click, and new-tab click (`Ctrl/Cmd+Click` / middle-click).
-- Capture a text selection within one reviewable block.
-- Normalize the selection to the block's visible-text offsets.
-- Create comment drafts and send typed add/remove messages.
-- Open comment details and navigate from the comments drawer to highlighted text.
-- Submit `revise`, `approve`, or `save` intent.
-- Disable actions while submitting, after submission, for read-only artifacts, or while a comment draft is unsaved.
-- Reset transient selection/comment UI when the review round changes.
-- Copy Markdown to the clipboard without changing lifecycle state.
+- Request initial state from the provider upon ready.
+- In `ReviewApp`:
+  - Render artifact title, kind, round, Markdown, comments, and lifecycle notices.
+  - Provide toolbar buttons for Comments drawer, Sessions toggle (gated on MCP version 12), Start a work session flow (when the artifact has no memberships), and direct Inspect prompt copying.
+  - Capture text selections, draft inline comments, and submit review decisions (`revise`, `approve`, `save`).
+- In `SessionApp`:
+  - Render a two-column Work Session Manager with the `Working` artifact zone in the main column and a collapsible side panel (`Session Type` → `Instructions` → `References` → `Archived`).
+  - Provide controls to rename the session, change or quick-create its session type, edit and explicitly **Save** Markdown `instructions`, toggle the per-session side panel (`globalState`), and organize/reorder/remove artifacts across `Working`, `References`, and `Archived`.
+  - Preserve unsaved `instructions` draft across unrelated background refreshes while accepting `workSessionInstructionsPatch` when the persisted `instructions.md` file on disk actually changes, and surface action errors inline without tearing down the manager view.
+  - Route artifact card clicks to the host for safe opening.
+- Reset transient UI upon round or session state change.
+- Copy Markdown or Connect prompt to clipboard.
 
 **Owns**
 
-- Ephemeral React state: current draft, comment body, drawer/popover state, active drawer, sending status, active comment, and copy feedback.
+- Ephemeral React state: current draft, comment body, drawer/popover state, active dialogs, sending status, and active selection.
 
 **Does not own**
 
@@ -435,7 +473,7 @@ The parser, selection capture, renderer, and store must agree on the same visibl
 **Responsibilities**
 
 - Define the schema-v6 manifest/comments/submission contracts and the independent schema-v1 artifact-connection contract.
-- Define the schema-v1 installed-integration receipt and the independent numeric `MCP_VERSION` / `SKILL_VERSION` counters; these asset versions are monotonic integers, not SemVer or package versions.
+- Define the schema-v1 installed-integration receipt and independent numeric `MCP_VERSION` / `SKILL_VERSION` counters plus `WORK_SESSION_SKILL_VERSION`; `SKILL_VERSION` aliases `CREATE_REVIEW_ARTIFACT_SKILL_VERSION` only. These three asset versions are monotonic integers, not SemVer or package versions.
 - Define comments, review decisions, submissions, Markdown blocks, review state, and webview messages.
 - Validate all untrusted JSON and webview input.
 - Bind comments and submissions to the correct artifact lifecycle.
@@ -465,15 +503,15 @@ This layer is the protocol source of truth. A contract change must be propagated
 **Responsibilities**
 
 - Deploy the centralized MCP server runtime into `~/.ai-artifacts/managed/runtime/`.
-- Deploy the bundled skill into the global agent-skills directory (`~/.agents/skills/create-review-artifact/`).
-- Deploy the Claude skill independently into `~/.claude/skills/create-review-artifact/` when Claude is installed.
+- Deploy both bundled skills into sibling directories `~/.agents/skills/create-review-artifact/` and `~/.agents/skills/work-session/`.
+- Deploy both independently into the corresponding sibling directories under `~/.claude/skills/` when Claude is installed.
 - Provide dedicated, non-destructive configuration drivers for Codex (`config.toml`), Cursor (`mcp.json`), Claude Code (`.claude.json`), Windsurf (`mcp_config.json`), GitHub Copilot (`Code/User/mcp.json`), and Cline (`cline_mcp_settings.json`).
 - Expose dedicated setup commands plus `AI Artifacts: Install All Detected Integrations` and `AI Artifacts: Copy MCP Configuration JSON`.
 - Verify whether installed assets and client configurations match the extension requirements.
 - Report ready, missing, outdated, or configuration-conflict states across environments.
 - Replace stale installed skill/runtime assets with the packaged source and remove obsolete files during reinstall.
-- Preserve a valid non-official YAML `description:` and the `USER CUSTOM RULES` block independently for `.agents` and `.claude`; fail closed before swapping when those regions are malformed or cannot be preserved deterministically.
-- Record verified MCP, `.agents`, and `.claude` versions independently in `~/.ai-artifacts/managed/integration-version.json`, committing each receipt only after the corresponding install and verification succeeds.
+- Preserve a valid non-official YAML `description:` and `USER CUSTOM RULES` only for `create-review-artifact`, independently for `.agents` and `.claude`; fail closed before swapping when those regions cannot be preserved. Replace `work-session` with official assets atomically without customization merging.
+- Record verified MCP, `.agents`, and `.claude` versions independently in `~/.ai-artifacts/managed/integration-version.json`: `mcpVersion`, artifact `skills`, and `sessionSkills` maps. Base setup commits runtime and both Agents skill receipts after all three assets verify; Claude commits both after its own verification. Partial updates preserve other entries; missing/mismatched entries remain stale.
 - Treat `Ready` as asset synchronization after customization merge, not proof that arbitrary custom rules remain semantically compatible with the official lifecycle.
 - Remove only recognized legacy Codex Artifacts hooks, scripts, legacy `.vscode/ai-artifacts/` assets, and skill directories.
 - Preserve unrelated user configuration and all global user review data (`~/.ai-artifacts/artifacts/`) during uninstall.
@@ -489,7 +527,7 @@ This layer is the protocol source of truth. A contract change must be propagated
 
 ### Default submission flow
 
-1. The skill writes one complete Markdown document and calls `create_artifact` with `kind: "implementation-plan"`, title, and markdown. By default, it omits connection parameters and the server routes directly to the currently focused VS Code window (or sole live window).
+1. The skill writes one complete Markdown document and calls `create_artifact` with a suitable `kind` (fixed set or open kind), title, and markdown. By default, it omits connection parameters and the server routes directly to the currently focused VS Code window (or sole live window).
 2. If multiple windows exist and none or multiple are focused, `create_artifact` returns `WINDOW_SELECTION_REQUIRED` with candidates and opaque tokens. The skill selects the best candidate or prompts the user, then retries with `connection: { targetMode: "explicit-window", selectionToken }`.
 3. The MCP creates the initial schema-v6 files plus schema-v1 connection state under `~/.ai-artifacts/artifacts/<artifactId>/`, and returns the exact global handle plus a regular file link.
 4. The skill calls `wait_for_artifact_review` with the exact handle. The MCP reserves waiter ownership.
@@ -497,7 +535,7 @@ This layer is the protocol source of truth. A contract change must be propagated
 6. The user submits Review (`revise`), Proceed (`approve`), or Just save (`save`); the store creates `review-submission.json` exactly once.
 7. The waiting MCP validates and returns the submission metadata and the full comments document, including each comment's body and anchor. Submitted Review includes a round token and `nextAction.type: "process-review-feedback"`; this response contract is the same for initial and advanced waits, independently of client/model.
 8. For Review, the skill reads `comments.comments` directly and classifies feedback exactly as it does for chat escape: answer questions visibly, supply replacement Markdown only when changes are requested, then call `advance_and_wait_for_artifact`. Question-only Review omits Markdown; feedback needing clarification is answered before consuming the token. Inspect remains available for explicit chat feedback and recovery.
-9. Proceed and Just save end the current round without automatically advancing. Proceed returns `execute-approved-plan`, so the skill executes the approved code/file/workspace/command actions immediately in the same turn. The artifact remains persistent and reconnectable.
+9. Proceed and Just save end the round without automatically advancing. For `plan`/`implementation-plan`, Proceed returns `execute-approved-plan` for immediate in-scope execution. Other kinds return `approved` for acknowledgment and conclusion without automatic implementation. Just save returns no `nextAction`; the skill asks for a destination and copies Markdown without executing proposed work. The artifact remains persistent and reconnectable.
 
 ### Chat escape flow
 
@@ -521,7 +559,7 @@ This layer is the protocol source of truth. A contract change must be propagated
 ### Reconnect rules
 
 - Reconnect uses an exact artifact handle from the conversation or a path supplied by the user. No component selects the newest workspace artifact.
-- `inspect_artifact_review` with reconnect intent validates the manifest workspace against live window snapshots. A window ID is a hint; a tie returns candidates and retries inspect with the chosen selection token.
+- `inspect_artifact_review` with reconnect intent validates the exact global handle and resolves a live window: sole live window, validated advisory artifact-window affinity, then unique focused window, or an explicit selection token. Artifact identity has no workspace ownership. Ambiguity returns candidates for retrying the same inspect intent with a chosen token.
 - A successful reconnect increments `connectionRevision`, creates a new `openRequestId`, and may rebind another live window without changing Markdown, comments, submission, review round, or round tokens.
 - Wait and advance preserve connection state and never rebind.
 - MCP restart loses waiter/token memory, not artifact state. Inspection can issue a fresh token.
@@ -533,25 +571,25 @@ This layer is the protocol source of truth. A contract change must be propagated
 2. The extension-local search service queries the canonical global collection `~/.ai-artifacts/artifacts/` with bounded concurrency (`16`), filtering valid direct-child schema-v6 manifests in-memory by normalized title (accent-insensitive, case-insensitive).
 3. The VS Code Quick Pick displays matching artifacts with `alwaysShow: true`, deterministic ordering, and count indicators, capped at 1,000 items.
 4. On selection, the artifact is revalidated and opened in the current extension window via `ArtifactReviewOpenCoordinator.open`. Search does not call MCP, invoke window routing, or mutate `artifact-connection.json`.
-5. In the opened Artifact Review header, the user clicks the **Connect** button to copy the exact artifact directory and prompt to the clipboard.
+5. In the opened Artifact Review header, **Inspect artifact** copies the direct Inspect prompt without selecting or creating a Session. An active chat Session still supplies its default ID unless standalone is explicitly requested.
 6. The user pastes the prompt into their AI chat to inspect or reconnect the artifact into the active agent session.
 
-### Conversation artifacts navigation flow
+### Work Session navigation, entry, and reference reading
 
-1. The user clicks the **Artifacts in Conversation** button in the review editor header.
-2. The webview sends `listConversationArtifacts` with `artifactConversationId` and a monotonic `requestId`.
-3. The provider routes the request to `ConversationArtifactService.listArtifactsForConversation(...)`, which reads `~/.ai-artifacts/conversation-registry/<conversationId>/` with bounded concurrency (`8`) and validates `artifact.json` and `artifact.md` integrity.
-4. The webview receives `conversationArtifactsResult`, displays the list with current selection, status badges, and search filter, and activates the focus trap.
-5. On clicking an artifact item (or pressing Enter), the webview sends `openConversationArtifact` with the target `artifactDirectory` and `preview: true`. If `Ctrl/Cmd` or middle-click is used, `preview: false` is sent.
-6. The provider calls `ArtifactReviewOpenCoordinator.open(targetPath, { preview, preserveFocus: false })` to open/reveal the document in the current window without modifying connection or review state.
+1. The review header shows **Start a work session** when no membership exists, or **Sessions** for existing memberships. Support is gated on installed on-disk MCP version 12+; this does not probe the running process.
+2. Start collects a title via native input, creates a default-type Session, and registers the current artifact in Working. After commit, opening the manager and copying its Connect prompt are separate actions. A post-commit open/copy failure retains the created Session and ID; it must not cause automatic duplicate creation.
+3. Sessions opens the sole v2 Session or lets the user select one. Legacy membership can be explicitly migrated from that flow. The former conversation artifacts drawer is removed.
+4. The manager uses `WorkSessionProvider` and `ConversationArtifactService` for metadata, Instructions, zones, and scoped refresh patches. Card navigation opens validated artifacts in the current window without changing connection or review lifecycle state.
+5. The manager's Connect prompt targets the exact Session ID. Join-only returns metadata, Instructions/path, and ordered catalogs. Join with artifact returns shared inspect output under `inspection` alongside `session`.
+6. The Session skill follows section 1 freshness rules: read known exact Markdown paths on demand, refresh before latest/unknown/current-overview selection, replace catalog snapshots, and preserve review handles separately. Reference reading requires no takeover or waiter.
 
 ## 13. Responsibility matrix
 
 | Operation                      |             Skill |                 MCP |            Registry |               Extension entry |  Provider |              Store |      Webview |
 | ------------------------------ | ----------------: | ------------------: | ------------------: | ----------------------------: | --------: | -----------------: | -----------: |
 | Decide to create an artifact   |             Owner |                     |                     |                               |           |                    |              |
-| Prove workspace ownership      | Supplies evidence |           Validates | Supplies live facts |               Publishes facts |           |                    |              |
-| Generate artifact/session ID   |                   |               Owner |                     |                               |           |                    |              |
+| Select a live target window    | Chooses candidate | Validates token/routing | Supplies live facts | Publishes facts | | | |
+| Generate artifact/review ID    |                   |               Owner |                     |                               |           |                    |              |
 | Create initial lifecycle files |                   |               Owner |                     |                               |           |                    |              |
 | Auto-open review editor        |                   |                     |                     |                         Owner |           |                    |              |
 | Render Markdown                |                   |                     |                     |                               |   Bridges |                    |        Owner |
@@ -572,7 +610,7 @@ The active implementation is:
 
 - `ArtifactReviewProvider`, not `PlanReviewProvider`.
 - `ReviewApp.tsx`, imported by `src/webview/main.tsx`, not the retained `src/webview/App.tsx`.
-- `artifact-review-mcp-v4.ts`, built into `codex-artifacts-review-mcp.mjs` (and deployed as `ai-artifacts-review-mcp.mjs` under `~/.ai-artifacts/managed/runtime/`).
+- `artifact-review-mcp.ts`, built into `codex-artifacts-review-mcp.mjs` (and deployed as `ai-artifacts-review-mcp.mjs` under `~/.ai-artifacts/managed/runtime/`).
 
 Retained legacy sources include:
 
@@ -581,7 +619,7 @@ Retained legacy sources include:
 - `src/integration/stamp-origin.ts`
 - `src/webview/App.tsx`
 
-Schemas v3/v4 and workspace-local artifacts are unsupported by the active runtime. Retained legacy source exists only as cleanup, historical, or test-workflow context and must not be treated as a compatibility path.
+Schemas v3/v4/v5 and workspace-local artifacts are unsupported by the active runtime. Retained legacy source exists only as cleanup, historical, or test-workflow context and must not be treated as a compatibility path.
 
 ## 15. Verification ownership
 
@@ -591,17 +629,17 @@ Tests document the expected responsibility boundaries:
 | -------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
 | Global artifact loading, comments, submissions, schema-v3/v4 rejection, and permissions | `test/artifact-store.test.ts`, `test/global-artifact-path.test.ts`                              |
 | MCP creation, waiting, takeover, inspection, reconnect, token use, rollback, and safety | `test/review-wait-mcp.test.ts`                                                                 |
-| Conversation registry persistence, atomic locking, and retention cleanup               | `test/conversation-artifact-registry.test.ts`                                                   |
-| Conversation artifact service discovery and validation                                 | `test/conversation-artifact-service.test.ts`                                                    |
-| Webview conversation drawer, keyboard navigation, and focus trap                       | `test/conversation-artifacts-drawer.test.tsx`                                                   |
-| Provider async non-blocking queue and conversation routing                             | `test/artifact-review-provider.test.ts`                                                         |
+| Session registry persistence, atomic writes, reconciliation, migration, and retention cleanup | `test/conversation-artifact-registry.test.ts` |
+| Conversation artifact service discovery, scoped change events, and session mutations   | `test/conversation-artifact-service.test.ts`                                                    |
+| Work Session Manager provider, webview state machine, sidebar filter/search, and Quick Input commands | `test/work-session-provider.test.ts`, `test/session-app.test.tsx`, `test/work-session-sidebar.test.ts`, `test/session-type-command.test.ts`, `test/session-filter-command.test.ts`, `test/session-search-command.test.ts`, `test/session-migration-command.test.ts` |
+| Provider message dispatch, submission guard, and Session navigation                    | `test/artifact-review-provider.test.ts`                                                         |
 | Workspace evidence, grouped windows, selection grants, and focus-as-hint behavior      | `test/workspace-registry.test.ts`                                                               |
 | Connection schema, atomic commits, retries, path safety, and target resolution          | `test/artifact-connection.test.ts`                                                              |
 | Review button state and decision constraints                                           | `test/review-actions.test.ts`                                                                   |
 | Markdown blocks and rendered annotation behavior                                       | `test/markdown-blocks.test.ts`, `test/markdown-renderer.test.tsx`                               |
 | Safe links and protocols                                                               | `test/url-policy.test.ts`                                                                       |
 | Managed MCP and legacy-hook configuration                                              | `test/mcp-config.test.ts`, `test/hook-config.test.ts`, `test/global-integration-status.test.ts` |
-| Installed skill contract                                                               | `test/skill-contract.test.ts`                                                                   |
+| Installed skill contracts                                                              | `test/skill-contract.test.ts`, `test/work-session-skill.test.ts`, `test/work-session-context.test.ts` |
 | Connection watcher, targeted unfocused auto-open, dedupe, exact-handle command, and open coordination | `test/artifact-review-open.test.ts`, `test/artifact-link-contract.test.ts`          |
 | Extension-local artifact search core, discovery, limit cap, and Quick Pick controller | `test/artifact-search.test.ts`, `test/artifact-search-command.test.ts`                         |
 | Six-client install/reinstall/verify/uninstall, version receipts, customization merge, and artifact retention | `test/workspace-integration.test.ts`, `test/mcp-client-drivers.test.ts`, `test/skill-contract.test.ts`, `test/artifact-retention.test.ts` |
@@ -619,9 +657,9 @@ npm run build
 
 The review system deliberately separates responsibilities:
 
-- The **skill** controls agent behavior.
+- The **artifact skill** controls review behavior; the **Work Session skill** controls active shared context and on-demand freshness.
 - The **MCP** controls lifecycle transitions.
-- The **registry** proves workspace availability and ownership evidence.
+- The **workspace registry** supplies live window facts; the **Session registry** persists metadata, Instructions, layout, and memberships.
 - The **extension entry** composes VS Code services.
 - The **provider** bridges the webview and trusted host.
 - The **store** validates and persists human review state.

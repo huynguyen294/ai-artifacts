@@ -1,5 +1,6 @@
 import type { ArtifactDiscoveryResult, SearchableArtifact } from "./artifact-search";
 import { filterSearchableArtifacts, MAX_QUICK_PICK_ITEMS } from "./artifact-search";
+import { formatArtifactKindLabel, isFixedArtifactKind } from "../shared/artifact-kinds";
 
 export interface ArtifactQuickPickItem {
   label: string;
@@ -32,10 +33,16 @@ export interface ArtifactSearchCommandDeps {
   showErrorMessage: (message: string) => void | Thenable<unknown>;
 }
 
+export interface ArtifactSearchCommandOptions {
+  kindFilter?: string | undefined;
+}
+
 export function toQuickPickItem(artifact: SearchableArtifact): ArtifactQuickPickItem {
+  const baseDescription = `${formatArtifactKindLabel(artifact.kind)} · Round ${artifact.reviewRound}`;
+  const description = artifact.isArchived ? `${baseDescription} · Archived` : baseDescription;
   return {
     label: artifact.title,
-    description: `${artifact.kind} · Round ${artifact.reviewRound}`,
+    description,
     detail: `Updated ${artifact.updatedAt} · Created ${artifact.createdAt} · ${artifact.artifactId}`,
     alwaysShow: true,
     artifact,
@@ -46,26 +53,36 @@ export function updateQuickPickState(
   quickPick: ArtifactSearchQuickPick,
   allArtifacts: readonly SearchableArtifact[],
   query: string,
+  kindFilter?: string | undefined,
 ): void {
   const filterResult = filterSearchableArtifacts(allArtifacts, query, MAX_QUICK_PICK_ITEMS);
   quickPick.items = filterResult.items.map(toQuickPickItem);
 
+  const filterSuffix = kindFilter
+    ? ` [Type: ${kindFilter === "other" ? "Other" : formatArtifactKindLabel(kindFilter)}]`
+    : "";
+
   if (allArtifacts.length === 0) {
-    quickPick.title = "AI Artifacts: Search Artifact (0 artifacts)";
-    quickPick.placeholder = "No artifacts found in ~/.ai-artifacts/artifacts/";
+    quickPick.title = `AI Artifacts: Search Artifact${filterSuffix} (0 artifacts)`;
+    quickPick.placeholder = kindFilter
+      ? "No artifacts match this filter"
+      : "No artifacts found in ~/.ai-artifacts/artifacts/";
   } else if (filterResult.totalMatches === 0) {
-    quickPick.title = "AI Artifacts: Search Artifact (0 matches)";
+    quickPick.title = `AI Artifacts: Search Artifact${filterSuffix} (0 matches)`;
     quickPick.placeholder = "No artifacts match current title query";
   } else if (filterResult.limited) {
-    quickPick.title = `AI Artifacts: Search Artifact (Showing 1,000 of ${filterResult.totalMatches.toLocaleString()})`;
+    quickPick.title = `AI Artifacts: Search Artifact${filterSuffix} (Showing 1,000 of ${filterResult.totalMatches.toLocaleString()})`;
     quickPick.placeholder = "Type more to narrow results...";
   } else {
-    quickPick.title = `AI Artifacts: Search Artifact (${filterResult.totalMatches.toLocaleString()})`;
+    quickPick.title = `AI Artifacts: Search Artifact${filterSuffix} (${filterResult.totalMatches.toLocaleString()})`;
     quickPick.placeholder = "Search artifacts by title...";
   }
 }
 
-export async function runArtifactSearchCommand(deps: ArtifactSearchCommandDeps): Promise<void> {
+export async function runArtifactSearchCommand(
+  deps: ArtifactSearchCommandDeps,
+  options?: ArtifactSearchCommandOptions,
+): Promise<void> {
   const quickPick = deps.createQuickPick();
   quickPick.title = "AI Artifacts: Search Artifact";
   quickPick.placeholder = "Search artifacts by title...";
@@ -96,7 +113,7 @@ export async function runArtifactSearchCommand(deps: ArtifactSearchCommandDeps):
   disposables.push(
     quickPick.onDidChangeValue((value) => {
       if (isDisposed || cachedArtifacts === null) return;
-      updateQuickPickState(quickPick, cachedArtifacts, value);
+      updateQuickPickState(quickPick, cachedArtifacts, value, options?.kindFilter);
     }),
     quickPick.onDidAccept(async () => {
       const selected = quickPick.selectedItems[0];
@@ -123,9 +140,16 @@ export async function runArtifactSearchCommand(deps: ArtifactSearchCommandDeps):
     const discovery = await deps.discoverArtifacts();
     if (isDisposed) return;
 
-    cachedArtifacts = discovery.artifacts;
+    let artifacts = discovery.artifacts;
+    if (options?.kindFilter === "other") {
+      artifacts = artifacts.filter((a) => !isFixedArtifactKind(a.kind));
+    } else if (options?.kindFilter) {
+      artifacts = artifacts.filter((a) => a.kind === options.kindFilter);
+    }
+
+    cachedArtifacts = artifacts;
     quickPick.busy = false;
-    updateQuickPickState(quickPick, cachedArtifacts, quickPick.value);
+    updateQuickPickState(quickPick, cachedArtifacts, quickPick.value, options?.kindFilter);
   } catch (err) {
     if (isDisposed) return;
     cleanup();

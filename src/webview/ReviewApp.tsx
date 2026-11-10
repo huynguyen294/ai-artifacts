@@ -13,20 +13,20 @@ import {
   ARTIFACT_ROOT_TEXT,
 } from "../shared/contracts";
 import type {
+  ArtifactSessionTarget,
   ExtensionToWebviewMessage,
   MarkdownBlock,
   ReviewComment,
   ReviewDecision,
   ReviewState,
   SendStatus,
-  ConversationArtifactsViewState,
 } from "../shared/contracts";
 import { vscode } from "./vscode-api";
 import { MarkdownRenderer } from "./MarkdownRenderer";
+import { formatArtifactKindLabel } from "../shared/artifact-kinds";
 import { SelectionCommentPopover, type SelectionDraft } from "./SelectionCommentPopover";
 import { CommentDetailPopover } from "./CommentDetailPopover";
 import { CommentsDrawer } from "./CommentsDrawer";
-import { ConversationArtifactsDrawer } from "./ConversationArtifactsDrawer";
 import { trapFocusInContainer } from "./focus-trap";
 import { deriveReviewActions } from "./review-actions";
 
@@ -119,39 +119,65 @@ function captureSelection(blocks: Map<string, MarkdownBlock>): { draft: Selectio
   };
 }
 
-export function App(): ReactNode {
-  const [state, setState] = useState<ReviewState>();
+export interface ReviewAppProps {
+  initialState?: ReviewState;
+  initialSessionSupport?: {
+    supported: boolean;
+    sessions: ArtifactSessionTarget[];
+  };
+  initialSessionsLoaded?: boolean;
+  initialConnectPromptCopied?: boolean;
+}
+
+export function App(props?: ReviewAppProps): ReactNode {
+  const [state, setState] = useState<ReviewState | undefined>(props?.initialState);
   const [error, setError] = useState<string>();
   const [draft, setDraft] = useState<SelectionDraft | null>(null);
   const [body, setBody] = useState("");
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const [conversationsDrawerOpen, setConversationsDrawerOpen] = useState(false);
-  const [conversationState, setConversationState] = useState<ConversationArtifactsViewState>({ status: "loading" });
+  const [sessionSupport, setSessionSupport] = useState<{
+    supported: boolean;
+    sessions: ArtifactSessionTarget[];
+  }>(props?.initialSessionSupport ?? { supported: false, sessions: [] });
+  const [sessionsLoaded, setSessionsLoaded] = useState(props?.initialSessionsLoaded ?? false);
   const [activeComment, setActiveComment] = useState<{ id: string; anchor: HTMLElement }>();
   const [sendStatus, setSendStatus] = useState<SendStatus>("idle");
   const [sendMessage, setSendMessage] = useState<string>();
   const [submittingDecision, setSubmittingDecision] = useState<ReviewDecision>();
   const [copied, setCopied] = useState(false);
-  const [connectPromptCopied, setConnectPromptCopied] = useState(false);
+  const [connectPromptCopied, setConnectPromptCopied] = useState(props?.initialConnectPromptCopied ?? false);
+  const [isRestoring, setIsRestoring] = useState(false);
+  const [isDeleted, setIsDeleted] = useState(false);
   const reviewRoundRef = useRef<number | undefined>(undefined);
   const generalFeedbackButtonRef = useRef<HTMLButtonElement>(null);
-  const conversationsButtonRef = useRef<HTMLButtonElement>(null);
+  const connectButtonRef = useRef<HTMLButtonElement>(null);
   const commentsButtonRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     const listener = (event: MessageEvent<ExtensionToWebviewMessage>): void => {
       const message = event.data;
+      if (message.type === "artifactUiStatePatch") {
+        setState((current) => {
+          if (!current || current.artifact.artifactId !== message.artifactId) return current;
+          return {
+            ...current,
+            uiState: message.uiState,
+          };
+        });
+        setIsRestoring(false);
+        return;
+      }
       if (message.type === "state") {
         const roundChanged =
           reviewRoundRef.current !== undefined && reviewRoundRef.current !== message.state.artifact.reviewRound;
         reviewRoundRef.current = message.state.artifact.reviewRound;
         setState(message.state);
         setError(undefined);
+        setIsRestoring(false);
         if (roundChanged) {
           setDraft(null);
           setBody("");
           setDrawerOpen(false);
-          setConversationsDrawerOpen(false);
           setActiveComment(undefined);
           window.getSelection()?.removeAllRanges();
         }
@@ -169,8 +195,12 @@ export function App(): ReactNode {
           setSendStatus("idle");
           setSendMessage(undefined);
         }
-      } else if (message.type === "conversationArtifactsState") {
-        setConversationState(message.state);
+      } else if (message.type === "artifactSessionsState") {
+        setSessionSupport({
+          supported: message.supported,
+          sessions: message.sessions,
+        });
+        setSessionsLoaded(true);
       } else if (message.type === "sendState") {
         setSendStatus(message.status);
         setSendMessage(message.message);
@@ -178,8 +208,24 @@ export function App(): ReactNode {
       } else if (message.type === "artifactConnectPromptCopied") {
         setConnectPromptCopied(true);
         window.setTimeout(() => setConnectPromptCopied(false), 1600);
+      } else if (message.type === "artifactMetadataPatch") {
+        setState((prev) => {
+          if (!prev || prev.artifact.artifactId !== message.artifactId) return prev;
+          return {
+            ...prev,
+            artifact: {
+              ...prev.artifact,
+              title: message.title,
+              kind: message.kind,
+            },
+          };
+        });
+      } else if (message.type === "artifactDeleted") {
+        setIsDeleted(true);
+        setIsRestoring(false);
       } else if (message.type === "error") {
         setError(message.message);
+        setIsRestoring(false);
       }
     };
     window.addEventListener("message", listener);
@@ -288,23 +334,8 @@ export function App(): ReactNode {
     }
   };
 
-  const openConversationsDrawer = useCallback((): void => {
-    setConversationsDrawerOpen(true);
-    if (typeof window !== "undefined" && window.innerWidth < 1100) {
-      setDrawerOpen(false);
-    }
-  }, []);
-
-  const closeConversationsDrawer = useCallback((): void => {
-    setConversationsDrawerOpen(false);
-    conversationsButtonRef.current?.focus();
-  }, []);
-
   const openCommentsDrawer = useCallback((): void => {
     setDrawerOpen(true);
-    if (typeof window !== "undefined" && window.innerWidth < 1100) {
-      setConversationsDrawerOpen(false);
-    }
   }, []);
 
   const closeCommentsDrawer = useCallback((): void => {
@@ -312,28 +343,29 @@ export function App(): ReactNode {
     commentsButtonRef.current?.focus();
   }, []);
 
-  const handleOpenArtifact = useCallback((artifactId: string): void => {
-    vscode.postMessage({ type: "openConversationArtifact", artifactId });
-  }, []);
-
   useEffect(() => {
-    if (!drawerOpen && !conversationsDrawerOpen) return;
+    if (!drawerOpen) return;
     const handleKeyDown = (event: KeyboardEvent): void => {
       if (event.key !== "Tab") return;
-      const activeDrawerId = conversationsDrawerOpen
-        ? "conversation-artifacts-drawer"
-        : drawerOpen
-          ? "artifact-comments-drawer"
-          : null;
-      if (!activeDrawerId) return;
-      const container = document.getElementById(activeDrawerId);
+      const container = document.getElementById("artifact-comments-drawer");
       if (container) {
         trapFocusInContainer(container, event);
       }
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [drawerOpen, conversationsDrawerOpen]);
+  }, [drawerOpen]);
+
+  if (isDeleted) {
+    return (
+      <main className="loading artifact-deleted-terminal">
+        <div className="session-error-banner" role="alert">
+          <h3>Artifact Deleted</h3>
+          <p>This artifact has been deleted permanently and is no longer available.</p>
+        </div>
+      </main>
+    );
+  }
 
   if (!state) return <main className="loading">{error ?? "Loading artifact…"}</main>;
 
@@ -349,123 +381,165 @@ export function App(): ReactNode {
     lifecycleReadOnly: state.lifecycle.readOnly,
     ...(submittingDecision ? { submittingDecision } : {}),
   });
+  const isArchived = Boolean(state.uiState?.archivedAt);
   const selectedComment = activeComment ? comments.find((comment) => comment.id === activeComment.id) : undefined;
   const blockedTitle = state.lifecycle.readOnly
     ? state.lifecycle.message
     : hasUnsavedComment
       ? "Save or cancel the comment draft first."
       : undefined;
-  const totalConversationArtifacts = conversationState.status === "ready"
-    ? conversationState.groups.reduce((sum, g) => sum + g.artifacts.length, 0)
-    : 0;
 
   return (
     <div className="app-shell">
       <header className="topbar">
         <div className="artifact-heading">
           <span className="eyebrow">
-            {state.artifact.kind.toUpperCase()} · ROUND {state.artifact.reviewRound}
+            {isArchived && <span className="archived-pill">Archived · </span>}
+            ROUND {state.artifact.reviewRound} · {formatArtifactKindLabel(state.artifact.kind)}
+            {!isArchived && (
+              <button
+                type="button"
+                className="inline-icon-btn"
+                title="Change artifact type"
+                aria-label="Change artifact type"
+                onClick={() => vscode.postMessage({ type: "changeArtifactType" })}
+              >
+                ✎
+              </button>
+            )}
           </span>
-          <h1>{state.artifact.title}</h1>
+          <div className="artifact-title-row">
+            <h1>{state.artifact.title}</h1>
+            {!isArchived && (
+              <button
+                type="button"
+                className="inline-icon-btn"
+                title="Rename artifact"
+                aria-label="Rename artifact"
+                onClick={() => vscode.postMessage({ type: "renameArtifact" })}
+              >
+                ✎
+              </button>
+            )}
+          </div>
         </div>
-        <div className="topbar-actions">
-          <div className="topbar-icon-actions">
+        {isArchived ? (
+          <div className="topbar-actions">
             <button
-              className={`icon-button copy-button${copied ? " copied" : ""}`}
-              onClick={() => void copyMarkdown()}
-              aria-label={copied ? "Markdown copied" : "Copy Markdown"}
-              title={copied ? "Copied!" : "Copy Markdown"}
+              type="button"
+              className="primary"
+              disabled={isRestoring}
+              onClick={() => {
+                setIsRestoring(true);
+                vscode.postMessage({ type: "restoreArtifact" });
+              }}
             >
-              {copied ? (
-                <svg aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="none">
-                  <path
-                    d="m2.5 8 3.25 3.25 7.75-7.75"
-                    stroke="currentColor"
-                    strokeWidth="1.5"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  />
-                </svg>
-              ) : (
-                <svg aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="none">
-                  <rect x="5.5" y="5.5" width="8" height="8" rx="1.5" stroke="currentColor" strokeWidth="1.2" />
-                  <path
-                    d="M10.5 5.5v-2A1.5 1.5 0 0 0 9 2H3.5A1.5 1.5 0 0 0 2 3.5V9a1.5 1.5 0 0 0 1.5 1.5h2"
-                    stroke="currentColor"
-                    strokeWidth="1.2"
-                  />
-                </svg>
-              )}
-            </button>
-            <button
-              className="icon-button copy-button"
-              disabled={actions.save.disabled}
-              aria-label={actions.save.label}
-              title={blockedTitle ?? actions.save.label}
-              onClick={() => submitDecision("save")}
-            >
-              <svg aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="none">
-                <path
-                  d="M2.5 2.5h8.9l2.1 2.1v8.9h-11v-11Z"
-                  stroke="currentColor"
-                  strokeWidth="1.2"
-                  strokeLinejoin="round"
-                />
-                <path d="M5 2.5v4h6v-4M5 13.5V9h6v4.5" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" />
-              </svg>
-            </button>
-            <button
-              className={`icon-button copy-button${connectPromptCopied ? " copied" : ""}`}
-              onClick={() => vscode.postMessage({ type: "copyArtifactConnectPrompt" })}
-              aria-label={connectPromptCopied ? "AI connect prompt copied" : "Copy AI connect prompt"}
-              title={connectPromptCopied ? "Copied!" : "Copy AI connect prompt"}
-            >
-              {connectPromptCopied ? (
-                <svg aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="none">
-                  <path
-                    d="m2.5 8 3.25 3.25 7.75-7.75"
-                    stroke="currentColor"
-                    strokeWidth="1.5"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  />
-                </svg>
-              ) : (
-                <svg aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="none">
-                  <path
-                    d="m6.1 9.9-1.2 1.2a2.83 2.83 0 0 1-4-4l2.2-2.2a2.83 2.83 0 0 1 4 0"
-                    stroke="currentColor"
-                    strokeWidth="1.2"
-                    strokeLinecap="round"
-                  />
-                  <path
-                    d="m9.9 6.1 1.2-1.2a2.83 2.83 0 0 1 4 4l-2.2 2.2a2.83 2.83 0 0 1-4 0"
-                    stroke="currentColor"
-                    strokeWidth="1.2"
-                    strokeLinecap="round"
-                  />
-                  <path d="m5.6 10.4 4.8-4.8" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
-                </svg>
-              )}
+              {isRestoring ? "Restoring..." : "Restore"}
             </button>
           </div>
-          <button
-            className={actions.revise.primary ? "primary" : "ghost"}
-            disabled={actions.revise.disabled}
-            title={blockedTitle}
-            onClick={() => submitDecision("revise")}
-          >
-            {actions.revise.label}
-          </button>
-          <button
-            className={actions.approve.primary ? "primary" : "ghost"}
-            disabled={actions.approve.disabled}
-            title={blockedTitle}
-            onClick={() => submitDecision("approve")}
-          >
-            {actions.approve.label}
-          </button>
-        </div>
+        ) : (
+          <div className="topbar-actions">
+            <div className="topbar-icon-actions">
+              <button
+                className={`icon-button copy-button${copied ? " copied" : ""}`}
+                onClick={() => void copyMarkdown()}
+                aria-label={copied ? "Markdown copied" : "Copy Markdown"}
+                title={copied ? "Copied!" : "Copy Markdown"}
+              >
+                {copied ? (
+                  <svg aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="none">
+                    <path
+                      d="m2.5 8 3.25 3.25 7.75-7.75"
+                      stroke="currentColor"
+                      strokeWidth="1.5"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  </svg>
+                ) : (
+                  <svg aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="none">
+                    <rect x="5.5" y="5.5" width="8" height="8" rx="1.5" stroke="currentColor" strokeWidth="1.2" />
+                    <path
+                      d="M10.5 5.5v-2A1.5 1.5 0 0 0 9 2H3.5A1.5 1.5 0 0 0 2 3.5V9a1.5 1.5 0 0 0 1.5 1.5h2"
+                      stroke="currentColor"
+                      strokeWidth="1.2"
+                    />
+                  </svg>
+                )}
+              </button>
+              <button
+                className="icon-button copy-button"
+                disabled={actions.save.disabled}
+                aria-label={actions.save.label}
+                title={blockedTitle ?? actions.save.label}
+                onClick={() => submitDecision("save")}
+              >
+                <svg aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="none">
+                  <path
+                    d="M2.5 2.5h8.9l2.1 2.1v8.9h-11v-11Z"
+                    stroke="currentColor"
+                    strokeWidth="1.2"
+                    strokeLinejoin="round"
+                  />
+                  <path d="M5 2.5v4h6v-4M5 13.5V9h6v4.5" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" />
+                </svg>
+              </button>
+              <button
+                ref={connectButtonRef}
+                className={`icon-button copy-button${connectPromptCopied ? " copied" : ""}`}
+                onClick={() => {
+                  vscode.postMessage({ type: "copyArtifactConnectPrompt" });
+                }}
+                aria-label={connectPromptCopied ? "Inspect prompt copied" : "Inspect artifact"}
+                title={connectPromptCopied ? "Inspect prompt copied" : "Inspect artifact"}
+              >
+                {connectPromptCopied ? (
+                  <svg aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="none">
+                    <path
+                      d="m2.5 8 3.25 3.25 7.75-7.75"
+                      stroke="currentColor"
+                      strokeWidth="1.5"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  </svg>
+                ) : (
+                  <svg aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="none">
+                    <path
+                      d="m6.1 9.9-1.2 1.2a2.83 2.83 0 0 1-4-4l2.2-2.2a2.83 2.83 0 0 1 4 0"
+                      stroke="currentColor"
+                      strokeWidth="1.2"
+                      strokeLinecap="round"
+                    />
+                    <path
+                      d="m9.9 6.1 1.2-1.2a2.83 2.83 0 0 1 4 4l-2.2 2.2a2.83 2.83 0 0 1-4 0"
+                      stroke="currentColor"
+                      strokeWidth="1.2"
+                      strokeLinecap="round"
+                    />
+                    <path d="m5.6 10.4 4.8-4.8" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+                  </svg>
+                )}
+              </button>
+            </div>
+            <button
+              className={actions.revise.primary ? "primary" : "ghost"}
+              disabled={actions.revise.disabled}
+              title={blockedTitle}
+              onClick={() => submitDecision("revise")}
+            >
+              {actions.revise.label}
+            </button>
+            <button
+              className={actions.approve.primary ? "primary" : "ghost"}
+              disabled={actions.approve.disabled}
+              title={blockedTitle}
+              onClick={() => submitDecision("approve")}
+            >
+              {actions.approve.label}
+            </button>
+          </div>
+        )}
       </header>
 
       {(error || sendMessage || state.lifecycle.message) && (
@@ -476,36 +550,57 @@ export function App(): ReactNode {
 
       <nav className="review-utility-bar" aria-label="Artifact review tools">
         <div className="review-utility-bar-left">
-          <button
-            ref={conversationsButtonRef}
-            className="ghost conversations-toggle"
-            aria-expanded={conversationsDrawerOpen}
-            aria-controls="conversation-artifacts-drawer"
-            title={
-              totalConversationArtifacts > 0
-                ? `View artifacts in this conversation (${totalConversationArtifacts})`
-                : "View artifacts in this conversation"
-            }
-            onClick={openConversationsDrawer}
-          >
-            <svg aria-hidden="true" width="14" height="14" viewBox="0 0 16 16" fill="none">
-              <path
-                d="M2 4.5h12M2 8h12M2 11.5h8"
-                stroke="currentColor"
-                strokeWidth="1.3"
-                strokeLinecap="round"
-              />
-            </svg>
-            <span>Conversation Artifacts</span>
-            {totalConversationArtifacts > 0 && (
-              <span
-                className="comment-count-badge"
-                aria-label={`${totalConversationArtifacts} artifacts`}
+          {sessionSupport.supported && sessionsLoaded && sessionSupport.sessions.length === 0 ? (
+            <div className="start-session-container">
+              <button
+                type="button"
+                className="ghost start-work-session-button"
+                title="For ongoing work, keep related artifacts and shared instructions together across agents and chats."
+                onClick={() => {
+                  vscode.postMessage({ type: "startWorkSession" });
+                }}
               >
-                {totalConversationArtifacts}
+                <svg aria-hidden="true" width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
+                  <path d="M8 2a.75.75 0 0 1 .75.75v4.5h4.5a.75.75 0 0 1 0 1.5h-4.5v4.5a.75.75 0 0 1-1.5 0v-4.5h-4.5a.75.75 0 0 1 0-1.5h4.5v-4.5A.75.75 0 0 1 8 2Z" />
+                </svg>
+                <span>Start a work session</span>
+              </button>
+              <span className="start-session-helper">
+                For ongoing work, keep related artifacts and shared instructions together across agents and chats.
               </span>
-            )}
-          </button>
+            </div>
+          ) : (
+            <button
+              type="button"
+              className="ghost sessions-toggle"
+              disabled={!sessionSupport.supported || !sessionsLoaded}
+              title={
+                !sessionSupport.supported
+                  ? "Sessions require MCP server version 12 or higher"
+                  : !sessionsLoaded
+                    ? "Loading sessions..."
+                    : `Open sessions for this artifact (${sessionSupport.sessions.length})`
+              }
+              onClick={() => {
+                vscode.postMessage({ type: "openArtifactSessions" });
+              }}
+            >
+              <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                <path fillRule="evenodd" clipRule="evenodd" d="M11.536 2.164a1 1 0 0 1 .928 0l9 4.5a1 1 0 0 1 0 1.79l-9 4.5a1 1 0 0 1-.894 0l-9-4.5a1 1 0 0 1 0-1.79l9-4.5zm.464 1.713L4.472 7.5 12 11.264 19.528 7.5 12 3.877z" />
+                <path fillRule="evenodd" clipRule="evenodd" d="M2.536 10.664a1 1 0 0 1 1.358-.456L12 14.264l8.106-4.056a1 1 0 1 1 .894 1.789l-8.553 4.277a1 1 0 0 1-.894 0l-8.553-4.277a1 1 0 0 1-.464-1.333z" />
+                <path fillRule="evenodd" clipRule="evenodd" d="M2.536 15.664a1 1 0 0 1 1.358-.456L12 19.264l8.106-4.056a1 1 0 1 1 .894 1.789l-8.553 4.277a1 1 0 0 1-.894 0l-8.553-4.277a1 1 0 0 1-.464-1.333z" />
+              </svg>
+              <span>Sessions</span>
+              {sessionSupport.sessions.length > 0 && (
+                <span
+                  className="comment-count-badge"
+                  aria-label={`${sessionSupport.sessions.length} sessions`}
+                >
+                  {sessionSupport.sessions.length}
+                </span>
+              )}
+            </button>
+          )}
         </div>
         <div className="review-utility-bar-right">
           <button
@@ -580,12 +675,6 @@ export function App(): ReactNode {
           onRemove={() => removeComment(selectedComment.id)}
         />
       )}
-      <ConversationArtifactsDrawer
-        open={conversationsDrawerOpen}
-        state={conversationState}
-        onClose={closeConversationsDrawer}
-        onOpenArtifact={handleOpenArtifact}
-      />
       <CommentsDrawer
         open={drawerOpen}
         comments={comments}
@@ -597,3 +686,5 @@ export function App(): ReactNode {
     </div>
   );
 }
+
+export { App as ReviewApp };

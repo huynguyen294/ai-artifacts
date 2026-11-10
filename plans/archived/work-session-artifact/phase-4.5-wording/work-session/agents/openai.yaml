@@ -1,0 +1,4 @@
+interface:
+  display_name: "Work Session"
+  short_description: "Connect and continue work with shared session context"
+  default_prompt: "Use $work-session to refresh the active session context and continue the requested work."

@@ -7,6 +7,10 @@ export const ARTIFACT_COLLECTION_DIRECTORY = "artifacts";
 export const CONVERSATION_REGISTRY_DIRECTORY = "conversation-registry";
 export const CONVERSATION_REGISTERED_ARTIFACTS_DIRECTORY = "registered-artifacts";
 export const CONVERSATION_METADATA_FILE = "conversation.json";
+export const WORK_SESSION_LAYOUT_FILE = "layout.json";
+export const WORK_SESSION_INSTRUCTIONS_FILE = "instructions.md";
+export const CONVERSATION_V1_BACKUP_FILE = "conversation.v1.backup.json";
+export const SESSION_TYPES_FILE = "session-types.json";
 export const MANAGED_ASSETS_DIRECTORY = "managed";
 export const MANAGED_RUNTIME_DIRECTORY = "runtime";
 export const MANAGED_WORKSPACES_DIRECTORY = "workspaces";
@@ -21,6 +25,8 @@ export const REVIEW_SUBMISSION_FILE = "review-submission.json";
 export const ARTIFACT_UPDATE_LOCK_FILE = ".artifact-update.lock";
 export const ARTIFACT_CONNECTION_FILE = "artifact-connection.json";
 export const ARTIFACT_CONNECTION_LOCK_FILE = ".artifact-connection.lock";
+export const ARTIFACT_UI_STATE_FILE = "artifact-ui-state.json";
+export const SESSION_UI_STATE_FILE = "session-ui-state.json";
 
 export const OWNER_ONLY_DIRECTORY_MODE = 0o700;
 export const OWNER_ONLY_FILE_MODE = 0o600;
@@ -55,6 +61,17 @@ export function artifactCollectionRoot(options: GlobalArtifactsRootOptions = {})
  */
 export function globalArtifactsRoot(options: GlobalArtifactsRootOptions = {}): string {
   return artifactCollectionRoot(options);
+}
+
+/**
+ * Returns the directory for an artifact (~/.ai-artifacts/artifacts/<artifactId>).
+ */
+export function artifactDirectory(
+  artifactId: string,
+  options: GlobalArtifactsRootOptions = {},
+): string {
+  const validatedArtifactId = artifactIdSchema.parse(artifactId);
+  return path.join(artifactCollectionRoot(options), validatedArtifactId);
 }
 
 /**
@@ -111,6 +128,63 @@ export function conversationRegisteredArtifactPath(
     conversationRegisteredArtifactsDirectory(artifactConversationId, options),
     `${validatedArtifactId}.json`,
   );
+}
+
+/**
+ * Returns the layout.json path for a specific work session.
+ */
+export function workSessionLayoutPath(
+  sessionId: string,
+  options: GlobalArtifactsRootOptions = {},
+): string {
+  return path.join(conversationDirectory(sessionId, options), WORK_SESSION_LAYOUT_FILE);
+}
+
+/**
+ * Returns the instructions.md path for a specific work session.
+ */
+export function workSessionInstructionsPath(
+  sessionId: string,
+  options: GlobalArtifactsRootOptions = {},
+): string {
+  return path.join(conversationDirectory(sessionId, options), WORK_SESSION_INSTRUCTIONS_FILE);
+}
+
+/**
+ * Returns the conversation.v1.backup.json path for a migrated conversation.
+ */
+export function conversationV1BackupPath(
+  sessionId: string,
+  options: GlobalArtifactsRootOptions = {},
+): string {
+  return path.join(conversationDirectory(sessionId, options), CONVERSATION_V1_BACKUP_FILE);
+}
+
+/**
+ * Returns the artifact-ui-state.json path for a specific artifact.
+ */
+export function artifactUiStatePath(
+  artifactId: string,
+  options: GlobalArtifactsRootOptions = {},
+): string {
+  return path.join(artifactDirectory(artifactId, options), ARTIFACT_UI_STATE_FILE);
+}
+
+/**
+ * Returns the session-ui-state.json path for a specific work session.
+ */
+export function sessionUiStatePath(
+  sessionId: string,
+  options: GlobalArtifactsRootOptions = {},
+): string {
+  return path.join(conversationDirectory(sessionId, options), SESSION_UI_STATE_FILE);
+}
+
+/**
+ * Returns the global session-types.json path.
+ */
+export function sessionTypesFilePath(options: GlobalArtifactsRootOptions = {}): string {
+  return path.join(aiArtifactsRoot(options), SESSION_TYPES_FILE);
 }
 
 /**

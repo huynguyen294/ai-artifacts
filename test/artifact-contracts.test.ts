@@ -7,9 +7,11 @@ import {
   ARTIFACT_ROOT_BLOCK_TYPE,
   ARTIFACT_ROOT_TEXT,
   ARTIFACT_SCHEMA_VERSION,
+  CREATE_REVIEW_ARTIFACT_SKILL_VERSION,
   INTEGRATION_VERSION_SCHEMA_VERSION,
   MCP_VERSION,
   SKILL_VERSION,
+  WORK_SESSION_SKILL_VERSION,
   artifactConnectionSchema,
   artifactManifestSchema,
   commentsDocumentSchema,
@@ -197,11 +199,28 @@ describe("artifact schema v6 contract", () => {
 
 describe("integration version receipt schema v1 contract", () => {
   it("locks numeric bundled versions and accepts complete or partial receipts", () => {
-    expect(MCP_VERSION).toBe(11);
-    expect(SKILL_VERSION).toBe(3);
+    expect(MCP_VERSION).toBe(12);
+    expect(CREATE_REVIEW_ARTIFACT_SKILL_VERSION).toBe(4);
+    expect(WORK_SESSION_SKILL_VERSION).toBe(1);
+    expect(SKILL_VERSION).toBe(4);
     expect(INTEGRATION_VERSION_SCHEMA_VERSION).toBe(1);
 
-    const completeReceipt = {
+    const completeReceiptWithSession = {
+      schemaVersion: INTEGRATION_VERSION_SCHEMA_VERSION,
+      mcpVersion: MCP_VERSION,
+      skills: {
+        agents: CREATE_REVIEW_ARTIFACT_SKILL_VERSION,
+        claude: CREATE_REVIEW_ARTIFACT_SKILL_VERSION,
+      },
+      sessionSkills: {
+        agents: WORK_SESSION_SKILL_VERSION,
+        claude: WORK_SESSION_SKILL_VERSION,
+      },
+      updatedAt: timestamp,
+    };
+    expect(integrationVersionManifestSchema.parse(completeReceiptWithSession)).toEqual(completeReceiptWithSession);
+
+    const legacyReceiptWithoutSession = {
       schemaVersion: INTEGRATION_VERSION_SCHEMA_VERSION,
       mcpVersion: MCP_VERSION,
       skills: {
@@ -210,11 +229,12 @@ describe("integration version receipt schema v1 contract", () => {
       },
       updatedAt: timestamp,
     };
-    expect(integrationVersionManifestSchema.parse(completeReceipt)).toEqual(completeReceipt);
+    expect(integrationVersionManifestSchema.parse(legacyReceiptWithoutSession)).toEqual(legacyReceiptWithoutSession);
 
     const partialReceipt = {
       schemaVersion: INTEGRATION_VERSION_SCHEMA_VERSION,
       skills: { agents: SKILL_VERSION },
+      sessionSkills: { agents: WORK_SESSION_SKILL_VERSION },
       updatedAt: timestamp,
     };
     expect(integrationVersionManifestSchema.parse(partialReceipt)).toEqual(partialReceipt);
@@ -417,6 +437,55 @@ describe("artifact conversation schema v1 contract", () => {
     expect(() => contracts.artifactConversationMembershipSchema.parse({ ...validMembership, title: "copied-title" })).toThrow();
   });
 
+  it("locks work session schema version to 2 and validates session metadata", () => {
+    expect(contracts.WORK_SESSION_SCHEMA_VERSION).toBe(2);
+    const validMeta = {
+      schemaVersion: 2,
+      sessionId: artifactConversationId,
+      title: "Improve Artifact Viewer",
+      typeId: "conversation",
+      createdAt: timestamp,
+    };
+    expect(contracts.workSessionMetadataSchema.parse(validMeta)).toEqual(validMeta);
+    expect(() => contracts.workSessionMetadataSchema.parse({ ...validMeta, schemaVersion: 1 })).toThrow();
+    expect(() => contracts.workSessionMetadataSchema.parse({ ...validMeta, title: "   " })).toThrow();
+    expect(() => contracts.workSessionMetadataSchema.parse({ ...validMeta, typeId: "" })).toThrow();
+    for (const instructions of ["", "Existing inline instructions"]) {
+      expect(contracts.workSessionMetadataSchema.parse({ ...validMeta, instructions })).toEqual({
+        ...validMeta,
+        instructions,
+      });
+    }
+    expect(() => contracts.workSessionMetadataSchema.parse({ ...validMeta, instructions: null })).toThrow();
+    expect(() => contracts.workSessionMetadataSchema.parse({ ...validMeta, unknownField: true })).toThrow();
+  });
+
+  it("locks work session layout schema version to 1 and validates zones", () => {
+    expect(contracts.WORK_SESSION_LAYOUT_SCHEMA_VERSION).toBe(1);
+    const validLayout = {
+      schemaVersion: 1,
+      working: ["artifact-1", "artifact-2"],
+      references: ["artifact-ref"],
+      archived: [],
+    };
+    expect(contracts.workSessionLayoutSchema.parse(validLayout)).toEqual(validLayout);
+    expect(() => contracts.workSessionLayoutSchema.parse({ ...validLayout, schemaVersion: 2 })).toThrow();
+    expect(() => contracts.workSessionLayoutSchema.parse({ ...validLayout, working: ["../invalid"] })).toThrow();
+  });
+
+  it("locks session types schema version to 1 and validates session types document", () => {
+    expect(contracts.SESSION_TYPES_SCHEMA_VERSION).toBe(1);
+    const validDoc = {
+      schemaVersion: 1,
+      types: [
+        { id: "conversation", label: "Conversation" },
+        { id: "project", label: "Project" },
+      ],
+    };
+    expect(contracts.sessionTypesDocumentSchema.parse(validDoc)).toEqual(validDoc);
+    expect(() => contracts.sessionTypesDocumentSchema.parse({ ...validDoc, types: [{ id: "c", label: "  " }] })).toThrow();
+  });
+
   it("validates optional conversation input and view state schemas", () => {
     expect(contracts.artifactConversationInputSchema.parse({})).toEqual({});
     expect(contracts.artifactConversationInputSchema.parse({
@@ -484,5 +553,89 @@ describe("artifact conversation schema v1 contract", () => {
         artifactConversationId,
       }),
     ).toThrow();
+  });
+
+  it("validates sessionWebviewToExtensionMessageSchema actions and rejects malformed payloads", () => {
+    const validActions = [
+      { type: "ready" },
+      { type: "openArtifact", artifactId: "artifact-001" },
+      { type: "openExternal", url: "https://example.com" },
+      { type: "renameSession" },
+      { type: "saveSessionInstructions", instructions: "## Updated guidelines" },
+      { type: "selectSessionType" },
+      { type: "moveArtifact", artifactId: "artifact-001", zone: "references" },
+      { type: "reorderArtifact", artifactId: "artifact-001", direction: "up" },
+      { type: "removeArtifact", artifactId: "artifact-001" },
+      { type: "setSessionPanelExpanded", expanded: false },
+    ];
+
+    for (const action of validActions) {
+      expect(contracts.sessionWebviewToExtensionMessageSchema.parse(action)).toEqual(action);
+    }
+
+    // Rejects invalid actions or malformed payloads
+    expect(() =>
+      contracts.sessionWebviewToExtensionMessageSchema.parse({
+        type: "moveArtifact",
+        artifactId: "artifact-001",
+        zone: "invalid-zone",
+      }),
+    ).toThrow();
+
+    expect(() =>
+      contracts.sessionWebviewToExtensionMessageSchema.parse({
+        type: "reorderArtifact",
+        artifactId: "artifact-001",
+        direction: "sideways",
+      }),
+    ).toThrow();
+
+    expect(() =>
+      contracts.sessionWebviewToExtensionMessageSchema.parse({
+        type: "unknownAction",
+      }),
+    ).toThrow();
+  });
+
+  it("enforces standalone vs session-linked discrimination on CreateArtifactReviewResult and InspectArtifactReviewResult", () => {
+    const standaloneResult: contracts.CreateArtifactReviewResult = {
+      artifactDirectory: "d:/workspace/artifacts/test",
+      artifactId: "test-001",
+      artifactPath: "d:/workspace/artifacts/test/artifact.md",
+      artifactUrl: "file:///d:/workspace/artifacts/test/artifact.md",
+      artifactLink: "[Test](file:///d:/workspace/artifacts/test/artifact.md)",
+      reviewSessionId: "11111111-1111-4111-8111-111111111111",
+      reviewRound: 1,
+      artifactSha256: "a".repeat(64),
+      kind: "plan",
+      session: null,
+    };
+
+    expect(standaloneResult.session).toBeNull();
+    if (standaloneResult.session === null) {
+      expect("artifactConversationId" in standaloneResult).toBe(false);
+    }
+
+    const inspectionResult: contracts.InspectArtifactReviewResult = {
+      artifactDirectory: "d:/workspace/artifacts/test",
+      artifactId: "test-001",
+      artifactPath: "d:/workspace/artifacts/test/artifact.md",
+      artifactUrl: "file:///d:/workspace/artifacts/test/artifact.md",
+      artifactLink: "[Test](file:///d:/workspace/artifacts/test/artifact.md)",
+      reviewSessionId: "11111111-1111-4111-8111-111111111111",
+      reviewRound: 1,
+      artifactSha256: "a".repeat(64),
+      kind: "plan",
+      manifest: manifest() as any,
+      markdown: "# Test\n",
+      comments: comments() as any,
+      commentsSha256: "b".repeat(64),
+      roundToken: "token-123",
+      roundTokenSource: "chat-inspection",
+      session: null,
+    };
+
+    expect(inspectionResult.roundTokenSource).toBe("chat-inspection");
+    expect(inspectionResult.session).toBeNull();
   });
 });

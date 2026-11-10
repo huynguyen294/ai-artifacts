@@ -1,12 +1,25 @@
+import { promises as fs } from "node:fs";
 import * as vscode from "vscode";
 import { buildArtifactConnectPrompt } from "../shared/artifact-connect-prompt";
+import { ARTIFACT_UI_STATE_FILE, type GlobalArtifactsRootOptions } from "../shared/artifact-files";
 import {
+  conversationNameSchema,
   webviewToExtensionMessageSchema,
-  type ConversationArtifactsViewState,
+  type ArtifactSessionTarget,
   type ExtensionToWebviewMessage,
+  type ReviewState,
+  type WorkSession,
+  type WorkSessionDataChange,
 } from "../shared/contracts";
+import { removeConversation } from "../shared/conversation-artifact-registry";
+import { buildSessionConnectPrompt } from "../shared/session-connect-prompt";
+import { parseArtifactManifest } from "../shared/artifact-validation";
+import { promptChangeArtifactType, promptRenameArtifact } from "./artifact-metadata-command";
+import { validateArtifactReviewTarget } from "./artifact-review-open";
 import { ArtifactStore } from "./artifact-store";
-import type { OpenConversationArtifactResult } from "./conversation-artifact-service";
+import { getArtifactUiState, patchArtifactUiState } from "./artifact-ui-state";
+import { runSingleMigration } from "./session-migration-command";
+import { resolveWorkSessionSupport } from "./work-session-support";
 
 function nonce(): string {
   const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
@@ -14,15 +27,19 @@ function nonce(): string {
 }
 
 export type ConversationArtifactProviderController = {
-  getConversationsViewState: (currentArtifactId: string) => Promise<ConversationArtifactsViewState>;
-  openConversationArtifact: (artifactId: string) => Promise<OpenConversationArtifactResult>;
-  onDidChange: (listener: () => void | Promise<void>) => { dispose: () => void };
+  getArtifactSessions: (artifactId: string) => Promise<ArtifactSessionTarget[]>;
+  createSession?: (input: { title: string; typeId?: string; instructions?: string }) => Promise<WorkSession>;
+  registerArtifactInSession?: (sessionId: string, artifactId: string) => Promise<void>;
+  onDidChange: (listener: (changes?: readonly WorkSessionDataChange[]) => void | Promise<void>) => { dispose: () => void };
 };
 
 export type ArtifactStoreController = Pick<
   ArtifactStore,
   "artifactDirectory" | "artifactId" | "load" | "addComment" | "removeComment" | "submitReview"
->;
+> & {
+  updateMetadata?: ArtifactStore["updateMetadata"];
+  artifactPath?: string;
+};
 
 export class ArtifactReviewProvider implements vscode.CustomTextEditorProvider {
   static readonly viewType = "agentPlus.artifactReview";
@@ -32,6 +49,7 @@ export class ArtifactReviewProvider implements vscode.CustomTextEditorProvider {
     private readonly conversationService?: ConversationArtifactProviderController,
     private readonly createStore: (artifactPath: string) => ArtifactStoreController = (artifactPath) =>
       new ArtifactStore(artifactPath),
+    private readonly rootOptions: GlobalArtifactsRootOptions = {},
   ) {}
 
   async resolveCustomTextEditor(document: vscode.TextDocument, panel: vscode.WebviewPanel): Promise<void> {
@@ -47,49 +65,56 @@ export class ArtifactReviewProvider implements vscode.CustomTextEditorProvider {
     panel.webview.html = this.html(panel.webview);
 
     const post = (message: ExtensionToWebviewMessage): Thenable<boolean> => panel.webview.postMessage(message);
+    let lastLoadedState: ReviewState | undefined;
     const refresh = async (): Promise<void> => {
       if (disposed) return;
       try {
         const state = await store.load();
+        lastLoadedState = state;
         if (disposed) return;
         await post({ type: "state", state });
       } catch (error) {
         if (disposed) return;
+        try {
+          await fs.access(store.artifactDirectory);
+        } catch (accessErr: any) {
+          if (accessErr && (accessErr.code === "ENOENT" || accessErr.code === "ENOTDIR")) {
+            await post({ type: "artifactDeleted", artifactId: store.artifactId });
+            return;
+          }
+        }
         await post({ type: "error", message: error instanceof Error ? error.message : String(error) });
       }
     };
 
-    const refreshConversations = async (showLoading = false): Promise<void> => {
+    const refreshSessions = async (): Promise<void> => {
       if (disposed) return;
       const seq = ++conversationRefreshSeq;
-      if (!this.conversationService) {
-        await post({
-          type: "conversationArtifactsState",
-          state: { status: "ready", groups: [], skippedCount: 0 },
-        });
-        return;
-      }
-      if (showLoading) {
-        await post({
-          type: "conversationArtifactsState",
-          state: { status: "loading" },
-        });
-      }
       try {
-        const state = await this.conversationService.getConversationsViewState(store.artifactId);
+        const support = await resolveWorkSessionSupport(this.rootOptions, this.context);
+        if (!support.supported || !this.conversationService) {
+          if (disposed || seq !== conversationRefreshSeq) return;
+          await post({
+            type: "artifactSessionsState",
+            supported: false,
+            sessions: [],
+          });
+          return;
+        }
+
+        const sessions = await this.conversationService.getArtifactSessions(store.artifactId);
         if (disposed || seq !== conversationRefreshSeq) return;
         await post({
-          type: "conversationArtifactsState",
-          state,
+          type: "artifactSessionsState",
+          supported: true,
+          sessions,
         });
-      } catch (error) {
+      } catch {
         if (disposed || seq !== conversationRefreshSeq) return;
         await post({
-          type: "conversationArtifactsState",
-          state: {
-            status: "error",
-            message: error instanceof Error ? error.message : String(error),
-          },
+          type: "artifactSessionsState",
+          supported: false,
+          sessions: [],
         });
       }
     };
@@ -100,13 +125,10 @@ export class ArtifactReviewProvider implements vscode.CustomTextEditorProvider {
         switch (message.type) {
           case "ready":
             await refresh();
-            void refreshConversations(true);
+            void refreshSessions();
             return;
-          case "openConversationArtifact": {
-            if (!this.conversationService) return;
-            await this.conversationService.openConversationArtifact(message.artifactId);
+          case "openConversationArtifact":
             return;
-          }
           case "addComment":
             await store.addComment(message);
             await refresh();
@@ -115,10 +137,290 @@ export class ArtifactReviewProvider implements vscode.CustomTextEditorProvider {
             await store.removeComment(message.commentId);
             await refresh();
             return;
-          case "copyArtifactConnectPrompt":
-            await vscode.env.clipboard.writeText(buildArtifactConnectPrompt(store.artifactDirectory));
+          case "restoreArtifact": {
+            try {
+              const updated = await patchArtifactUiState(store.artifactId, { archivedAt: null }, this.rootOptions);
+              (this.conversationService as any)?.scheduleChangeNotification?.([{ kind: "artifactUiState", artifactId: store.artifactId }]);
+              await post({
+                type: "artifactUiStatePatch",
+                artifactId: store.artifactId,
+                uiState: {
+                  pinned: Boolean(updated.pinned),
+                  ...(updated.archivedAt ? { archivedAt: updated.archivedAt } : {}),
+                },
+              });
+            } catch (error) {
+              const message = error instanceof Error ? error.message : String(error);
+              void vscode.window.showErrorMessage(`Failed to restore artifact: ${message}`);
+              await post({ type: "error", message: `Failed to restore artifact: ${message}` });
+            }
+            return;
+          }
+          case "renameArtifact": {
+            try {
+              const result = await promptRenameArtifact(store as ArtifactStore, lastLoadedState?.artifact.title);
+              if (result) {
+                if (lastLoadedState) {
+                  lastLoadedState.artifact.title = result.title;
+                  lastLoadedState.artifact.kind = result.kind;
+                }
+                await post({
+                  type: "artifactMetadataPatch",
+                  artifactId: store.artifactId,
+                  title: result.title,
+                  kind: result.kind,
+                });
+                (this.conversationService as any)?.scheduleChangeNotification?.([{ kind: "artifact", artifactId: store.artifactId }]);
+              }
+            } catch (error) {
+              const message = error instanceof Error ? error.message : String(error);
+              void vscode.window.showErrorMessage(`Failed to rename artifact: ${message}`);
+            }
+            return;
+          }
+          case "changeArtifactType": {
+            try {
+              const result = await promptChangeArtifactType(
+                store as ArtifactStore,
+                this.rootOptions,
+                lastLoadedState?.artifact.kind,
+              );
+              if (result) {
+                if (lastLoadedState) {
+                  lastLoadedState.artifact.title = result.title;
+                  lastLoadedState.artifact.kind = result.kind;
+                }
+                await post({
+                  type: "artifactMetadataPatch",
+                  artifactId: store.artifactId,
+                  title: result.title,
+                  kind: result.kind,
+                });
+                (this.conversationService as any)?.scheduleChangeNotification?.([{ kind: "artifact", artifactId: store.artifactId }]);
+              }
+            } catch (error) {
+              const message = error instanceof Error ? error.message : String(error);
+              void vscode.window.showErrorMessage(`Failed to change artifact type: ${message}`);
+            }
+            return;
+          }
+          case "copyArtifactConnectPrompt": {
+            const prompt = buildArtifactConnectPrompt(store.artifactDirectory);
+            await vscode.env.clipboard.writeText(prompt);
             await post({ type: "artifactConnectPromptCopied" });
             return;
+          }
+          case "startWorkSession": {
+            const support = await resolveWorkSessionSupport(this.rootOptions, this.context);
+            if (
+              !support.supported
+              || !this.conversationService?.createSession
+              || !this.conversationService?.registerArtifactInSession
+            ) {
+              void vscode.window.showInformationMessage("Sessions require MCP server version 12 or higher.");
+              return;
+            }
+
+            const artifactFilePath = store.artifactPath ?? document.uri.fsPath;
+            let targetTitle = store.artifactId;
+            try {
+              const target = await validateArtifactReviewTarget(artifactFilePath, this.rootOptions);
+              targetTitle = target.manifest.title;
+            } catch {
+              void vscode.window.showErrorMessage(
+                `Artifact "${store.artifactId}" is no longer valid or has been removed.`,
+              );
+              return;
+            }
+
+            const rawTitle = await vscode.window.showInputBox({
+              title: "Start a work session",
+              prompt: "Enter a name for the new work session",
+              placeHolder: "Work session name",
+              value: targetTitle,
+              validateInput: (value) => {
+                const parsed = conversationNameSchema.safeParse(value?.trim());
+                if (!parsed.success) {
+                  return "Work session name must be between 1 and 200 characters.";
+                }
+                return undefined;
+              },
+            });
+
+            if (rawTitle === undefined) {
+              return;
+            }
+
+            const title = rawTitle.trim();
+            const parsedTitle = conversationNameSchema.safeParse(title);
+            if (!parsedTitle.success) {
+              void vscode.window.showErrorMessage("Work session name must be between 1 and 200 characters.");
+              return;
+            }
+
+            let session: WorkSession;
+            try {
+              session = await this.conversationService.createSession({ title: parsedTitle.data });
+            } catch (error) {
+              const message = error instanceof Error ? error.message : String(error);
+              void vscode.window.showErrorMessage(`Failed to create work session: ${message}`);
+              return;
+            }
+
+            try {
+              await this.conversationService.registerArtifactInSession(session.sessionId, store.artifactId);
+            } catch (error) {
+              await removeConversation(session.sessionId, this.rootOptions).catch(() => undefined);
+              const message = error instanceof Error ? error.message : String(error);
+              void vscode.window.showErrorMessage(`Failed to register artifact in session: ${message}`);
+              return;
+            }
+
+            void refreshSessions();
+
+            let openSucceeded = false;
+            try {
+              await vscode.commands.executeCommand("agentPlus.openWorkSession", session.sessionId);
+              openSucceeded = true;
+            } catch {
+              openSucceeded = false;
+            }
+
+            let copySucceeded = false;
+            try {
+              const prompt = buildSessionConnectPrompt({ sessionId: session.sessionId, title: parsedTitle.data });
+              await vscode.env.clipboard.writeText(prompt);
+              copySucceeded = true;
+            } catch {
+              copySucceeded = false;
+            }
+
+            if (openSucceeded && copySucceeded) {
+              void vscode.window.showInformationMessage(
+                "Work session created. Connect prompt copied. Paste it into your AI chat to connect.",
+              );
+            } else if (openSucceeded && !copySucceeded) {
+              void vscode.window.showWarningMessage(
+                "Work session created, but the Connect prompt could not be copied. Open the session and use Connect to try again.",
+              );
+            } else if (!openSucceeded && copySucceeded) {
+              void vscode.window.showWarningMessage(
+                "Work session created and Connect prompt copied, but the session could not be opened. Paste the prompt into your AI chat to connect.",
+              );
+            } else {
+              void vscode.window.showErrorMessage(
+                "Work session created, but it could not be opened and the Connect prompt could not be copied. Open it from Sessions to continue.",
+              );
+            }
+            return;
+          }
+          case "openArtifactSessions": {
+            const support = await resolveWorkSessionSupport(this.rootOptions, this.context);
+            if (!support.supported || !this.conversationService) {
+              void vscode.window.showInformationMessage("Sessions require MCP server version 12 or higher.");
+              return;
+            }
+
+            const sessions = await this.conversationService.getArtifactSessions(store.artifactId);
+            if (sessions.length === 0) {
+              void vscode.window.showInformationMessage("This artifact does not belong to any session.");
+              return;
+            }
+
+            if (sessions.length === 1) {
+              const target = sessions[0]!;
+              if (target.version === 2) {
+                await vscode.commands.executeCommand("agentPlus.openWorkSession", target.sessionId);
+              } else {
+                const choice = await vscode.window.showInformationMessage(
+                  `This artifact belongs to conversation "${target.title}". Do you want to migrate it to Session v2 to open?`,
+                  "Migrate",
+                  "Cancel",
+                );
+                if (choice === "Migrate") {
+                  await runSingleMigration({
+                    sessionId: target.sessionId,
+                    rootOptions: this.rootOptions,
+                    openWorkSession: async (id) => {
+                      await vscode.commands.executeCommand("agentPlus.openWorkSession", id);
+                    },
+                    showErrorMessage: (msg) => vscode.window.showErrorMessage(msg),
+                    onDidMigrate: () => {
+                      void refreshSessions();
+                    },
+                  });
+                }
+              }
+              return;
+            }
+
+            // Multiple sessions: show QuickPick
+            const items = sessions.map((s) => ({
+              label: s.title,
+              description: s.version === 2 ? `Session · ${s.typeLabel ?? "conversation"}` : "Legacy conversation · Migration required",
+              target: s,
+            }));
+
+            const selected = await vscode.window.showQuickPick(items, {
+              title: "Select Artifact Session to Open",
+            });
+
+            if (!selected) return;
+
+            if (selected.target.version === 2) {
+              await vscode.commands.executeCommand("agentPlus.openWorkSession", selected.target.sessionId);
+            } else {
+              const choice = await vscode.window.showInformationMessage(
+                `Migrate conversation "${selected.target.title}" to Session v2 to open?`,
+                "Migrate",
+                "Cancel",
+              );
+              if (choice === "Migrate") {
+                await runSingleMigration({
+                  sessionId: selected.target.sessionId,
+                  rootOptions: this.rootOptions,
+                  openWorkSession: async (id) => {
+                    await vscode.commands.executeCommand("agentPlus.openWorkSession", id);
+                  },
+                  showErrorMessage: (msg) => vscode.window.showErrorMessage(msg),
+                  onDidMigrate: () => {
+                    void refreshSessions();
+                  },
+                });
+              }
+            }
+            return;
+          }
+          case "migrateSelectedConversation": {
+            const support = await resolveWorkSessionSupport(this.rootOptions, this.context);
+            if (!support.supported || !this.conversationService) {
+              void vscode.window.showInformationMessage("Sessions require MCP server version 12 or higher.");
+              return;
+            }
+
+            const sessions = await this.conversationService.getArtifactSessions(store.artifactId);
+            const targetCandidate = sessions.find((s) => s.sessionId === message.sessionId);
+            if (!targetCandidate || targetCandidate.version !== 1) {
+              void vscode.window.showErrorMessage(
+                `Conversation "${message.sessionId}" is no longer in a state requiring migration.`,
+              );
+              void refreshSessions();
+              return;
+            }
+
+            await runSingleMigration({
+              sessionId: message.sessionId,
+              rootOptions: this.rootOptions,
+              openWorkSession: async (id) => {
+                await vscode.commands.executeCommand("agentPlus.openWorkSession", id);
+              },
+              showErrorMessage: (msg) => vscode.window.showErrorMessage(msg),
+              onDidMigrate: () => {
+                void refreshSessions();
+              },
+            });
+            return;
+          }
           case "openExternal": {
             const uri = vscode.Uri.parse(message.url, true);
             if (!new Set(["http", "https", "mailto"]).has(uri.scheme.toLowerCase())) {
@@ -174,12 +476,89 @@ export class ArtifactReviewProvider implements vscode.CustomTextEditorProvider {
         "{artifact.json,artifact.md,comments.json,review-submission.json}",
       ),
     );
+    const handleFileChange = async (uri: vscode.Uri) => {
+      if (disposed) return;
+      if (uri.fsPath.endsWith("artifact.json") && lastLoadedState) {
+        try {
+          const raw = await fs.readFile(uri.fsPath, "utf8");
+          const manifest = parseArtifactManifest(JSON.parse(raw));
+          if (
+            manifest.artifactId === lastLoadedState.artifact.artifactId &&
+            manifest.reviewRound === lastLoadedState.artifact.reviewRound &&
+            manifest.createdAt === lastLoadedState.artifact.createdAt &&
+            manifest.reviewSessionId === lastLoadedState.artifact.reviewSessionId
+          ) {
+            lastLoadedState.artifact.title = manifest.title;
+            lastLoadedState.artifact.kind = manifest.kind;
+            await post({
+              type: "artifactMetadataPatch",
+              artifactId: store.artifactId,
+              title: manifest.title,
+              kind: manifest.kind,
+            });
+            return;
+          }
+        } catch {
+          // Fall through to full refresh
+        }
+      }
+      void refresh();
+    };
     fileWatcher.onDidCreate(() => void refresh());
-    fileWatcher.onDidChange(() => void refresh());
+    fileWatcher.onDidChange((uri) => void handleFileChange(uri));
     fileWatcher.onDidDelete(() => void refresh());
 
-    const conversationSubscription = this.conversationService?.onDidChange(() => {
-      void refreshConversations(false);
+    const uiStateWatcher = vscode.workspace.createFileSystemWatcher(
+      new vscode.RelativePattern(store.artifactDirectory, ARTIFACT_UI_STATE_FILE),
+    );
+    const handleUiStateChange = async () => {
+      if (disposed) return;
+      try {
+        const uiState = await getArtifactUiState(store.artifactId, this.rootOptions);
+        if (disposed) return;
+        await post({
+          type: "artifactUiStatePatch",
+          artifactId: store.artifactId,
+          uiState: {
+            pinned: Boolean(uiState.pinned),
+            ...(uiState.archivedAt ? { archivedAt: uiState.archivedAt } : {}),
+          },
+        });
+      } catch (error) {
+        if (disposed) return;
+        console.warn(`[ArtifactReviewProvider] Failed to read UI state for ${store.artifactId}:`, error);
+      }
+    };
+    uiStateWatcher.onDidCreate(() => void handleUiStateChange());
+    uiStateWatcher.onDidChange(() => void handleUiStateChange());
+    uiStateWatcher.onDidDelete(() => void handleUiStateChange());
+
+    const conversationSubscription = this.conversationService?.onDidChange((changes) => {
+      if (!changes || changes.length === 0) {
+        void refreshSessions();
+        return;
+      }
+      const relevant = changes.some((c) => {
+        if (c.kind === "types" || c.kind === "support") return true;
+        if (c.kind === "membership" && c.artifactId === store.artifactId) return true;
+        if (c.kind === "metadata") return true;
+        return false;
+      });
+      if (relevant) {
+        void refreshSessions();
+      }
+      const hasUiState = changes.some(
+        (c) => c.kind === "artifactUiState" && c.artifactId === store.artifactId,
+      );
+      if (hasUiState) {
+        void handleUiStateChange();
+      }
+      const hasArtifact = changes.some(
+        (c) => c.kind === "artifact" && c.artifactId === store.artifactId,
+      );
+      if (hasArtifact) {
+        void refresh();
+      }
     });
 
     panel.onDidDispose(() => {
@@ -187,6 +566,7 @@ export class ArtifactReviewProvider implements vscode.CustomTextEditorProvider {
       messageSubscription.dispose();
       documentSubscription.dispose();
       fileWatcher.dispose();
+      uiStateWatcher.dispose();
       conversationSubscription?.dispose();
     });
   }
@@ -215,7 +595,7 @@ export class ArtifactReviewProvider implements vscode.CustomTextEditorProvider {
     <title>Artifact Review</title>
   </head>
   <body>
-    <div id="root" data-style-nonce="${token}" data-shiki-uri="${shikiUri}" data-mermaid-uri="${mermaidUri}"></div>
+    <div id="root" data-app="review" data-style-nonce="${token}" data-shiki-uri="${shikiUri}" data-mermaid-uri="${mermaidUri}"></div>
     <script nonce="${token}" src="${scriptUri}"></script>
   </body>
 </html>`;

@@ -10,17 +10,23 @@ import {
 } from "../src/extension/artifact-review-open";
 import {
   ConversationArtifactService,
+  classifyWatcherUri,
+  isTemporaryOrBackupFile,
   setupConversationRegistryWatcher,
   type ConversationRegistryWatcher,
 } from "../src/extension/conversation-artifact-service";
 import {
+  ARTIFACT_MANIFEST_FILE,
+  ARTIFACT_MARKDOWN_FILE,
   CONVERSATION_REGISTRY_DIRECTORY,
   conversationRegisteredArtifactPath,
   globalArtifactsRoot,
 } from "../src/shared/artifact-files";
 import {
   createConversationAndRegisterArtifact,
+  createSession,
   registerArtifactInConversation,
+  registerArtifactInSession,
 } from "../src/shared/conversation-artifact-registry";
 
 const temporaryDirectories: string[] = [];
@@ -137,11 +143,7 @@ async function writeSchemaV6Artifact(
 afterEach(async () => {
   vi.useRealTimers();
   vi.restoreAllMocks();
-  await Promise.all(
-    temporaryDirectories.splice(0).map((directory) =>
-      rm(directory, { recursive: true, force: true }),
-    ),
-  );
+  await Promise.all(temporaryDirectories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })));
 });
 
 describe("ConversationArtifactService", () => {
@@ -360,10 +362,7 @@ describe("ConversationArtifactService", () => {
     expect(opened.status).toBe("opened");
     expect(opened.shouldRefresh).toBe(false);
     expect(openWith).toHaveBeenCalledTimes(1);
-    expect(openWith).toHaveBeenCalledWith(
-      { fsPath: targetArtifact.artifactPath },
-      { preview: false },
-    );
+    expect(openWith).toHaveBeenCalledWith({ fsPath: targetArtifact.artifactPath }, { preview: false });
     expect(changeListener).not.toHaveBeenCalled();
 
     // 2. Malformed / path-traversal artifactId is rejected before openWith
@@ -382,9 +381,7 @@ describe("ConversationArtifactService", () => {
       message: 'Artifact "artifact-target" is no longer available on disk.',
       shouldRefresh: true,
     });
-    expect(reportError).toHaveBeenCalledWith(
-      'Artifact "artifact-target" is no longer available on disk.',
-    );
+    expect(reportError).toHaveBeenCalledWith('Artifact "artifact-target" is no longer available on disk.');
     expect(changeListener).toHaveBeenCalledTimes(1);
   });
 
@@ -432,5 +429,189 @@ describe("ConversationArtifactService", () => {
 
     service.dispose();
     expect(fakeWatcher.disposed).toBe(true);
+  });
+
+  it("resolves session view data with unavailable: true for missing artifacts", async () => {
+    const userHome = await makeUserHome();
+    const service = new ConversationArtifactService<TestUri>({
+      uriFromFilePath: (fsPath) => ({ fsPath }),
+      openArtifactReview: vi.fn(),
+      rootOptions: { userHome },
+    });
+
+    const session = await createSession({
+      title: "Unavailable Test Session",
+      userHome,
+    });
+    await registerArtifactInSession(session.sessionId, "ghost-artifact-id", { userHome });
+
+    const viewData = await service.resolveSessionViewData(session.sessionId);
+    expect(viewData.working).toHaveLength(1);
+    expect(viewData.working[0]?.artifactId).toBe("ghost-artifact-id");
+    expect(viewData.working[0]?.unavailable).toBe(true);
+
+    service.dispose();
+  });
+
+  it("WS-F3: resolveSessionViewData marks row unavailable for junction directory and manifest ID mismatch", async () => {
+    const userHome = await makeUserHome();
+    const service = new ConversationArtifactService<TestUri>({
+      uriFromFilePath: (fsPath) => ({ fsPath }),
+      openArtifactReview: vi.fn(),
+      rootOptions: { userHome },
+    });
+    const session = await createSession({
+      title: "Boundary Test Session",
+      userHome,
+    });
+
+    const root = globalArtifactsRoot({ userHome });
+    await mkdir(root, { recursive: true });
+
+    // 1. Linked artifact
+    const outsideDir = path.join(userHome, "outside-svc-art");
+    await mkdir(outsideDir, { recursive: true });
+    await writeFile(
+      path.join(outsideDir, ARTIFACT_MANIFEST_FILE),
+      JSON.stringify({
+        schemaVersion: 6,
+        artifactId: "linked-svc-art",
+        title: "Linked Art",
+        kind: "spec",
+        createdAt: "2026-05-01T10:00:00.000Z",
+        updatedAt: "2026-05-01T11:00:00.000Z",
+        reviewRound: 1,
+        reviewSessionId: "11111111-1111-4111-8111-111111111111",
+      }),
+      "utf8",
+    );
+    await writeFile(path.join(outsideDir, ARTIFACT_MARKDOWN_FILE), "# Linked", "utf8");
+    const linkPath = path.join(root, "linked-svc-art");
+    await symlink(outsideDir, linkPath, process.platform === "win32" ? "junction" : "dir");
+    await registerArtifactInSession(session.sessionId, "linked-svc-art", { userHome });
+
+    // 2. Manifest ID mismatch
+    const mismatchDir = path.join(root, "expected-svc-id");
+    await mkdir(mismatchDir, { recursive: true });
+    await writeFile(
+      path.join(mismatchDir, ARTIFACT_MANIFEST_FILE),
+      JSON.stringify({
+        schemaVersion: 6,
+        artifactId: "different-svc-id",
+        title: "Mismatched Manifest",
+        kind: "spec",
+        createdAt: "2026-05-01T10:00:00.000Z",
+        updatedAt: "2026-05-01T11:00:00.000Z",
+        reviewRound: 1,
+        reviewSessionId: "11111111-1111-4111-8111-111111111111",
+      }),
+      "utf8",
+    );
+    await writeFile(path.join(mismatchDir, ARTIFACT_MARKDOWN_FILE), "# Mismatch", "utf8");
+    await registerArtifactInSession(session.sessionId, "expected-svc-id", { userHome });
+
+    const viewData = await service.resolveSessionViewData(session.sessionId);
+    expect(viewData.working).toHaveLength(2);
+
+    const linkedRow = viewData.working.find((r) => r.artifactId === "linked-svc-art");
+    expect(linkedRow?.unavailable).toBe(true);
+
+    const mismatchRow = viewData.working.find((r) => r.artifactId === "expected-svc-id");
+    expect(mismatchRow?.unavailable).toBe(true);
+
+    service.dispose();
+  });
+
+  it("classifies watcher paths and ignores temporary/backup files", () => {
+    const validSessionId = "00000000-0000-4000-8000-000000000001";
+    const validArtifactId = "artifact-01";
+
+    expect(classifyWatcherUri(`/root/${validSessionId}/conversation.json`)).toEqual({
+      kind: "metadata",
+      sessionId: validSessionId,
+    });
+
+    expect(classifyWatcherUri(`/root/${validSessionId}/instructions.md`)).toEqual({
+      kind: "instructions",
+      sessionId: validSessionId,
+    });
+
+    expect(classifyWatcherUri(`/root/${validSessionId}/layout.json`)).toEqual({
+      kind: "layout",
+      sessionId: validSessionId,
+    });
+
+    expect(
+      classifyWatcherUri(`/root/${validSessionId}/registered-artifacts/${validArtifactId}.json`),
+    ).toEqual({
+      kind: "membership",
+      sessionId: validSessionId,
+      artifactId: validArtifactId,
+    });
+
+    expect(classifyWatcherUri(`/root/${validSessionId}/conversation.v1.backup.json`)).toBe("ignored");
+    expect(classifyWatcherUri(`/root/${validSessionId}/layout.json.tmp.123`)).toBe("ignored");
+    expect(classifyWatcherUri(`/root/${validSessionId}/.update.lock`)).toBe("ignored");
+    expect(isTemporaryOrBackupFile("test.backup.json")).toBe(true);
+
+    expect(classifyWatcherUri("/root/arbitrary-unknown-path")).toBe("unclassified");
+  });
+
+  it("service manager methods update session and notify scoped changes", async () => {
+    const userHome = await makeUserHome();
+    const service = new ConversationArtifactService<TestUri>({
+      uriFromFilePath: (fsPath) => ({ fsPath }),
+      openArtifactReview: vi.fn(),
+      rootOptions: { userHome },
+    });
+
+    const session = await createSession({
+      title: "Service Manager Session",
+      instructions: "Init",
+      userHome,
+    });
+
+    const receivedChanges: any[] = [];
+    service.onDidChange((changes) => {
+      receivedChanges.push(...changes);
+    });
+
+    // 1. updateSessionDetails
+    await service.updateSessionDetails(session.sessionId, { title: "New Title", instructions: "New MD" });
+    expect(receivedChanges).toContainEqual({ kind: "metadata", sessionId: session.sessionId });
+
+    // 2. setSessionType
+    await expect(service.setSessionType(session.sessionId, "non-existent-type")).rejects.toThrow();
+    await service.setSessionType(session.sessionId, "conversation");
+    expect(receivedChanges.filter((c) => c.kind === "metadata")).toHaveLength(2);
+
+    service.dispose();
+  });
+
+  it("emits empty array (full refresh) when generic change is combined with scoped change", () => {
+    vi.useFakeTimers();
+    const service = new ConversationArtifactService<TestUri>({
+      uriFromFilePath: (fsPath) => ({ fsPath }),
+      openArtifactReview: vi.fn(),
+      debounceMs: 50,
+    });
+
+    const received: any[] = [];
+    service.onDidChange((changes) => {
+      received.push(changes);
+    });
+
+    // Both a scoped change and a generic unclassified change occur in debounce window
+    service.scheduleChangeNotification([{ kind: "metadata", sessionId: "00000000-0000-4000-8000-000000000001" }]);
+    service.scheduleChangeNotification(); // unclassified / generic
+
+    vi.advanceTimersByTime(50);
+
+    expect(received).toHaveLength(1);
+    // Must emit empty array to indicate full refresh
+    expect(received[0]).toEqual([]);
+
+    service.dispose();
+    vi.useRealTimers();
   });
 });

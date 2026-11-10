@@ -34,7 +34,7 @@ describe("regular artifact file-link contract", () => {
 
   it("keeps the MCP result on RFC 8089 file URLs and regular Markdown links", async () => {
     const integrationSource = await readFile(
-      path.join(repositoryRoot, "src", "integration", "artifact-review-mcp-v4.ts"),
+      path.join(repositoryRoot, "src", "integration", "artifact-review-mcp.ts"),
       "utf8",
     );
     const [skill, contract] = await Promise.all([

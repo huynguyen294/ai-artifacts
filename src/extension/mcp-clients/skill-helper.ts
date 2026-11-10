@@ -7,11 +7,19 @@ export const USER_CUSTOM_RULES_END = "<!-- <<< USER CUSTOM RULES <<< -->";
 export const OFFICIAL_SKILL_DESCRIPTIONS: readonly string[] = [
   "Create or update a reviewable Markdown artifact and wait for the user's decision in the same Codex turn. Use only when the user explicitly asks to create or update an artifact.",
   "Create, update, inspect, or reconnect an explicitly requested reviewable Markdown artifact and coordinate its review rounds.",
+  "Create, update, inspect, or reconnect an explicitly requested reviewable Markdown artifact, join work sessions, and coordinate review rounds.",
+  "Create, update, inspect, or reconnect an explicitly requested reviewable Markdown artifact and coordinate its review rounds. Also use when explicitly asked to comment on an artifact, with or without submitting Review.",
 ];
 
 export const REVIEW_SKILL_ASSETS = [
   "SKILL.md",
   path.join("references", "artifact-contract.md"),
+  path.join("references", "ai-feedback.md"),
+  path.join("agents", "openai.yaml"),
+];
+
+export const WORK_SESSION_SKILL_ASSETS = [
+  "SKILL.md",
   path.join("agents", "openai.yaml"),
 ];
 
@@ -439,6 +447,73 @@ export async function replaceSkillDirectory(source: string, target: string): Pro
           throw new AggregateError(
             [error, restoreError],
             `Failed to install the review skill and restore the previous copy. Recovery files remain at "${stagingRoot}".`,
+          );
+        }
+      }
+      throw error;
+    }
+  } finally {
+    if (!keepRecoveryDirectory) {
+      await fs.rm(stagingRoot, { recursive: true, force: true }).catch(() => {});
+    }
+  }
+}
+
+export async function officialSkillDirectoryIsCurrent(
+  source: string,
+  target: string,
+  assets: readonly string[] = WORK_SESSION_SKILL_ASSETS,
+): Promise<boolean> {
+  const checks = assets.map((relativePath) => {
+    const sourcePath = path.join(source, relativePath);
+    const targetPath = path.join(target, relativePath);
+    return sameFile(sourcePath, targetPath);
+  });
+  return (await Promise.all(checks)).every(Boolean);
+}
+
+export async function replaceOfficialSkillDirectory(
+  source: string,
+  target: string,
+  assets: readonly string[] = WORK_SESSION_SKILL_ASSETS,
+): Promise<void> {
+  await Promise.all(assets.map((rel) => fs.access(path.join(source, rel))));
+
+  const targetParent = path.dirname(target);
+  await fs.mkdir(targetParent, { recursive: true });
+  const stagingRoot = await fs.mkdtemp(path.join(targetParent, ".work-session-skill-install-"));
+  const stagedSkill = path.join(stagingRoot, "next");
+  const previousSkill = path.join(stagingRoot, "previous");
+  let previousMoved = false;
+  let keepRecoveryDirectory = false;
+
+  try {
+    await fs.mkdir(stagedSkill, { recursive: true });
+    for (const rel of assets) {
+      const srcFile = path.join(source, rel);
+      const destFile = path.join(stagedSkill, rel);
+      await fs.mkdir(path.dirname(destFile), { recursive: true });
+      await fs.copyFile(srcFile, destFile);
+    }
+
+    try {
+      await fs.rename(target, previousSkill);
+      previousMoved = true;
+    } catch (error: any) {
+      if (error?.code !== "ENOENT") throw error;
+    }
+
+    try {
+      await fs.rename(stagedSkill, target);
+    } catch (error) {
+      if (previousMoved) {
+        try {
+          await fs.rename(previousSkill, target);
+        } catch (restoreError) {
+          keepRecoveryDirectory = true;
+          throw new AggregateError(
+            [error, restoreError],
+            `Failed to install the official skill and restore the previous copy. Recovery files remain at "${stagingRoot}".`,
           );
         }
       }

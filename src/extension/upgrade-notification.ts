@@ -9,11 +9,17 @@ export const INSTALLATION_GUIDE_URL =
   "https://github.com/huynguyen294/ai-artifacts#getting-started";
 
 export type IntegrationSkillTarget = keyof InstalledSkillVersions;
-export type StaleIntegrationAsset = "mcp" | "skill:agents" | "skill:claude";
+export type StaleIntegrationAsset =
+  | "mcp"
+  | "skill:agents"
+  | "skill:claude"
+  | "session-skill:agents"
+  | "session-skill:claude";
 
 export type IntegrationNotificationState = {
   mcpVersion: number;
   skillVersion: number;
+  sessionSkillVersion?: number;
   staleAssets: StaleIntegrationAsset[];
 };
 
@@ -28,6 +34,7 @@ export interface UpgradeNotificationDeps {
   bundledVersions: {
     mcpVersion: number;
     skillVersion: number;
+    sessionSkillVersion?: number;
   };
   skillTargets: readonly IntegrationSkillTarget[];
   getInstalledIntegrationVersion: () => MaybePromise<InstalledIntegrationVersionState>;
@@ -75,6 +82,12 @@ export function computeStaleIntegrationAssets(
     if (manifest?.skills[target] !== bundledVersions.skillVersion) {
       staleAssets.push(`skill:${target}`);
     }
+    if (
+      bundledVersions.sessionSkillVersion !== undefined
+      && manifest?.sessionSkills?.[target] !== bundledVersions.sessionSkillVersion
+    ) {
+      staleAssets.push(`session-skill:${target}`);
+    }
   }
   return staleAssets;
 }
@@ -87,6 +100,7 @@ function isSameNotificationState(
   const candidate = value as Partial<IntegrationNotificationState>;
   return candidate.mcpVersion === expected.mcpVersion
     && candidate.skillVersion === expected.skillVersion
+    && candidate.sessionSkillVersion === expected.sessionSkillVersion
     && Array.isArray(candidate.staleAssets)
     && candidate.staleAssets.length === expected.staleAssets.length
     && candidate.staleAssets.every((asset, index) => asset === expected.staleAssets[index]);
@@ -95,7 +109,9 @@ function isSameNotificationState(
 function assetLabel(asset: StaleIntegrationAsset): string {
   if (asset === "mcp") return "MCP runtime";
   if (asset === "skill:agents") return "shared agent skill (.agents)";
-  return "Claude skill (.claude)";
+  if (asset === "skill:claude") return "Claude skill (.claude)";
+  if (asset === "session-skill:agents") return "shared work session skill (.agents)";
+  return "Claude work session skill (.claude)";
 }
 
 export function buildUpgradeNotificationMessage(

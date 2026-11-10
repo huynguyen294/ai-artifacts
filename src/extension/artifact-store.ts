@@ -1,11 +1,13 @@
 import { createHash, randomUUID } from "node:crypto";
 import { constants, promises as fs } from "node:fs";
 import path from "node:path";
+import { z } from "zod";
 import {
   ARTIFACT_ROOT_BLOCK_ID,
   ARTIFACT_ROOT_BLOCK_TYPE,
   ARTIFACT_ROOT_TEXT,
   ARTIFACT_SCHEMA_VERSION,
+  artifactKindSchema,
   commentsDocumentSchema,
   reviewCommentSchema,
   reviewSubmissionSchema,
@@ -31,6 +33,7 @@ import {
   OWNER_ONLY_FILE_MODE,
   type GlobalArtifactsRootOptions,
 } from "../shared/artifact-files";
+import { getArtifactUiState } from "./artifact-ui-state";
 
 function sha256(value: string): string {
   return createHash("sha256").update(value).digest("hex");
@@ -281,6 +284,18 @@ export class ArtifactStore {
       if (errorCode(error) !== "ENOENT") throw error;
     }
 
+    let uiStateData;
+    try {
+      const uiState = await getArtifactUiState(artifact.artifactId, this.globalRootOptions);
+      uiStateData = {
+        pinned: Boolean(uiState.pinned),
+        ...(uiState.archivedAt ? { archivedAt: uiState.archivedAt } : {}),
+      };
+    } catch (err) {
+      console.warn(`[ArtifactStore] Failed to read UI state for ${artifact.artifactId}:`, err);
+      uiStateData = undefined;
+    }
+
     return {
       artifact,
       comments,
@@ -288,6 +303,7 @@ export class ArtifactStore {
       markdown,
       lifecycle: { readOnly: false },
       ...(submission ? { submission } : {}),
+      ...(uiStateData ? { uiState: uiStateData } : {}),
     };
   }
 
@@ -350,6 +366,53 @@ export class ArtifactStore {
     });
     await this.createSubmission(submission);
     return this.load();
+  }
+
+  async updateMetadata(patch: { title?: string; kind?: string }): Promise<{ title: string; kind: string }> {
+    const titlePatch = patch.title !== undefined ? z.string().min(1).max(200).parse(patch.title.trim()) : undefined;
+    const kindPatch = patch.kind !== undefined ? artifactKindSchema.parse(patch.kind.trim()) : undefined;
+    if (titlePatch === undefined && kindPatch === undefined) {
+      throw new Error("No metadata changes provided.");
+    }
+
+    const { artifactDirectory, files } = await this.safeArtifactFiles(this.artifactId);
+    await waitForArtifactTransaction(artifactDirectory);
+
+    const rawManifest = await this.readManagedJson(artifactDirectory, files.manifestPath);
+    const currentManifest = parseArtifactManifest(rawManifest);
+    if (currentManifest.artifactId !== this.artifactId) {
+      throw new Error("artifact.json does not belong to this global artifact directory.");
+    }
+
+    if (
+      (titlePatch === undefined || titlePatch === currentManifest.title) &&
+      (kindPatch === undefined || kindPatch === currentManifest.kind)
+    ) {
+      return { title: currentManifest.title, kind: currentManifest.kind };
+    }
+
+    const updatedManifest = {
+      ...currentManifest,
+      ...(titlePatch !== undefined ? { title: titlePatch } : {}),
+      ...(kindPatch !== undefined ? { kind: kindPatch } : {}),
+    };
+    const validated = parseArtifactManifest(updatedManifest);
+
+    const temporaryPath = `${files.manifestPath}.tmp-${process.pid}-${Date.now()}`;
+    let temporaryCreated = false;
+    try {
+      await writeNewManagedFile(
+        artifactDirectory,
+        temporaryPath,
+        `${JSON.stringify(validated, null, 2)}\n`,
+      );
+      temporaryCreated = true;
+      await replaceManagedFile(artifactDirectory, temporaryPath, files.manifestPath);
+    } finally {
+      if (temporaryCreated) await removeCreatedManagedFile(artifactDirectory, temporaryPath);
+    }
+
+    return { title: validated.title, kind: validated.kind };
   }
 
   private assertWritableState(state: ReviewState): void {

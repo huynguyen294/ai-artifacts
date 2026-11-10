@@ -32,6 +32,21 @@ describe("v1.1.4 release contract", () => {
     ]);
   });
 
+  it("registers both sidebar views in a valid Activity Bar container", async () => {
+    const packageJson = JSON.parse(await read("package.json"));
+    const containers = packageJson.contributes.viewsContainers.activitybar;
+    const container = containers.find((item: any) => item.title === "AI Artifacts");
+
+    expect(container).toBeDefined();
+    // VS Code rejects invalid container IDs and moves their views into Explorer.
+    expect(container.id).toMatch(/^[a-zA-Z0-9_-]+$/);
+    expect(packageJson.contributes.views[container.id].map((view: any) => view.id)).toEqual([
+      "agentPlus.recentArtifacts",
+      "agentPlus.sessions",
+    ]);
+    expect(container.icon).toBe("$(library)");
+  });
+
   it("contributes the safe-open command for artifact.md Explorer, editor, and editor-tab context menus", async () => {
     const packageJson = JSON.parse(await read("package.json"));
     const openCommand = packageJson.contributes.commands.find(
@@ -65,6 +80,115 @@ describe("v1.1.4 release contract", () => {
           group: "navigation@0",
         },
       ],
+      "view/title": [
+        {
+          command: "agentPlus.filterRecentArtifacts",
+          when: "view == agentPlus.recentArtifacts",
+          group: "navigation@0",
+        },
+        {
+          command: "agentPlus.createSession",
+          when: "view == agentPlus.sessions",
+          group: "navigation@0",
+        },
+        {
+          command: "agentPlus.filterSessions",
+          when: "view == agentPlus.sessions",
+          group: "navigation@1",
+        },
+        {
+          command: "agentPlus.searchSessions",
+          when: "view == agentPlus.sessions",
+          group: "navigation@2",
+        },
+        {
+          command: "agentPlus.manageSessionTypes",
+          when: "view == agentPlus.sessions",
+          group: "navigation@3",
+        },
+      ],
+      "view/item/context": [
+        {
+          command: "agentPlus.openArtifact",
+          when: "view == agentPlus.recentArtifacts && (viewItem == artifact || viewItem == artifact.pinned)",
+          group: "0_open@1",
+        },
+        {
+          command: "agentPlus.copyArtifactConnectPromptFromTree",
+          when: "view == agentPlus.recentArtifacts && (viewItem == artifact || viewItem == artifact.pinned)",
+          group: "1_actions@1",
+        },
+        {
+          command: "agentPlus.pinArtifact",
+          when: "view == agentPlus.recentArtifacts && viewItem == artifact",
+          group: "2_pin@1",
+        },
+        {
+          command: "agentPlus.unpinArtifact",
+          when: "view == agentPlus.recentArtifacts && viewItem == artifact.pinned",
+          group: "2_pin@1",
+        },
+        {
+          command: "agentPlus.archiveArtifact",
+          when: "view == agentPlus.recentArtifacts && (viewItem == artifact || viewItem == artifact.pinned)",
+          group: "3_archive@1",
+        },
+        {
+          command: "agentPlus.deleteArtifactPermanently",
+          when: "view == agentPlus.recentArtifacts && (viewItem == artifact || viewItem == artifact.pinned)",
+          group: "4_delete@1",
+        },
+        {
+          command: "agentPlus.openWorkSession",
+          when: "view == agentPlus.sessions && (viewItem == session || viewItem == session.pinned)",
+          group: "0_open@1",
+        },
+        {
+          command: "agentPlus.renameSessionFromTree",
+          when: "view == agentPlus.sessions && (viewItem == session || viewItem == session.pinned)",
+          group: "1_modify@1",
+        },
+        {
+          command: "agentPlus.changeSessionTypeFromTree",
+          when: "view == agentPlus.sessions && (viewItem == session || viewItem == session.pinned)",
+          group: "1_modify@2",
+        },
+        {
+          command: "agentPlus.copySessionConnectPromptFromTree",
+          when: "view == agentPlus.sessions && (viewItem == session || viewItem == session.pinned)",
+          group: "2_connect@1",
+        },
+        {
+          command: "agentPlus.openSessionInstructionsFileFromTree",
+          when: "view == agentPlus.sessions && (viewItem == session || viewItem == session.pinned)",
+          group: "2_connect@2",
+        },
+        {
+          command: "agentPlus.copySessionInstructionsFilePathFromTree",
+          when: "view == agentPlus.sessions && (viewItem == session || viewItem == session.pinned)",
+          group: "2_connect@3",
+        },
+        {
+          command: "agentPlus.pinSession",
+          when: "view == agentPlus.sessions && viewItem == session",
+          group: "3_pin@1",
+        },
+        {
+          command: "agentPlus.unpinSession",
+          when: "view == agentPlus.sessions && viewItem == session.pinned",
+          group: "3_pin@1",
+        },
+        {
+          command: "agentPlus.archiveSession",
+          when: "view == agentPlus.sessions && (viewItem == session || viewItem == session.pinned)",
+          group: "4_archive@1",
+        },
+        {
+          command: "agentPlus.deleteSessionPermanently",
+          when: "view == agentPlus.sessions && (viewItem == session || viewItem == session.pinned)",
+          group: "5_delete@1",
+        },
+      ],
     });
   });
 
@@ -84,10 +208,12 @@ describe("v1.1.4 release contract", () => {
     for (const document of [readme, philosophy, architecture, components, instructions, contract]) {
       expect(document).toMatch(/schema[- ]v6/i);
       expect(document).toContain("~/.ai-artifacts/artifacts/");
+    }
+    for (const document of [readme, philosophy, architecture, components, instructions]) {
       expect(document).toContain("~/.ai-artifacts/conversation-registry/");
     }
-    expect(readme).toContain("MCP_VERSION = 11");
-    expect(readme).toContain("SKILL_VERSION = 3");
+    expect(readme).toContain("MCP_VERSION = 12");
+    expect(readme).toContain("SKILL_VERSION = 4");
     expect(readme).toContain("~/.ai-artifacts/managed/integration-version.json");
     expect(readme).toContain("USER CUSTOM RULES");
     expect(readme).toContain("It does not prove that custom rules remain semantically compatible");
@@ -98,8 +224,8 @@ describe("v1.1.4 release contract", () => {
     expect(readme).toContain("artifact-connection.json");
     expect(readme).toContain("The target may be unfocused; other windows ignore the event");
     expect(philosophy).toContain("Focus is a ranking hint, not identity, authorization, or a requirement");
-    expect(philosophy).toContain("numeric MCP version 11");
-    expect(philosophy).toContain("numeric skill version 3");
+    expect(philosophy).toContain("numeric MCP version 12");
+    expect(philosophy).toContain("numeric skill version 4");
     expect(philosophy).toContain("not SemVer");
     expect(architecture).toContain("Integration asset versioning and skill customization");
     expect(architecture).toContain("valid partial install");
@@ -117,14 +243,16 @@ describe("v1.1.4 release contract", () => {
     expect(contract).toContain("AI Artifacts: Install All Detected Integrations");
     expect(changelog).toContain("## [1.1.4] - 2026-11-04");
     expect(changelog).toContain("## [1.1.3] - 2026-11-02");
-    expect(changelog).not.toContain("## [Unreleased]");
+    expect(changelog).toContain("### Preserve Active Waiters During Non-waiting Updates");
+    expect(changelog.indexOf("### Preserve Active Waiters During Non-waiting Updates"))
+      .toBeLessThan(changelog.indexOf("## [1.1.4] - 2026-11-04"));
     expect(changelog).toContain("Skill Customization & Independent Integration Versioning");
     expect(changelog).toContain("## [1.1.2] - 2026-10-18");
     expect(changelog).toContain("## [1.1.0] - 2026-10-18");
     expect(changelog).toContain("## [1.0.1] - 2026-09-21");
     expect(changelog).toContain("## [1.0.0] - 2026-09-20");
     expect(changelog).toContain("MCP server 9.0.0");
-    expect(changelog).not.toContain("## [1.2.0]");
+    expect(changelog.match(/^## \[[^\]]+\] - \d{4}-\d{2}-\d{2}$/m)?.[0]).toBe("## [1.1.4] - 2026-11-04");
     expect(changelog).toContain("MCP server 10.0.0");
     expect(documentationChanges).toContain("Skill Customization & Independent Integration Asset Versioning");
     expect(documentationChanges).toContain("Automatic artifact retention cleanup and bounded lifetime model");

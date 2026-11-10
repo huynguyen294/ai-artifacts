@@ -144,6 +144,9 @@ export function upsertCodexArtifactsMcp(config: string, serverScriptPath: string
     "",
     `[mcp_servers.${AI_ARTIFACTS_MCP_NAME}.tools.advance_and_wait_for_artifact]`,
     'approval_mode = "approve"',
+    "",
+    `[mcp_servers.${AI_ARTIFACTS_MCP_NAME}.tools.join_session]`,
+    'approval_mode = "approve"',
     CURRENT_END_MARKER,
   ].join("\n");
   return base ? `${base.trimEnd()}\n\n${block}\n` : `${block}\n`;
@@ -181,13 +184,14 @@ export function hasManagedCodexArtifactsMcp(config: string, serverScriptPath: st
     return false;
   }
 
-  // 5. Must configure the 5 core tools
+  // 5. Must configure the 6 core tools
   const requiredTools = [
     "resolve_artifact_window",
     "create_artifact",
     "wait_for_artifact_review",
     "inspect_artifact_review",
     "advance_and_wait_for_artifact",
+    "join_session",
   ];
 
   for (const tool of requiredTools) {

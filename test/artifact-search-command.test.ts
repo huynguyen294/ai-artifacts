@@ -121,10 +121,24 @@ describe("artifact-search-command", () => {
       const item = toQuickPickItem(art);
 
       expect(item.label).toBe("Kế hoạch triển khai");
-      expect(item.description).toBe("implementation-plan · Round 3");
+      expect(item.description).toBe("Implementation plan · Round 3");
       expect(item.detail).toBe("Updated 2026-09-20T00:00:00Z · Created 2026-09-19T00:00:00Z · plan-42");
       expect(item.alwaysShow).toBe(true);
       expect(item.artifact).toBe(art);
+    });
+
+    it("adds Archived indicator to description when artifact isArchived is true", () => {
+      const art = makeArtifact({
+        artifactId: "plan-42",
+        title: "Kế hoạch triển khai",
+        kind: "implementation-plan",
+        reviewRound: 3,
+        isArchived: true,
+      });
+
+      const item = toQuickPickItem(art);
+
+      expect(item.description).toBe("Implementation plan · Round 3 · Archived");
     });
   });
 
@@ -342,6 +356,65 @@ describe("artifact-search-command", () => {
       // QuickPick was disposed, no items populated
       expect(qp.isDisposed).toBe(true);
       expect(qp.items).toHaveLength(0);
+    });
+
+    it("filters candidates by fixed kindFilter before query matching", async () => {
+      const qp = new MockQuickPick();
+      const planArt = makeArtifact({ artifactId: "art-1", title: "Alpha Plan", kind: "plan" });
+      const specArt = makeArtifact({ artifactId: "art-2", title: "Beta Spec", kind: "spec" });
+
+      await runArtifactSearchCommand(
+        {
+          createQuickPick: () => qp,
+          discoverArtifacts: async () => ({ artifacts: [planArt, specArt], skippedCount: 0 }),
+          openArtifact: vi.fn(),
+          showErrorMessage: vi.fn(),
+        },
+        { kindFilter: "plan" },
+      );
+
+      expect(qp.items).toHaveLength(1);
+      expect(qp.items[0]!.artifact.artifactId).toBe("art-1");
+      expect(qp.title).toBe("AI Artifacts: Search Artifact [Type: Plan] (1)");
+    });
+
+    it("filters candidates by other kindFilter for non-fixed custom kinds", async () => {
+      const qp = new MockQuickPick();
+      const planArt = makeArtifact({ artifactId: "art-1", title: "Alpha Plan", kind: "plan" });
+      const customArt = makeArtifact({ artifactId: "art-2", title: "Beta Note", kind: "meeting-minutes" });
+
+      await runArtifactSearchCommand(
+        {
+          createQuickPick: () => qp,
+          discoverArtifacts: async () => ({ artifacts: [planArt, customArt], skippedCount: 0 }),
+          openArtifact: vi.fn(),
+          showErrorMessage: vi.fn(),
+        },
+        { kindFilter: "other" },
+      );
+
+      expect(qp.items).toHaveLength(1);
+      expect(qp.items[0]!.artifact.artifactId).toBe("art-2");
+      expect(qp.title).toBe("AI Artifacts: Search Artifact [Type: Other] (1)");
+    });
+
+    it("displays 0 artifacts placeholder when kindFilter has no matches", async () => {
+      const qp = new MockQuickPick();
+      const specArt = makeArtifact({ artifactId: "art-2", title: "Beta Spec", kind: "spec" });
+
+      await runArtifactSearchCommand(
+        {
+          createQuickPick: () => qp,
+          discoverArtifacts: async () => ({ artifacts: [specArt], skippedCount: 0 }),
+          openArtifact: vi.fn(),
+          showErrorMessage: vi.fn(),
+        },
+        { kindFilter: "design" },
+      );
+
+      expect(qp.items).toHaveLength(0);
+      expect(qp.title).toBe("AI Artifacts: Search Artifact [Type: Design] (0 artifacts)");
+      expect(qp.placeholder).toBe("No artifacts match this filter");
     });
   });
 

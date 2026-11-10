@@ -68,4 +68,37 @@ describe("integration verification summary", () => {
       "AI Artifacts installation needs attention. Agent skill: Ready. MCP runtime: Outdated / Missing. Detected clients: Codex: Configuration conflict. Review the installation guide or use a client-specific install command, then verify again.",
     );
   });
+
+  it("reports Review skill and Work session skill separately when sessionSkillCurrent is provided", () => {
+    const summary = summarizeIntegrationVerification({
+      skillCurrent: true,
+      sessionSkillCurrent: true,
+      baseCurrent: true,
+      clients: [
+        { name: "Codex", isDetected: true, status: "ready" },
+      ],
+    });
+
+    expect(summary).toEqual({
+      severity: "information",
+      message:
+        "AI Artifacts installation verified. Review skill: Ready. Work session skill: Ready. MCP runtime: Ready. Detected clients: Codex: Ready. Restart your AI client and start a new chat to use this version.",
+    });
+  });
+
+  it("warns when Work session skill is outdated or missing", () => {
+    const summary = summarizeIntegrationVerification({
+      skillCurrent: true,
+      sessionSkillCurrent: false,
+      baseCurrent: true,
+      clients: [
+        { name: "Codex", isDetected: true, status: "outdated" },
+      ],
+    });
+
+    expect(summary.severity).toBe("warning");
+    expect(summary.message).toBe(
+      "AI Artifacts installation needs attention. Review skill: Ready. Work session skill: Outdated / Missing. MCP runtime: Ready. Detected clients: Codex: Outdated. Review the installation guide or use a client-specific install command, then verify again.",
+    );
+  });
 });

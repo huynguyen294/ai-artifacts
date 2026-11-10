@@ -1,0 +1,47 @@
+{
+  "schemaVersion": 1,
+  "normalization": "UTF-8 without BOM; normalize CRLF to LF only; do not trim or reword",
+  "createReviewArtifactSkillVersion": 4,
+  "workSessionSkillVersion": 2,
+  "baseline": {
+    "skills/create-review-artifact/SKILL.md": "3b8e19b9fd33e3a6b96f98e61b59f080a6c5a56a210fa4e6098b99853994882d",
+    "skills/create-review-artifact/references/artifact-contract.md": "3860f60e50ffec4764d45379bc801d5cd72730d911b3bbd76479caccafbb5a7e",
+    "skills/create-review-artifact/agents/openai.yaml": "8d548a5aa9157119851e076d2dcdca44e5ee290187964075702f20373e3ea952"
+  },
+  "files": [
+    {
+      "source": "create-review-artifact/SKILL.md",
+      "target": "skills/create-review-artifact/SKILL.md",
+      "sha256Lf": "51ef03e7a1eda7a9de2af77beacb62f07e4f1c1d116d8de5bc86185b78f0f333"
+    },
+    {
+      "source": "create-review-artifact/references/artifact-contract.md",
+      "target": "skills/create-review-artifact/references/artifact-contract.md",
+      "sha256Lf": "b0ac03e5470714019525f37e8e66e6a0b178b1c760c5e30c82268b99990f73ee"
+    },
+    {
+      "source": "create-review-artifact/agents/openai.yaml",
+      "target": "skills/create-review-artifact/agents/openai.yaml",
+      "sha256Lf": "5298013f641f30b8fee94bb9c14f44312ca34b6f05713ebcf2ec8e9c462458b1"
+    },
+    {
+      "source": "work-session/SKILL.md",
+      "target": "skills/work-session/SKILL.md",
+      "sha256Lf": "e35b4b74a85fbcabe1449862276577a93c5c750d5ab71abb0b34b364b2a8d67e"
+    },
+    {
+      "source": "work-session/references/session-contract.md",
+      "target": "skills/work-session/references/session-contract.md",
+      "sha256Lf": "7eb3410473780630f8a32af22535db5888d60194bf91b192fb32e13de338abc7"
+    },
+    {
+      "source": "work-session/agents/openai.yaml",
+      "target": "skills/work-session/agents/openai.yaml",
+      "sha256Lf": "4e6540c48688c51183d188aae0b9f9e66e92f72b9c37f5bfd5af81536508edb3"
+    }
+  ],
+  "embeddedTexts": {
+    "source": "agent-text.json",
+    "sha256Lf": "771e9290fd1b356de926fd19387c98f1ad1470c85d18ee97a07617598cd7f3f7"
+  }
+}

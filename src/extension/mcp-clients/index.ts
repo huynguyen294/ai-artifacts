@@ -27,12 +27,13 @@ export function getAllClientDrivers(
   copilotConfigPath?: string,
   clineConfigPath?: string,
   sourceSkillDirectory?: string,
+  sourceSessionSkillDirectory?: string,
 ): McpClientDriver[] {
   return [
     new CopilotClientDriver(copilotConfigPath),
     new CursorClientDriver(),
     new CodexClientDriver(),
-    new ClaudeClientDriver(undefined, undefined, sourceSkillDirectory),
+    new ClaudeClientDriver(undefined, undefined, sourceSkillDirectory, undefined, sourceSessionSkillDirectory),
     new WindsurfClientDriver(),
     new ClineClientDriver(clineConfigPath),
   ];

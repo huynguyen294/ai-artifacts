@@ -3,8 +3,9 @@ import { createRoot } from "react-dom/client";
 import { App } from "../src/webview/ReviewApp";
 import "../src/webview/styles.css";
 import "./vscode-theme.css";
-import { createInitialConversationState, createInitialReviewState } from "./mock-data";
+import { createInitialReviewState, createInitialSessionsState } from "./mock-data";
 import { DevToolbar } from "./DevToolbar";
+import { buildArtifactConnectPrompt } from "../src/shared/artifact-connect-prompt";
 import {
   ARTIFACT_ROOT_BLOCK_ID,
   ARTIFACT_ROOT_BLOCK_TYPE,
@@ -43,7 +44,7 @@ export function DevHostApp(): ReactNode {
     switch (message.type) {
       case "ready": {
         postToWebview({ type: "state", state: current });
-        postToWebview({ type: "conversationArtifactsState", state: createInitialConversationState() });
+        postToWebview({ type: "artifactSessionsState", ...createInitialSessionsState() });
         break;
       }
 
@@ -150,9 +151,33 @@ export function DevHostApp(): ReactNode {
       }
 
       case "copyArtifactConnectPrompt": {
-        const prompt = `@codex inspect_artifact_review(artifactDirectory: "dev/artifacts/${current.artifact.artifactId}")`;
-        void navigator.clipboard.writeText(prompt);
+        const prompt = buildArtifactConnectPrompt(`dev/artifacts/${current.artifact.artifactId}`);
+        void navigator.clipboard?.writeText(prompt);
         postToWebview({ type: "artifactConnectPromptCopied" });
+        break;
+      }
+
+      case "startWorkSession": {
+        const title = current.artifact.title.trim() || "Untitled work session";
+        const newSessionId = crypto.randomUUID();
+        console.info(`[Dev Host] Start work session: "${title}" (${newSessionId})`);
+        postToWebview({
+          type: "artifactSessionsState",
+          supported: true,
+          sessions: [
+            {
+              sessionId: newSessionId,
+              title,
+              version: 2,
+            },
+          ],
+        });
+        postToWebview({ type: "artifactConnectPromptCopied" });
+        break;
+      }
+
+      case "openArtifactSessions": {
+        console.info("[Dev Host] Request to open artifact sessions");
         break;
       }
 
@@ -178,7 +203,7 @@ export function DevHostApp(): ReactNode {
 
     // Proactively broadcast initial state on mount to guarantee immediate render
     broadcastState(reviewStateRef.current);
-    postToWebview({ type: "conversationArtifactsState", state: createInitialConversationState() });
+    postToWebview({ type: "artifactSessionsState", ...createInitialSessionsState() });
 
     return () => {
       if (typeof window.setDevVsCodeHandler === "function") {
@@ -192,7 +217,7 @@ export function DevHostApp(): ReactNode {
   const handleReset = useCallback(() => {
     const fresh = createInitialReviewState();
     broadcastState(fresh);
-    postToWebview({ type: "conversationArtifactsState", state: createInitialConversationState() });
+    postToWebview({ type: "artifactSessionsState", ...createInitialSessionsState() });
   }, [broadcastState]);
 
   return (
