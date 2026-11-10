@@ -1,10 +1,14 @@
-import type { IntegrationVersionManifest, InstalledSkillVersions } from "../shared/contracts";
+import type {
+  IntegrationVersionManifest,
+  InstalledSkillVersions,
+  McpClientId,
+} from "../shared/contracts";
+import type {
+  IntegrationUpgradeClientReport,
+  IntegrationUpgradeReport,
+} from "./workspace-integration";
 
-export const LAST_NOTIFIED_INTEGRATION_STATE_KEY =
-  "upgradeNotification.lastNotifiedIntegrationState";
-export const RUN_INSTALLER_ACTION = "Run Installer";
 export const VIEW_INSTALLATION_GUIDE_ACTION = "View Installation Guide";
-export const LATER_ACTION = "Later";
 export const INSTALLATION_GUIDE_URL =
   "https://github.com/huynguyen294/ai-artifacts#getting-started";
 
@@ -18,11 +22,10 @@ export type StaleIntegrationAsset =
   | "session-skill:claude"
   | "session-skill:antigravity";
 
-export type IntegrationNotificationState = {
+export type BundledIntegrationVersions = {
   mcpVersion: number;
   skillVersion: number;
   sessionSkillVersion?: number;
-  staleAssets: StaleIntegrationAsset[];
 };
 
 export type InstalledIntegrationVersionState =
@@ -32,29 +35,35 @@ export type InstalledIntegrationVersionState =
 
 type MaybePromise<T> = T | PromiseLike<T>;
 
-export interface UpgradeNotificationDeps {
-  bundledVersions: {
-    mcpVersion: number;
-    skillVersion: number;
-    sessionSkillVersion?: number;
-  };
-  skillTargets: readonly IntegrationSkillTarget[];
+export interface AutomaticIntegrationUpgradeDeps {
+  bundledVersions: BundledIntegrationVersions;
+  upgradeIntegrations: () => Promise<IntegrationUpgradeReport>;
   getInstalledIntegrationVersion: () => MaybePromise<InstalledIntegrationVersionState>;
-  getLastNotifiedIntegrationState: () => unknown;
-  setLastNotifiedIntegrationState: (
-    state: IntegrationNotificationState,
-  ) => MaybePromise<void>;
-  showInformationMessage: (
+  refreshIntegrationSupport: () => void;
+  showWarningMessage: (
     message: string,
     ...actions: string[]
   ) => MaybePromise<string | undefined>;
-  runInstaller: () => MaybePromise<unknown>;
+  showErrorMessage: (
+    message: string,
+    ...actions: string[]
+  ) => MaybePromise<string | undefined>;
   openInstallationGuide: () => MaybePromise<unknown>;
   reportDiagnostic: (message: string, error: unknown) => void;
 }
 
+const INSTALL_CLIENT_COMMAND_TITLES: Record<McpClientId, string> = {
+  copilot: "AI Artifacts: Install Integration for GitHub Copilot",
+  cursor: "AI Artifacts: Install Integration for Cursor",
+  codex: "AI Artifacts: Install Integration for Codex",
+  claude: "AI Artifacts: Install Integration for Claude",
+  windsurf: "AI Artifacts: Install Integration for Windsurf",
+  cline: "AI Artifacts: Install Integration for Cline",
+  antigravity: "AI Artifacts: Install Integration for Antigravity",
+};
+
 function reportDiagnosticSafely(
-  deps: UpgradeNotificationDeps,
+  deps: AutomaticIntegrationUpgradeDeps,
   message: string,
   error: unknown,
 ): void {
@@ -75,7 +84,7 @@ function requiredSkillTargets(
 }
 
 export function computeStaleIntegrationAssets(
-  bundledVersions: UpgradeNotificationDeps["bundledVersions"],
+  bundledVersions: BundledIntegrationVersions,
   manifest: IntegrationVersionManifest | undefined,
   skillTargets: readonly IntegrationSkillTarget[],
 ): StaleIntegrationAsset[] {
@@ -97,114 +106,152 @@ export function computeStaleIntegrationAssets(
   return staleAssets;
 }
 
-function isSameNotificationState(
-  value: unknown,
-  expected: IntegrationNotificationState,
-): boolean {
-  if (!value || typeof value !== "object") return false;
-  const candidate = value as Partial<IntegrationNotificationState>;
-  return candidate.mcpVersion === expected.mcpVersion
-    && candidate.skillVersion === expected.skillVersion
-    && candidate.sessionSkillVersion === expected.sessionSkillVersion
-    && Array.isArray(candidate.staleAssets)
-    && candidate.staleAssets.length === expected.staleAssets.length
-    && candidate.staleAssets.every((asset, index) => asset === expected.staleAssets[index]);
+function errorMessage(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error);
+  const trimmed = raw.trim();
+  return trimmed || "Unknown error.";
 }
 
-function assetLabel(asset: StaleIntegrationAsset): string {
-  switch (asset) {
-    case "mcp":
-      return "MCP runtime";
-    case "skill:agents":
-      return "shared agent skill (.agents)";
-    case "skill:claude":
-      return "Claude skill (.claude)";
-    case "skill:antigravity":
-      return "Antigravity review skill (.gemini/config)";
-    case "session-skill:agents":
-      return "shared work session skill (.agents)";
-    case "session-skill:claude":
-      return "Claude work session skill (.claude)";
-    case "session-skill:antigravity":
-      return "Antigravity work session skill (.gemini/config)";
-  }
+function ensureSentenceEnding(text: string): string {
+  return /[.!?]$/.test(text) ? text : `${text}.`;
 }
 
-export function buildUpgradeNotificationMessage(
-  staleAssets: readonly StaleIntegrationAsset[],
-): string {
-  const assets = staleAssets.map(assetLabel).join(", ");
-  return `AI Artifacts integration update required for: ${assets}. Valid skill customizations will be preserved. Run the installer, then restart your AI client.`;
+function formatClientAttentionItem(client: IntegrationUpgradeClientReport): string {
+  const fallbackDetail =
+    client.status === "setup-required"
+      ? "Manual setup is required."
+      : "Automatic upgrade failed.";
+  const detail = ensureSentenceEnding(client.detail?.trim() || fallbackDetail);
+  const commandTitle = INSTALL_CLIENT_COMMAND_TITLES[client.id];
+  return `${client.name} (${client.status}): ${detail} Run "${commandTitle}" from the Command Palette.`;
 }
 
-export async function maybeShowUpgradeNotification(
-  deps: UpgradeNotificationDeps,
+async function notifyWithGuideAction(
+  deps: AutomaticIntegrationUpgradeDeps,
+  severity: "warning" | "error",
+  message: string,
 ): Promise<void> {
-  let installedState: InstalledIntegrationVersionState;
-  try {
-    installedState = await deps.getInstalledIntegrationVersion();
-  } catch (error) {
-    reportDiagnosticSafely(deps, "Could not read installed integration versions.", error);
-    installedState = { status: "missing" };
-  }
-
-  if (installedState.status === "invalid") {
-    reportDiagnosticSafely(
-      deps,
-      "Installed integration version receipt is invalid; treating all required assets as stale.",
-      installedState.error,
-    );
-  }
-  const manifest = installedState.status === "valid" ? installedState.manifest : undefined;
-  const staleAssets = computeStaleIntegrationAssets(
-    deps.bundledVersions,
-    manifest,
-    deps.skillTargets,
-  );
-  const notificationState: IntegrationNotificationState = {
-    ...deps.bundledVersions,
-    staleAssets,
-  };
-
-  let lastNotifiedState: unknown;
-  try {
-    lastNotifiedState = deps.getLastNotifiedIntegrationState();
-  } catch (error) {
-    reportDiagnosticSafely(deps, "Could not read notification state.", error);
-    return;
-  }
-
-  if (isSameNotificationState(lastNotifiedState, notificationState)) return;
-
-  try {
-    await deps.setLastNotifiedIntegrationState(notificationState);
-  } catch (error) {
-    reportDiagnosticSafely(deps, "Could not persist notification state.", error);
-    return;
-  }
-
-  if (staleAssets.length === 0) return;
-
   let selectedAction: string | undefined;
   try {
-    selectedAction = await deps.showInformationMessage(
-      buildUpgradeNotificationMessage(staleAssets),
-      RUN_INSTALLER_ACTION,
-      VIEW_INSTALLATION_GUIDE_ACTION,
-      LATER_ACTION,
-    );
-  } catch (error) {
-    reportDiagnosticSafely(deps, "Could not show the upgrade notification.", error);
+    selectedAction =
+      severity === "error"
+        ? await deps.showErrorMessage(message, VIEW_INSTALLATION_GUIDE_ACTION)
+        : await deps.showWarningMessage(message, VIEW_INSTALLATION_GUIDE_ACTION);
+  } catch (uiError) {
+    reportDiagnosticSafely(deps, "Could not show automatic upgrade notification.", uiError);
+    return;
+  }
+
+  if (selectedAction !== VIEW_INSTALLATION_GUIDE_ACTION) {
     return;
   }
 
   try {
-    if (selectedAction === RUN_INSTALLER_ACTION) {
-      await deps.runInstaller();
-    } else if (selectedAction === VIEW_INSTALLATION_GUIDE_ACTION) {
-      await deps.openInstallationGuide();
-    }
-  } catch (error) {
-    reportDiagnosticSafely(deps, "The selected upgrade notification action failed.", error);
+    await deps.openInstallationGuide();
+  } catch (guideError) {
+    reportDiagnosticSafely(deps, "Could not open installation guide.", guideError);
   }
+}
+
+export async function runAutomaticIntegrationUpgrade(
+  deps: AutomaticIntegrationUpgradeDeps,
+): Promise<void> {
+  let report: IntegrationUpgradeReport | undefined;
+  let upgradeError: unknown;
+  let upgradeFailed = false;
+
+  try {
+    report = await deps.upgradeIntegrations();
+  } catch (error) {
+    upgradeFailed = true;
+    upgradeError = error;
+    reportDiagnosticSafely(deps, "Automatic integration upgrade failed.", error);
+  } finally {
+    try {
+      deps.refreshIntegrationSupport();
+    } catch (refreshError) {
+      reportDiagnosticSafely(
+        deps,
+        "Could not refresh integration support after automatic upgrade.",
+        refreshError,
+      );
+    }
+  }
+
+  if (upgradeFailed || !report) {
+    const detail = ensureSentenceEnding(errorMessage(upgradeError));
+    await notifyWithGuideAction(
+      deps,
+      "error",
+      `AI Artifacts automatic upgrade could not complete: ${detail} Run the install command for your AI client from the Command Palette, or view the installation guide.`,
+    );
+    return;
+  }
+
+  if (report.clientIds.length === 0) {
+    let installedState: InstalledIntegrationVersionState;
+    try {
+      installedState = await deps.getInstalledIntegrationVersion();
+    } catch (readError) {
+      reportDiagnosticSafely(deps, "Could not read installed integration versions.", readError);
+      const detail = ensureSentenceEnding(errorMessage(readError));
+      await notifyWithGuideAction(
+        deps,
+        "error",
+        `AI Artifacts could not read installed integration status: ${detail} Run the install command for your AI client from the Command Palette if integrations are missing, or view the installation guide.`,
+      );
+      return;
+    }
+
+    if (installedState.status === "invalid") {
+      reportDiagnosticSafely(
+        deps,
+        "Installed integration version receipt is invalid; treating shared assets as stale.",
+        installedState.error,
+      );
+    }
+
+    const manifest = installedState.status === "valid" ? installedState.manifest : undefined;
+    const staleSharedAssets = computeStaleIntegrationAssets(
+      deps.bundledVersions,
+      manifest,
+      ["agents"],
+    );
+    if (staleSharedAssets.length === 0) {
+      return;
+    }
+
+    await notifyWithGuideAction(
+      deps,
+      "warning",
+      "AI Artifacts integration assets require manual setup because no configured AI client was detected or saved. Run the install command for your AI client from the Command Palette, or view the installation guide.",
+    );
+    return;
+  }
+
+  const attentionClients = report.clients.filter(
+    (client) => client.status === "failed" || client.status === "setup-required",
+  );
+  if (attentionClients.length === 0) {
+    return;
+  }
+
+  const hasFailed = attentionClients.some((client) => client.status === "failed");
+  reportDiagnosticSafely(
+    deps,
+    hasFailed
+      ? "Automatic integration upgrade reported failures."
+      : "Automatic integration upgrade requires manual client setup.",
+    attentionClients,
+  );
+
+  const items = attentionClients.map(formatClientAttentionItem).join(" ");
+  const prefix = hasFailed
+    ? "AI Artifacts automatic upgrade failed for one or more clients."
+    : "AI Artifacts automatic upgrade needs attention.";
+  await notifyWithGuideAction(
+    deps,
+    hasFailed ? "error" : "warning",
+    `${prefix} ${items} Or view the installation guide.`,
+  );
 }

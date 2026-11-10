@@ -42,7 +42,6 @@ import { migrateConversationToSession } from "../shared/conversation-artifact-re
 import { ensureSafeGlobalArtifactsRoot } from "../shared/artifact-validation";
 import {
   checkAllIntegrations,
-  getDetectedSkillTargets,
   getMcpConfigSnippet,
   getReviewSkillMarkdown,
   installAllDetectedIntegrations,
@@ -62,6 +61,7 @@ import {
   uninstallCursorIntegration,
   uninstallWindsurfIntegration,
   uninstallClineIntegration,
+  upgradeDetectedIntegrations,
 } from "./workspace-integration";
 import { WorkspaceRegistryPublisher } from "./workspace-registry-publisher";
 import { executeArtifactRetentionCleanup } from "./artifact-retention";
@@ -74,15 +74,12 @@ import {
 import { summarizeIntegrationVerification } from "./integration-verification";
 import {
   INSTALLATION_GUIDE_URL,
-  LAST_NOTIFIED_INTEGRATION_STATE_KEY,
-  maybeShowUpgradeNotification,
-  type IntegrationNotificationState,
+  runAutomaticIntegrationUpgrade,
 } from "./upgrade-notification";
 import {
   artifactIdSchema,
   CREATE_REVIEW_ARTIFACT_SKILL_VERSION,
   MCP_VERSION,
-  SKILL_VERSION,
   WORK_SESSION_SKILL_VERSION,
 } from "../shared/contracts";
 import {
@@ -714,27 +711,23 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     }),
   );
 
-  void maybeShowUpgradeNotification({
+  void runAutomaticIntegrationUpgrade({
     bundledVersions: {
       mcpVersion: MCP_VERSION,
-      skillVersion: SKILL_VERSION,
+      skillVersion: CREATE_REVIEW_ARTIFACT_SKILL_VERSION,
       sessionSkillVersion: WORK_SESSION_SKILL_VERSION,
     },
-    skillTargets: getDetectedSkillTargets(),
+    upgradeIntegrations: () => upgradeDetectedIntegrations(context),
     getInstalledIntegrationVersion: () => readInstalledIntegrationVersion(),
-    getLastNotifiedIntegrationState: () =>
-      context.globalState.get<IntegrationNotificationState>(
-        LAST_NOTIFIED_INTEGRATION_STATE_KEY,
-      ),
-    setLastNotifiedIntegrationState: (state) =>
-      context.globalState.update(LAST_NOTIFIED_INTEGRATION_STATE_KEY, state),
-    showInformationMessage: (message, ...actions) =>
-      vscode.window.showInformationMessage(message, ...actions),
-    runInstaller: installAllDetectedIntegrationsAndNotify,
+    refreshIntegrationSupport: refreshViewsAndService,
+    showWarningMessage: (message, ...actions) =>
+      vscode.window.showWarningMessage(message, ...actions),
+    showErrorMessage: (message, ...actions) =>
+      vscode.window.showErrorMessage(message, ...actions),
     openInstallationGuide: () =>
       vscode.env.openExternal(vscode.Uri.parse(INSTALLATION_GUIDE_URL)),
     reportDiagnostic: (message, error) => {
-      console.error(`AI Artifacts upgrade notification: ${message}`, error);
+      console.error(`AI Artifacts automatic integration upgrade: ${message}`, error);
     },
   });
 

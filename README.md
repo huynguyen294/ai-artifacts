@@ -113,6 +113,7 @@ Open the Command Palette (`Ctrl+Shift+P` on Windows/Linux or `Cmd+Shift+P` on ma
 ~/.ai-artifacts/managed/runtime/ai-artifacts-review-mcp.mjs  # Centralized MCP runtime server
 ~/.ai-artifacts/managed/workspaces/                          # Live workspace heartbeat registry
 ~/.ai-artifacts/managed/integration-version.json             # Installed MCP/skill version receipt
+~/.ai-artifacts/managed/installed-clients.json               # Saved manual client selection list
 ~/.agents/skills/create-review-artifact/                     # Shared review artifact skill & instructions
 ~/.agents/skills/work-session/                               # Shared work session skill & instructions
 ~/.claude/skills/create-review-artifact/                     # Claude Code review artifact skill
@@ -128,7 +129,7 @@ The installer preserves all unrelated MCP configurations, custom skills, and wor
 
 ### 3. Reload and verify the integration
 
-After installing the integration, reload your editor and restart your agent to load the new tools and skill.
+After initial setup (or when a manual client install is required), reload your editor and restart your agent to load the new tools and skill.
 
 1. Run **Developer: Reload Window** from the Command Palette.
 2. Restart your AI chat extension or agent.
@@ -136,14 +137,12 @@ After installing the integration, reload your editor and restart your agent to l
 4. Run **AI Artifacts: Verify All Integrations** from the Command Palette.
 
 > [!NOTE]
-> **After an extension update:** reinstall only when AI Artifacts reports that the installed MCP runtime or skill is stale. Extension-only UI or documentation updates do not require integration reinstall. After reinstalling an asset, restart the affected AI client and start a new chat.
->
-> We're sorry for the extra steps when a release requires you to update the MCP server or review skill. These updates support new features and improvements, keeping the extension and AI tools working together. Thank you for your patience and understanding as AI Artifacts evolves.
+> **After an extension update:** When AI Artifacts activates, it automatically upgrades outdated managed assets and reconciles required client tool definitions for your saved and detected AI clients without prompting you to click a separate installer button. Successful or no-op upgrades stay silent; if a client is missing setup, misconfigured, or encounters an upgrade error, VS Code displays a single warning or error naming the affected client(s) and exact Command Palette install command. Extension-only UI or documentation updates with current receipts and valid client definitions leave installed files untouched. Whenever the managed MCP runtime, client definition, or skills change on disk, restart the affected AI client and start a new chat so it loads the updated tools and skills.
 
 <details>
 <summary>Runtime version and expected tools</summary>
 
-The current source bundles numeric MCP version 12, review skill version 4, and work session skill version 1 (with `SKILL_VERSION = 4` bridge constant). The MCP catalog contains exactly six tools: `resolve_artifact_window`, `create_artifact`, `wait_for_artifact_review`, `inspect_artifact_review`, `advance_and_wait_for_artifact`, and `join_session`. A client that reports a different MCP version or exposes an older catalog must be reinstalled and restarted.
+The current source bundles numeric MCP version 12, review skill version 4, and work session skill version 1 (with `SKILL_VERSION = 4` bridge constant). The MCP catalog contains exactly six tools: `resolve_artifact_window`, `create_artifact`, `wait_for_artifact_review`, `inspect_artifact_review`, `advance_and_wait_for_artifact`, and `join_session`. Clients using an older tool catalog require reloading/upgrading (or running that client's install command if manual setup is reported) followed by a client restart and fresh chat to expose the current tools.
 
 MCP version 12 is reserved for the unreleased Work Session feature and remains its release version across implementation stages. The current runtime supports schema-v2 Sessions and explicit migration from legacy v1 conversations. Session instructions are read from `instructions.md`; existing v2 metadata may still contain an optional inline `instructions` string, which is accepted but not used as the instructions source. New metadata writes omit that field. Updating a test runtime bundle still requires reinstalling the changed runtime even when its numeric version remains 12.
 
@@ -386,12 +385,14 @@ Work Sessions organize artifacts independently of their review lifecycles and AI
 
 - Version 1.1.0 supports only schema v6 stored under `~/.ai-artifacts/artifacts/`.
 - The current integration uses numeric `MCP_VERSION = 12`, `CREATE_REVIEW_ARTIFACT_SKILL_VERSION = 4` (`SKILL_VERSION = 4`), and `WORK_SESSION_SKILL_VERSION = 1`. These are independent monotonic asset versions, not SemVer and not the extension package version.
-- Successful installation records the verified MCP runtime, shared `.agents` skills (`skills` and `sessionSkills`), and detected Claude and Antigravity skills independently in `~/.ai-artifacts/managed/integration-version.json`. A missing or invalid receipt is treated as stale, and activation checks detected targets so stale assets trigger a reinstall notification.
+- Successful manual client installation records the client selection in `~/.ai-artifacts/managed/installed-clients.json` (cleared on uninstall), while verified MCP runtime, shared `.agents` skills (`skills` and `sessionSkills`), Claude, and Antigravity skill versions are tracked independently in `~/.ai-artifacts/managed/integration-version.json`. A missing, invalid, absent, or mismatched receipt entry is stale.
+- On extension activation, AI Artifacts runs an asynchronous automatic upgrade across the merged `saved ∪ detected` client set: it deploys stale shared assets once, verifies and commits receipts incrementally, reconciles required client definitions (such as adding `join_session` to Codex's managed config), and updates stale Claude/Antigravity skills while keeping current files, customizations, and Antigravity rules/permissions untouched. Successful or unchanged runs are silent.
+- Missing or conflicting client setup (or damaged installed skills when receipts are current) is reported as a non-intrusive `setup-required` warning or error pointing to that client's manual install command rather than silently overwriting user configs or creating new client entries. If no clients are detected or saved and shared assets are stale or uninitialized, a warning directs you to run your client's install command.
 - Schema v3/v4/v5 and workspace-local `.ai-artifacts` or `.codex-artifacts` lifecycles are not opened, advanced, or migrated by v1.1.x. Existing files remain untouched on disk.
 - This is a hard compatibility cutoff. A rollback to a 0.9.x extension also requires reinstalling the matching older runtime and skill; do not use a 0.9.x runtime with v1.1.x artifacts.
-- Reinstall only when the extension reports a stale MCP or skill asset because its numeric version changed. Extension-only updates with current receipts do not create another reinstall notification.
-- Reinstall preserves a valid custom `description:` and `USER CUSTOM RULES` block. Malformed customization fails closed without replacing the existing skill; fix the reported target and run the installer again.
-- After reinstalling, restart the affected AI client and start a new chat so it loads the updated runtime or skill.
+- Extension-only updates with current receipts and valid client definitions leave already installed files untouched without warnings.
+- Upgrades and manual reinstalls preserve a valid custom `description:` and `USER CUSTOM RULES` block. Malformed customization fails closed without replacing the existing skill; fix the reported target and run that client's install command again.
+- After an automatic upgrade or manual reinstall updates assets or client definitions on disk, restart the affected AI client and start a new chat so it loads the updated runtime, tool definitions, or skills (AI Artifacts does not restart external clients or live chats automatically).
 
 ## Uninstalling and cleanup
 

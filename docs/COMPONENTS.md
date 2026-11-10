@@ -66,14 +66,14 @@ The core responsibility split is:
 | Workspace Registry       | Evidence of currently open VS Code workspaces | Short-lived, per-window workspace snapshots                                  |
 | Work Session Registry    | Work Session organization and zones           | Schema-v2 metadata, instructions.md, layout.json zones, registered artifact indexes, and global session types |
 | Artifact file protocol   | Persistent lifecycle and routing communication | Manifest, Markdown, comments, decision, and optional connection state         |
-| Extension entry          | VS Code activation and composition            | Commands, watchers, Activity Bar views, and provider registration            |
+| Extension entry          | VS Code activation and composition            | Commands, watchers, Activity Bar views, auto-upgrade trigger, and provider registration |
 | Artifact Review Provider | Webview/extension orchestration               | One custom-editor session, submission guard, and its subscriptions        |
 | Work Session Provider    | Work Session management orchestration         | `agentPlus.workSession` custom readonly editor, scoped patches, per-session panel state, and host actions |
 | Artifact Store           | Trusted artifact persistence adapter          | Validated review state, comments, and submission writes                      |
 | Review Webview & Session Tab | Human review and Work Session management  | Ephemeral UI state, ReviewApp, SessionApp (two-column manager), and typed user intent |
 | Markdown review pipeline | Document rendering and comment anchoring      | Parsed blocks and rendered annotations                                       |
 | Shared contracts         | Cross-process protocol definition             | Schemas, types, filenames, and binding rules                                 |
-| Integration manager      | Installation and verification                 | Extension-managed MCP runtime, both skills, and supported-client configuration     |
+| Integration manager      | Installation, upgrade, and verification       | Extension-managed MCP runtime, both skills, saved client selections, version receipts, and supported-client configuration |
 
 The governing lifetime relationship is `artifact lifetime > waiter lifetime > chat-turn lifetime`. Artifact lifetime is bounded by configured retention (`agentPlus.artifactRetentionDays`); expired artifacts are permanently deleted when the extension activates. Artifact files persist across cancellation, takeover, chat completion, and MCP restart until the retention window expires. The MCP waiter registry is temporary process state, while the skill retains the exact artifact handle needed to inspect or reconnect that persistent state.
 
@@ -297,7 +297,7 @@ The protocol is the communication medium between the independently running MCP p
   - Run single and bulk conversation migration (`agentPlus.migrateConversations`).
   - Install, verify, and uninstall all supported integrations or one specific client.
   - Copy the current MCP configuration or production skill.
-- Compare bundled numeric MCP/skill versions with `~/.ai-artifacts/managed/integration-version.json`, determine the exact stale assets, and show the existing installer action only for a new stale-state fingerprint.
+- Trigger non-blocking automatic integration upgrade (`runAutomaticIntegrationUpgrade`) at activation: call `upgradeDetectedIntegrations(context)` before any notification decision, refresh integration support views once on settlement, and stay silent on healthy upgrades or current no-ops while displaying a single grouped warning/error notification with exact Command Palette recovery commands and `View Installation Guide` when clients require manual setup, fail, or unconfigured shared base assets remain stale/missing/invalid.
 - Schedule best-effort asynchronous retention cleanup at activation: read `agentPlus.artifactRetentionDays`, enumerate validated schema-v6 candidates, and permanently delete expired artifacts via atomic rename to managed cleanup staging. Cleanup does not block activation or commands.
 - Own and dispose top-level VS Code subscriptions.
 
@@ -473,7 +473,7 @@ The parser, selection capture, renderer, and store must agree on the same visibl
 **Responsibilities**
 
 - Define the schema-v6 manifest/comments/submission contracts and the independent schema-v1 artifact-connection contract.
-- Define the schema-v1 installed-integration receipt and independent numeric `MCP_VERSION` / `SKILL_VERSION` counters plus `WORK_SESSION_SKILL_VERSION`; `SKILL_VERSION` aliases `CREATE_REVIEW_ARTIFACT_SKILL_VERSION` only. These three asset versions are monotonic integers, not SemVer or package versions.
+- Define the schema-v1 installed-integration receipt, schema-v1 saved-clients manifest (`installed-clients.json`), and independent numeric `MCP_VERSION` / `SKILL_VERSION` counters plus `WORK_SESSION_SKILL_VERSION`; `SKILL_VERSION` aliases `CREATE_REVIEW_ARTIFACT_SKILL_VERSION` only. These three asset versions are monotonic integers, not SemVer or package versions.
 - Define comments, review decisions, submissions, Markdown blocks, review state, and webview messages.
 - Validate all untrusted JSON and webview input.
 - Bind comments and submissions to the correct artifact lifecycle.
@@ -494,7 +494,9 @@ This layer is the protocol source of truth. A contract change must be propagated
 
 **Source**
 
-- Installer: [`src/extension/workspace-integration.ts`](../src/extension/workspace-integration.ts)
+- Installer and upgrade coordinator: [`src/extension/workspace-integration.ts`](../src/extension/workspace-integration.ts)
+- Automatic upgrade controller and shared stale-asset helpers: [`src/extension/upgrade-notification.ts`](../src/extension/upgrade-notification.ts)
+- Saved client selection store: [`src/extension/installed-client-state.ts`](../src/extension/installed-client-state.ts)
 - Client drivers: [`src/extension/mcp-clients/`](../src/extension/mcp-clients/)
 - MCP configuration: [`src/extension/mcp-config.ts`](../src/extension/mcp-config.ts)
 - Status classification: [`src/extension/global-integration-status.ts`](../src/extension/global-integration-status.ts)
@@ -504,16 +506,18 @@ This layer is the protocol source of truth. A contract change must be propagated
 
 - Deploy the centralized MCP server runtime into `~/.ai-artifacts/managed/runtime/`.
 - Deploy both bundled skills into sibling directories `~/.agents/skills/create-review-artifact/` and `~/.agents/skills/work-session/`.
-- Deploy both independently into the corresponding sibling directories under `~/.claude/skills/` when Claude is installed and `~/.gemini/config/skills/` when Antigravity is installed.
-- Provide dedicated, non-destructive configuration drivers for Codex (`config.toml`), Cursor (`mcp.json`), Claude Code (`.claude.json`), Windsurf (`mcp_config.json`), GitHub Copilot (`Code/User/mcp.json`), Cline (`cline_mcp_settings.json`), and Antigravity (`~/.gemini/config/mcp_config.json`).
+- Deploy both independently into the corresponding sibling directories under `~/.claude/skills/` when Claude is installed or upgraded and `~/.gemini/config/skills/` when Antigravity is installed or upgraded.
+- Provide dedicated, non-destructive configuration and upgrade drivers for Codex (`config.toml`), Cursor (`mcp.json`), Claude Code (`.claude.json`), Windsurf (`mcp_config.json`), GitHub Copilot (`Code/User/mcp.json`), Cline (`cline_mcp_settings.json`), and Antigravity (`~/.gemini/config/mcp_config.json`).
+- Track manually installed/uninstalled client IDs in `~/.ai-artifacts/managed/installed-clients.json` only when manual install/uninstall commands run (`recordClientSelection: true`), leaving automatic upgrades, verification, and copy commands non-mutating.
+- Coordinate asynchronous activation upgrades (`upgradeDetectedIntegrations(context)`) across merged `saved ∪ detected` clients: exit early when no clients exist (so the controller checks shared `agents` receipts for silence, setup guidance, or receipt I/O errors), deploy stale shared assets once, invoke each selected client driver's `upgrade()` and `check()` even when shared receipts are already current (to reconcile required client definitions such as selectively patching `[mcp_servers.ai_artifacts.tools.join_session]` for Codex), skip auto-installing missing configs (`setup-required`) or cleaning legacy hooks, isolate per-client `failed` exceptions, and refresh extension support views once on settlement without notifying on healthy updates or no-ops.
 - Expose dedicated setup commands plus `AI Artifacts: Install All Detected Integrations` and `AI Artifacts: Copy MCP Configuration JSON`.
 - Verify whether installed assets and client configurations match the extension requirements.
 - Report ready, missing, outdated, or configuration-conflict states across environments.
-- Replace stale installed skill/runtime assets with the packaged source and remove obsolete files during reinstall.
+- Replace stale installed skill/runtime assets with the packaged source and remove obsolete files during upgrade or reinstall.
 - Preserve a valid non-official YAML `description:` and `USER CUSTOM RULES` only for `create-review-artifact`, independently for `.agents`, `.claude`, and Antigravity (`.gemini/config`); fail closed before swapping when those regions cannot be preserved. Replace `work-session` with official assets atomically without customization merging.
-- Record verified MCP, `.agents`, `.claude`, and Antigravity (`.gemini/config`) versions independently in `~/.ai-artifacts/managed/integration-version.json`: `mcpVersion`, artifact `skills`, and `sessionSkills` maps. Base setup commits runtime and both Agents skill receipts after all three assets verify; Claude and Antigravity each commit both after their own verification. Partial updates preserve other entries; missing/mismatched entries remain stale.
+- Record verified MCP, `.agents`, `.claude`, and Antigravity (`.gemini/config`) versions independently in `~/.ai-artifacts/managed/integration-version.json`: `mcpVersion`, artifact `skills`, and `sessionSkills` maps. Base setup commits runtime and both Agents skill receipts after all three assets verify (and automatic upgrade commits each verified shared asset incrementally); Claude and Antigravity each commit both after their own verification. Partial updates preserve other entries; missing/mismatched entries remain stale.
 - Treat `Ready` as asset synchronization after customization merge, not proof that arbitrary custom rules remain semantically compatible with the official lifecycle.
-- Remove only recognized legacy Codex Artifacts hooks, scripts, legacy `.vscode/ai-artifacts/` assets, and skill directories.
+- Remove only recognized legacy Codex Artifacts hooks, scripts, legacy `.vscode/ai-artifacts/` assets, and skill directories (on manual install/uninstall only, never during automatic upgrade).
 - Preserve unrelated user configuration and all global user review data (`~/.ai-artifacts/artifacts/`) during uninstall.
 
 **Does not own**
@@ -602,7 +606,7 @@ This layer is the protocol source of truth. A contract change must be propagated
 | Inspect saved feedback         | Classifies/answers| Validates and grants |                     |                               |           |        Persists it | Captures it  |
 | Advance review round           | Optional Markdown |               Owner |                     |                               | Refreshes | Waits while locked |    Resets UI |
 | Continue after approval        | Executes directive| Decision + nextAction|                    |                               |           |                    |              |
-| Install MCP and skill          |                   |     Installed asset |                     | Owner via integration manager |           |                    |              |
+| Install and upgrade MCP and skills |                   |     Installed asset |                     | Owner via integration manager |           |                    |              |
 
 ## 14. Active and excluded legacy components
 
@@ -642,8 +646,8 @@ Tests document the expected responsibility boundaries:
 | Installed skill contracts                                                              | `test/skill-contract.test.ts`, `test/work-session-skill.test.ts`, `test/work-session-context.test.ts` |
 | Connection watcher, targeted unfocused auto-open, dedupe, exact-handle command, and open coordination | `test/artifact-review-open.test.ts`, `test/artifact-link-contract.test.ts`          |
 | Extension-local artifact search core, discovery, limit cap, and Quick Pick controller | `test/artifact-search.test.ts`, `test/artifact-search-command.test.ts`                         |
-| Seven-client install/reinstall/verify/uninstall, version receipts, customization merge, and artifact retention | `test/workspace-integration.test.ts`, `test/mcp-client-drivers.test.ts`, `test/skill-contract.test.ts`, `test/artifact-retention.test.ts` |
-| Integration upgrade notification and release-facing documentation contract            | `test/upgrade-notification.test.ts`, `test/release-contract.test.ts`                                |
+| Seven-client install/reinstall/verify/uninstall, version receipts, customization merge, and artifact retention | `test/workspace-integration.test.ts`, `test/mcp-client-drivers.test.ts`, `test/integration-verification.test.ts`, `test/skill-contract.test.ts`, `test/artifact-retention.test.ts` |
+| Automatic integration upgrade coordinator, driver upgrades, saved client selections, activation controller, and release-facing documentation contract | `test/integration-upgrade.test.ts`, `test/installed-client-state.test.ts`, `test/extension-command-recording.test.ts`, `test/upgrade-notification.test.ts`, `test/release-contract.test.ts` |
 
 For responsibility or protocol changes, update the shared contract first, trace every producer and consumer, and run:
 

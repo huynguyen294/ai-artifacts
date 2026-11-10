@@ -1,19 +1,18 @@
-import { readFile } from "node:fs/promises";
-import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import {
+  computeStaleIntegrationAssets,
   INSTALLATION_GUIDE_URL,
-  LAST_NOTIFIED_INTEGRATION_STATE_KEY,
-  LATER_ACTION,
-  RUN_INSTALLER_ACTION,
+  runAutomaticIntegrationUpgrade,
   VIEW_INSTALLATION_GUIDE_ACTION,
-  buildUpgradeNotificationMessage,
-  maybeShowUpgradeNotification,
+  type AutomaticIntegrationUpgradeDeps,
   type InstalledIntegrationVersionState,
-  type IntegrationNotificationState,
-  type UpgradeNotificationDeps,
 } from "../src/extension/upgrade-notification";
-import type { IntegrationVersionManifest, InstalledSkillVersions } from "../src/shared/contracts";
+import type { IntegrationUpgradeReport } from "../src/extension/workspace-integration";
+import type {
+  IntegrationVersionManifest,
+  InstalledSkillVersions,
+  McpClientId,
+} from "../src/shared/contracts";
 
 function manifest(
   mcpVersion: number | undefined,
@@ -25,611 +24,412 @@ function manifest(
     ...(mcpVersion === undefined ? {} : { mcpVersion }),
     skills,
     ...(sessionSkills ? { sessionSkills } : {}),
-    updatedAt: "2026-11-02T00:00:00.000Z",
+    updatedAt: "2026-11-10T00:00:00.000Z",
   };
 }
 
-function missingInstalledState(): InstalledIntegrationVersionState {
-  return { status: "missing" };
-}
-
-function validInstalledState(
-  value: IntegrationVersionManifest,
-): InstalledIntegrationVersionState {
-  return { status: "valid", manifest: value };
-}
-
-function invalidInstalledState(error: unknown): InstalledIntegrationVersionState {
-  return { status: "invalid", error };
+function emptyReport(): IntegrationUpgradeReport {
+  return {
+    clientIds: [],
+    skillTargets: [],
+    updatedAssets: [],
+    clients: [],
+  };
 }
 
 function makeDeps(
-  overrides: Partial<UpgradeNotificationDeps> = {},
-): UpgradeNotificationDeps {
+  overrides: Partial<AutomaticIntegrationUpgradeDeps> = {},
+): AutomaticIntegrationUpgradeDeps {
   return {
-    bundledVersions: { mcpVersion: 10, skillVersion: 2 },
-    skillTargets: ["agents"],
-    getInstalledIntegrationVersion: vi.fn(() => missingInstalledState()),
-    getLastNotifiedIntegrationState: vi.fn(() => undefined),
-    setLastNotifiedIntegrationState: vi.fn(async () => undefined),
-    showInformationMessage: vi.fn(async () => undefined),
-    runInstaller: vi.fn(async () => undefined),
+    bundledVersions: { mcpVersion: 12, skillVersion: 4, sessionSkillVersion: 1 },
+    upgradeIntegrations: vi.fn(async (): Promise<IntegrationUpgradeReport> => ({
+      clientIds: ["codex"],
+      skillTargets: ["agents"],
+      updatedAssets: ["mcp"],
+      clients: [{ id: "codex", name: "Codex", status: "updated" }],
+    })),
+    getInstalledIntegrationVersion: vi.fn<() => InstalledIntegrationVersionState>(() => ({
+      status: "missing",
+    })),
+    refreshIntegrationSupport: vi.fn(),
+    showWarningMessage: vi.fn(async () => undefined),
+    showErrorMessage: vi.fn(async () => undefined),
     openInstallationGuide: vi.fn(async () => undefined),
     reportDiagnostic: vi.fn(),
     ...overrides,
   };
 }
 
-describe("upgrade notification", () => {
-  it("treats a missing receipt as stale and persists the fingerprint before showing", async () => {
+describe("automatic integration upgrade controller", () => {
+  it("runs coordinator first and stays silent on successful asset and client upgrades while refreshing once", async () => {
     const callOrder: string[] = [];
     const deps = makeDeps({
-      skillTargets: ["agents", "claude"],
-      setLastNotifiedIntegrationState: vi.fn(async () => {
-        callOrder.push("persist");
+      upgradeIntegrations: vi.fn(async (): Promise<IntegrationUpgradeReport> => {
+        callOrder.push("upgrade");
+        return {
+          clientIds: ["codex", "antigravity"],
+          skillTargets: ["agents", "antigravity"],
+          updatedAssets: ["mcp", "skill:agents", "skill:antigravity", "session-skill:antigravity"],
+          clients: [
+            { id: "codex", name: "Codex", status: "updated" },
+            { id: "antigravity", name: "Antigravity", status: "updated" },
+          ],
+        };
       }),
-      showInformationMessage: vi.fn(async () => {
-        callOrder.push("show");
+      refreshIntegrationSupport: vi.fn(() => {
+        callOrder.push("refresh");
+      }),
+    });
+
+    await runAutomaticIntegrationUpgrade(deps);
+
+    expect(callOrder).toEqual(["upgrade", "refresh"]);
+    expect(deps.getInstalledIntegrationVersion).not.toHaveBeenCalled();
+    expect(deps.showWarningMessage).not.toHaveBeenCalled();
+    expect(deps.showErrorMessage).not.toHaveBeenCalled();
+    expect(deps.openInstallationGuide).not.toHaveBeenCalled();
+    expect(deps.reportDiagnostic).not.toHaveBeenCalled();
+  });
+
+  it("stays silent for all-unchanged and definition-only updates without reading extra receipts or suppressing repeat runs", async () => {
+    const deps = makeDeps({
+      upgradeIntegrations: vi.fn(async (): Promise<IntegrationUpgradeReport> => ({
+        clientIds: ["cursor", "codex"],
+        skillTargets: ["agents"],
+        updatedAssets: [],
+        clients: [
+          { id: "cursor", name: "Cursor", status: "unchanged" },
+          { id: "codex", name: "Codex", status: "updated" },
+        ],
+      })),
+    });
+
+    await runAutomaticIntegrationUpgrade(deps);
+    await runAutomaticIntegrationUpgrade(deps);
+
+    expect(deps.upgradeIntegrations).toHaveBeenCalledTimes(2);
+    expect(deps.refreshIntegrationSupport).toHaveBeenCalledTimes(2);
+    expect(deps.getInstalledIntegrationVersion).not.toHaveBeenCalled();
+    expect(deps.showWarningMessage).not.toHaveBeenCalled();
+    expect(deps.showErrorMessage).not.toHaveBeenCalled();
+  });
+
+  it("shows a single warning with exact per-client install commands for setup-required clients including saved-only and Antigravity", async () => {
+    const allSetupClients: Array<[McpClientId, string, string]> = [
+      ["copilot", "GitHub Copilot", "AI Artifacts: Install Integration for GitHub Copilot"],
+      ["cursor", "Cursor", "AI Artifacts: Install Integration for Cursor"],
+      ["codex", "Codex", "AI Artifacts: Install Integration for Codex"],
+      ["claude", "Claude", "AI Artifacts: Install Integration for Claude"],
+      ["windsurf", "Windsurf", "AI Artifacts: Install Integration for Windsurf"],
+      ["cline", "Cline", "AI Artifacts: Install Integration for Cline"],
+      ["antigravity", "Antigravity", "AI Artifacts: Install Integration for Antigravity"],
+    ];
+
+    const deps = makeDeps({
+      upgradeIntegrations: vi.fn(async (): Promise<IntegrationUpgradeReport> => ({
+        clientIds: allSetupClients.map(([id]) => id),
+        skillTargets: ["agents", "claude", "antigravity"],
+        updatedAssets: ["mcp"],
+        clients: allSetupClients.map(([id, name], index) => ({
+          id,
+          name,
+          status: index === 1 ? ("unchanged" as const) : ("setup-required" as const),
+          ...(index === 1 ? {} : { detail: `  Missing entry for ${name}  ` }),
+        })),
+      })),
+    });
+
+    await runAutomaticIntegrationUpgrade(deps);
+
+    expect(deps.refreshIntegrationSupport).toHaveBeenCalledTimes(1);
+    expect(deps.showErrorMessage).not.toHaveBeenCalled();
+    expect(deps.showWarningMessage).toHaveBeenCalledTimes(1);
+    expect(deps.reportDiagnostic).toHaveBeenCalledTimes(1);
+
+    const [message, ...actions] = vi.mocked(deps.showWarningMessage).mock.calls[0]!;
+    expect(actions).toEqual([VIEW_INSTALLATION_GUIDE_ACTION]);
+    expect(message).not.toContain("Run Installer");
+    expect(message).not.toContain("Install All Detected Integrations");
+    expect(message).not.toContain("Cursor (unchanged)");
+
+    let previousPos = -1;
+    for (const [id, name, commandTitle] of allSetupClients) {
+      if (id === "cursor") continue;
+      const expectedSegment = `${name} (setup-required): Missing entry for ${name}. Run "${commandTitle}"`;
+      const idx = message.indexOf(expectedSegment);
+      expect(idx).toBeGreaterThan(previousPos);
+      previousPos = idx;
+    }
+  });
+
+  it("shows a single error preserving report order and fallback details when failed mixes with setup-required and healthy clients", async () => {
+    const deps = makeDeps({
+      upgradeIntegrations: vi.fn(async (): Promise<IntegrationUpgradeReport> => ({
+        clientIds: ["copilot", "codex", "claude", "antigravity"],
+        skillTargets: ["agents", "claude", "antigravity"],
+        updatedAssets: ["mcp"],
+        clients: [
+          { id: "copilot", name: "GitHub Copilot", status: "updated" },
+          { id: "codex", name: "Codex", status: "failed", detail: "  " },
+          { id: "claude", name: "Claude", status: "setup-required" },
+          { id: "antigravity", name: "Antigravity", status: "failed", detail: "Malformed mcp_config.json" },
+        ],
+      })),
+    });
+
+    await runAutomaticIntegrationUpgrade(deps);
+
+    expect(deps.refreshIntegrationSupport).toHaveBeenCalledTimes(1);
+    expect(deps.showWarningMessage).not.toHaveBeenCalled();
+    expect(deps.showErrorMessage).toHaveBeenCalledTimes(1);
+    expect(deps.reportDiagnostic).toHaveBeenCalledTimes(1);
+
+    const [message, ...actions] = vi.mocked(deps.showErrorMessage).mock.calls[0]!;
+    expect(actions).toEqual([VIEW_INSTALLATION_GUIDE_ACTION]);
+    expect(message).not.toContain("GitHub Copilot");
+
+    const codexPos = message.indexOf(
+      'Codex (failed): Automatic upgrade failed. Run "AI Artifacts: Install Integration for Codex"',
+    );
+    const claudePos = message.indexOf(
+      'Claude (setup-required): Manual setup is required. Run "AI Artifacts: Install Integration for Claude"',
+    );
+    const agPos = message.indexOf(
+      'Antigravity (failed): Malformed mcp_config.json. Run "AI Artifacts: Install Integration for Antigravity"',
+    );
+    expect(codexPos).toBeGreaterThanOrEqual(0);
+    expect(claudePos).toBeGreaterThan(codexPos);
+    expect(agPos).toBeGreaterThan(claudePos);
+  });
+
+  it("shows a single error with original message, logs diagnostic, refreshes once, and resolves when coordinator rejects", async () => {
+    const boom = new Error("ENOENT: packaged mcp server missing");
+    const callOrder: string[] = [];
+    const deps = makeDeps({
+      upgradeIntegrations: vi.fn(async () => {
+        callOrder.push("upgrade-throw");
+        throw boom;
+      }),
+      refreshIntegrationSupport: vi.fn(() => {
+        callOrder.push("refresh");
+      }),
+      reportDiagnostic: vi.fn(() => {
+        callOrder.push("diagnostic");
+      }),
+      showErrorMessage: vi.fn(async () => {
+        callOrder.push("error-popup");
         return undefined;
       }),
     });
 
-    await maybeShowUpgradeNotification(deps);
+    await expect(runAutomaticIntegrationUpgrade(deps)).resolves.toBeUndefined();
 
-    const expectedState: IntegrationNotificationState = {
-      mcpVersion: 10,
-      skillVersion: 2,
-      staleAssets: ["mcp", "skill:agents", "skill:claude"],
-    };
-    expect(deps.setLastNotifiedIntegrationState).toHaveBeenCalledWith(expectedState);
-    expect(deps.showInformationMessage).toHaveBeenCalledWith(
-      buildUpgradeNotificationMessage(expectedState.staleAssets),
-      RUN_INSTALLER_ACTION,
-      VIEW_INSTALLATION_GUIDE_ACTION,
-      LATER_ACTION,
-    );
-    expect(callOrder).toEqual(["persist", "show"]);
-  });
-
-  it("treats an invalid receipt as stale and records a diagnostic", async () => {
-    const receiptError = new Error("invalid integration-version.json");
-    const deps = makeDeps({
-      getInstalledIntegrationVersion: vi.fn(() => invalidInstalledState(receiptError)),
-    });
-
-    await maybeShowUpgradeNotification(deps);
-
+    expect(callOrder).toEqual(["upgrade-throw", "diagnostic", "refresh", "error-popup"]);
     expect(deps.reportDiagnostic).toHaveBeenCalledWith(
-      "Installed integration version receipt is invalid; treating all required assets as stale.",
-      receiptError,
+      "Automatic integration upgrade failed.",
+      boom,
     );
-    expect(deps.setLastNotifiedIntegrationState).toHaveBeenCalledWith({
-      mcpVersion: 10,
-      skillVersion: 2,
-      staleAssets: ["mcp", "skill:agents"],
-    });
-    expect(deps.showInformationMessage).toHaveBeenCalledTimes(1);
+    expect(deps.showWarningMessage).not.toHaveBeenCalled();
+    expect(deps.showErrorMessage).toHaveBeenCalledTimes(1);
+    const [message, ...actions] = vi.mocked(deps.showErrorMessage).mock.calls[0]!;
+    expect(message).toContain("ENOENT: packaged mcp server missing");
+    expect(actions).toEqual([VIEW_INSTALLATION_GUIDE_ACTION]);
   });
 
-  it("syncs an all-current fingerprint without showing a notification", async () => {
-    const deps = makeDeps({
-      getInstalledIntegrationVersion: vi.fn(() =>
-        validInstalledState(manifest(10, { agents: 2 }))),
+  it("handles empty reports using only shared agents assets unless receipt read rejects", async () => {
+    // 1. Current shared receipt stays silent even if old Claude/Antigravity receipt entries are stale
+    const currentDeps = makeDeps({
+      upgradeIntegrations: vi.fn(async () => emptyReport()),
+      getInstalledIntegrationVersion: vi.fn<() => InstalledIntegrationVersionState>(() => ({
+        status: "valid",
+        manifest: manifest(12, { agents: 4, claude: 1 }, { agents: 1, antigravity: 1 }),
+      })),
     });
+    await runAutomaticIntegrationUpgrade(currentDeps);
+    expect(currentDeps.refreshIntegrationSupport).toHaveBeenCalledTimes(1);
+    expect(currentDeps.showWarningMessage).not.toHaveBeenCalled();
+    expect(currentDeps.showErrorMessage).not.toHaveBeenCalled();
+    expect(currentDeps.reportDiagnostic).not.toHaveBeenCalled();
 
-    await maybeShowUpgradeNotification(deps);
-
-    expect(deps.setLastNotifiedIntegrationState).toHaveBeenCalledWith({
-      mcpVersion: 10,
-      skillVersion: 2,
-      staleAssets: [],
+    // 2. Missing receipt triggers one setup warning
+    const missingDeps = makeDeps({
+      upgradeIntegrations: vi.fn(async () => emptyReport()),
+      getInstalledIntegrationVersion: vi.fn<() => InstalledIntegrationVersionState>(() => ({
+        status: "missing",
+      })),
     });
-    expect(deps.showInformationMessage).not.toHaveBeenCalled();
-  });
+    await runAutomaticIntegrationUpgrade(missingDeps);
+    expect(missingDeps.showWarningMessage).toHaveBeenCalledTimes(1);
+    expect(missingDeps.showErrorMessage).not.toHaveBeenCalled();
+    expect(vi.mocked(missingDeps.showWarningMessage).mock.calls[0]?.[1]).toBe(
+      VIEW_INSTALLATION_GUIDE_ACTION,
+    );
 
-  it("reports only the Claude skill when shared assets are current", async () => {
-    const deps = makeDeps({
-      skillTargets: ["agents", "claude"],
-      getInstalledIntegrationVersion: vi.fn(() =>
-        validInstalledState(manifest(10, { agents: 2 }))),
+    // 3. Invalid receipt logs diagnostic and warns
+    const invalidError = new SyntaxError("Unexpected token");
+    const invalidDeps = makeDeps({
+      upgradeIntegrations: vi.fn(async () => emptyReport()),
+      getInstalledIntegrationVersion: vi.fn<() => InstalledIntegrationVersionState>(() => ({
+        status: "invalid",
+        error: invalidError,
+      })),
     });
+    await runAutomaticIntegrationUpgrade(invalidDeps);
+    expect(invalidDeps.reportDiagnostic).toHaveBeenCalledWith(
+      "Installed integration version receipt is invalid; treating shared assets as stale.",
+      invalidError,
+    );
+    expect(invalidDeps.showWarningMessage).toHaveBeenCalledTimes(1);
+    expect(invalidDeps.showErrorMessage).not.toHaveBeenCalled();
 
-    await maybeShowUpgradeNotification(deps);
-
-    expect(deps.setLastNotifiedIntegrationState).toHaveBeenCalledWith({
-      mcpVersion: 10,
-      skillVersion: 2,
-      staleAssets: ["skill:claude"],
+    // 4. Stale shared receipt triggers warning
+    const staleDeps = makeDeps({
+      upgradeIntegrations: vi.fn(async () => emptyReport()),
+      getInstalledIntegrationVersion: vi.fn<() => InstalledIntegrationVersionState>(() => ({
+        status: "valid",
+        manifest: manifest(11, { agents: 4 }, { agents: 1 }),
+      })),
     });
-    const message = vi.mocked(deps.showInformationMessage).mock.calls[0]?.[0];
-    expect(message).toContain("Claude skill (.claude)");
-    expect(message).not.toContain("MCP runtime");
-    expect(message).not.toContain("shared agent skill (.agents)");
-  });
+    await runAutomaticIntegrationUpgrade(staleDeps);
+    expect(staleDeps.showWarningMessage).toHaveBeenCalledTimes(1);
+    expect(staleDeps.showErrorMessage).not.toHaveBeenCalled();
 
-  it("suppresses only the same fingerprint after Later", async () => {
-    let storedState: IntegrationNotificationState | undefined;
-    const showInformationMessage = vi.fn(async () => LATER_ACTION);
-    const deps = makeDeps({
-      getLastNotifiedIntegrationState: () => storedState,
-      setLastNotifiedIntegrationState: async (state) => {
-        storedState = state;
-      },
-      showInformationMessage,
-    });
-
-    await maybeShowUpgradeNotification(deps);
-    await maybeShowUpgradeNotification(deps);
-
-    expect(showInformationMessage).toHaveBeenCalledTimes(1);
-    expect(storedState).toEqual({
-      mcpVersion: 10,
-      skillVersion: 2,
-      staleAssets: ["mcp", "skill:agents"],
-    });
-  });
-
-  it("shows again when a partial install changes the remaining stale assets", async () => {
-    let installed: InstalledIntegrationVersionState = missingInstalledState();
-    let storedState: IntegrationNotificationState | undefined;
-    const showInformationMessage = vi.fn(async () => LATER_ACTION);
-    const deps = makeDeps({
-      skillTargets: ["agents", "claude"],
-      getInstalledIntegrationVersion: () => installed,
-      getLastNotifiedIntegrationState: () => storedState,
-      setLastNotifiedIntegrationState: async (state) => {
-        storedState = state;
-      },
-      showInformationMessage,
-    });
-
-    await maybeShowUpgradeNotification(deps);
-    installed = validInstalledState(manifest(10, { agents: 2 }));
-    await maybeShowUpgradeNotification(deps);
-
-    expect(showInformationMessage).toHaveBeenCalledTimes(2);
-    expect(storedState?.staleAssets).toEqual(["skill:claude"]);
-  });
-
-  it.each([
-    ["MCP", { mcpVersion: 11, skillVersion: 2 }, ["mcp"]],
-    ["skill", { mcpVersion: 10, skillVersion: 3 }, ["skill:agents"]],
-  ] as const)("shows a new fingerprint after a bundled %s version bump", async (
-    _label,
-    bundledVersions,
-    staleAssets,
-  ) => {
-    const deps = makeDeps({
-      bundledVersions,
-      getInstalledIntegrationVersion: () =>
-        validInstalledState(manifest(10, { agents: 2 })),
-      getLastNotifiedIntegrationState: () => ({
-        mcpVersion: 10,
-        skillVersion: 2,
-        staleAssets: [],
-      }),
-    });
-
-    await maybeShowUpgradeNotification(deps);
-
-    expect(deps.setLastNotifiedIntegrationState).toHaveBeenCalledWith({
-      ...bundledVersions,
-      staleAssets,
-    });
-    expect(deps.showInformationMessage).toHaveBeenCalledTimes(1);
-  });
-
-  it("detects stale session skills when receipt lacks sessionSkills", async () => {
-    const deps = makeDeps({
-      bundledVersions: { mcpVersion: 10, skillVersion: 2, sessionSkillVersion: 1 },
-      skillTargets: ["agents", "claude"],
-      getInstalledIntegrationVersion: vi.fn(() =>
-        validInstalledState(manifest(10, { agents: 2, claude: 2 }))),
-    });
-
-    await maybeShowUpgradeNotification(deps);
-
-    expect(deps.setLastNotifiedIntegrationState).toHaveBeenCalledWith({
-      mcpVersion: 10,
-      skillVersion: 2,
-      sessionSkillVersion: 1,
-      staleAssets: ["session-skill:agents", "session-skill:claude"],
-    });
-    const message = vi.mocked(deps.showInformationMessage).mock.calls[0]?.[0];
-    expect(message).toContain("shared work session skill (.agents)");
-    expect(message).toContain("Claude work session skill (.claude)");
-    expect(message).not.toContain("MCP runtime");
-  });
-
-  it("syncs all-current when both review skills and session skills match", async () => {
-    const deps = makeDeps({
-      bundledVersions: { mcpVersion: 10, skillVersion: 2, sessionSkillVersion: 1 },
-      skillTargets: ["agents", "claude"],
-      getInstalledIntegrationVersion: vi.fn(() =>
-        validInstalledState(
-          manifest(10, { agents: 2, claude: 2 }, { agents: 1, claude: 1 }),
-        )),
-    });
-
-    await maybeShowUpgradeNotification(deps);
-
-    expect(deps.setLastNotifiedIntegrationState).toHaveBeenCalledWith({
-      mcpVersion: 10,
-      skillVersion: 2,
-      sessionSkillVersion: 1,
-      staleAssets: [],
-    });
-    expect(deps.showInformationMessage).not.toHaveBeenCalled();
-  });
-
-  it("does not include the extension package version in the fingerprint", async () => {
-    const currentFingerprint: IntegrationNotificationState = {
-      mcpVersion: 10,
-      skillVersion: 2,
-      staleAssets: ["mcp", "skill:agents"],
-    };
-    const deps = makeDeps({
-      getLastNotifiedIntegrationState: () => currentFingerprint,
-    });
-
-    await maybeShowUpgradeNotification(deps);
-
-    expect(deps.setLastNotifiedIntegrationState).not.toHaveBeenCalled();
-    expect(deps.showInformationMessage).not.toHaveBeenCalled();
-  });
-
-  it.each([
-    [RUN_INSTALLER_ACTION, "runInstaller"],
-    [VIEW_INSTALLATION_GUIDE_ACTION, "openInstallationGuide"],
-  ] as const)("executes only the %s action", async (selectedAction, expectedAction) => {
-    const deps = makeDeps({
-      showInformationMessage: vi.fn(async () => selectedAction),
-    });
-
-    await maybeShowUpgradeNotification(deps);
-
-    expect(deps[expectedAction]).toHaveBeenCalledTimes(1);
-    const otherAction = expectedAction === "runInstaller" ? "openInstallationGuide" : "runInstaller";
-    expect(deps[otherAction]).not.toHaveBeenCalled();
-  });
-
-  it("contains receipt, global-state, notification, and action failures", async () => {
-    const receiptError = new Error("receipt read failed");
-    const receiptDeps = makeDeps({
+    // 5. Read I/O error becomes an error popup preserving original message, not a setup warning
+    const readIoError = new Error("EACCES: permission denied");
+    const ioErrorDeps = makeDeps({
+      upgradeIntegrations: vi.fn(async () => emptyReport()),
       getInstalledIntegrationVersion: vi.fn(async () => {
-        throw receiptError;
+        throw readIoError;
       }),
     });
-    await expect(maybeShowUpgradeNotification(receiptDeps)).resolves.toBeUndefined();
-    expect(receiptDeps.reportDiagnostic).toHaveBeenCalledWith(
+    await expect(runAutomaticIntegrationUpgrade(ioErrorDeps)).resolves.toBeUndefined();
+    expect(ioErrorDeps.reportDiagnostic).toHaveBeenCalledWith(
       "Could not read installed integration versions.",
-      receiptError,
+      readIoError,
     );
-    expect(receiptDeps.showInformationMessage).toHaveBeenCalledTimes(1);
-
-    const stateReadError = new Error("state read failed");
-    const stateReadDeps = makeDeps({
-      getLastNotifiedIntegrationState: () => {
-        throw stateReadError;
-      },
-    });
-    await expect(maybeShowUpgradeNotification(stateReadDeps)).resolves.toBeUndefined();
-    expect(stateReadDeps.reportDiagnostic).toHaveBeenCalledWith(
-      "Could not read notification state.",
-      stateReadError,
-    );
-
-    const stateWriteError = new Error("state write failed");
-    const stateWriteDeps = makeDeps({
-      setLastNotifiedIntegrationState: vi.fn(async () => {
-        throw stateWriteError;
-      }),
-    });
-    await expect(maybeShowUpgradeNotification(stateWriteDeps)).resolves.toBeUndefined();
-    expect(stateWriteDeps.reportDiagnostic).toHaveBeenCalledWith(
-      "Could not persist notification state.",
-      stateWriteError,
-    );
-    expect(stateWriteDeps.showInformationMessage).not.toHaveBeenCalled();
-
-    const notificationError = new Error("notification failed");
-    const notificationDeps = makeDeps({
-      showInformationMessage: vi.fn(async () => {
-        throw notificationError;
-      }),
-    });
-    await expect(maybeShowUpgradeNotification(notificationDeps)).resolves.toBeUndefined();
-    expect(notificationDeps.reportDiagnostic).toHaveBeenCalledWith(
-      "Could not show the upgrade notification.",
-      notificationError,
-    );
-
-    const actionError = new Error("installer failed");
-    const actionDeps = makeDeps({
-      showInformationMessage: vi.fn(async () => RUN_INSTALLER_ACTION),
-      runInstaller: vi.fn(async () => {
-        throw actionError;
-      }),
-    });
-    await expect(maybeShowUpgradeNotification(actionDeps)).resolves.toBeUndefined();
-    expect(actionDeps.reportDiagnostic).toHaveBeenCalledWith(
-      "The selected upgrade notification action failed.",
-      actionError,
+    expect(ioErrorDeps.showWarningMessage).not.toHaveBeenCalled();
+    expect(ioErrorDeps.showErrorMessage).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(ioErrorDeps.showErrorMessage).mock.calls[0]?.[0]).toContain(
+      "EACCES: permission denied",
     );
   });
 
-  it("names stale assets, customization preservation, and restart guidance", () => {
-    const message = buildUpgradeNotificationMessage([
-      "mcp",
-      "skill:agents",
-      "skill:claude",
-      "skill:antigravity",
-      "session-skill:antigravity",
-    ]);
-    expect(message).toContain("MCP runtime");
-    expect(message).toContain("shared agent skill (.agents)");
-    expect(message).toContain("Claude skill (.claude)");
-    expect(message).toContain("Antigravity review skill (.gemini/config)");
-    expect(message).toContain("Antigravity work session skill (.gemini/config)");
-    expect(message).toContain("customizations will be preserved");
-    expect(message).toContain("restart your AI client");
-  });
-
-  it("reports only missing or stale Antigravity review and session skills accurately without leaking Claude labels", async () => {
-    const onlyReviewDeps = makeDeps({
-      bundledVersions: { mcpVersion: 10, skillVersion: 2, sessionSkillVersion: 1 },
-      skillTargets: ["agents", "antigravity"],
-      getInstalledIntegrationVersion: vi.fn(() =>
-        validInstalledState(
-          manifest(10, { agents: 2 }, { agents: 1, antigravity: 1 }),
-        )),
-    });
-    await maybeShowUpgradeNotification(onlyReviewDeps);
-    expect(onlyReviewDeps.setLastNotifiedIntegrationState).toHaveBeenCalledWith({
-      mcpVersion: 10,
-      skillVersion: 2,
-      sessionSkillVersion: 1,
-      staleAssets: ["skill:antigravity"],
-    });
-    const reviewMsg = vi.mocked(onlyReviewDeps.showInformationMessage).mock.calls[0]?.[0];
-    expect(reviewMsg).toContain("Antigravity review skill (.gemini/config)");
-    expect(reviewMsg).not.toContain("Antigravity work session skill (.gemini/config)");
-    expect(reviewMsg).not.toContain("Claude");
-    expect(reviewMsg).not.toContain("MCP runtime");
-
-    const onlySessionDeps = makeDeps({
-      bundledVersions: { mcpVersion: 10, skillVersion: 2, sessionSkillVersion: 1 },
-      skillTargets: ["agents", "antigravity"],
-      getInstalledIntegrationVersion: vi.fn(() =>
-        validInstalledState(
-          manifest(10, { agents: 2, antigravity: 2 }, { agents: 1 }),
-        )),
-    });
-    await maybeShowUpgradeNotification(onlySessionDeps);
-    expect(onlySessionDeps.setLastNotifiedIntegrationState).toHaveBeenCalledWith({
-      mcpVersion: 10,
-      skillVersion: 2,
-      sessionSkillVersion: 1,
-      staleAssets: ["session-skill:antigravity"],
-    });
-    const sessionMsg = vi.mocked(onlySessionDeps.showInformationMessage).mock.calls[0]?.[0];
-    expect(sessionMsg).toContain("Antigravity work session skill (.gemini/config)");
-    expect(sessionMsg).not.toContain("Antigravity review skill (.gemini/config)");
-    expect(sessionMsg).not.toContain("Claude");
-    expect(sessionMsg).not.toContain("MCP runtime");
-
-    const bothAntigravityDeps = makeDeps({
-      bundledVersions: { mcpVersion: 10, skillVersion: 2, sessionSkillVersion: 1 },
-      skillTargets: ["agents", "antigravity"],
-      getInstalledIntegrationVersion: vi.fn(() =>
-        validInstalledState(manifest(10, { agents: 2 }, { agents: 1 }))),
-    });
-    await maybeShowUpgradeNotification(bothAntigravityDeps);
-    expect(bothAntigravityDeps.setLastNotifiedIntegrationState).toHaveBeenCalledWith({
-      mcpVersion: 10,
-      skillVersion: 2,
-      sessionSkillVersion: 1,
-      staleAssets: ["skill:antigravity", "session-skill:antigravity"],
-    });
-    const bothMsg = vi.mocked(bothAntigravityDeps.showInformationMessage).mock.calls[0]?.[0];
-    expect(bothMsg).toContain("Antigravity review skill (.gemini/config)");
-    expect(bothMsg).toContain("Antigravity work session skill (.gemini/config)");
-    expect(bothMsg).not.toContain("Claude");
-  });
-
-  it("handles current three-target receipts, undetected Antigravity entries, and omitted sessionSkillVersion", async () => {
-    const allCurrentDeps = makeDeps({
-      bundledVersions: { mcpVersion: 10, skillVersion: 2, sessionSkillVersion: 1 },
-      skillTargets: ["agents", "claude", "antigravity"],
-      getInstalledIntegrationVersion: vi.fn(() =>
-        validInstalledState(
-          manifest(
-            10,
-            { agents: 2, claude: 2, antigravity: 2 },
-            { agents: 1, claude: 1, antigravity: 1 },
-          ),
-        )),
-    });
-    await maybeShowUpgradeNotification(allCurrentDeps);
-    expect(allCurrentDeps.setLastNotifiedIntegrationState).toHaveBeenCalledWith({
-      mcpVersion: 10,
-      skillVersion: 2,
-      sessionSkillVersion: 1,
-      staleAssets: [],
-    });
-    expect(allCurrentDeps.showInformationMessage).not.toHaveBeenCalled();
-
-    const undetectedAntigravityDeps = makeDeps({
-      bundledVersions: { mcpVersion: 10, skillVersion: 2, sessionSkillVersion: 1 },
-      skillTargets: ["agents", "claude"],
-      getInstalledIntegrationVersion: vi.fn(() =>
-        validInstalledState(
-          manifest(10, { agents: 2, claude: 2, antigravity: 1 }, { agents: 1, claude: 1 }),
-        )),
-    });
-    await maybeShowUpgradeNotification(undetectedAntigravityDeps);
-    expect(undetectedAntigravityDeps.setLastNotifiedIntegrationState).toHaveBeenCalledWith({
-      mcpVersion: 10,
-      skillVersion: 2,
-      sessionSkillVersion: 1,
-      staleAssets: [],
-    });
-    expect(undetectedAntigravityDeps.showInformationMessage).not.toHaveBeenCalled();
-
-    const withoutSessionVersionDeps = makeDeps({
-      bundledVersions: { mcpVersion: 10, skillVersion: 2 },
-      skillTargets: ["agents", "antigravity"],
-      getInstalledIntegrationVersion: vi.fn(() =>
-        validInstalledState(manifest(10, { agents: 2, antigravity: 1 }))),
-    });
-    await maybeShowUpgradeNotification(withoutSessionVersionDeps);
-    expect(withoutSessionVersionDeps.setLastNotifiedIntegrationState).toHaveBeenCalledWith({
-      mcpVersion: 10,
-      skillVersion: 2,
-      staleAssets: ["skill:antigravity"],
-    });
-  });
-
-  it("canonicalizes duplicate and reordered skillTargets so fingerprint and order remain deterministic", async () => {
-    let storedState: IntegrationNotificationState | undefined;
-    const showInformationMessage = vi.fn(async () => LATER_ACTION);
-    const reorderedDeps = makeDeps({
-      bundledVersions: { mcpVersion: 10, skillVersion: 2, sessionSkillVersion: 1 },
-      skillTargets: ["antigravity", "claude", "agents", "antigravity", "claude"],
-      getInstalledIntegrationVersion: vi.fn(() => missingInstalledState()),
-      getLastNotifiedIntegrationState: () => storedState,
-      setLastNotifiedIntegrationState: async (state) => {
-        storedState = state;
-      },
-      showInformationMessage,
+  it("opens guide only when chosen and isolates refresh, UI, guide, and diagnostic failures", async () => {
+    const setupReport = (): IntegrationUpgradeReport => ({
+      clientIds: ["codex"],
+      skillTargets: ["agents"],
+      updatedAssets: [],
+      clients: [{ id: "codex", name: "Codex", status: "setup-required", detail: "Missing entry" }],
     });
 
-    await maybeShowUpgradeNotification(reorderedDeps);
-    expect(storedState).toEqual({
-      mcpVersion: 10,
-      skillVersion: 2,
-      sessionSkillVersion: 1,
-      staleAssets: [
-        "mcp",
-        "skill:agents",
-        "session-skill:agents",
-        "skill:claude",
-        "session-skill:claude",
-        "skill:antigravity",
-        "session-skill:antigravity",
-      ],
+    // Clicking View Installation Guide opens external guide
+    const openDeps = makeDeps({
+      upgradeIntegrations: vi.fn(async () => setupReport()),
+      showWarningMessage: vi.fn(async () => VIEW_INSTALLATION_GUIDE_ACTION),
     });
-
-    const canonicalDeps = makeDeps({
-      bundledVersions: { mcpVersion: 10, skillVersion: 2, sessionSkillVersion: 1 },
-      skillTargets: ["agents", "claude", "antigravity"],
-      getInstalledIntegrationVersion: vi.fn(() => missingInstalledState()),
-      getLastNotifiedIntegrationState: () => storedState,
-      setLastNotifiedIntegrationState: vi.fn(async () => undefined),
-      showInformationMessage,
-    });
-    await maybeShowUpgradeNotification(canonicalDeps);
-    expect(canonicalDeps.setLastNotifiedIntegrationState).not.toHaveBeenCalled();
-    expect(showInformationMessage).toHaveBeenCalledTimes(1);
-  });
-
-  it("suppresses Antigravity stale fingerprint after Later, notifies again after partial install, and clears once repaired", async () => {
-    let installed: InstalledIntegrationVersionState = validInstalledState(
-      manifest(10, { agents: 2 }, { agents: 1 }),
-    );
-    let storedState: IntegrationNotificationState | undefined;
-    const showInformationMessage = vi.fn(async () => LATER_ACTION);
-    const deps = makeDeps({
-      bundledVersions: { mcpVersion: 10, skillVersion: 2, sessionSkillVersion: 1 },
-      skillTargets: ["agents", "antigravity"],
-      getInstalledIntegrationVersion: () => installed,
-      getLastNotifiedIntegrationState: () => storedState,
-      setLastNotifiedIntegrationState: async (state) => {
-        storedState = state;
-      },
-      showInformationMessage,
-    });
-
-    await maybeShowUpgradeNotification(deps);
-    await maybeShowUpgradeNotification(deps);
-    expect(showInformationMessage).toHaveBeenCalledTimes(1);
-    expect(storedState?.staleAssets).toEqual(["skill:antigravity", "session-skill:antigravity"]);
-
-    installed = validInstalledState(
-      manifest(10, { agents: 2, antigravity: 2 }, { agents: 1 }),
-    );
-    await maybeShowUpgradeNotification(deps);
-    expect(showInformationMessage).toHaveBeenCalledTimes(2);
-    expect(storedState?.staleAssets).toEqual(["session-skill:antigravity"]);
-
-    installed = validInstalledState(
-      manifest(10, { agents: 2, antigravity: 2 }, { agents: 1, antigravity: 1 }),
-    );
-    await maybeShowUpgradeNotification(deps);
-    await maybeShowUpgradeNotification(deps);
-    expect(showInformationMessage).toHaveBeenCalledTimes(2);
-    expect(storedState?.staleAssets).toEqual([]);
-  });
-
-  it("invokes runInstaller once when Run Installer is chosen for stale Antigravity skills, and not on Later or dismiss", async () => {
-    const runDeps = makeDeps({
-      bundledVersions: { mcpVersion: 10, skillVersion: 2, sessionSkillVersion: 1 },
-      skillTargets: ["agents", "antigravity"],
-      getInstalledIntegrationVersion: vi.fn(() =>
-        validInstalledState(manifest(10, { agents: 2 }, { agents: 1 }))),
-      showInformationMessage: vi.fn(async () => RUN_INSTALLER_ACTION),
-    });
-    await maybeShowUpgradeNotification(runDeps);
-    expect(runDeps.runInstaller).toHaveBeenCalledTimes(1);
-    expect(runDeps.openInstallationGuide).not.toHaveBeenCalled();
-
-    for (const action of [LATER_ACTION, undefined] as const) {
-      const noRunDeps = makeDeps({
-        bundledVersions: { mcpVersion: 10, skillVersion: 2, sessionSkillVersion: 1 },
-        skillTargets: ["agents", "antigravity"],
-        getInstalledIntegrationVersion: vi.fn(() =>
-          validInstalledState(manifest(10, { agents: 2 }, { agents: 1 }))),
-        showInformationMessage: vi.fn(async () => action),
-      });
-      await maybeShowUpgradeNotification(noRunDeps);
-      expect(noRunDeps.runInstaller).not.toHaveBeenCalled();
-    }
-  });
-
-  it("keeps the integration-state key and installation guide target", () => {
-    expect(LAST_NOTIFIED_INTEGRATION_STATE_KEY).toBe(
-      "upgradeNotification.lastNotifiedIntegrationState",
-    );
+    await runAutomaticIntegrationUpgrade(openDeps);
+    expect(openDeps.openInstallationGuide).toHaveBeenCalledTimes(1);
     expect(INSTALLATION_GUIDE_URL).toBe(
       "https://github.com/huynguyen294/ai-artifacts#getting-started",
     );
+
+    // Dismissing does not open guide
+    const dismissDeps = makeDeps({
+      upgradeIntegrations: vi.fn(async () => setupReport()),
+      showWarningMessage: vi.fn(async () => undefined),
+    });
+    await runAutomaticIntegrationUpgrade(dismissDeps);
+    expect(dismissDeps.openInstallationGuide).not.toHaveBeenCalled();
+
+    // UI failure is contained and does not re-notify with error
+    const uiError = new Error("window showWarningMessage failed");
+    const uiFailDeps = makeDeps({
+      upgradeIntegrations: vi.fn(async () => setupReport()),
+      showWarningMessage: vi.fn(async () => {
+        throw uiError;
+      }),
+    });
+    await expect(runAutomaticIntegrationUpgrade(uiFailDeps)).resolves.toBeUndefined();
+    expect(uiFailDeps.showErrorMessage).not.toHaveBeenCalled();
+    expect(uiFailDeps.reportDiagnostic).toHaveBeenCalledWith(
+      "Could not show automatic upgrade notification.",
+      uiError,
+    );
+
+    // Guide open failure is contained
+    const guideError = new Error("openExternal failed");
+    const guideFailDeps = makeDeps({
+      upgradeIntegrations: vi.fn(async () => setupReport()),
+      showWarningMessage: vi.fn(async () => VIEW_INSTALLATION_GUIDE_ACTION),
+      openInstallationGuide: vi.fn(async () => {
+        throw guideError;
+      }),
+    });
+    await expect(runAutomaticIntegrationUpgrade(guideFailDeps)).resolves.toBeUndefined();
+    expect(guideFailDeps.reportDiagnostic).toHaveBeenCalledWith(
+      "Could not open installation guide.",
+      guideError,
+    );
+
+    // Refresh & diagnostic throwing still resolve cleanly
+    const refreshFailDeps = makeDeps({
+      upgradeIntegrations: vi.fn(async () => setupReport()),
+      refreshIntegrationSupport: vi.fn(() => {
+        throw new Error("refresh failed");
+      }),
+      reportDiagnostic: vi.fn(() => {
+        throw new Error("diagnostic failed");
+      }),
+    });
+    await expect(runAutomaticIntegrationUpgrade(refreshFailDeps)).resolves.toBeUndefined();
+    expect(refreshFailDeps.showWarningMessage).toHaveBeenCalledTimes(1);
   });
 });
 
-describe("extension activation wiring", () => {
-  it("uses receipts, bundled versions, detected targets, and the install-and-verify flow", async () => {
-    const repositoryRoot = path.resolve(import.meta.dirname, "..");
-    const extensionSource = await readFile(
-      path.join(repositoryRoot, "src/extension/extension.ts"),
-      "utf8",
-    );
+describe("computeStaleIntegrationAssets", () => {
+  it("computes stale MCP, review-skill, and session-skill assets across agents, claude, and antigravity deterministically", () => {
+    expect(
+      computeStaleIntegrationAssets(
+        { mcpVersion: 12, skillVersion: 4, sessionSkillVersion: 1 },
+        undefined,
+        ["antigravity", "claude", "agents", "antigravity"],
+      ),
+    ).toEqual([
+      "mcp",
+      "skill:agents",
+      "session-skill:agents",
+      "skill:claude",
+      "session-skill:claude",
+      "skill:antigravity",
+      "session-skill:antigravity",
+    ]);
 
-    expect(extensionSource).toContain("void maybeShowUpgradeNotification({");
-    expect(extensionSource).toContain("mcpVersion: MCP_VERSION");
-    expect(extensionSource).toContain("skillVersion: SKILL_VERSION");
-    expect(extensionSource).toContain("sessionSkillVersion: WORK_SESSION_SKILL_VERSION");
-    expect(extensionSource).toContain("skillTargets: getDetectedSkillTargets()");
-    expect(extensionSource).toContain("readInstalledIntegrationVersion()");
-    expect(extensionSource).toContain("LAST_NOTIFIED_INTEGRATION_STATE_KEY");
-    expect(extensionSource).not.toContain("context.extension.packageJSON.version");
-    expect(extensionSource).not.toContain("LAST_NOTIFIED_VERSION_KEY");
-    expect(extensionSource).toContain("const installAllDetectedIntegrationsAndNotify");
-    expect(extensionSource).toContain("await checkAllIntegrations(context);");
-    expect(extensionSource).toContain(
-      "runInstaller: installAllDetectedIntegrationsAndNotify",
-    );
-    expect(extensionSource).toContain(
-      "vscode.env.openExternal(vscode.Uri.parse(INSTALLATION_GUIDE_URL))",
-    );
+    expect(
+      computeStaleIntegrationAssets(
+        { mcpVersion: 12, skillVersion: 4, sessionSkillVersion: 1 },
+        manifest(
+          12,
+          { agents: 4, claude: 4, antigravity: 4 },
+          { agents: 1, claude: 1, antigravity: 1 },
+        ),
+        ["agents", "claude", "antigravity"],
+      ),
+    ).toEqual([]);
+
+    expect(
+      computeStaleIntegrationAssets(
+        { mcpVersion: 12, skillVersion: 4, sessionSkillVersion: 1 },
+        manifest(12, { agents: 4, antigravity: 3 }, { agents: 1, antigravity: 1 }),
+        ["agents", "antigravity"],
+      ),
+    ).toEqual(["skill:antigravity"]);
+
+    expect(
+      computeStaleIntegrationAssets(
+        { mcpVersion: 12, skillVersion: 4 },
+        manifest(12, { agents: 4 }, { agents: 1 }),
+        ["agents"],
+      ),
+    ).toEqual([]);
   });
 });

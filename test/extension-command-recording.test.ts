@@ -2,15 +2,25 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  CREATE_REVIEW_ARTIFACT_SKILL_VERSION,
+  MCP_VERSION,
+  WORK_SESSION_SKILL_VERSION,
+} from "../src/shared/contracts";
+import type { AutomaticIntegrationUpgradeDeps } from "../src/extension/upgrade-notification";
+import { INSTALLATION_GUIDE_URL } from "../src/extension/upgrade-notification";
 
 const {
   registeredCommands,
   mockExecuteCommand,
+  mockOpenExternal,
   mockShowInformationMessage,
   mockShowWarningMessage,
   mockShowErrorMessage,
   mockClipboardWriteText,
-  mockUpgradeNotification,
+  mockRunAutomaticIntegrationUpgrade,
+  sidebarSpies,
+  conversationServiceSpies,
   workspaceIntegrationSpies,
 } = vi.hoisted(() => {
   const commands = new Map<string, (...args: unknown[]) => unknown>();
@@ -21,11 +31,21 @@ const {
       if (handler) return handler(...args);
       return undefined;
     }),
+    mockOpenExternal: vi.fn(async () => true),
     mockShowInformationMessage: vi.fn(async () => undefined),
     mockShowWarningMessage: vi.fn(async () => undefined),
     mockShowErrorMessage: vi.fn(async () => undefined),
     mockClipboardWriteText: vi.fn(async () => undefined),
-    mockUpgradeNotification: vi.fn(async () => undefined),
+    mockRunAutomaticIntegrationUpgrade: vi.fn(
+      async (_deps: AutomaticIntegrationUpgradeDeps): Promise<void> => undefined,
+    ),
+    sidebarSpies: {
+      recentRefresh: vi.fn(),
+      sessionsRefresh: vi.fn(),
+    },
+    conversationServiceSpies: {
+      notifyChanged: vi.fn(),
+    },
     workspaceIntegrationSpies: {
       installAllDetectedIntegrations: vi.fn(async () => ({ installedClients: ["Codex"] })),
       installCopilotIntegration: vi.fn(async () => ({ userConfigPath: "/tmp/mcp.json" })),
@@ -51,11 +71,13 @@ const {
       })),
       getMcpConfigSnippet: vi.fn(() => "{}"),
       getReviewSkillMarkdown: vi.fn(async () => "# Review"),
-      getDetectedSkillTargets: vi.fn(() => ["agents"]),
-      readInstalledIntegrationVersion: vi.fn(async () => ({ status: "missing" })),
-      upgradeDetectedIntegrations: vi.fn(async () => {
-        throw new Error("upgradeDetectedIntegrations must not be called in Phase 1 activation");
-      }),
+      readInstalledIntegrationVersion: vi.fn(async () => ({ status: "missing" as const })),
+      upgradeDetectedIntegrations: vi.fn(async () => ({
+        clientIds: ["codex" as const],
+        skillTargets: ["agents" as const],
+        updatedAssets: ["mcp" as const],
+        clients: [{ id: "codex" as const, name: "Codex", status: "updated" as const }],
+      })),
     },
   };
 });
@@ -77,7 +99,7 @@ vi.mock("vscode", () => ({
   },
   env: {
     clipboard: { writeText: mockClipboardWriteText },
-    openExternal: vi.fn(async () => true),
+    openExternal: mockOpenExternal,
   },
   commands: {
     registerCommand: (id: string, handler: (...args: unknown[]) => unknown) => {
@@ -118,12 +140,12 @@ vi.mock("../src/extension/work-session-provider", () => ({
 vi.mock("../src/extension/work-session-sidebar", () => ({
   RecentArtifactsTreeDataProvider: class {
     onDidChangeTreeData = () => ({ dispose: () => {} });
-    refresh = vi.fn();
+    refresh = sidebarSpies.recentRefresh;
     getKindFilter = () => undefined;
   },
   WorkSessionsTreeDataProvider: class {
     onDidChangeTreeData = () => ({ dispose: () => {} });
-    refresh = vi.fn();
+    refresh = sidebarSpies.sessionsRefresh;
     getTypeFilter = () => undefined;
     setTypeFilter = vi.fn();
   },
@@ -142,7 +164,7 @@ vi.mock("../src/extension/artifact-review-open", () => ({
 }));
 vi.mock("../src/extension/conversation-artifact-service", () => ({
   ConversationArtifactService: class {
-    notifyChanged = vi.fn();
+    notifyChanged = conversationServiceSpies.notifyChanged;
     dispose = () => {};
   },
   setupConversationRegistryWatcher: vi.fn(async () => ({ dispose: () => {} })),
@@ -162,20 +184,105 @@ vi.mock("../src/extension/upgrade-notification", async (importOriginal) => {
   const original = await importOriginal<typeof import("../src/extension/upgrade-notification")>();
   return {
     ...original,
-    maybeShowUpgradeNotification: mockUpgradeNotification,
+    runAutomaticIntegrationUpgrade: mockRunAutomaticIntegrationUpgrade,
   };
 });
 vi.mock("../src/extension/workspace-integration", () => workspaceIntegrationSpies);
 
 import { activate } from "../src/extension/extension";
 
-describe("Extension manual command recording & Phase 1 activation boundary", () => {
+describe("Extension activation auto-upgrade wiring & manual command recording", () => {
   afterEach(() => {
     vi.clearAllMocks();
+    vi.restoreAllMocks();
     registeredCommands.clear();
   });
 
-  it("passes recordClientSelection: true on all 16 manual install/uninstall commands, keeps aliases single-recorded, avoids recording in non-mutating commands, and keeps existing activation notification", async () => {
+  it("triggers automatic upgrade non-blockingly at activation regardless of legacy notification globalState and wires real callbacks", async () => {
+    const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "ai-artifacts-ext-act-"));
+    try {
+      vi.spyOn(os, "homedir").mockReturnValue(tempRoot);
+
+      let releaseUpgrade!: () => void;
+      const pendingUpgrade = new Promise<void>((resolve) => {
+        releaseUpgrade = resolve;
+      });
+      mockRunAutomaticIntegrationUpgrade.mockReturnValueOnce(pendingUpgrade);
+
+      const globalStateGet = vi.fn((key: string) => {
+        if (key === "upgradeNotification.lastNotifiedIntegrationState") {
+          return {
+            mcpVersion: MCP_VERSION,
+            skillVersion: CREATE_REVIEW_ARTIFACT_SKILL_VERSION,
+            sessionSkillVersion: WORK_SESSION_SKILL_VERSION,
+            staleAssets: ["mcp", "skill:agents", "session-skill:agents"],
+          };
+        }
+        return undefined;
+      });
+      const globalStateUpdate = vi.fn(async () => undefined);
+
+      const context = {
+        extensionUri: { fsPath: tempRoot },
+        globalStorageUri: { fsPath: path.join(tempRoot, "storage") },
+        globalState: { get: globalStateGet, update: globalStateUpdate },
+        subscriptions: [] as Array<{ dispose: () => void }>,
+      } as any;
+
+      // activate(context) must resolve even while the upgrade promise is still pending
+      await activate(context);
+
+      expect(mockRunAutomaticIntegrationUpgrade).toHaveBeenCalledTimes(1);
+      expect(registeredCommands.has("agentPlus.installAllIntegrations")).toBe(true);
+      expect(globalStateGet).not.toHaveBeenCalledWith("upgradeNotification.lastNotifiedIntegrationState");
+      expect(globalStateUpdate).not.toHaveBeenCalled();
+
+      // Captured controller deps wire through to real manager/UI/support callbacks
+      const capturedDeps = mockRunAutomaticIntegrationUpgrade.mock.calls[0]![0];
+      expect(capturedDeps.bundledVersions).toEqual({
+        mcpVersion: MCP_VERSION,
+        skillVersion: CREATE_REVIEW_ARTIFACT_SKILL_VERSION,
+        sessionSkillVersion: WORK_SESSION_SKILL_VERSION,
+      });
+
+      const report = await capturedDeps.upgradeIntegrations();
+      expect(workspaceIntegrationSpies.upgradeDetectedIntegrations).toHaveBeenCalledWith(context);
+      expect(report.clientIds).toEqual(["codex"]);
+      expect(workspaceIntegrationSpies.installAllDetectedIntegrations).not.toHaveBeenCalled();
+
+      await capturedDeps.getInstalledIntegrationVersion();
+      expect(workspaceIntegrationSpies.readInstalledIntegrationVersion).toHaveBeenCalledTimes(1);
+
+      capturedDeps.refreshIntegrationSupport();
+      expect(sidebarSpies.sessionsRefresh).toHaveBeenCalledTimes(1);
+      expect(sidebarSpies.recentRefresh).toHaveBeenCalledTimes(1);
+      expect(conversationServiceSpies.notifyChanged).toHaveBeenCalledWith([{ kind: "support" }]);
+
+      await capturedDeps.showWarningMessage("warn", "View Installation Guide");
+      expect(mockShowWarningMessage).toHaveBeenCalledWith("warn", "View Installation Guide");
+
+      await capturedDeps.showErrorMessage("err", "View Installation Guide");
+      expect(mockShowErrorMessage).toHaveBeenCalledWith("err", "View Installation Guide");
+
+      await capturedDeps.openInstallationGuide();
+      expect(mockOpenExternal).toHaveBeenCalledWith({ value: INSTALLATION_GUIDE_URL });
+
+      const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      const err = new Error("diag detail");
+      capturedDeps.reportDiagnostic("failed check", err);
+      expect(consoleErrorSpy).toHaveBeenCalledWith(
+        "AI Artifacts automatic integration upgrade: failed check",
+        err,
+      );
+
+      releaseUpgrade();
+      await pendingUpgrade;
+    } finally {
+      await fs.rm(tempRoot, { recursive: true, force: true }).catch(() => {});
+    }
+  });
+
+  it("passes recordClientSelection: true on all 16 manual install/uninstall commands, keeps aliases single-recorded, and avoids recording in Verify/Copy", async () => {
     const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "ai-artifacts-ext-cmd-"));
     try {
       vi.spyOn(os, "homedir").mockReturnValue(tempRoot);
@@ -188,15 +295,13 @@ describe("Extension manual command recording & Phase 1 activation boundary", () 
 
       await activate(context);
 
-      // Phase 1 keeps existing activation notification and does NOT invoke upgradeDetectedIntegrations
-      expect(mockUpgradeNotification).toHaveBeenCalledTimes(1);
-      expect(workspaceIntegrationSpies.upgradeDetectedIntegrations).not.toHaveBeenCalled();
-
       // Context-bearing install commands
       await registeredCommands.get("agentPlus.installAllIntegrations")!();
       expect(workspaceIntegrationSpies.installAllDetectedIntegrations).toHaveBeenCalledWith(context, {
         recordClientSelection: true,
       });
+      expect(workspaceIntegrationSpies.checkAllIntegrations).toHaveBeenCalledWith(context);
+      expect(mockShowInformationMessage).toHaveBeenCalledTimes(1);
 
       const installWithContextCommands: Array<[string, keyof typeof workspaceIntegrationSpies]> = [
         ["agentPlus.installCopilotIntegration", "installCopilotIntegration"],
@@ -266,4 +371,3 @@ describe("Extension manual command recording & Phase 1 activation boundary", () 
     }
   });
 });
-

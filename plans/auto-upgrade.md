@@ -1,19 +1,19 @@
-# IDEAS
+# Auto-upgrade Integrations Notes
 
-- Tự động upgrade integration khi extension activate và phát hiện MCP/skill cần cập nhật; bỏ thông báo yêu cầu người dùng bấm `Run Installer`.
-- Dùng auto detector hiện có để xác định các client cần xử lý; không lưu thêm danh sách client người dùng đã cài hoặc sử dụng.
-- Không detect được client thì hướng người dùng về installer/hướng dẫn cài thủ công. Các lệnh install thủ công vẫn được giữ lại cho setup và sửa cấu hình.
-- Tách luồng `upgrade` khỏi `install`: mỗi driver có entry point upgrade riêng, được integration manager gọi rõ ràng.
-- Upgrade dùng chung hạ tầng với installer: xác định đường dẫn, đọc version receipt, triển khai asset, bảo toàn customization, ghi file và verify; không gọi lại toàn bộ luồng install.
-- Integration manager cập nhật MCP runtime và hai skill dùng chung trong `.agents` một lần; driver xử lý asset riêng của client, như hai skill trong `.claude`.
-- Quyết định cập nhật theo version độc lập của MCP, `create-review-artifact` và `work-session`; thay đổi version extension đơn thuần không buộc upgrade integration. Asset đã đúng version thì bỏ qua.
-- Mặc định upgrade chỉ cập nhật MCP/skill cần thiết; không ghi lại MCP definition/config, không chạy lại setup hoặc cleanup legacy của luồng install.
-- Driver hỗ trợ cập nhật MCP definition khi phiên bản có thay đổi cần thiết cho client đó, ví dụ thêm/đổi tool trong danh sách khai báo. Không có thay đổi definition thì mặc định không làm gì.
-- Có thể dùng mốc `MCP_VERSION` để khai báo migration definition trong từng driver; xử lý các mốc nằm trong khoảng version upgrade, kể cả khi người dùng bỏ qua phiên bản trung gian. Chạy lại không ghi config nếu phần cần cập nhật đã đúng.
+- Tự động upgrade integration khi extension activate và phát hiện MCP, skill hoặc client definition cần cập nhật; bỏ thông báo `Run Installer` / `Later` theo fingerprint cũ.
+- Hợp nhất danh sách client đã lưu (`~/.ai-artifacts/managed/installed-clients.json`, chỉ ghi khi chạy lệnh install/uninstall thủ công) với kết quả auto-detector (`saved ∪ detected`) qua tất cả bảy driver (Copilot, Cursor, Codex, Claude, Windsurf, Cline, Antigravity) trước khi kiểm tra hoặc triển khai asset.
+- Khi không có client trong `saved ∪ detected`, coordinator trả report rỗng; controller mới đọc receipt asset chung (`agents`) để phân biệt trường hợp im lặng (đã hiện hành), warning hướng dẫn cài thủ công (thiếu/invalid/stale), hoặc error (lỗi I/O). Các lệnh install/uninstall thủ công vẫn giữ nguyên cho setup lần đầu và sửa cấu hình.
+- Tách luồng `upgrade` khỏi `install`: mỗi driver có entry point `upgrade(context)` riêng, được integration manager (`upgradeDetectedIntegrations(context)`) gọi rõ ràng.
+- Upgrade dùng chung hạ tầng với installer: xác định đường dẫn, đọc version receipt, triển khai asset, bảo toàn customization, ghi file atomically và verify; không gọi lại toàn bộ luồng install hoặc cleanup legacy.
+- Integration manager cập nhật MCP runtime và hai skill dùng chung trong `.agents` một lần; mỗi driver xử lý asset riêng của client (`create-review-artifact` và `work-session` trong `~/.claude/skills/` cho Claude và `~/.gemini/config/skills/` cho Antigravity).
+- Quyết định cập nhật asset theo version độc lập của MCP, `create-review-artifact` và `work-session`; thay đổi version extension đơn thuần không buộc viết lại asset. Asset đã đúng version thì bỏ qua.
+- Mặc định upgrade chỉ cập nhật asset cần thiết; không ghi lại toàn bộ MCP definition/config, không chạy lại setup hoặc cleanup legacy của luồng install, và không tự tạo mới config/timeout hoặc sửa Antigravity user rules/permissions.
+- Mỗi lần activate có target, các driver vẫn chạy `upgrade()` và `check()` kể cả khi asset receipt đã hiện hành để kiểm tra và nối lại các bản vá definition còn thiếu dựa trên config thực tế trên đĩa (ví dụ thêm/bổ sung tool trong khai báo khi bỏ qua phiên bản trung gian). Chạy lại không ghi file nếu phần cần cập nhật đã đúng.
+- Có thể dùng `targetMcpVersion` / mốc `MCP_VERSION` để khai báo migration definition trong từng driver; với Codex, bản vá chỉ bổ sung `[mcp_servers.ai_artifacts.tools.join_session]` cho MCP >= 12 khi entry đã tồn tại, còn Antigravity giữ nguyên config và `timeoutSeconds` hiện có.
 - Phân biệt danh sách tool được phép sử dụng với approval theo từng tool. Client dùng wildcard như `tools: ["*"]` không cần cập nhật danh sách chỉ vì thêm tool; áp dụng đúng schema của từng client, không dùng lẫn config Copilot CLI với Copilot trong VS Code.
 - Chỉ patch phần definition cần thay đổi của AI Artifacts, giữ nguyên các thiết lập khác trong server entry và config người dùng; không dùng thao tác thay toàn bộ server entry cho upgrade.
-- Đồng bộ verification với luồng upgrade và definition của từng client. Cần xử lý kiểm tra Codex hiện yêu cầu đủ từng tool trong config, bao gồm `join_session`.
-- Giữ cơ chế bảo toàn `description` và `USER CUSTOM RULES` của review skill; Work Session skill được cập nhật bằng nội dung chính thức.
-- Verify asset và các thay đổi definition bắt buộc trước khi ghi receipt hoàn tất tương ứng; lỗi một phần không được đánh dấu toàn bộ upgrade đã thành công, và phải còn khả năng retry.
-- Upgrade thành công chạy im lặng; thất bại thì báo lỗi có thông tin xử lý. Việc cập nhật file không đồng nghĩa client đang chạy đã nạp bản mới: vẫn cần restart client và mở chat mới theo hướng dẫn sử dụng.
-- Đây là ideas cho thay đổi sắp tới, chưa phải mô tả hành vi đã triển khai.
+- Đồng bộ verification với luồng upgrade và definition của từng client; Codex kiểm tra đủ danh sách `tools` yêu cầu gồm `join_session`, và driver thiếu cấu hình, sai config hoặc thiếu skill dù receipt đã khớp trả về `setup-required` thay vì tự cài đặt hay âm thầm đánh dấu thành công.
+- Giữ cơ chế bảo toàn `description` và `USER CUSTOM RULES` của `create-review-artifact` độc lập cho `.agents`, `.claude` và `~/.gemini/config/skills/` (fail-closed trước khi thay thế nếu lỗi parse); `work-session` được cập nhật bằng nội dung chính thức.
+- Verify asset và các thay đổi definition bắt buộc trước khi ghi receipt hoàn tất tương ứng (commit từng phần thành công cho shared assets và từng client); lỗi từng client thành `failed` không làm dừng các client còn lại và không được đánh dấu receipt thành công. Lỗi ở bước đọc saved clients/receipt hoặc đồng bộ asset chung làm reject coordinator để tránh khai báo thành công giả.
+- Thành công, no-op hoặc cập nhật definition sạch chạy im lặng và chỉ refresh support UI một lần trong `finally`; `setup-required` hiện một warning gộp kèm tên command cài theo client, còn `failed` hoặc coordinator rejection hiện một error gộp kèm `View Installation Guide`. Cập nhật file không tự restart AI client hoặc nạp hot vào chat đang mở: vẫn cần restart client và mở chat mới theo tài liệu sử dụng.
+- **Trạng thái hiện tại:** Đã triển khai xong Phase 1 (saved client store, coordinator & bảy client drivers, verification) và Phase 2 (wiring activation, upgrade controller & đồng bộ tài liệu); đã xác minh qua `check`, automated test suite và production build, trong khi smoke test trực tiếp trên VS Code Extension Development Host và AI client thật chưa chạy ở bước headless này.
