@@ -22,7 +22,7 @@ import { CopilotClientDriver } from "../src/extension/mcp-clients/copilot-client
 import { ClineClientDriver, getClineSettingsPath } from "../src/extension/mcp-clients/cline-client";
 import { cleanupBaseMcpServer } from "../src/extension/mcp-clients/base-cleanup";
 import { runUninstall } from "../src/extension/uninstall-entry";
-import { USER_CUSTOM_RULES_END } from "../src/extension/mcp-clients/skill-helper";
+import { OFFICIAL_SKILL_DESCRIPTIONS, USER_CUSTOM_RULES_END } from "../src/extension/mcp-clients/skill-helper";
 
 describe("JSON MCP Helper", () => {
   let tempDir: string;
@@ -973,6 +973,447 @@ describe("Uninstall & Base Assets Cleanup", () => {
         process.env.APPDATA = originalAppData;
       }
     }
+  });
+});
+
+describe("Client Driver Upgrade", () => {
+  let tempHome: string;
+
+  beforeEach(async () => {
+    tempHome = path.join(os.tmpdir(), `ai-artifacts-upgrade-driver-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    await fs.mkdir(tempHome, { recursive: true });
+    vi.spyOn(os, "homedir").mockReturnValue(tempHome);
+  });
+
+  afterEach(async () => {
+    vi.restoreAllMocks();
+    await fs.rm(tempHome, { recursive: true, force: true }).catch(() => {});
+  });
+
+  it("JSON-only drivers report unchanged without writes when ready, and setup-required on missing, mismatched, or invalid JSON config", async () => {
+    const scriptPath = "D:/runtime/ai-artifacts-review-mcp.mjs";
+    const copilotConfig = path.join(tempHome, "Code", "User", "mcp.json");
+    const clineConfig = path.join(tempHome, "Code", "User", "globalStorage", "saoudrizwan.claude-dev", "settings", "cline_mcp_settings.json");
+
+    const drivers = [
+      new CopilotClientDriver(copilotConfig),
+      new CursorClientDriver(),
+      new WindsurfClientDriver(),
+      new ClineClientDriver(clineConfig),
+    ];
+
+    // Missing config files -> setup-required without creating files
+    for (const driver of drivers) {
+      const missingRes = await driver.upgrade({
+        mcpScriptPath: scriptPath,
+        targetMcpVersion: 12,
+        updateReviewSkill: true,
+        updateSessionSkill: true,
+      });
+      expect(missingRes.status).toBe("setup-required");
+      await expect(fs.access(driver.configPath)).rejects.toThrow();
+    }
+
+    // Install all 4, record exact contents, verify upgrade() is unchanged without disk writes
+    for (const driver of drivers) {
+      await driver.install(scriptPath);
+    }
+    const beforeContents = await Promise.all(drivers.map((d) => fs.readFile(d.configPath, "utf8")));
+    const writeFileSpy = vi.spyOn(fs, "writeFile");
+    const renameSpy = vi.spyOn(fs, "rename");
+
+    for (const driver of drivers) {
+      const readyRes = await driver.upgrade({
+        mcpScriptPath: scriptPath,
+        targetMcpVersion: 12,
+        updateReviewSkill: true,
+        updateSessionSkill: true,
+      });
+      expect(readyRes).toEqual({ status: "unchanged" });
+    }
+    expect(writeFileSpy).not.toHaveBeenCalled();
+    expect(renameSpy).not.toHaveBeenCalled();
+    for (const [index, driver] of drivers.entries()) {
+      await expect(fs.readFile(driver.configPath, "utf8")).resolves.toBe(beforeContents[index]);
+    }
+
+    // Mismatched runtime path and corrupt JSON both yield setup-required without writing
+    for (const [index, driver] of drivers.entries()) {
+      const mismatchRes = await driver.upgrade({
+        mcpScriptPath: "D:/runtime/other.mjs",
+        targetMcpVersion: 12,
+        updateReviewSkill: false,
+        updateSessionSkill: false,
+      });
+      expect(mismatchRes.status).toBe("setup-required");
+      await expect(fs.readFile(driver.configPath, "utf8")).resolves.toBe(beforeContents[index]);
+
+      const corruptRaw = "{ invalid json";
+      await fs.writeFile(driver.configPath, corruptRaw, "utf8");
+      writeFileSpy.mockClear();
+      renameSpy.mockClear();
+      const corruptRes = await driver.upgrade({
+        mcpScriptPath: scriptPath,
+        targetMcpVersion: 12,
+        updateReviewSkill: false,
+        updateSessionSkill: false,
+      });
+      expect(corruptRes.status).toBe("setup-required");
+      expect(writeFileSpy).not.toHaveBeenCalled();
+      expect(renameSpy).not.toHaveBeenCalled();
+      await expect(fs.readFile(driver.configPath, "utf8")).resolves.toBe(corruptRaw);
+    }
+  });
+
+  it("Codex driver upgrades 5-tool managed config, skips 6-tool, avoids writes if candidate still invalid, handles conflicts, and ignores legacy hooks", async () => {
+    const originalCodexHome = process.env.CODEX_HOME;
+    const codexHome = path.join(tempHome, ".codex");
+    process.env.CODEX_HOME = codexHome;
+    try {
+      const scriptPath = "C:/Users/Test/.ai-artifacts/managed/runtime/ai-artifacts-review-mcp.mjs";
+      const codexDriver = new CodexClientDriver();
+
+      // Missing config -> setup-required without creating .codex/config.toml
+      expect(await codexDriver.upgrade({
+        mcpScriptPath: scriptPath,
+        targetMcpVersion: 12,
+        updateReviewSkill: false,
+        updateSessionSkill: false,
+      })).toMatchObject({ status: "setup-required" });
+      await expect(fs.access(codexDriver.configPath)).rejects.toThrow();
+
+      await fs.mkdir(codexHome, { recursive: true });
+      const legacyHooksPath = path.join(codexHome, "hooks.json");
+      const legacyHookContent = JSON.stringify({
+        hooks: {
+          PostToolUse: [{ matcher: "apply_patch", hooks: [{ type: "command", command: "node ~/.codex/codex-artifacts/codex-artifacts-stamp-origin.mjs" }] }],
+        },
+      });
+      await fs.writeFile(legacyHooksPath, legacyHookContent, "utf8");
+
+      const fiveTool = [
+        'model = "gpt-test"',
+        "",
+        "# >>> AI Artifacts review MCP >>>",
+        "[mcp_servers.ai_artifacts]",
+        'command = "node"',
+        `args = ["${scriptPath}"]`,
+        "tool_timeout_sec = 3600",
+        'default_tools_approval_mode = "approve"',
+        "",
+        "[mcp_servers.ai_artifacts.tools.resolve_artifact_window]",
+        'approval_mode = "approve"',
+        "",
+        "[mcp_servers.ai_artifacts.tools.create_artifact]",
+        'approval_mode = "never"',
+        "",
+        "[mcp_servers.ai_artifacts.tools.wait_for_artifact_review]",
+        'approval_mode = "approve"',
+        "",
+        "[mcp_servers.ai_artifacts.tools.inspect_artifact_review]",
+        'approval_mode = "approve"',
+        "",
+        "[mcp_servers.ai_artifacts.tools.advance_and_wait_for_artifact]",
+        'approval_mode = "approve"',
+        "# <<< AI Artifacts review MCP <<<",
+        "",
+      ].join("\n");
+      await fs.writeFile(codexDriver.configPath, fiveTool, "utf8");
+
+      const firstUpgrade = await codexDriver.upgrade({
+        mcpScriptPath: scriptPath,
+        targetMcpVersion: 12,
+        updateReviewSkill: false,
+        updateSessionSkill: false,
+      });
+      expect(firstUpgrade).toEqual({ status: "updated" });
+      expect((await codexDriver.check(scriptPath)).status).toBe("ready");
+
+      const patchedContent = await fs.readFile(codexDriver.configPath, "utf8");
+      expect(patchedContent).toContain("[mcp_servers.ai_artifacts.tools.create_artifact]\napproval_mode = \"never\"");
+      expect(patchedContent).toContain("[mcp_servers.ai_artifacts.tools.join_session]\napproval_mode = \"approve\"");
+      await expect(fs.readFile(legacyHooksPath, "utf8")).resolves.toBe(legacyHookContent);
+
+      // Re-running on ready 6-tool config is unchanged with no write
+      const writeSpy = vi.spyOn(fs, "writeFile");
+      const renameSpy = vi.spyOn(fs, "rename");
+      expect(await codexDriver.upgrade({
+        mcpScriptPath: scriptPath,
+        targetMcpVersion: 12,
+        updateReviewSkill: false,
+        updateSessionSkill: false,
+      })).toEqual({ status: "unchanged" });
+      expect(writeSpy).not.toHaveBeenCalled();
+      expect(renameSpy).not.toHaveBeenCalled();
+
+      // Candidate that would still fail verification (bad timeout) must NOT be written
+      const badTimeoutFiveTool = fiveTool.replace("tool_timeout_sec = 3600", "tool_timeout_sec = 180");
+      await fs.writeFile(codexDriver.configPath, badTimeoutFiveTool, "utf8");
+      writeSpy.mockClear();
+      renameSpy.mockClear();
+      const badCandidateRes = await codexDriver.upgrade({
+        mcpScriptPath: scriptPath,
+        targetMcpVersion: 12,
+        updateReviewSkill: false,
+        updateSessionSkill: false,
+      });
+      expect(badCandidateRes.status).toBe("setup-required");
+      expect(writeSpy).not.toHaveBeenCalled();
+      expect(renameSpy).not.toHaveBeenCalled();
+      await expect(fs.readFile(codexDriver.configPath, "utf8")).resolves.toBe(badTimeoutFiveTool);
+
+      // Unmanaged conflict returns setup-required without throwing or overwriting
+      const conflictConfig = '[mcp_servers.ai_artifacts]\ncommand = "node"\nargs = ["/other.mjs"]\n';
+      await fs.writeFile(codexDriver.configPath, conflictConfig, "utf8");
+      const conflictRes = await codexDriver.upgrade({
+        mcpScriptPath: scriptPath,
+        targetMcpVersion: 12,
+        updateReviewSkill: false,
+        updateSessionSkill: false,
+      });
+      expect(conflictRes.status).toBe("setup-required");
+      expect(conflictRes.detail).toContain("outside the extension-managed block");
+      await expect(fs.readFile(codexDriver.configPath, "utf8")).resolves.toBe(conflictConfig);
+    } finally {
+      if (originalCodexHome === undefined) {
+        delete process.env.CODEX_HOME;
+      } else {
+        process.env.CODEX_HOME = originalCodexHome;
+      }
+    }
+  });
+
+  it("Claude driver upgrades only flagged skills while keeping .claude.json untouched and validating sources before writes", async () => {
+    const customConfig = path.join(tempHome, ".claude.json");
+    const scriptPath = "/Users/test/.ai-artifacts/managed/runtime/ai-artifacts-review-mcp.mjs";
+
+    const reviewSource = path.join(tempHome, "src-skills", "create-review-artifact");
+    const sessionSource = path.join(tempHome, "src-skills", "work-session");
+    await fs.mkdir(path.join(reviewSource, "references"), { recursive: true });
+    await fs.mkdir(path.join(reviewSource, "agents"), { recursive: true });
+    await fs.writeFile(
+      path.join(reviewSource, "SKILL.md"),
+      [
+        "---",
+        "name: create-review-artifact",
+        `description: ${OFFICIAL_SKILL_DESCRIPTIONS.at(-1)}`,
+        "---",
+        "# New Review Core",
+        "<!-- >>> USER CUSTOM RULES >>> -->",
+        "<!-- <<< USER CUSTOM RULES <<< -->",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+    await fs.writeFile(path.join(reviewSource, "references", "artifact-contract.md"), "# Contract v2", "utf8");
+    await fs.writeFile(path.join(reviewSource, "references", "ai-feedback.md"), "# Feedback v2", "utf8");
+    await fs.writeFile(path.join(reviewSource, "agents", "openai.yaml"), "prompt: review", "utf8");
+    await fs.mkdir(path.join(sessionSource, "agents"), { recursive: true });
+    await fs.writeFile(path.join(sessionSource, "SKILL.md"), "# Session v2", "utf8");
+    await fs.writeFile(path.join(sessionSource, "agents", "openai.yaml"), "prompt: session", "utf8");
+
+    const claudeDriver = new ClaudeClientDriver(customConfig, undefined, reviewSource, undefined, sessionSource);
+
+    // Missing config -> setup-required even if flags are true, without deploying skills
+    expect(await claudeDriver.upgrade({
+      mcpScriptPath: scriptPath,
+      targetMcpVersion: 12,
+      updateReviewSkill: true,
+      updateSessionSkill: true,
+    })).toMatchObject({ status: "setup-required" });
+    await expect(fs.access(claudeDriver.skillDirectory)).rejects.toThrow();
+
+    // Corrupt config -> setup-required without touching file
+    await fs.writeFile(customConfig, "{ broken json", "utf8");
+    expect((await claudeDriver.upgrade({
+      mcpScriptPath: scriptPath,
+      targetMcpVersion: 12,
+      updateReviewSkill: true,
+      updateSessionSkill: true,
+    })).status).toBe("setup-required");
+    await expect(fs.readFile(customConfig, "utf8")).resolves.toBe("{ broken json");
+    await fs.rm(customConfig);
+
+    // Valid config + independent .agents contamination + existing custom Claude review skill + missing session skill
+    await fs.writeFile(customConfig, JSON.stringify({ opusProMigrationComplete: true }), "utf8");
+    await upsertJsonMcpServer(customConfig, "ai_artifacts", scriptPath);
+    const beforeConfig = await fs.readFile(customConfig, "utf8");
+
+    const agentsSkill = path.join(tempHome, ".agents", "skills", "create-review-artifact", "SKILL.md");
+    await fs.mkdir(path.dirname(agentsSkill), { recursive: true });
+    await fs.writeFile(agentsSkill, "# Agents contamination\n", "utf8");
+
+    await fs.mkdir(claudeDriver.skillDirectory, { recursive: true });
+    await fs.writeFile(
+      path.join(claudeDriver.skillDirectory, "SKILL.md"),
+      [
+        "---",
+        "name: create-review-artifact",
+        "description: Claude custom description only.",
+        "---",
+        "# Old Review Core",
+        "<!-- >>> USER CUSTOM RULES >>> -->",
+        "- Keep Claude rule.",
+        "<!-- <<< USER CUSTOM RULES <<< -->",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+
+    // Missing packaged session source preflights before modifying review skill too
+    await fs.rm(path.join(sessionSource, "agents", "openai.yaml"));
+    await expect(claudeDriver.upgrade({
+      mcpScriptPath: scriptPath,
+      targetMcpVersion: 12,
+      updateReviewSkill: true,
+      updateSessionSkill: true,
+    })).rejects.toThrow("unavailable or incomplete");
+    await expect(fs.readFile(path.join(claudeDriver.skillDirectory, "SKILL.md"), "utf8")).resolves.toContain("# Old Review Core");
+
+    // Selective review-only upgrade works cleanly when session flag is false
+    const reviewOnlyRes = await claudeDriver.upgrade({
+      mcpScriptPath: scriptPath,
+      targetMcpVersion: 12,
+      updateReviewSkill: true,
+      updateSessionSkill: false,
+    });
+    expect(reviewOnlyRes).toEqual({ status: "updated" });
+    await expect(fs.readFile(customConfig, "utf8")).resolves.toBe(beforeConfig);
+    const updatedClaudeReview = await fs.readFile(path.join(claudeDriver.skillDirectory, "SKILL.md"), "utf8");
+    expect(updatedClaudeReview).toContain("Claude custom description only.");
+    expect(updatedClaudeReview).toContain("- Keep Claude rule.");
+    expect(updatedClaudeReview).toContain("# New Review Core");
+    expect(updatedClaudeReview).not.toContain("Agents contamination");
+    await expect(fs.access(claudeDriver.sessionSkillDirectory)).rejects.toThrow();
+
+    // False flags -> unchanged without disk writes
+    await fs.writeFile(path.join(sessionSource, "agents", "openai.yaml"), "prompt: session", "utf8");
+    const unchangedRes = await claudeDriver.upgrade({
+      mcpScriptPath: scriptPath,
+      targetMcpVersion: 12,
+      updateReviewSkill: false,
+      updateSessionSkill: false,
+    });
+    expect(unchangedRes).toEqual({ status: "unchanged" });
+  });
+
+  it("Antigravity driver keeps config, rules, and permissions untouched in upgrade, rejects corrupt JSON, and requires setup on bad timeout", async () => {
+    const scriptPath = "D:/runtime/ai-artifacts-review-mcp.mjs";
+    const reviewSource = path.join(tempHome, "src-ag", "create-review-artifact");
+    const sessionSource = path.join(tempHome, "src-ag", "work-session");
+    await fs.mkdir(path.join(reviewSource, "references"), { recursive: true });
+    await fs.mkdir(path.join(reviewSource, "agents"), { recursive: true });
+    await fs.writeFile(
+      path.join(reviewSource, "SKILL.md"),
+      [
+        "---",
+        "name: create-review-artifact",
+        `description: ${OFFICIAL_SKILL_DESCRIPTIONS.at(-1)}`,
+        "---",
+        "# Antigravity Review v2",
+        "<!-- >>> USER CUSTOM RULES >>> -->",
+        "<!-- <<< USER CUSTOM RULES <<< -->",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+    await fs.writeFile(path.join(reviewSource, "references", "artifact-contract.md"), "# Contract v2", "utf8");
+    await fs.writeFile(path.join(reviewSource, "references", "ai-feedback.md"), "# Feedback v2", "utf8");
+    await fs.writeFile(path.join(reviewSource, "agents", "openai.yaml"), "prompt: review", "utf8");
+    await fs.mkdir(path.join(sessionSource, "agents"), { recursive: true });
+    await fs.writeFile(path.join(sessionSource, "SKILL.md"), "# Session v2", "utf8");
+    await fs.writeFile(path.join(sessionSource, "agents", "openai.yaml"), "prompt: session", "utf8");
+
+    const driver = new AntigravityClientDriver({
+      userHome: tempHome,
+      sourceSkillDirectory: reviewSource,
+      sourceSessionSkillDirectory: sessionSource,
+    });
+
+    const geminiRulesDoc = path.join(tempHome, ".gemini", "GEMINI.md");
+    const globalRule = path.join(tempHome, ".gemini", "config", "rules", "policy.md");
+    await fs.mkdir(path.dirname(geminiRulesDoc), { recursive: true });
+    await fs.mkdir(path.dirname(globalRule), { recursive: true });
+    await fs.writeFile(geminiRulesDoc, "# GEMINI custom rules\n", "utf8");
+    await fs.writeFile(globalRule, "# Policy rule\n", "utf8");
+
+    // Bad timeoutSeconds in mcp_config.json -> setup-required, no auto-normalization, no skill touch
+    await writeJsonConfig(driver.configPath, {
+      mcpServers: {
+        ai_artifacts: {
+          command: "node",
+          args: [scriptPath],
+          timeoutSeconds: 180,
+          disabledTools: ["join_session"],
+        },
+      },
+    });
+    const badTimeoutRaw = await fs.readFile(driver.configPath, "utf8");
+    const badTimeoutRes = await driver.upgrade({
+      mcpScriptPath: scriptPath,
+      targetMcpVersion: 12,
+      updateReviewSkill: true,
+      updateSessionSkill: true,
+    });
+    expect(badTimeoutRes.status).toBe("setup-required");
+    expect(badTimeoutRes.detail).toContain("timeoutSeconds");
+    await expect(fs.readFile(driver.configPath, "utf8")).resolves.toBe(badTimeoutRaw);
+    await expect(fs.access(driver.skillDirectory)).rejects.toThrow();
+
+    // Corrupt JSON -> throwsSyntaxError (preserved readJsonConfig behavior)
+    await fs.writeFile(driver.configPath, "{ broken", "utf8");
+    await expect(driver.upgrade({
+      mcpScriptPath: scriptPath,
+      targetMcpVersion: 12,
+      updateReviewSkill: true,
+      updateSessionSkill: true,
+    })).rejects.toThrow("Invalid JSON syntax");
+
+    // Valid timeout + permission settings -> upgrade updates flagged skills and preserves config & rules
+    await writeJsonConfig(driver.configPath, {
+      mcpServers: {
+        ai_artifacts: {
+          command: "node",
+          args: [scriptPath],
+          timeoutSeconds: ANTIGRAVITY_MCP_TIMEOUT_SECONDS,
+          disabled: false,
+          disabledTools: ["join_session"],
+        },
+      },
+    });
+    const validConfigBefore = await fs.readFile(driver.configPath, "utf8");
+    await fs.mkdir(driver.skillDirectory, { recursive: true });
+    await fs.writeFile(
+      path.join(driver.skillDirectory, "SKILL.md"),
+      [
+        "---",
+        "name: create-review-artifact",
+        "description: Antigravity custom desc.",
+        "---",
+        "# Old AG Core",
+        "<!-- >>> USER CUSTOM RULES >>> -->",
+        "- AG rule",
+        "<!-- <<< USER CUSTOM RULES <<< -->",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+
+    const res = await driver.upgrade({
+      mcpScriptPath: scriptPath,
+      targetMcpVersion: 12,
+      updateReviewSkill: true,
+      updateSessionSkill: true,
+    });
+    expect(res).toEqual({ status: "updated" });
+    expect((await driver.check(scriptPath)).status).toBe("ready");
+    await expect(fs.readFile(driver.configPath, "utf8")).resolves.toBe(validConfigBefore);
+    await expect(fs.readFile(geminiRulesDoc, "utf8")).resolves.toBe("# GEMINI custom rules\n");
+    await expect(fs.readFile(globalRule, "utf8")).resolves.toBe("# Policy rule\n");
+    const agSkillAfter = await fs.readFile(path.join(driver.skillDirectory, "SKILL.md"), "utf8");
+    expect(agSkillAfter).toContain("description: Antigravity custom desc.");
+    expect(agSkillAfter).toContain("- AG rule");
+    expect(agSkillAfter).toContain("# Antigravity Review v2");
   });
 });
 

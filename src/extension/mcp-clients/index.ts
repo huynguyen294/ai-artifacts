@@ -1,3 +1,4 @@
+import type { McpClientId } from "../../shared/contracts";
 import type { IntegrationCheck } from "../global-integration-status";
 import { CodexClientDriver } from "./codex-client";
 import { CursorClientDriver } from "./cursor-client";
@@ -7,13 +8,26 @@ import { CopilotClientDriver } from "./copilot-client";
 import { ClineClientDriver } from "./cline-client";
 import { AntigravityClientDriver } from "./antigravity-client";
 
+export type ClientUpgradeContext = {
+  mcpScriptPath: string;
+  targetMcpVersion: number;
+  updateReviewSkill: boolean;
+  updateSessionSkill: boolean;
+};
+
+export type ClientUpgradeResult = {
+  status: "unchanged" | "updated" | "setup-required";
+  detail?: string;
+};
+
 export interface McpClientDriver {
-  readonly id: string;
+  readonly id: McpClientId;
   readonly name: string;
   readonly configPath: string;
   isDetected(): boolean;
   check(mcpScriptPath: string): Promise<IntegrationCheck>;
   install(mcpScriptPath: string): Promise<void>;
+  upgrade(context: ClientUpgradeContext): Promise<ClientUpgradeResult>;
   uninstall(): Promise<boolean>;
 }
 

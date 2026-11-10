@@ -136,7 +136,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   const installAllDetectedIntegrationsAndNotify = async (): Promise<void> => {
     try {
-      await installAllDetectedIntegrations(context);
+      await installAllDetectedIntegrations(context, { recordClientSelection: true });
       refreshViewsAndService();
       const verification = await checkAllIntegrations(context);
       const summary = summarizeIntegrationVerification(verification);
@@ -450,7 +450,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     // 2. Copilot (base setup + Code/User/mcp.json)
     vscode.commands.registerCommand("agentPlus.installCopilotIntegration", async () => {
       try {
-        const result = await installCopilotIntegration(context);
+        const result = await installCopilotIntegration(context, { recordClientSelection: true });
         refreshViewsAndService();
         void vscode.window.showInformationMessage(
           `AI Artifacts MCP installed for GitHub Copilot in VS Code User configuration (${result.userConfigPath}).`,
@@ -463,7 +463,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     // 3. Codex
     vscode.commands.registerCommand("agentPlus.installCodexIntegration", async () => {
       try {
-        await installCodexIntegration(context);
+        await installCodexIntegration(context, { recordClientSelection: true });
         refreshViewsAndService();
         void vscode.window.showInformationMessage(
           "AI Artifacts MCP installed for Codex (~/.codex/config.toml). Please restart Codex to activate.",
@@ -476,7 +476,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     // 4. Cursor
     vscode.commands.registerCommand("agentPlus.installCursorIntegration", async () => {
       try {
-        await installCursorIntegration(context);
+        await installCursorIntegration(context, { recordClientSelection: true });
         refreshViewsAndService();
         void vscode.window.showInformationMessage(
           "AI Artifacts MCP installed for Cursor (~/.cursor/mcp.json). Please restart Cursor to activate.",
@@ -489,7 +489,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     // 5. Claude
     vscode.commands.registerCommand("agentPlus.installClaudeIntegration", async () => {
       try {
-        await installClaudeIntegration(context);
+        await installClaudeIntegration(context, { recordClientSelection: true });
         refreshViewsAndService();
         void vscode.window.showInformationMessage(
           "AI Artifacts MCP installed for Claude (~/.claude.json). Please restart Claude to activate.",
@@ -502,7 +502,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     // 6. Windsurf
     vscode.commands.registerCommand("agentPlus.installWindsurfIntegration", async () => {
       try {
-        await installWindsurfIntegration(context);
+        await installWindsurfIntegration(context, { recordClientSelection: true });
         refreshViewsAndService();
         void vscode.window.showInformationMessage(
           "AI Artifacts MCP installed for Windsurf (~/.codeium/windsurf/mcp_config.json). Please restart Windsurf to activate.",
@@ -515,7 +515,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     // 7. Cline
     vscode.commands.registerCommand("agentPlus.installClineIntegration", async () => {
       try {
-        await installClineIntegration(context);
+        await installClineIntegration(context, { recordClientSelection: true });
         refreshViewsAndService();
         void vscode.window.showInformationMessage(
           "AI Artifacts MCP installed for Cline (cline_mcp_settings.json). Please reload Cline or window to activate.",
@@ -528,7 +528,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     // Antigravity
     vscode.commands.registerCommand("agentPlus.installAntigravityIntegration", async () => {
       try {
-        await installAntigravityIntegration(context);
+        await installAntigravityIntegration(context, { recordClientSelection: true });
         refreshViewsAndService();
         void vscode.window.showInformationMessage(
           "AI Artifacts MCP and skills (create-review-artifact, work-session) installed for Antigravity (~/.gemini/config/mcp_config.json). Please restart Antigravity and start a new chat to activate.",
@@ -582,7 +582,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     // 10. Uninstall all detected integrations
     vscode.commands.registerCommand("agentPlus.uninstallAllIntegrations", async () => {
       try {
-        const result = await uninstallAllDetectedIntegrations(context);
+        const result = await uninstallAllDetectedIntegrations(context, { recordClientSelection: true });
         const count = result.uninstalledClients.length;
         const msg =
           count > 0
@@ -597,7 +597,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     // 11. Uninstall Copilot
     vscode.commands.registerCommand("agentPlus.uninstallCopilotIntegration", async () => {
       try {
-        const removed = await uninstallCopilotIntegration(context);
+        const removed = await uninstallCopilotIntegration(context, { recordClientSelection: true });
         if (removed) {
           void vscode.window.showInformationMessage(
             "AI Artifacts MCP uninstalled for GitHub Copilot. Please restart VS Code or reload window to apply changes.",
@@ -613,7 +613,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     // 12. Uninstall Codex
     vscode.commands.registerCommand("agentPlus.uninstallCodexIntegration", async () => {
       try {
-        const removed = await uninstallCodexIntegration();
+        const removed = await uninstallCodexIntegration({ recordClientSelection: true });
         if (removed) {
           void vscode.window.showInformationMessage(
             "AI Artifacts MCP uninstalled for Codex (~/.codex/config.toml). Please restart Codex to apply changes.",
@@ -629,7 +629,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     // 13. Uninstall Cursor
     vscode.commands.registerCommand("agentPlus.uninstallCursorIntegration", async () => {
       try {
-        const removed = await uninstallCursorIntegration();
+        const removed = await uninstallCursorIntegration({ recordClientSelection: true });
         if (removed) {
           void vscode.window.showInformationMessage(
             "AI Artifacts MCP uninstalled for Cursor (~/.cursor/mcp.json). Please restart Cursor to apply changes.",
@@ -645,7 +645,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     // 14. Uninstall Claude
     vscode.commands.registerCommand("agentPlus.uninstallClaudeIntegration", async () => {
       try {
-        const removed = await uninstallClaudeIntegration();
+        const removed = await uninstallClaudeIntegration({ recordClientSelection: true });
         if (removed) {
           void vscode.window.showInformationMessage(
             "AI Artifacts MCP uninstalled for Claude (~/.claude.json). Please restart Claude to apply changes.",
@@ -661,7 +661,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     // 15. Uninstall Windsurf
     vscode.commands.registerCommand("agentPlus.uninstallWindsurfIntegration", async () => {
       try {
-        const removed = await uninstallWindsurfIntegration();
+        const removed = await uninstallWindsurfIntegration({ recordClientSelection: true });
         if (removed) {
           void vscode.window.showInformationMessage(
             "AI Artifacts MCP uninstalled for Windsurf (~/.codeium/windsurf/mcp_config.json). Please restart Windsurf to apply changes.",
@@ -677,7 +677,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     // 16. Uninstall Cline
     vscode.commands.registerCommand("agentPlus.uninstallClineIntegration", async () => {
       try {
-        const removed = await uninstallClineIntegration(context);
+        const removed = await uninstallClineIntegration(context, { recordClientSelection: true });
         if (removed) {
           void vscode.window.showInformationMessage(
             "AI Artifacts MCP uninstalled for Cline (cline_mcp_settings.json). Please reload Cline or window to apply changes.",
@@ -693,7 +693,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     // Uninstall Antigravity
     vscode.commands.registerCommand("agentPlus.uninstallAntigravityIntegration", async () => {
       try {
-        const removed = await uninstallAntigravityIntegration();
+        const removed = await uninstallAntigravityIntegration({ recordClientSelection: true });
         if (removed) {
           void vscode.window.showInformationMessage(
             "AI Artifacts MCP and skills uninstalled for Antigravity (~/.gemini/config/mcp_config.json). Please restart Antigravity to apply changes.",

@@ -3,7 +3,7 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { IntegrationCheck } from "../global-integration-status";
-import type { McpClientDriver } from "./index";
+import type { ClientUpgradeContext, ClientUpgradeResult, McpClientDriver } from "./index";
 import {
   normalizePathForComparison,
   readJsonConfig,
@@ -12,6 +12,8 @@ import {
 import {
   REVIEW_SKILL_ASSETS,
   WORK_SESSION_SKILL_ASSETS,
+  assertSkillSourceAssetsPresent,
+  findPackagedSkillDirectory,
   officialSkillDirectoryIsCurrent,
   replaceOfficialSkillDirectory,
   replaceSkillDirectory,
@@ -44,47 +46,6 @@ function isFileSync(targetPath: string): boolean {
   } catch {
     return false;
   }
-}
-
-function findPackagedSkillDirectory(
-  skillName: "create-review-artifact" | "work-session",
-): string | undefined {
-  const candidates = [
-    path.resolve(__dirname, "..", "..", "..", "skills", skillName),
-    path.resolve(__dirname, "..", "skills", skillName),
-    path.resolve(__dirname, "..", "..", "skills", skillName),
-  ];
-  return candidates.find((candidate) => isDirectorySync(candidate));
-}
-
-async function assertSourceAssetsPresent(
-  skillName: "create-review-artifact" | "work-session",
-  sourceDirectory: string | undefined,
-  assets: readonly string[],
-): Promise<string> {
-  if (!sourceDirectory) {
-    throw new Error(
-      `Packaged ${skillName} skill source directory is not available for Antigravity.`,
-    );
-  }
-  const missingAssets: string[] = [];
-  for (const relativePath of assets) {
-    try {
-      await fs.access(path.join(sourceDirectory, relativePath));
-    } catch (error: any) {
-      if (error?.code === "ENOENT") {
-        missingAssets.push(relativePath);
-      } else {
-        throw error;
-      }
-    }
-  }
-  if (missingAssets.length > 0) {
-    throw new Error(
-      `Antigravity ${skillName} skill source is unavailable or incomplete at "${sourceDirectory}" (missing: ${missingAssets.join(", ")}).`,
-    );
-  }
-  return sourceDirectory;
 }
 
 async function removeTargetIfExists(targetPath: string): Promise<boolean> {
@@ -132,7 +93,7 @@ export class AntigravityClientDriver implements McpClientDriver {
     return (
       explicitPath ??
       this.options.sourceSkillDirectory ??
-      findPackagedSkillDirectory("create-review-artifact")
+      findPackagedSkillDirectory("create-review-artifact", __dirname)
     );
   }
 
@@ -140,7 +101,7 @@ export class AntigravityClientDriver implements McpClientDriver {
     return (
       explicitPath ??
       this.options.sourceSessionSkillDirectory ??
-      findPackagedSkillDirectory("work-session")
+      findPackagedSkillDirectory("work-session", __dirname)
     );
   }
 
@@ -151,7 +112,7 @@ export class AntigravityClientDriver implements McpClientDriver {
     );
   }
 
-  async check(mcpScriptPath: string): Promise<IntegrationCheck> {
+  private async checkDefinition(mcpScriptPath: string): Promise<IntegrationCheck> {
     const config = await readJsonConfig(this.configPath);
     if (!isPlainObject(config)) {
       return { status: "missing" };
@@ -177,6 +138,15 @@ export class AntigravityClientDriver implements McpClientDriver {
       };
     }
 
+    return { status: "ready" };
+  }
+
+  async check(mcpScriptPath: string): Promise<IntegrationCheck> {
+    const definition = await this.checkDefinition(mcpScriptPath);
+    if (definition.status !== "ready") {
+      return definition;
+    }
+
     const skillMain = path.join(this.skillDirectory, "SKILL.md");
     if (!isFileSync(skillMain)) {
       return { status: "missing", detail: "Antigravity skill directory is missing SKILL.md." };
@@ -190,15 +160,17 @@ export class AntigravityClientDriver implements McpClientDriver {
       };
     }
 
-    const source = await assertSourceAssetsPresent(
+    const source = await assertSkillSourceAssetsPresent(
       "create-review-artifact",
       this.resolveSkillSource(),
       REVIEW_SKILL_ASSETS,
+      "Antigravity",
     );
-    const sourceSession = await assertSourceAssetsPresent(
+    const sourceSession = await assertSkillSourceAssetsPresent(
       "work-session",
       this.resolveSessionSkillSource(),
       WORK_SESSION_SKILL_ASSETS,
+      "Antigravity",
     );
 
     if (!(await skillDirectoryIsCurrent(source, this.skillDirectory))) {
@@ -217,15 +189,17 @@ export class AntigravityClientDriver implements McpClientDriver {
     sourceSkillPath?: string,
     sourceSessionSkillPath?: string,
   ): Promise<void> {
-    const source = await assertSourceAssetsPresent(
+    const source = await assertSkillSourceAssetsPresent(
       "create-review-artifact",
       this.resolveSkillSource(sourceSkillPath),
       REVIEW_SKILL_ASSETS,
+      "Antigravity",
     );
-    const sourceSession = await assertSourceAssetsPresent(
+    const sourceSession = await assertSkillSourceAssetsPresent(
       "work-session",
       this.resolveSessionSkillSource(sourceSessionSkillPath),
       WORK_SESSION_SKILL_ASSETS,
+      "Antigravity",
     );
 
     const config = await readJsonConfig(this.configPath);
@@ -249,6 +223,46 @@ export class AntigravityClientDriver implements McpClientDriver {
 
     await replaceSkillDirectory(source, this.skillDirectory);
     await replaceOfficialSkillDirectory(sourceSession, this.sessionSkillDirectory);
+  }
+
+  async upgrade(context: ClientUpgradeContext): Promise<ClientUpgradeResult> {
+    const definition = await this.checkDefinition(context.mcpScriptPath);
+    if (definition.status !== "ready") {
+      return {
+        status: "setup-required",
+        detail: definition.detail ?? "Antigravity MCP configuration is missing or needs setup.",
+      };
+    }
+
+    if (!context.updateReviewSkill && !context.updateSessionSkill) {
+      return { status: "unchanged" };
+    }
+
+    const source = context.updateReviewSkill
+      ? await assertSkillSourceAssetsPresent(
+          "create-review-artifact",
+          this.resolveSkillSource(),
+          REVIEW_SKILL_ASSETS,
+          "Antigravity",
+        )
+      : undefined;
+    const sourceSession = context.updateSessionSkill
+      ? await assertSkillSourceAssetsPresent(
+          "work-session",
+          this.resolveSessionSkillSource(),
+          WORK_SESSION_SKILL_ASSETS,
+          "Antigravity",
+        )
+      : undefined;
+
+    if (source) {
+      await replaceSkillDirectory(source, this.skillDirectory);
+    }
+    if (sourceSession) {
+      await replaceOfficialSkillDirectory(sourceSession, this.sessionSkillDirectory);
+    }
+
+    return { status: "updated" };
   }
 
   async uninstall(): Promise<boolean> {

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   CODEX_ARTIFACTS_MCP_TIMEOUT_SECONDS,
   hasManagedCodexArtifactsMcp,
+  patchCodexArtifactsMcpForUpgrade,
   removeCodexArtifactsMcp,
   upsertCodexArtifactsMcp,
 } from "../src/extension/mcp-config";
@@ -120,5 +121,103 @@ describe("Codex Artifacts MCP config", () => {
     expect(updated).toContain('[plugins."test-plugin@bundled"]');
     expect(updated).toContain("[mcp_servers.ai_artifacts]");
     expect(hasManagedCodexArtifactsMcp(updated, "D:/new/path/ai-artifacts-review-mcp.mjs")).toBe(true);
+  });
+
+  it("patches missing join_session into a 5-tool managed block at MCP >= 12 while preserving overrides and CRLF", () => {
+    const scriptPath = "C:/Users/Admin/.ai-artifacts/managed/runtime/ai-artifacts-review-mcp.mjs";
+    const fiveToolConfig = [
+      'model = "gpt-5.6-sol"',
+      "",
+      "# >>> AI Artifacts review MCP >>>",
+      "[mcp_servers.ai_artifacts]",
+      'command = "node"',
+      'args = ["C:/Users/Admin/.ai-artifacts/managed/runtime/ai-artifacts-review-mcp.mjs"]',
+      "tool_timeout_sec = 3600",
+      'default_tools_approval_mode = "approve"',
+      'custom_flag = "keep-me"',
+      "",
+      "[mcp_servers.ai_artifacts.tools.resolve_artifact_window]",
+      'approval_mode = "approve"',
+      "",
+      "[mcp_servers.ai_artifacts.tools.create_artifact]",
+      'approval_mode = "never"',
+      "",
+      "[mcp_servers.ai_artifacts.tools.wait_for_artifact_review]",
+      'approval_mode = "approve"',
+      "",
+      "[mcp_servers.ai_artifacts.tools.inspect_artifact_review]",
+      'approval_mode = "approve"',
+      "",
+      "[mcp_servers.ai_artifacts.tools.advance_and_wait_for_artifact]",
+      'approval_mode = "approve"',
+      "# <<< AI Artifacts review MCP <<<",
+      "",
+      "[mcp_servers.other]",
+      'command = "other"',
+      "",
+    ].join("\r\n");
+
+    expect(patchCodexArtifactsMcpForUpgrade(fiveToolConfig, scriptPath, 11)).toBe(fiveToolConfig);
+
+    const patched = patchCodexArtifactsMcpForUpgrade(fiveToolConfig, scriptPath, 12);
+    expect(patched).not.toBe(fiveToolConfig);
+    expect(patched).toContain("\r\n");
+    expect(patched.replaceAll("\r\n", "")).not.toContain("\n");
+    expect(patched).toContain('custom_flag = "keep-me"');
+    expect(patched).toContain("[mcp_servers.ai_artifacts.tools.create_artifact]\r\napproval_mode = \"never\"");
+    expect(patched).toContain("[mcp_servers.ai_artifacts.tools.join_session]\r\napproval_mode = \"approve\"\r\n# <<< AI Artifacts review MCP <<<");
+    expect(patched).toContain("[mcp_servers.other]");
+    expect(hasManagedCodexArtifactsMcp(patched, scriptPath)).toBe(true);
+
+    // Calling again on already 6-tool config is an exact no-op
+    expect(patchCodexArtifactsMcpForUpgrade(patched, scriptPath, 12)).toBe(patched);
+  });
+
+  it("handles displaced closing marker when patching join_session and leaves existing join_session or missing block untouched", () => {
+    const scriptPath = "C:/Users/Admin/.ai-artifacts/managed/runtime/ai-artifacts-review-mcp.mjs";
+    const displacedFiveTool = [
+      "# >>> AI Artifacts review MCP >>>",
+      "[mcp_servers.ai_artifacts]",
+      'command = "node"',
+      `args = ["${scriptPath}"]`,
+      "tool_timeout_sec = 3600",
+      'default_tools_approval_mode = "approve"',
+      "",
+      "[mcp_servers.ai_artifacts.tools.resolve_artifact_window]",
+      'approval_mode = "approve"',
+      "",
+      "[mcp_servers.ai_artifacts.tools.create_artifact]",
+      'approval_mode = "approve"',
+      "",
+      "[mcp_servers.ai_artifacts.tools.wait_for_artifact_review]",
+      'approval_mode = "approve"',
+      "",
+      "[mcp_servers.ai_artifacts.tools.inspect_artifact_review]",
+      'approval_mode = "approve"',
+      "",
+      "[mcp_servers.ai_artifacts.tools.advance_and_wait_for_artifact]",
+      'approval_mode = "approve"',
+      "",
+      "[mcp_servers.node_repl]",
+      'command = "node_repl.exe"',
+      "# <<< AI Artifacts review MCP <<<",
+      "",
+    ].join("\n");
+
+    const patchedDisplaced = patchCodexArtifactsMcpForUpgrade(displacedFiveTool, scriptPath, 12);
+    expect(hasManagedCodexArtifactsMcp(patchedDisplaced, scriptPath)).toBe(true);
+    expect(patchedDisplaced.indexOf("[mcp_servers.ai_artifacts.tools.join_session]")).toBeLessThan(
+      patchedDisplaced.indexOf("[mcp_servers.node_repl]"),
+    );
+    expect(patchedDisplaced).toContain("[mcp_servers.node_repl]\ncommand = \"node_repl.exe\"");
+
+    const customJoinSession = patchedDisplaced.replace(
+      '[mcp_servers.ai_artifacts.tools.join_session]\napproval_mode = "approve"',
+      '[mcp_servers.ai_artifacts.tools.join_session]\napproval_mode = "prompt"',
+    );
+    expect(patchCodexArtifactsMcpForUpgrade(customJoinSession, scriptPath, 12)).toBe(customJoinSession);
+
+    const unmanaged = '[mcp_servers.ai_artifacts]\ncommand = "node"\nargs = ["/tmp/server.mjs"]\n';
+    expect(patchCodexArtifactsMcpForUpgrade(unmanaged, "/tmp/server.mjs", 12)).toBe(unmanaged);
   });
 });

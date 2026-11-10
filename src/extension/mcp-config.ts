@@ -203,3 +203,59 @@ export function hasManagedCodexArtifactsMcp(config: string, serverScriptPath: st
 
   return true;
 }
+
+export function patchCodexArtifactsMcpForUpgrade(
+  config: string,
+  serverScriptPath: string,
+  targetMcpVersion: number,
+): string {
+  if (hasManagedCodexArtifactsMcp(config, serverScriptPath)) {
+    return config;
+  }
+  if (targetMcpVersion < 12) {
+    return config;
+  }
+
+  const bounds = findManagedBlockBounds(config, CURRENT_BEGIN_MARKER, CURRENT_END_MARKER);
+  if (!bounds) {
+    return config;
+  }
+
+  const joinSessionHeader = new RegExp(
+    `^\\s*\\[mcp_servers\\.${AI_ARTIFACTS_MCP_NAME}\\.tools\\.join_session\\]\\s*$`,
+    "m",
+  );
+  if (joinSessionHeader.test(config)) {
+    return config;
+  }
+
+  const block = config.slice(bounds.startIndex, bounds.endIndex);
+  if (!/^\s*\[mcp_servers\.ai_artifacts\]\s*$/m.test(block)) {
+    return config;
+  }
+
+  const newline = config.includes("\r\n") ? "\r\n" : "\n";
+  const snippetLines = [
+    `[mcp_servers.${AI_ARTIFACTS_MCP_NAME}.tools.join_session]`,
+    'approval_mode = "approve"',
+  ];
+
+  const endMarkerRegex = new RegExp(`^[ \\t]*${escapeRegExp(CURRENT_END_MARKER)}.*$`, "m");
+  const endMarkerMatch = block.match(endMarkerRegex);
+  if (endMarkerMatch && endMarkerMatch.index !== undefined) {
+    const insertPos = bounds.startIndex + endMarkerMatch.index;
+    const before = config.slice(0, insertPos).replace(/(?:\r?\n)+$/, "");
+    const after = config.slice(insertPos);
+    return `${before}${newline}${newline}${snippetLines.join(newline)}${newline}${after}`;
+  }
+
+  const before = config.slice(0, bounds.endIndex).replace(/(?:\r?\n)+$/, "");
+  const after = config.slice(bounds.endIndex);
+  if (after.length === 0) {
+    const trailing = /(?:\r?\n)$/.test(config) ? newline : "";
+    return `${before}${newline}${newline}${snippetLines.join(newline)}${trailing || newline}`;
+  }
+
+  const trimmedAfter = after.replace(/^(?:\r?\n)+/, "");
+  return `${before}${newline}${newline}${snippetLines.join(newline)}${newline}${newline}${trimmedAfter}`;
+}

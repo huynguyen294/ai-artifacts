@@ -2,7 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { IntegrationCheck } from "../global-integration-status";
-import type { McpClientDriver } from "./index";
+import type { ClientUpgradeContext, ClientUpgradeResult, McpClientDriver } from "./index";
 import {
   hasJsonMcpServer,
   removeJsonMcpServer,
@@ -29,6 +29,17 @@ export class CursorClientDriver implements McpClientDriver {
 
   async install(mcpScriptPath: string): Promise<void> {
     await upsertJsonMcpServer(this.configPath, "ai_artifacts", mcpScriptPath);
+  }
+
+  async upgrade(context: ClientUpgradeContext): Promise<ClientUpgradeResult> {
+    const configured = await hasJsonMcpServer(this.configPath, "ai_artifacts", context.mcpScriptPath);
+    if (configured) {
+      return { status: "unchanged" };
+    }
+    return {
+      status: "setup-required",
+      detail: `${this.name} MCP configuration is missing or needs setup.`,
+    };
   }
 
   async uninstall(): Promise<boolean> {

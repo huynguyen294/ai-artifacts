@@ -31,12 +31,12 @@ import {
   skillDirectoryIsCurrent,
 } from "./mcp-clients/skill-helper";
 import {
-  OWNER_ONLY_FILE_MODE,
   aiArtifactsRoot,
   managedAssetsRoot,
   managedIntegrationVersionPath,
   managedMcpScriptPath,
   managedWorkspaceRegistryDirectory,
+  OWNER_ONLY_FILE_MODE,
 } from "../shared/artifact-files";
 import { ensureManagedDirectory } from "../shared/artifact-validation";
 import {
@@ -48,7 +48,17 @@ import {
   integrationVersionManifestSchema,
   type InstalledSkillVersions,
   type IntegrationVersionManifest,
+  type McpClientId,
 } from "../shared/contracts";
+import {
+  addInstalledClient,
+  readInstalledClients,
+  removeInstalledClient,
+} from "./installed-client-state";
+import {
+  computeStaleIntegrationAssets,
+  type StaleIntegrationAsset,
+} from "./upgrade-notification";
 
 export { cleanupBaseMcpServer } from "./mcp-clients/base-cleanup";
 
@@ -214,22 +224,111 @@ export async function writeInstalledIntegrationVersion(
   return nextManifest;
 }
 
+type SharedAssetSyncSelection = {
+  syncMcp: boolean;
+  syncReviewSkill: boolean;
+  syncSessionSkill: boolean;
+};
+
+async function validateSharedIntegrationSources(
+  paths: BaseIntegrationPaths,
+  selection: SharedAssetSyncSelection,
+): Promise<void> {
+  const preflightChecks: Promise<void>[] = [];
+  if (selection.syncMcp) {
+    preflightChecks.push(fs.access(paths.sourceMcpScript));
+  }
+  if (selection.syncReviewSkill) {
+    for (const relativePath of REVIEW_SKILL_ASSETS) {
+      preflightChecks.push(fs.access(path.join(paths.sourceSkill, relativePath)));
+    }
+  }
+  if (selection.syncSessionSkill) {
+    for (const relativePath of WORK_SESSION_SKILL_ASSETS) {
+      preflightChecks.push(fs.access(path.join(paths.sourceSessionSkill, relativePath)));
+    }
+  }
+  await Promise.all(preflightChecks);
+}
+
+async function syncSharedIntegrationAssets(
+  paths: BaseIntegrationPaths,
+  selection: SharedAssetSyncSelection,
+  userHome: string,
+  options?: { skipPreflight?: boolean },
+): Promise<StaleIntegrationAsset[]> {
+  const { syncMcp, syncReviewSkill, syncSessionSkill } = selection;
+  if (!syncMcp && !syncReviewSkill && !syncSessionSkill) {
+    return [];
+  }
+
+  // Validate every packaged source needed for this operation before writing.
+  if (!options?.skipPreflight) {
+    await validateSharedIntegrationSources(paths, selection);
+  }
+
+  await ensureManagedDirectory(aiArtifactsRoot({ userHome }));
+  await ensureManagedDirectory(paths.targetDirectory);
+
+  if (syncMcp) {
+    await ensureManagedDirectory(path.dirname(paths.targetMcpScript));
+    const mcpContents = await fs.readFile(paths.sourceMcpScript, "utf8");
+    await writeTextFileAtomic(paths.targetMcpScript, mcpContents, OWNER_ONLY_FILE_MODE);
+  }
+  if (syncReviewSkill) {
+    await replaceSkillDirectory(paths.sourceSkill, paths.targetSkill);
+  }
+  if (syncSessionSkill) {
+    await replaceOfficialSkillDirectory(paths.sourceSessionSkill, paths.targetSessionSkill);
+  }
+
+  const [scriptCurrent, skillCurrent, sessionSkillCurrent] = await Promise.all([
+    syncMcp ? baseScriptIsCurrent(paths) : Promise.resolve(true),
+    syncReviewSkill ? skillAssetsAreCurrent(paths) : Promise.resolve(true),
+    syncSessionSkill ? sessionSkillAssetsAreCurrent(paths) : Promise.resolve(true),
+  ]);
+  if (!scriptCurrent || !skillCurrent || !sessionSkillCurrent) {
+    throw new Error("Base MCP runtime or shared review/session skills verification failed after installation.");
+  }
+
+  const receiptPatch: {
+    mcpVersion?: number;
+    skills?: Partial<InstalledSkillVersions>;
+    sessionSkills?: Partial<InstalledSkillVersions>;
+  } = {};
+  const syncedAssets: StaleIntegrationAsset[] = [];
+
+  if (syncMcp) {
+    receiptPatch.mcpVersion = MCP_VERSION;
+    syncedAssets.push("mcp");
+  }
+  if (syncReviewSkill) {
+    receiptPatch.skills = { agents: CREATE_REVIEW_ARTIFACT_SKILL_VERSION };
+    syncedAssets.push("skill:agents");
+  }
+  if (syncSessionSkill) {
+    receiptPatch.sessionSkills = { agents: WORK_SESSION_SKILL_VERSION };
+    syncedAssets.push("session-skill:agents");
+  }
+
+  await writeInstalledIntegrationVersion(receiptPatch, { userHome });
+  return syncedAssets;
+}
+
 export async function setupBaseMcpServer(
   context: vscode.ExtensionContext,
   options?: { userHome?: string },
 ): Promise<{ paths: BaseIntegrationPaths; assetsUpdated: boolean }> {
-  const paths = getBaseIntegrationPaths(context, options);
+  const userHome = options?.userHome ?? os.homedir();
+  const paths = getBaseIntegrationPaths(context, { userHome });
+  const fullSelection: SharedAssetSyncSelection = {
+    syncMcp: true,
+    syncReviewSkill: true,
+    syncSessionSkill: true,
+  };
 
   // Validate every packaged source before replacing any installed asset.
-  await Promise.all([
-    fs.access(paths.sourceMcpScript),
-    ...REVIEW_SKILL_ASSETS.map((relativePath) =>
-      fs.access(path.join(paths.sourceSkill, relativePath)),
-    ),
-    ...WORK_SESSION_SKILL_ASSETS.map((relativePath) =>
-      fs.access(path.join(paths.sourceSessionSkill, relativePath)),
-    ),
-  ]);
+  await validateSharedIntegrationSources(paths, fullSelection);
   const [assetsCurrent, legacyScriptPresent, legacySkillPresent] = await Promise.all([
     baseAssetsAreCurrent(paths),
     pathExists(paths.targetLegacyMcpScript),
@@ -237,44 +336,14 @@ export async function setupBaseMcpServer(
   ]);
   const assetsUpdated = !assetsCurrent || legacyScriptPresent || legacySkillPresent;
 
-  const userHome = options?.userHome ?? os.homedir();
-  const root = aiArtifactsRoot({ userHome });
-  await ensureManagedDirectory(root);
-  await ensureManagedDirectory(paths.targetDirectory);
-  await ensureManagedDirectory(path.dirname(paths.targetMcpScript));
+  await syncSharedIntegrationAssets(paths, fullSelection, userHome, { skipPreflight: true });
   await ensureManagedDirectory(paths.workspacesDirectory);
 
-  // Install only the current runtime; upgrades require reinstalling client config.
-  const mcpContents = await fs.readFile(paths.sourceMcpScript, "utf8");
-  await writeTextFileAtomic(paths.targetMcpScript, mcpContents, OWNER_ONLY_FILE_MODE);
+  // Clean up legacy runtime, skill, and obsolete config files if present.
   await fs.rm(paths.targetLegacyMcpScript, { force: true }).catch(() => {});
-
-  // Deploy Agent Skill to ~/.agents/skills/create-review-artifact
-  await replaceSkillDirectory(paths.sourceSkill, paths.targetSkill);
-
-  // Deploy Work Session Skill to ~/.agents/skills/work-session
-  await replaceOfficialSkillDirectory(paths.sourceSessionSkill, paths.targetSessionSkill);
-
-  // Clean up legacy skill if present
   await fs.rm(paths.targetLegacySkill, { recursive: true, force: true }).catch(() => {});
-
-  // Clean up obsolete ~/.vscode/ai-artifacts/mcp.json if it exists
   const legacyDirectory = path.join(userHome, ".vscode", "ai-artifacts");
   await fs.rm(path.join(legacyDirectory, "mcp.json"), { force: true }).catch(() => {});
-
-  const [scriptCurrent, skillCurrent, sessionSkillCurrent] = await Promise.all([
-    baseScriptIsCurrent(paths),
-    skillAssetsAreCurrent(paths),
-    sessionSkillAssetsAreCurrent(paths),
-  ]);
-  if (!scriptCurrent || !skillCurrent || !sessionSkillCurrent) {
-    throw new Error("Base MCP runtime or shared review/session skills verification failed after installation.");
-  }
-  await writeInstalledIntegrationVersion({
-    mcpVersion: MCP_VERSION,
-    skills: { agents: CREATE_REVIEW_ARTIFACT_SKILL_VERSION },
-    sessionSkills: { agents: WORK_SESSION_SKILL_VERSION },
-  }, { userHome });
 
   return { paths, assetsUpdated };
 }
@@ -304,31 +373,69 @@ export async function getReviewSkillMarkdown(context: vscode.ExtensionContext): 
   }
 }
 
-async function verifyAndRecordAntigravityIntegration(
+export type IntegrationMutationOptions = {
+  recordClientSelection?: boolean;
+};
+
+async function installAndVerifyClient(
   driver: McpClientDriver,
   targetMcpScript: string,
-  userHome = os.homedir(),
+  options: {
+    userHome: string;
+    recordClientSelection: boolean;
+  },
 ): Promise<void> {
+  await driver.install(targetMcpScript);
   const check = await driver.check(targetMcpScript);
   if (check.status !== "ready") {
     throw new Error(
-      `Antigravity integration verification failed after installation: ${check.detail ?? check.status}`,
+      `${driver.name} integration verification failed after installation: ${check.detail ?? check.status}`,
     );
   }
-  await writeInstalledIntegrationVersion(
-    {
-      skills: { antigravity: CREATE_REVIEW_ARTIFACT_SKILL_VERSION },
-      sessionSkills: { antigravity: WORK_SESSION_SKILL_VERSION },
-    },
-    { userHome },
-  );
+  if (driver.id === "claude") {
+    await writeInstalledIntegrationVersion(
+      {
+        skills: { claude: CREATE_REVIEW_ARTIFACT_SKILL_VERSION },
+        sessionSkills: { claude: WORK_SESSION_SKILL_VERSION },
+      },
+      { userHome: options.userHome },
+    );
+  } else if (driver.id === "antigravity") {
+    await writeInstalledIntegrationVersion(
+      {
+        skills: { antigravity: CREATE_REVIEW_ARTIFACT_SKILL_VERSION },
+        sessionSkills: { antigravity: WORK_SESSION_SKILL_VERSION },
+      },
+      { userHome: options.userHome },
+    );
+  }
+  if (options.recordClientSelection) {
+    await addInstalledClient(driver.id, { userHome: options.userHome });
+  }
+}
+
+async function uninstallClient(
+  driver: McpClientDriver,
+  options: {
+    userHome: string;
+    recordClientSelection: boolean;
+  },
+): Promise<boolean> {
+  const changed = await driver.uninstall();
+  if (options.recordClientSelection) {
+    await removeInstalledClient(driver.id, { userHome: options.userHome });
+  }
+  return changed;
 }
 
 // 1. All detected
 export async function installAllDetectedIntegrations(
   context: vscode.ExtensionContext,
+  options?: IntegrationMutationOptions,
 ): Promise<{ installedClients: string[] }> {
-  const { paths } = await setupBaseMcpServer(context);
+  const userHome = os.homedir();
+  const recordClientSelection = options?.recordClientSelection ?? false;
+  const { paths } = await setupBaseMcpServer(context, { userHome });
   const copilotConfigPath = getCopilotConfigPath(context);
   const clineConfigPath = getClineConfigPath(context);
   const drivers = getAllClientDrivers(
@@ -341,42 +448,16 @@ export async function installAllDetectedIntegrations(
 
   for (const driver of drivers) {
     if (driver.isDetected()) {
-      await driver.install(paths.targetMcpScript);
+      await installAndVerifyClient(driver, paths.targetMcpScript, {
+        userHome,
+        recordClientSelection,
+      });
       installedClients.push(driver.name);
-      if (driver.id === "claude") {
-        const check = await driver.check(paths.targetMcpScript);
-        if (check.status !== "ready") {
-          throw new Error(`Claude integration verification failed after installation: ${check.detail ?? check.status}`);
-        }
-        await writeInstalledIntegrationVersion(
-          {
-            skills: { claude: CREATE_REVIEW_ARTIFACT_SKILL_VERSION },
-            sessionSkills: { claude: WORK_SESSION_SKILL_VERSION },
-          },
-          { userHome: os.homedir() },
-        );
-      } else if (driver.id === "antigravity") {
-        await verifyAndRecordAntigravityIntegration(driver, paths.targetMcpScript);
-      }
     }
   }
 
-  // Verify all detected clients before cleaning up legacy runtime
-  let allReady = true;
-  for (const driver of drivers) {
-    if (driver.isDetected()) {
-      const check = await driver.check(paths.targetMcpScript);
-      if (check.status !== "ready") {
-        allReady = false;
-        break;
-      }
-    }
-  }
-
-  if (allReady) {
-    const legacyBaseDir = path.join(os.homedir(), ".vscode", "ai-artifacts");
-    await fs.rm(legacyBaseDir, { recursive: true, force: true }).catch(() => {});
-  }
+  const legacyBaseDir = path.join(userHome, ".vscode", "ai-artifacts");
+  await fs.rm(legacyBaseDir, { recursive: true, force: true }).catch(() => {});
 
   return { installedClients };
 }
@@ -384,11 +465,16 @@ export async function installAllDetectedIntegrations(
 // 2. Copilot (base setup + Code/User/mcp.json)
 export async function installCopilotIntegration(
   context: vscode.ExtensionContext,
+  options?: IntegrationMutationOptions,
 ): Promise<{ userConfigPath: string }> {
-  const { paths } = await setupBaseMcpServer(context);
+  const userHome = os.homedir();
+  const { paths } = await setupBaseMcpServer(context, { userHome });
   const copilotConfigPath = getCopilotConfigPath(context);
   const copilotDriver = new CopilotClientDriver(copilotConfigPath);
-  await copilotDriver.install(paths.targetMcpScript);
+  await installAndVerifyClient(copilotDriver, paths.targetMcpScript, {
+    userHome,
+    recordClientSelection: options?.recordClientSelection ?? false,
+  });
 
   return { userConfigPath: copilotConfigPath };
 }
@@ -396,26 +482,38 @@ export async function installCopilotIntegration(
 // 3. Codex
 export async function installCodexIntegration(
   context: vscode.ExtensionContext,
+  options?: IntegrationMutationOptions,
 ): Promise<void> {
-  const { paths } = await setupBaseMcpServer(context);
+  const userHome = os.homedir();
+  const { paths } = await setupBaseMcpServer(context, { userHome });
   const codexDriver = new CodexClientDriver();
-  await codexDriver.install(paths.targetMcpScript);
+  await installAndVerifyClient(codexDriver, paths.targetMcpScript, {
+    userHome,
+    recordClientSelection: options?.recordClientSelection ?? false,
+  });
 }
 
 // 4. Cursor
 export async function installCursorIntegration(
   context: vscode.ExtensionContext,
+  options?: IntegrationMutationOptions,
 ): Promise<void> {
-  const { paths } = await setupBaseMcpServer(context);
+  const userHome = os.homedir();
+  const { paths } = await setupBaseMcpServer(context, { userHome });
   const cursorDriver = new CursorClientDriver();
-  await cursorDriver.install(paths.targetMcpScript);
+  await installAndVerifyClient(cursorDriver, paths.targetMcpScript, {
+    userHome,
+    recordClientSelection: options?.recordClientSelection ?? false,
+  });
 }
 
 // 5. Claude
 export async function installClaudeIntegration(
   context: vscode.ExtensionContext,
+  options?: IntegrationMutationOptions,
 ): Promise<void> {
-  const { paths } = await setupBaseMcpServer(context);
+  const userHome = os.homedir();
+  const { paths } = await setupBaseMcpServer(context, { userHome });
   const claudeDriver = new ClaudeClientDriver(
     undefined,
     undefined,
@@ -423,70 +521,86 @@ export async function installClaudeIntegration(
     undefined,
     paths.sourceSessionSkill,
   );
-  await claudeDriver.install(paths.targetMcpScript);
-  const check = await claudeDriver.check(paths.targetMcpScript);
-  if (check.status !== "ready") {
-    throw new Error(`Claude integration verification failed after installation: ${check.detail ?? check.status}`);
-  }
-  await writeInstalledIntegrationVersion({
-    skills: { claude: CREATE_REVIEW_ARTIFACT_SKILL_VERSION },
-    sessionSkills: { claude: WORK_SESSION_SKILL_VERSION },
+  await installAndVerifyClient(claudeDriver, paths.targetMcpScript, {
+    userHome,
+    recordClientSelection: options?.recordClientSelection ?? false,
   });
 }
 
 // 6. Windsurf
 export async function installWindsurfIntegration(
   context: vscode.ExtensionContext,
+  options?: IntegrationMutationOptions,
 ): Promise<void> {
-  const { paths } = await setupBaseMcpServer(context);
+  const userHome = os.homedir();
+  const { paths } = await setupBaseMcpServer(context, { userHome });
   const windsurfDriver = new WindsurfClientDriver();
-  await windsurfDriver.install(paths.targetMcpScript);
+  await installAndVerifyClient(windsurfDriver, paths.targetMcpScript, {
+    userHome,
+    recordClientSelection: options?.recordClientSelection ?? false,
+  });
 }
 
 // 7. Cline
 export async function installClineIntegration(
   context: vscode.ExtensionContext,
+  options?: IntegrationMutationOptions,
 ): Promise<void> {
-  const { paths } = await setupBaseMcpServer(context);
+  const userHome = os.homedir();
+  const { paths } = await setupBaseMcpServer(context, { userHome });
   const clineConfigPath = getClineConfigPath(context);
   const clineDriver = new ClineClientDriver(clineConfigPath);
-  await clineDriver.install(paths.targetMcpScript);
+  await installAndVerifyClient(clineDriver, paths.targetMcpScript, {
+    userHome,
+    recordClientSelection: options?.recordClientSelection ?? false,
+  });
 }
 
 // 8. Antigravity
 export async function installAntigravityIntegration(
   context: vscode.ExtensionContext,
+  options?: IntegrationMutationOptions,
 ): Promise<void> {
-  const { paths } = await setupBaseMcpServer(context);
+  const userHome = os.homedir();
+  const { paths } = await setupBaseMcpServer(context, { userHome });
   const antigravityDriver = new AntigravityClientDriver({
+    userHome,
     sourceSkillDirectory: paths.sourceSkill,
     sourceSessionSkillDirectory: paths.sourceSessionSkill,
   });
-  await antigravityDriver.install(paths.targetMcpScript);
-  await verifyAndRecordAntigravityIntegration(antigravityDriver, paths.targetMcpScript);
+  await installAndVerifyClient(antigravityDriver, paths.targetMcpScript, {
+    userHome,
+    recordClientSelection: options?.recordClientSelection ?? false,
+  });
 }
 
 // 8. Uninstall all detected integrations
 export async function uninstallAllDetectedIntegrations(
   context?: vscode.ExtensionContext,
-  options?: { cleanupBase?: boolean; userHome?: string },
+  options?: { cleanupBase?: boolean; userHome?: string; recordClientSelection?: boolean },
 ): Promise<{ uninstalledClients: string[] }> {
+  const userHome = options?.userHome ?? os.homedir();
+  const recordClientSelection = options?.recordClientSelection ?? false;
   const copilotConfigPath = getCopilotConfigPath(context);
   const clineConfigPath = getClineConfigPath(context);
   const drivers = getAllClientDrivers(copilotConfigPath, clineConfigPath);
+  const savedClientIds = recordClientSelection
+    ? new Set(await readInstalledClients({ userHome }))
+    : undefined;
+  const targetDrivers = drivers.filter((driver) =>
+    savedClientIds ? savedClientIds.has(driver.id) || driver.isDetected() : driver.isDetected(),
+  );
   const uninstalledClients: string[] = [];
 
-  for (const driver of drivers) {
-    if (driver.isDetected()) {
-      const changed = await driver.uninstall();
-      if (changed) {
-        uninstalledClients.push(driver.name);
-      }
+  for (const driver of targetDrivers) {
+    const changed = await uninstallClient(driver, { userHome, recordClientSelection });
+    if (changed) {
+      uninstalledClients.push(driver.name);
     }
   }
 
   if (options?.cleanupBase !== false) {
-    await cleanupBaseMcpServer(options?.userHome ? { userHome: options.userHome } : undefined);
+    await cleanupBaseMcpServer({ userHome });
   }
 
   return { uninstalledClients };
@@ -495,43 +609,251 @@ export async function uninstallAllDetectedIntegrations(
 // 8. Individual uninstall functions
 export async function uninstallCopilotIntegration(
   context?: vscode.ExtensionContext,
+  options?: IntegrationMutationOptions,
 ): Promise<boolean> {
   const copilotConfigPath = getCopilotConfigPath(context);
   const driver = new CopilotClientDriver(copilotConfigPath);
-  return driver.uninstall();
+  return uninstallClient(driver, {
+    userHome: os.homedir(),
+    recordClientSelection: options?.recordClientSelection ?? false,
+  });
 }
 
-export async function uninstallCodexIntegration(): Promise<boolean> {
+export async function uninstallCodexIntegration(
+  options?: IntegrationMutationOptions,
+): Promise<boolean> {
   const driver = new CodexClientDriver();
-  return driver.uninstall();
+  return uninstallClient(driver, {
+    userHome: os.homedir(),
+    recordClientSelection: options?.recordClientSelection ?? false,
+  });
 }
 
-export async function uninstallCursorIntegration(): Promise<boolean> {
+export async function uninstallCursorIntegration(
+  options?: IntegrationMutationOptions,
+): Promise<boolean> {
   const driver = new CursorClientDriver();
-  return driver.uninstall();
+  return uninstallClient(driver, {
+    userHome: os.homedir(),
+    recordClientSelection: options?.recordClientSelection ?? false,
+  });
 }
 
-export async function uninstallClaudeIntegration(): Promise<boolean> {
+export async function uninstallClaudeIntegration(
+  options?: IntegrationMutationOptions,
+): Promise<boolean> {
   const driver = new ClaudeClientDriver();
-  return driver.uninstall();
+  return uninstallClient(driver, {
+    userHome: os.homedir(),
+    recordClientSelection: options?.recordClientSelection ?? false,
+  });
 }
 
-export async function uninstallWindsurfIntegration(): Promise<boolean> {
+export async function uninstallWindsurfIntegration(
+  options?: IntegrationMutationOptions,
+): Promise<boolean> {
   const driver = new WindsurfClientDriver();
-  return driver.uninstall();
+  return uninstallClient(driver, {
+    userHome: os.homedir(),
+    recordClientSelection: options?.recordClientSelection ?? false,
+  });
 }
 
 export async function uninstallClineIntegration(
   context?: vscode.ExtensionContext,
+  options?: IntegrationMutationOptions,
 ): Promise<boolean> {
   const clineConfigPath = getClineConfigPath(context);
   const driver = new ClineClientDriver(clineConfigPath);
-  return driver.uninstall();
+  return uninstallClient(driver, {
+    userHome: os.homedir(),
+    recordClientSelection: options?.recordClientSelection ?? false,
+  });
 }
 
-export async function uninstallAntigravityIntegration(): Promise<boolean> {
+export async function uninstallAntigravityIntegration(
+  options?: IntegrationMutationOptions,
+): Promise<boolean> {
   const driver = new AntigravityClientDriver();
-  return driver.uninstall();
+  return uninstallClient(driver, {
+    userHome: os.homedir(),
+    recordClientSelection: options?.recordClientSelection ?? false,
+  });
+}
+
+export type IntegrationUpgradeClientReport = {
+  id: McpClientId;
+  name: string;
+  status: "unchanged" | "updated" | "setup-required" | "failed";
+  detail?: string;
+};
+
+export type IntegrationUpgradeReport = {
+  clientIds: McpClientId[];
+  skillTargets: Array<keyof InstalledSkillVersions>;
+  updatedAssets: StaleIntegrationAsset[];
+  clients: IntegrationUpgradeClientReport[];
+};
+
+function formatNonReadyUpgradeDetail(
+  clientName: string,
+  status: IntegrationCheck["status"],
+): string {
+  if (status === "restart-required") {
+    return `${clientName} integration status is ${status}. Restart ${clientName} and start a new chat to apply the updated integration.`;
+  }
+  return `${clientName} integration status is ${status}. Run the ${clientName} install command to configure it.`;
+}
+
+export async function upgradeDetectedIntegrations(
+  context: vscode.ExtensionContext,
+): Promise<IntegrationUpgradeReport> {
+  const userHome = os.homedir();
+  const paths = getBaseIntegrationPaths(context, { userHome });
+  const copilotConfigPath = getCopilotConfigPath(context);
+  const clineConfigPath = getClineConfigPath(context);
+  const allDrivers = getAllClientDrivers(
+    copilotConfigPath,
+    clineConfigPath,
+    paths.sourceSkill,
+    paths.sourceSessionSkill,
+  );
+  const savedClientIds = new Set(await readInstalledClients({ userHome }));
+  const selectedDrivers = allDrivers.filter(
+    (driver) => savedClientIds.has(driver.id) || driver.isDetected(),
+  );
+  const clientIds = selectedDrivers.map((driver) => driver.id);
+
+  if (selectedDrivers.length === 0) {
+    return {
+      clientIds: [],
+      skillTargets: [],
+      updatedAssets: [],
+      clients: [],
+    };
+  }
+
+  const clientIdSet = new Set(clientIds);
+  const skillTargets: Array<keyof InstalledSkillVersions> = ["agents"];
+  if (clientIdSet.has("claude")) skillTargets.push("claude");
+  if (clientIdSet.has("antigravity")) skillTargets.push("antigravity");
+
+  const installedVersion = await readInstalledIntegrationVersion({ userHome });
+  const manifest = installedVersion.status === "valid" ? installedVersion.manifest : undefined;
+  const staleAssets = computeStaleIntegrationAssets(
+    {
+      mcpVersion: MCP_VERSION,
+      skillVersion: CREATE_REVIEW_ARTIFACT_SKILL_VERSION,
+      sessionSkillVersion: WORK_SESSION_SKILL_VERSION,
+    },
+    manifest,
+    skillTargets,
+  );
+  const staleSet = new Set<StaleIntegrationAsset>(staleAssets);
+
+  const updatedAssets: StaleIntegrationAsset[] = await syncSharedIntegrationAssets(
+    paths,
+    {
+      syncMcp: staleSet.has("mcp"),
+      syncReviewSkill: staleSet.has("skill:agents"),
+      syncSessionSkill: staleSet.has("session-skill:agents"),
+    },
+    userHome,
+  );
+
+  const clients: IntegrationUpgradeClientReport[] = [];
+  for (const driver of selectedDrivers) {
+    const updateReviewSkill =
+      driver.id === "claude"
+        ? staleSet.has("skill:claude")
+        : driver.id === "antigravity"
+          ? staleSet.has("skill:antigravity")
+          : false;
+    const updateSessionSkill =
+      driver.id === "claude"
+        ? staleSet.has("session-skill:claude")
+        : driver.id === "antigravity"
+          ? staleSet.has("session-skill:antigravity")
+          : false;
+
+    try {
+      const upgradeResult = await driver.upgrade({
+        mcpScriptPath: paths.targetMcpScript,
+        targetMcpVersion: MCP_VERSION,
+        updateReviewSkill,
+        updateSessionSkill,
+      });
+
+      if (upgradeResult.status === "setup-required") {
+        clients.push({
+          id: driver.id,
+          name: driver.name,
+          status: "setup-required",
+          ...(upgradeResult.detail ? { detail: upgradeResult.detail } : {}),
+        });
+        continue;
+      }
+
+      const checkResult = await driver.check(paths.targetMcpScript);
+      if (checkResult.status !== "ready") {
+        const detail =
+          checkResult.detail?.trim() ||
+          formatNonReadyUpgradeDetail(driver.name, checkResult.status);
+        clients.push({
+          id: driver.id,
+          name: driver.name,
+          status: "setup-required",
+          detail,
+        });
+        continue;
+      }
+
+      if (driver.id === "claude" || driver.id === "antigravity") {
+        if (updateReviewSkill || updateSessionSkill) {
+          await ensureManagedDirectory(aiArtifactsRoot({ userHome }));
+          await ensureManagedDirectory(paths.targetDirectory);
+          await writeInstalledIntegrationVersion(
+            {
+              ...(updateReviewSkill
+                ? { skills: { [driver.id]: CREATE_REVIEW_ARTIFACT_SKILL_VERSION } }
+                : {}),
+              ...(updateSessionSkill
+                ? { sessionSkills: { [driver.id]: WORK_SESSION_SKILL_VERSION } }
+                : {}),
+            },
+            { userHome },
+          );
+          if (updateReviewSkill) {
+            updatedAssets.push(`skill:${driver.id}`);
+          }
+          if (updateSessionSkill) {
+            updatedAssets.push(`session-skill:${driver.id}`);
+          }
+        }
+      }
+
+      clients.push({
+        id: driver.id,
+        name: driver.name,
+        status: upgradeResult.status,
+        ...(upgradeResult.detail ? { detail: upgradeResult.detail } : {}),
+      });
+    } catch (error) {
+      clients.push({
+        id: driver.id,
+        name: driver.name,
+        status: "failed",
+        detail: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  return {
+    clientIds,
+    skillTargets,
+    updatedAssets,
+    clients,
+  };
 }
 
 export type ClientVerificationReport = {

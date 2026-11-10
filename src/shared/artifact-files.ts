@@ -17,6 +17,7 @@ export const MANAGED_WORKSPACES_DIRECTORY = "workspaces";
 export const MANAGED_CLEANUP_DIRECTORY = "cleanup";
 export const MANAGED_MCP_SCRIPT_FILE = "ai-artifacts-review-mcp.mjs";
 export const MANAGED_INTEGRATION_VERSION_FILE = "integration-version.json";
+export const MANAGED_INSTALLED_CLIENTS_FILE = "installed-clients.json";
 
 export const ARTIFACT_MANIFEST_FILE = "artifact.json";
 export const ARTIFACT_MARKDOWN_FILE = "artifact.md";
@@ -200,6 +201,14 @@ export function managedAssetsRoot(options: GlobalArtifactsRootOptions = {}): str
  */
 export function managedIntegrationVersionPath(options: GlobalArtifactsRootOptions = {}): string {
   return path.join(managedAssetsRoot(options), MANAGED_INTEGRATION_VERSION_FILE);
+}
+
+/**
+ * Returns the installed client selection path
+ * (~/.ai-artifacts/managed/installed-clients.json).
+ */
+export function managedInstalledClientsPath(options: GlobalArtifactsRootOptions = {}): string {
+  return path.join(managedAssetsRoot(options), MANAGED_INSTALLED_CLIENTS_FILE);
 }
 
 /**

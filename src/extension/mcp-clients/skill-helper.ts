@@ -1,4 +1,5 @@
 import { promises as fs } from "node:fs";
+import fsSync from "node:fs";
 import path from "node:path";
 
 export const USER_CUSTOM_RULES_BEGIN = "<!-- >>> USER CUSTOM RULES >>> -->";
@@ -22,6 +23,59 @@ export const WORK_SESSION_SKILL_ASSETS = [
   "SKILL.md",
   path.join("agents", "openai.yaml"),
 ];
+
+export type ManagedSkillName = "create-review-artifact" | "work-session";
+
+function isDirectorySync(targetPath: string): boolean {
+  try {
+    return fsSync.statSync(targetPath).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+export function findPackagedSkillDirectory(
+  skillName: ManagedSkillName,
+  baseDirectory: string = __dirname,
+): string | undefined {
+  const candidates = [
+    path.resolve(baseDirectory, "..", "..", "..", "skills", skillName),
+    path.resolve(baseDirectory, "..", "skills", skillName),
+    path.resolve(baseDirectory, "..", "..", "skills", skillName),
+  ];
+  return candidates.find((candidate) => isDirectorySync(candidate));
+}
+
+export async function assertSkillSourceAssetsPresent(
+  skillName: ManagedSkillName,
+  sourceDirectory: string | undefined,
+  assets: readonly string[],
+  clientLabel = "integration",
+): Promise<string> {
+  if (!sourceDirectory) {
+    throw new Error(
+      `Packaged ${skillName} skill source directory is not available for ${clientLabel}.`,
+    );
+  }
+  const missingAssets: string[] = [];
+  for (const relativePath of assets) {
+    try {
+      await fs.access(path.join(sourceDirectory, relativePath));
+    } catch (error: any) {
+      if (error?.code === "ENOENT") {
+        missingAssets.push(relativePath);
+      } else {
+        throw error;
+      }
+    }
+  }
+  if (missingAssets.length > 0) {
+    throw new Error(
+      `${clientLabel} ${skillName} skill source is unavailable or incomplete at "${sourceDirectory}" (missing: ${missingAssets.join(", ")}).`,
+    );
+  }
+  return sourceDirectory;
+}
 
 type DescriptionEntry =
   | { status: "absent" }

@@ -3,9 +3,10 @@ import fsSync from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { IntegrationCheck } from "../global-integration-status";
-import type { McpClientDriver } from "./index";
+import type { ClientUpgradeContext, ClientUpgradeResult, McpClientDriver } from "./index";
 import {
   hasManagedCodexArtifactsMcp,
+  patchCodexArtifactsMcpForUpgrade,
   removeCodexArtifactsMcp,
   upsertCodexArtifactsMcp,
 } from "../mcp-config";
@@ -69,6 +70,48 @@ export class CodexClientDriver implements McpClientDriver {
     await writeTextFileAtomic(this.configPath, updated);
 
     await this.cleanupLegacyHooks();
+  }
+
+  async upgrade(context: ClientUpgradeContext): Promise<ClientUpgradeResult> {
+    let content: string;
+    try {
+      content = await fs.readFile(this.configPath, "utf8");
+    } catch (error: any) {
+      if (error?.code === "ENOENT") {
+        return {
+          status: "setup-required",
+          detail: "Codex MCP configuration is missing or needs setup.",
+        };
+      }
+      throw error;
+    }
+
+    const conflict = configurationConflict(content);
+    if (conflict) {
+      return {
+        status: "setup-required",
+        detail: conflict,
+      };
+    }
+
+    if (hasManagedCodexArtifactsMcp(content, context.mcpScriptPath)) {
+      return { status: "unchanged" };
+    }
+
+    const candidate = patchCodexArtifactsMcpForUpgrade(
+      content,
+      context.mcpScriptPath,
+      context.targetMcpVersion,
+    );
+    if (candidate !== content && hasManagedCodexArtifactsMcp(candidate, context.mcpScriptPath)) {
+      await writeTextFileAtomic(this.configPath, candidate);
+      return { status: "updated" };
+    }
+
+    return {
+      status: "setup-required",
+      detail: "Codex MCP configuration is missing or needs setup.",
+    };
   }
 
   async uninstall(): Promise<boolean> {
