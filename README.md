@@ -91,19 +91,28 @@ To build the VSIX yourself from source, follow [Development](#development) below
 
 ### 2. Install the AI / MCP integration
 
-Open the Command Palette (`Ctrl+Shift+P` on Windows/Linux or `Cmd+Shift+P` on macOS) and choose your preferred setup command:
+1. Open the Command Palette (`Ctrl+Shift+P` on Windows/Linux or `Cmd+Shift+P` on macOS) and run **`AI Artifacts: Installer`**.
+2. Select one or more AI clients using the checkboxes. Detected clients and clients saved by earlier manual installs are selected by default; adjust the selection before running. Each row shows its integration status, `Detected` / `Saved` badges where applicable, and configuration path or error detail.
+3. Click **OK**, click the **Run** button in the title bar, or press **Enter** to install all selected clients in one operation. Use the same command to reinstall or repair selected integrations.
 
-- **`AI Artifacts: Install All Detected Integrations`**: Installs the MCP runtime and bundled skills, and configures all detected AI clients (including Antigravity when detected).
-- Or choose the dedicated installer for your specific AI client:
-  - **`AI Artifacts: Install Integration for Cursor`**: Automatically configures `~/.cursor/mcp.json`.
-  - **`AI Artifacts: Install Integration for Codex`**: Automatically configures `~/.codex/config.toml`.
-  - **`AI Artifacts: Install Integration for Claude`**: Automatically configures `~/.claude.json` and deploys `create-review-artifact` and `work-session` to `~/.claude/skills/`.
-  - **`AI Artifacts: Install Integration for GitHub Copilot`**: Automatically configures VS Code User global configuration (`Code/User/mcp.json`) for GitHub Copilot.
-  - **`AI Artifacts: Install Integration for Cline`**: Automatically configures the Cline VS Code extension's `cline_mcp_settings.json`.
-  - **`AI Artifacts: Install Integration for Windsurf`**: Automatically configures `~/.codeium/windsurf/mcp_config.json`.
-  - **`AI Artifacts: Install Integration for Antigravity`**: Automatically configures `~/.gemini/config/mcp_config.json` and deploys `create-review-artifact` and `work-session` to `~/.gemini/config/skills/`.
-- Or run **`AI Artifacts: Copy MCP Configuration JSON`** to copy the ready-to-use JSON configuration snippet directly to your clipboard to paste into any MCP-compatible editor.
-- Or run **`AI Artifacts: Copy create-review-artifact Skill Markdown`** to copy the full agent review skill instructions directly to your clipboard to paste into custom agent prompts, system instructions, or skill files.
+The installer prepares the shared MCP runtime and both shared skills once, then configures each selected client. A client configuration error is reported without stopping the remaining clients; the final message summarizes successful and failed installations. Successful installs are merged into the saved client list used by automatic upgrades. Closing the picker or confirming with no clients selected makes no changes.
+
+| Client | Managed configuration | Client-specific skills |
+| --- | --- | --- |
+| GitHub Copilot (VS Code) | VS Code User `mcp.json` (`Code/User/mcp.json`) | No additional copy |
+| Cursor | `~/.cursor/mcp.json` | No additional copy |
+| Codex | `~/.codex/config.toml` (or the configured `CODEX_HOME`) | No additional copy |
+| Claude | `~/.claude.json` | Both skills under `~/.claude/skills/` |
+| Windsurf | `~/.codeium/windsurf/mcp_config.json` | No additional copy |
+| Cline | Cline extension settings, `cline_mcp_settings.json` | No additional copy |
+| Antigravity | `~/.gemini/config/mcp_config.json` | Both skills under `~/.gemini/config/skills/` |
+
+The earlier all-detected and per-client install/uninstall commands remain available. Some existing Reinstall actions and automatic-upgrade recovery messages still use those command names; the grouped **Installer** and **Uninstall** pickers are the recommended manual entry points.
+
+For custom setup:
+
+- Run **`AI Artifacts: Copy MCP Configuration JSON`** to copy the ready-to-use JSON configuration snippet directly to your clipboard to paste into any MCP-compatible editor.
+- Run **`AI Artifacts: Copy create-review-artifact Skill Markdown`** to copy the full agent review skill instructions directly to your clipboard to paste into custom agent prompts, system instructions, or skill files.
 
 <details>
 <summary>Installed runtime and skill locations</summary>
@@ -142,7 +151,7 @@ After initial setup (or when a manual client install is required), reload your e
 <details>
 <summary>Runtime version and expected tools</summary>
 
-The current source bundles numeric MCP version 12, review skill version 4, and work session skill version 1 (with `SKILL_VERSION = 4` bridge constant). The MCP catalog contains exactly six tools: `resolve_artifact_window`, `create_artifact`, `wait_for_artifact_review`, `inspect_artifact_review`, `advance_and_wait_for_artifact`, and `join_session`. Clients using an older tool catalog require reloading/upgrading (or running that client's install command if manual setup is reported) followed by a client restart and fresh chat to expose the current tools.
+The current source bundles numeric MCP version 12, review skill version 4, and work session skill version 1 (with `SKILL_VERSION = 4` bridge constant). The MCP catalog contains exactly six tools: `resolve_artifact_window`, `create_artifact`, `wait_for_artifact_review`, `inspect_artifact_review`, `advance_and_wait_for_artifact`, and `join_session`. Clients using an older tool catalog require reloading/upgrading (or running **AI Artifacts: Installer** and selecting the affected client if manual setup is reported) followed by a client restart and fresh chat to expose the current tools.
 
 MCP version 12 is reserved for the unreleased Work Session feature and remains its release version across implementation stages. The current runtime supports schema-v2 Sessions and explicit migration from legacy v1 conversations. Session instructions are read from `instructions.md`; existing v2 metadata may still contain an optional inline `instructions` string, which is accepted but not used as the instructions source. New metadata writes omit that field. Updating a test runtime bundle still requires reinstalling the changed runtime even when its numeric version remains 12.
 
@@ -239,11 +248,11 @@ If the verify command reports `missing` (or you prefer manual setup), check dire
 
 ### 3. Common runtime errors & recovery
 
-- **MCP tools are unavailable:** Run **AI Artifacts: Install All Detected Integrations** (or the command for that client), restart your AI extension/editor, and start a fresh chat (a chat that was already open cannot load tools installed afterward). Also verify that `node` is available in `PATH`.
+- **MCP tools are unavailable:** Run **AI Artifacts: Installer**, select the affected AI client, and confirm with **OK**, **Run**, or **Enter**. Restart your AI extension/editor and start a fresh chat (a chat that was already open cannot load tools installed afterward). Also verify that `node` is available in `PATH`.
 - **`WINDOW_NOT_FOUND` / `WINDOW_SELECTION_REQUIRED`:** Ensure VS Code is running. When multiple windows exist and focus/affinity is ambiguous, select the matching window candidate and retry with the single-use selection token (`targetMode: "explicit-window"`).
 - **Window selection expired or closed:** Retry creation or inspection without the expired token to refresh live window candidates. After creation, keep the exact artifact handle and retry `inspect_artifact_review` with reconnect intent.
 - **A round token expired or the MCP restarted:** The existing content remains intact. Ask the AI agent to inspect the exact artifact path again to obtain a fresh token and reconnect.
-- **A configuration conflict is reported:** Remove or rename the unmanaged `[mcp_servers.ai_artifacts]` entry in your configuration file, then run the installer again.
+- **A configuration conflict is reported:** Remove or rename the unmanaged `[mcp_servers.ai_artifacts]` entry in your configuration file, then run **AI Artifacts: Installer** again and select the affected client.
 
 ## Features & Usage
 
@@ -385,13 +394,13 @@ Work Sessions organize artifacts independently of their review lifecycles and AI
 
 - Version 1.1.0 supports only schema v6 stored under `~/.ai-artifacts/artifacts/`.
 - The current integration uses numeric `MCP_VERSION = 12`, `CREATE_REVIEW_ARTIFACT_SKILL_VERSION = 4` (`SKILL_VERSION = 4`), and `WORK_SESSION_SKILL_VERSION = 1`. These are independent monotonic asset versions, not SemVer and not the extension package version.
-- Successful manual client installation records the client selection in `~/.ai-artifacts/managed/installed-clients.json` (cleared on uninstall), while verified MCP runtime, shared `.agents` skills (`skills` and `sessionSkills`), Claude, and Antigravity skill versions are tracked independently in `~/.ai-artifacts/managed/integration-version.json`. A missing, invalid, absent, or mismatched receipt entry is stale.
+- Successful manual client installation merges the client selection into `~/.ai-artifacts/managed/installed-clients.json`; successful manual uninstall removes only the selected client IDs from that list. Verified MCP runtime, shared `.agents` skills (`skills` and `sessionSkills`), Claude, and Antigravity skill versions are tracked independently in `~/.ai-artifacts/managed/integration-version.json`. A missing, invalid, absent, or mismatched receipt entry is stale.
 - On extension activation, AI Artifacts runs an asynchronous automatic upgrade across the merged `saved ∪ detected` client set: it deploys stale shared assets once, verifies and commits receipts incrementally, reconciles required client definitions (such as adding `join_session` to Codex's managed config), and updates stale Claude/Antigravity skills while keeping current files, customizations, and Antigravity rules/permissions untouched. Successful or unchanged runs are silent.
-- Missing or conflicting client setup (or damaged installed skills when receipts are current) is reported as a non-intrusive `setup-required` warning or error pointing to that client's manual install command rather than silently overwriting user configs or creating new client entries. If no clients are detected or saved and shared assets are stale or uninitialized, a warning directs you to run your client's install command.
+- Missing or conflicting client setup (or damaged installed skills when receipts are current) is reported as a non-intrusive `setup-required` warning or error pointing to that client's manual install command rather than silently overwriting user configs or creating new client entries. If no clients are detected or saved and shared assets are stale or uninitialized, a warning directs you to manual setup. For either case, you can run **AI Artifacts: Installer** and select the affected client.
 - Schema v3/v4/v5 and workspace-local `.ai-artifacts` or `.codex-artifacts` lifecycles are not opened, advanced, or migrated by v1.1.x. Existing files remain untouched on disk.
 - This is a hard compatibility cutoff. A rollback to a 0.9.x extension also requires reinstalling the matching older runtime and skill; do not use a 0.9.x runtime with v1.1.x artifacts.
 - Extension-only updates with current receipts and valid client definitions leave already installed files untouched without warnings.
-- Upgrades and manual reinstalls preserve a valid custom `description:` and `USER CUSTOM RULES` block. Malformed customization fails closed without replacing the existing skill; fix the reported target and run that client's install command again.
+- Upgrades and manual reinstalls preserve a valid custom `description:` and `USER CUSTOM RULES` block. Malformed customization fails closed without replacing the existing skill; fix the reported target, then run **AI Artifacts: Installer** and select the affected client again.
 - After an automatic upgrade or manual reinstall updates assets or client definitions on disk, restart the affected AI client and start a new chat so it loads the updated runtime, tool definitions, or skills (AI Artifacts does not restart external clients or live chats automatically).
 
 ## Uninstalling and cleanup
@@ -399,9 +408,7 @@ Work Sessions organize artifacts independently of their review lifecycles and AI
 AI Artifacts provides two comprehensive ways to remove MCP configurations and runtime assets:
 
 - **Automatic Cleanup upon Extension Uninstall:** When you uninstall the AI Artifacts extension from VS Code or Cursor (`Extensions -> Uninstall`), an automated lifecycle hook (`vscode:uninstall`) runs a standalone script that automatically removes the `ai_artifacts` MCP configuration from all detected AI clients and completely deletes managed runtime and skill assets (`~/.ai-artifacts/managed/`, legacy `~/.vscode/ai-artifacts/`, `~/.agents/skills/create-review-artifact/`, `~/.agents/skills/work-session/`, `~/.claude/skills/create-review-artifact/`, `~/.claude/skills/work-session/`, `~/.gemini/config/skills/create-review-artifact/`, and `~/.gemini/config/skills/work-session/`).
-- **Manual Cleanup via Command Palette:** If you want to disconnect MCP integrations while keeping the VS Code extension active, open the Command Palette (`Ctrl+Shift+P` / `Cmd+Shift+P`):
-  - **`AI Artifacts: Uninstall All Detected Integrations`**: Removes MCP configs from all detected editors and clears managed runtime and skill assets.
-  - Or choose a specific client: **`AI Artifacts: Uninstall Integration for Cursor`**, **`... for Codex`**, **`... for Claude`**, **`... for GitHub Copilot`**, **`... for Cline`**, **`... for Windsurf`**, or **`... for Antigravity`**.
+- **Manual Cleanup via Command Palette:** To disconnect integrations while keeping the extension active, run **`AI Artifacts: Uninstall`**, select the clients to remove using the checkboxes, then click **OK** or press **Enter**. No clients are selected by default. Each selected client has its managed configuration and client-specific skills removed independently; failures are summarized without stopping the remaining clients. Successful removal, including clients already not configured, removes their IDs from the saved client list. Shared runtime and skills are retained while any client still needs them or its usage cannot be determined. Shared cleanup runs once after the selected clients finish, only when no client remains dependent and no removal failed. Closing the picker or confirming an empty selection makes no changes. Restart affected AI clients after removal.
 
 > [!IMPORTANT]
 > **Artifact Data and User Rules Are Retained on Uninstall:** Neither uninstall method deletes user review data in `~/.ai-artifacts/artifacts/`, Work Sessions in `~/.ai-artifacts/conversation-registry/`, or user-managed global rules (`~/.gemini/config/rules/`, `~/.gemini/GEMINI.md`). Uninstall removes only managed client configuration, installed MCP runtime assets (`~/.ai-artifacts/managed/`), legacy `~/.vscode/ai-artifacts/`, and the managed skills. Delete the global artifact collection separately only when you intentionally want to erase review data.

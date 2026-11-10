@@ -19,7 +19,13 @@ import {
   getVsCodeUserMcpPath,
   type McpClientDriver,
 } from "./mcp-clients/index";
-import { upsertJsonMcpServer, writeTextFileAtomic } from "./mcp-clients/json-mcp-helper";
+import {
+  normalizePathForComparison,
+  readJsonConfig,
+  upsertJsonMcpServer,
+  writeTextFileAtomic,
+} from "./mcp-clients/json-mcp-helper";
+import { hasManagedCodexArtifactsMcp } from "./mcp-config";
 import { cleanupBaseMcpServer } from "./mcp-clients/base-cleanup";
 import {
   REVIEW_SKILL_ASSETS,
@@ -42,6 +48,7 @@ import { ensureManagedDirectory } from "../shared/artifact-validation";
 import {
   CREATE_REVIEW_ARTIFACT_SKILL_VERSION,
   INTEGRATION_VERSION_SCHEMA_VERSION,
+  MCP_CLIENT_IDS,
   MCP_VERSION,
   SKILL_VERSION,
   WORK_SESSION_SKILL_VERSION,
@@ -462,6 +469,62 @@ export async function installAllDetectedIntegrations(
   return { installedClients };
 }
 
+export type SelectedIntegrationsInstallResult = {
+  installedClients: Array<{ id: McpClientId; name: string }>;
+  failedClients: Array<{ id: McpClientId; name: string; error: string }>;
+};
+
+export async function installSelectedIntegrations(
+  context: vscode.ExtensionContext,
+  clientIds: readonly McpClientId[],
+  options?: IntegrationMutationOptions,
+): Promise<SelectedIntegrationsInstallResult> {
+  const userHome = os.homedir();
+  const recordClientSelection = options?.recordClientSelection ?? false;
+  const selectedIds = new Set(clientIds);
+  const canonicalSelectedIds = MCP_CLIENT_IDS.filter((id) => selectedIds.has(id));
+  if (canonicalSelectedIds.length === 0) {
+    return { installedClients: [], failedClients: [] };
+  }
+
+  const { paths } = await setupBaseMcpServer(context, { userHome });
+  const copilotConfigPath = getCopilotConfigPath(context);
+  const clineConfigPath = getClineConfigPath(context);
+  const drivers = getAllClientDrivers(
+    copilotConfigPath,
+    clineConfigPath,
+    paths.sourceSkill,
+    paths.sourceSessionSkill,
+  );
+  const selectedDrivers = drivers.filter((driver) => selectedIds.has(driver.id));
+
+  const installedClients: Array<{ id: McpClientId; name: string }> = [];
+  const failedClients: Array<{ id: McpClientId; name: string; error: string }> = [];
+
+  for (const driver of selectedDrivers) {
+    try {
+      await installAndVerifyClient(driver, paths.targetMcpScript, {
+        userHome,
+        recordClientSelection,
+      });
+      installedClients.push({ id: driver.id, name: driver.name });
+    } catch (error) {
+      failedClients.push({
+        id: driver.id,
+        name: driver.name,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  if (installedClients.length > 0) {
+    const legacyBaseDir = path.join(userHome, ".vscode", "ai-artifacts");
+    await fs.rm(legacyBaseDir, { recursive: true, force: true }).catch(() => {});
+  }
+
+  return { installedClients, failedClients };
+}
+
 // 2. Copilot (base setup + Code/User/mcp.json)
 export async function installCopilotIntegration(
   context: vscode.ExtensionContext,
@@ -604,6 +667,254 @@ export async function uninstallAllDetectedIntegrations(
   }
 
   return { uninstalledClients };
+}
+
+export type SelectedIntegrationsUninstallResult = {
+  uninstalledClients: Array<{ id: McpClientId; name: string }>;
+  notConfiguredClients: Array<{ id: McpClientId; name: string }>;
+  failedClients: Array<{ id: McpClientId; name: string; error: string }>;
+};
+
+type ClientBaseUsageState = "in-use" | "indeterminate" | "absent";
+
+function isPlainJsonObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function jsonEntryUsesManagedRuntime(
+  entry: unknown,
+  normalizedTargets: readonly string[],
+): boolean {
+  if (!isPlainJsonObject(entry) || !Array.isArray(entry.args)) return false;
+  return entry.args.some(
+    (arg) => typeof arg === "string" && normalizedTargets.includes(normalizePathForComparison(arg)),
+  );
+}
+
+function jsonConfigUsesManagedRuntime(
+  config: Record<string, unknown>,
+  normalizedTargets: readonly string[],
+): boolean {
+  if (
+    isPlainJsonObject(config.mcpServers) &&
+    jsonEntryUsesManagedRuntime(config.mcpServers.ai_artifacts, normalizedTargets)
+  ) {
+    return true;
+  }
+  if (
+    isPlainJsonObject(config.servers) &&
+    jsonEntryUsesManagedRuntime(config.servers.ai_artifacts, normalizedTargets)
+  ) {
+    return true;
+  }
+  return false;
+}
+
+function codexConfigUsesManagedRuntime(
+  content: string,
+  targetMcpScript: string,
+  legacyMcpScript: string,
+): boolean {
+  if (
+    hasManagedCodexArtifactsMcp(content, targetMcpScript) ||
+    hasManagedCodexArtifactsMcp(content, legacyMcpScript)
+  ) {
+    return true;
+  }
+  const hasArtifactsTable = /^\s*\[mcp_servers\.(?:ai_artifacts|codex_artifacts)(?:\.|\s*\])/m.test(
+    content,
+  );
+  if (!hasArtifactsTable) return false;
+
+  const normalizedTargets = [
+    normalizePathForComparison(targetMcpScript),
+    normalizePathForComparison(legacyMcpScript),
+  ];
+  const argsMatches = content.matchAll(
+    /^\s*args\s*=\s*\[\s*(?:"([^"]+)"|'([^']+)')(?:\s*,|\s*\])/gm,
+  );
+  for (const match of argsMatches) {
+    const scriptArg = match[1] ?? match[2] ?? "";
+    if (scriptArg && normalizedTargets.includes(normalizePathForComparison(scriptArg))) {
+      return true;
+    }
+  }
+  return false;
+}
+
+async function pathPresentOrIndeterminate(
+  targetPath: string,
+): Promise<"present" | "absent" | "indeterminate"> {
+  try {
+    await fs.lstat(targetPath);
+    return "present";
+  } catch (error: any) {
+    if (error?.code === "ENOENT") return "absent";
+    return "indeterminate";
+  }
+}
+
+async function assessClientBaseUsage(
+  driver: McpClientDriver,
+  targetMcpScript: string,
+  legacyMcpScript: string,
+): Promise<ClientBaseUsageState> {
+  const normalizedTargets = [
+    normalizePathForComparison(targetMcpScript),
+    normalizePathForComparison(legacyMcpScript),
+  ];
+
+  if (driver.id === "codex") {
+    try {
+      const content = await fs.readFile(driver.configPath, "utf8");
+      if (codexConfigUsesManagedRuntime(content, targetMcpScript, legacyMcpScript)) {
+        return "in-use";
+      }
+    } catch (error: any) {
+      if (error?.code !== "ENOENT") {
+        return "indeterminate";
+      }
+    }
+  } else {
+    try {
+      const config = await readJsonConfig(driver.configPath);
+      if (!isPlainJsonObject(config)) {
+        return "indeterminate";
+      }
+      if (jsonConfigUsesManagedRuntime(config, normalizedTargets)) {
+        return "in-use";
+      }
+    } catch {
+      return "indeterminate";
+    }
+
+    if (driver instanceof ClaudeClientDriver || driver instanceof AntigravityClientDriver) {
+      const [reviewSkillState, sessionSkillState] = await Promise.all([
+        pathPresentOrIndeterminate(driver.skillDirectory),
+        pathPresentOrIndeterminate(driver.sessionSkillDirectory),
+      ]);
+      if (reviewSkillState === "indeterminate" || sessionSkillState === "indeterminate") {
+        return "indeterminate";
+      }
+      if (reviewSkillState === "present" || sessionSkillState === "present") {
+        return "in-use";
+      }
+    }
+  }
+
+  try {
+    const checkResult = await driver.check(targetMcpScript);
+    if (checkResult.status !== "missing") {
+      return "in-use";
+    }
+  } catch {
+    return "indeterminate";
+  }
+
+  return "absent";
+}
+
+export async function uninstallSelectedIntegrations(
+  context: vscode.ExtensionContext | undefined,
+  clientIds: readonly McpClientId[],
+  options?: { cleanupBase?: boolean; userHome?: string; recordClientSelection?: boolean },
+): Promise<SelectedIntegrationsUninstallResult> {
+  const userHome = options?.userHome ?? os.homedir();
+  const recordClientSelection = options?.recordClientSelection ?? false;
+  const cleanupBase = options?.cleanupBase === true;
+  const selectedIds = new Set(clientIds);
+  const canonicalSelectedIds = MCP_CLIENT_IDS.filter((id) => selectedIds.has(id));
+  if (canonicalSelectedIds.length === 0) {
+    return {
+      uninstalledClients: [],
+      notConfiguredClients: [],
+      failedClients: [],
+    };
+  }
+
+  const paths = context?.extensionUri ? getBaseIntegrationPaths(context, { userHome }) : undefined;
+  const targetMcpScript = paths?.targetMcpScript ?? managedMcpScriptPath({ userHome });
+  const legacyMcpScript =
+    paths?.targetLegacyMcpScript ??
+    path.join(userHome, ".vscode", "ai-artifacts", "ai-artifacts-review-mcp.mjs");
+  const copilotConfigPath = getCopilotConfigPath(context);
+  const clineConfigPath = getClineConfigPath(context);
+  const drivers = getAllClientDrivers(
+    copilotConfigPath,
+    clineConfigPath,
+    paths?.sourceSkill,
+    paths?.sourceSessionSkill,
+  );
+  const selectedDrivers = drivers.filter((driver) => selectedIds.has(driver.id));
+
+  let globalIndeterminate = false;
+  const remainingClientsNeedingBase = new Set<McpClientId>();
+  if (cleanupBase) {
+    try {
+      await readInstalledClients({ userHome });
+    } catch {
+      globalIndeterminate = true;
+    }
+
+    const initialUsage = await Promise.all(
+      drivers.map(async (driver) => ({
+        id: driver.id,
+        state: await assessClientBaseUsage(driver, targetMcpScript, legacyMcpScript),
+      })),
+    );
+    for (const { id, state } of initialUsage) {
+      if (state === "in-use" || state === "indeterminate") {
+        remainingClientsNeedingBase.add(id);
+      }
+    }
+  }
+
+  const uninstalledClients: Array<{ id: McpClientId; name: string }> = [];
+  const notConfiguredClients: Array<{ id: McpClientId; name: string }> = [];
+  const failedClients: Array<{ id: McpClientId; name: string; error: string }> = [];
+
+  for (const driver of selectedDrivers) {
+    try {
+      const changed = await uninstallClient(driver, { userHome, recordClientSelection });
+      if (changed) {
+        uninstalledClients.push({ id: driver.id, name: driver.name });
+      } else {
+        notConfiguredClients.push({ id: driver.id, name: driver.name });
+      }
+      if (cleanupBase) {
+        const postState = await assessClientBaseUsage(driver, targetMcpScript, legacyMcpScript);
+        if (postState === "absent") {
+          remainingClientsNeedingBase.delete(driver.id);
+        } else {
+          remainingClientsNeedingBase.add(driver.id);
+        }
+      }
+    } catch (error) {
+      if (cleanupBase) {
+        remainingClientsNeedingBase.add(driver.id);
+      }
+      failedClients.push({
+        id: driver.id,
+        name: driver.name,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  if (
+    cleanupBase &&
+    !globalIndeterminate &&
+    failedClients.length === 0 &&
+    remainingClientsNeedingBase.size === 0
+  ) {
+    await cleanupBaseMcpServer({ userHome });
+  }
+
+  return {
+    uninstalledClients,
+    notConfiguredClients,
+    failedClients,
+  };
 }
 
 // 8. Individual uninstall functions
@@ -864,6 +1175,101 @@ export type ClientVerificationReport = {
   detail?: string;
 };
 
+export type InstallerClientDescriptor = {
+  id: McpClientId;
+  name: string;
+  configPath: string;
+  isDetected: boolean;
+  isSaved: boolean;
+  status: IntegrationCheck["status"];
+  detail?: string;
+};
+
+function formatOutdatedBaseAssetsDetail(
+  skillCurrent: boolean,
+  sessionSkillCurrent: boolean,
+): string {
+  if (!skillCurrent && !sessionSkillCurrent) {
+    return "Shared review skill and work session skill are outdated or missing.";
+  }
+  if (!skillCurrent) {
+    return "Shared review skill is outdated or missing.";
+  }
+  if (!sessionSkillCurrent) {
+    return "Shared work session skill is outdated or missing.";
+  }
+  return "Base MCP runtime is outdated or missing.";
+}
+
+async function checkDriverSafely(
+  driver: McpClientDriver,
+  targetMcpScript: string,
+): Promise<IntegrationCheck> {
+  try {
+    return await driver.check(targetMcpScript);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message.trim() : String(error).trim();
+    return {
+      status: "configuration-conflict",
+      detail: detail || `Failed to inspect ${driver.name} configuration.`,
+    };
+  }
+}
+
+export async function listInstallerClients(
+  context: vscode.ExtensionContext,
+): Promise<{
+  skillCurrent: boolean;
+  sessionSkillCurrent: boolean;
+  baseCurrent: boolean;
+  clients: InstallerClientDescriptor[];
+}> {
+  const userHome = os.homedir();
+  const paths = getBaseIntegrationPaths(context, { userHome });
+  const [skillCurrent, sessionSkillCurrent, baseCurrent, savedClients] = await Promise.all([
+    skillAssetsAreCurrent(paths),
+    sessionSkillAssetsAreCurrent(paths),
+    baseScriptIsCurrent(paths),
+    readInstalledClients({ userHome }),
+  ]);
+  const savedSet = new Set(savedClients);
+  const assetsCurrent = skillCurrent && sessionSkillCurrent && baseCurrent;
+  const copilotConfigPath = getCopilotConfigPath(context);
+  const clineConfigPath = getClineConfigPath(context);
+  const drivers = getAllClientDrivers(
+    copilotConfigPath,
+    clineConfigPath,
+    paths.sourceSkill,
+    paths.sourceSessionSkill,
+  );
+  const clients: InstallerClientDescriptor[] = [];
+
+  for (const driver of drivers) {
+    const isDetected = driver.isDetected();
+    const isSaved = savedSet.has(driver.id);
+    const checkResult = await checkDriverSafely(driver, paths.targetMcpScript);
+    let detail = checkResult.detail;
+    let status = checkResult.status;
+    if (status === "ready" && !assetsCurrent) {
+      status = "outdated";
+      if (!detail) {
+        detail = formatOutdatedBaseAssetsDetail(skillCurrent, sessionSkillCurrent);
+      }
+    }
+    clients.push({
+      id: driver.id,
+      name: driver.name,
+      configPath: driver.configPath,
+      isDetected,
+      isSaved,
+      status,
+      ...(detail ? { detail } : {}),
+    });
+  }
+
+  return { skillCurrent, sessionSkillCurrent, baseCurrent, clients };
+}
+
 export async function checkAllIntegrations(
   context: vscode.ExtensionContext,
 ): Promise<{
@@ -891,21 +1297,13 @@ export async function checkAllIntegrations(
 
   for (const driver of drivers) {
     const isDetected = driver.isDetected();
-    const checkResult = await driver.check(paths.targetMcpScript);
+    const checkResult = await checkDriverSafely(driver, paths.targetMcpScript);
     let detail = checkResult.detail;
     let status = checkResult.status;
     if (status === "ready" && !assetsCurrent) {
       status = "outdated";
       if (!detail) {
-        if (!skillCurrent && !sessionSkillCurrent) {
-          detail = "Shared review skill and work session skill are outdated or missing.";
-        } else if (!skillCurrent) {
-          detail = "Shared review skill is outdated or missing.";
-        } else if (!sessionSkillCurrent) {
-          detail = "Shared work session skill is outdated or missing.";
-        } else {
-          detail = "Base MCP runtime is outdated or missing.";
-        }
+        detail = formatOutdatedBaseAssetsDetail(skillCurrent, sessionSkillCurrent);
       }
     }
     clients.push({

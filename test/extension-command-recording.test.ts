@@ -17,6 +17,8 @@ const {
   mockShowInformationMessage,
   mockShowWarningMessage,
   mockShowErrorMessage,
+  mockCreateQuickPick,
+  mockWithProgress,
   mockClipboardWriteText,
   mockRunAutomaticIntegrationUpgrade,
   sidebarSpies,
@@ -35,6 +37,8 @@ const {
     mockShowInformationMessage: vi.fn(async () => undefined),
     mockShowWarningMessage: vi.fn(async () => undefined),
     mockShowErrorMessage: vi.fn(async () => undefined),
+    mockCreateQuickPick: vi.fn(),
+    mockWithProgress: vi.fn(async (_opts: unknown, task: () => Promise<unknown>) => task()),
     mockClipboardWriteText: vi.fn(async () => undefined),
     mockRunAutomaticIntegrationUpgrade: vi.fn(
       async (_deps: AutomaticIntegrationUpgradeDeps): Promise<void> => undefined,
@@ -55,6 +59,25 @@ const {
       installWindsurfIntegration: vi.fn(async () => undefined),
       installClineIntegration: vi.fn(async () => undefined),
       installAntigravityIntegration: vi.fn(async () => undefined),
+      installSelectedIntegrations: vi.fn(async () => ({
+        installedClients: [{ id: "codex" as const, name: "Codex" }],
+        failedClients: [],
+      })),
+      listInstallerClients: vi.fn(async () => ({
+        skillCurrent: true,
+        sessionSkillCurrent: true,
+        baseCurrent: true,
+        clients: [
+          {
+            id: "codex" as const,
+            name: "Codex",
+            configPath: "/tmp/.codex/config.toml",
+            isDetected: true,
+            isSaved: false,
+            status: "missing" as const,
+          },
+        ],
+      })),
       uninstallAllDetectedIntegrations: vi.fn(async () => ({ uninstalledClients: ["Codex"] })),
       uninstallCopilotIntegration: vi.fn(async () => true),
       uninstallCodexIntegration: vi.fn(async () => true),
@@ -63,6 +86,11 @@ const {
       uninstallWindsurfIntegration: vi.fn(async () => true),
       uninstallClineIntegration: vi.fn(async () => true),
       uninstallAntigravityIntegration: vi.fn(async () => true),
+      uninstallSelectedIntegrations: vi.fn(async () => ({
+        uninstalledClients: [{ id: "codex" as const, name: "Codex" }],
+        notConfiguredClients: [],
+        failedClients: [],
+      })),
       checkAllIntegrations: vi.fn(async () => ({
         skillCurrent: true,
         sessionSkillCurrent: true,
@@ -94,6 +122,9 @@ vi.mock("vscode", () => ({
     constructor(readonly base: unknown, readonly pattern: string) {}
   },
   ProgressLocation: { Notification: 15 },
+  ThemeIcon: class {
+    constructor(readonly id: string) {}
+  },
   TabInputCustom: class {
     constructor(readonly viewType: string, readonly uri: unknown) {}
   },
@@ -114,11 +145,11 @@ vi.mock("vscode", () => ({
     showInformationMessage: mockShowInformationMessage,
     showWarningMessage: mockShowWarningMessage,
     showErrorMessage: mockShowErrorMessage,
-    createQuickPick: vi.fn(),
+    createQuickPick: mockCreateQuickPick,
     showInputBox: vi.fn(),
     showQuickPick: vi.fn(),
     showOpenDialog: vi.fn(),
-    withProgress: vi.fn(),
+    withProgress: mockWithProgress,
   },
   workspace: {
     createFileSystemWatcher: () => ({
@@ -366,6 +397,106 @@ describe("Extension activation auto-upgrade wiring & manual command recording", 
       await registeredCommands.get("agentPlus.copyMcpConfig")!();
       await registeredCommands.get("agentPlus.copyReviewSkill")!();
       expect(workspaceIntegrationSpies.installAllDetectedIntegrations).not.toHaveBeenCalled();
+
+      // Interactive Installer command wires recordClientSelection: true and refreshes views
+      const acceptListeners: Array<() => void> = [];
+      const hideListeners: Array<() => void> = [];
+      const qp = {
+        title: "",
+        placeholder: "",
+        canSelectMany: false,
+        matchOnDescription: false,
+        matchOnDetail: false,
+        busy: false,
+        buttons: [] as unknown[],
+        items: [] as Array<{ clientId: string }>,
+        selectedItems: [] as Array<{ clientId: string }>,
+        onDidAccept: (fn: () => void) => {
+          acceptListeners.push(fn);
+          return { dispose: () => {} };
+        },
+        onDidTriggerButton: () => ({ dispose: () => {} }),
+        onDidHide: (fn: () => void) => {
+          hideListeners.push(fn);
+          return { dispose: () => {} };
+        },
+        show: vi.fn(),
+        hide: vi.fn(() => {
+          for (const fn of hideListeners) fn();
+        }),
+        dispose: vi.fn(),
+      };
+      mockCreateQuickPick.mockReturnValueOnce(qp);
+      sidebarSpies.recentRefresh.mockClear();
+      sidebarSpies.sessionsRefresh.mockClear();
+      conversationServiceSpies.notifyChanged.mockClear();
+
+      const installerPromise = registeredCommands.get("agentPlus.installer")!();
+      await vi.waitFor(() => {
+        expect(qp.busy).toBe(false);
+      });
+      for (const fn of acceptListeners) fn();
+      await installerPromise;
+
+      expect(workspaceIntegrationSpies.listInstallerClients).toHaveBeenCalledWith(context);
+      expect(workspaceIntegrationSpies.installSelectedIntegrations).toHaveBeenCalledWith(
+        context,
+        ["codex"],
+        { recordClientSelection: true },
+      );
+      expect(sidebarSpies.sessionsRefresh).toHaveBeenCalledTimes(1);
+      expect(sidebarSpies.recentRefresh).toHaveBeenCalledTimes(1);
+      expect(conversationServiceSpies.notifyChanged).toHaveBeenCalledWith([{ kind: "support" }]);
+
+      // Interactive Uninstall command wires recordClientSelection: true and refreshes views
+      const uninstallAcceptListeners: Array<() => void> = [];
+      const uninstallHideListeners: Array<() => void> = [];
+      const uninstallQp = {
+        title: "",
+        placeholder: "",
+        canSelectMany: false,
+        matchOnDescription: false,
+        matchOnDetail: false,
+        busy: false,
+        items: [] as Array<{ clientId: string }>,
+        selectedItems: [] as Array<{ clientId: string }>,
+        onDidAccept: (fn: () => void) => {
+          uninstallAcceptListeners.push(fn);
+          return { dispose: () => {} };
+        },
+        onDidHide: (fn: () => void) => {
+          uninstallHideListeners.push(fn);
+          return { dispose: () => {} };
+        },
+        show: vi.fn(),
+        hide: vi.fn(() => {
+          for (const fn of uninstallHideListeners) fn();
+        }),
+        dispose: vi.fn(),
+      };
+      mockCreateQuickPick.mockReturnValueOnce(uninstallQp);
+      sidebarSpies.recentRefresh.mockClear();
+      sidebarSpies.sessionsRefresh.mockClear();
+      conversationServiceSpies.notifyChanged.mockClear();
+
+      const uninstallPromise = registeredCommands.get("agentPlus.uninstall")!();
+      await vi.waitFor(() => {
+        expect(uninstallQp.busy).toBe(false);
+      });
+      // Default selection must be empty; explicitly select the item
+      expect(uninstallQp.selectedItems).toEqual([]);
+      uninstallQp.selectedItems = uninstallQp.items;
+      for (const fn of uninstallAcceptListeners) fn();
+      await uninstallPromise;
+
+      expect(workspaceIntegrationSpies.uninstallSelectedIntegrations).toHaveBeenCalledWith(
+        context,
+        ["codex"],
+        { recordClientSelection: true, cleanupBase: true },
+      );
+      expect(sidebarSpies.sessionsRefresh).toHaveBeenCalledTimes(1);
+      expect(sidebarSpies.recentRefresh).toHaveBeenCalledTimes(1);
+      expect(conversationServiceSpies.notifyChanged).toHaveBeenCalledWith([{ kind: "support" }]);
     } finally {
       await fs.rm(tempRoot, { recursive: true, force: true }).catch(() => {});
     }

@@ -64,6 +64,7 @@
     "onCommand:agentPlus.manageSessionTypes",
     "onCommand:agentPlus.openArtifactReview",
     "onCommand:agentPlus.searchArtifact",
+    "onCommand:agentPlus.installer",
     "onCommand:agentPlus.installAllIntegrations",
     "onCommand:agentPlus.installCopilotIntegration",
     "onCommand:agentPlus.installCodexIntegration",
@@ -75,6 +76,7 @@
     "onCommand:agentPlus.copyMcpConfig",
     "onCommand:agentPlus.copyReviewSkill",
     "onCommand:agentPlus.verifyGlobalIntegration",
+    "onCommand:agentPlus.uninstall",
     "onCommand:agentPlus.uninstallAllIntegrations",
     "onCommand:agentPlus.uninstallCopilotIntegration",
     "onCommand:agentPlus.uninstallCodexIntegration",
@@ -224,6 +226,10 @@
         "icon": "$(tag)"
       },
       {
+        "command": "agentPlus.installer",
+        "title": "AI Artifacts: Installer"
+      },
+      {
         "command": "agentPlus.installAllIntegrations",
         "title": "AI Artifacts: Install All Detected Integrations"
       },
@@ -266,6 +272,10 @@
       {
         "command": "agentPlus.verifyGlobalIntegration",
         "title": "AI Artifacts: Verify All Integrations"
+      },
+      {
+        "command": "agentPlus.uninstall",
+        "title": "AI Artifacts: Uninstall"
       },
       {
         "command": "agentPlus.uninstallAllIntegrations",

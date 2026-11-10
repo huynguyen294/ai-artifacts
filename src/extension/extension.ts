@@ -37,6 +37,14 @@ import {
   runArtifactSearchCommand,
   type ArtifactQuickPickItem,
 } from "./artifact-search-command";
+import {
+  runIntegrationInstallCommand,
+  type InstallerClientQuickPickItem,
+} from "./integration-install-command";
+import {
+  runIntegrationUninstallCommand,
+  type UninstallClientQuickPickItem,
+} from "./integration-uninstall-command";
 import { runBulkMigration } from "./session-migration-command";
 import { migrateConversationToSession } from "../shared/conversation-artifact-registry";
 import { ensureSafeGlobalArtifactsRoot } from "../shared/artifact-validation";
@@ -50,8 +58,10 @@ import {
   installCodexIntegration,
   installCopilotIntegration,
   installCursorIntegration,
+  installSelectedIntegrations,
   installWindsurfIntegration,
   installClineIntegration,
+  listInstallerClients,
   readInstalledIntegrationVersion,
   uninstallAllDetectedIntegrations,
   uninstallAntigravityIntegration,
@@ -59,6 +69,7 @@ import {
   uninstallCodexIntegration,
   uninstallCopilotIntegration,
   uninstallCursorIntegration,
+  uninstallSelectedIntegrations,
   uninstallWindsurfIntegration,
   uninstallClineIntegration,
   upgradeDetectedIntegrations,
@@ -438,6 +449,31 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       );
     }),
 
+    // Interactive multi-client installer
+    vscode.commands.registerCommand("agentPlus.installer", async () => {
+      await runIntegrationInstallCommand({
+        createQuickPick: () => vscode.window.createQuickPick<InstallerClientQuickPickItem>(),
+        listClients: () => listInstallerClients(context),
+        installClients: (clientIds) =>
+          installSelectedIntegrations(context, clientIds, { recordClientSelection: true }),
+        withProgress: (title, task) =>
+          Promise.resolve(
+            vscode.window.withProgress(
+              {
+                location: vscode.ProgressLocation.Notification,
+                title,
+                cancellable: false,
+              },
+              () => task(),
+            ),
+          ),
+        showInformationMessage: (message) => vscode.window.showInformationMessage(message),
+        showWarningMessage: (message) => vscode.window.showWarningMessage(message),
+        showErrorMessage: (message) => vscode.window.showErrorMessage(message),
+        onDidInstall: refreshViewsAndService,
+      });
+    }),
+
     // 1. All Detected
     vscode.commands.registerCommand(
       "agentPlus.installAllIntegrations",
@@ -574,6 +610,34 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       } catch (error) {
         void vscode.window.showErrorMessage(error instanceof Error ? error.message : String(error));
       }
+    }),
+
+    // Interactive multi-client uninstall
+    vscode.commands.registerCommand("agentPlus.uninstall", async () => {
+      await runIntegrationUninstallCommand({
+        createQuickPick: () => vscode.window.createQuickPick<UninstallClientQuickPickItem>(),
+        listClients: () => listInstallerClients(context),
+        uninstallClients: (clientIds) =>
+          uninstallSelectedIntegrations(context, clientIds, {
+            recordClientSelection: true,
+            cleanupBase: true,
+          }),
+        withProgress: (title, task) =>
+          Promise.resolve(
+            vscode.window.withProgress(
+              {
+                location: vscode.ProgressLocation.Notification,
+                title,
+                cancellable: false,
+              },
+              () => task(),
+            ),
+          ),
+        showInformationMessage: (message) => vscode.window.showInformationMessage(message),
+        showWarningMessage: (message) => vscode.window.showWarningMessage(message),
+        showErrorMessage: (message) => vscode.window.showErrorMessage(message),
+        onDidUninstall: refreshViewsAndService,
+      });
     }),
 
     // 10. Uninstall all detected integrations

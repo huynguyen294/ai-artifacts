@@ -263,7 +263,7 @@ describe("v1.1.4 release contract", () => {
     expect(instructions).toContain("extension-only changes with current receipts must not force reinstall");
     expect(instructions).toContain("Never mark a partial failure current");
     expect(contract).toContain("schema-v1 UI-routing state only");
-    expect(contract).toContain("AI Artifacts: Install All Detected Integrations");
+    expect(contract).toContain("AI Artifacts: Installer");
     expect(changelog).toContain("## [1.1.4] - 2026-11-04");
     expect(changelog).toContain("## [1.1.3] - 2026-11-02");
     expect(changelog).toContain("### Preserve Active Waiters During Non-waiting Updates");

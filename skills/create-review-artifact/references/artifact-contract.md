@@ -43,7 +43,7 @@ Both waiting tools, when waiting for review, return the same client-independent 
 
 ## Availability and lifetime
 
-The artifact skill requires its five tools once when starting an artifact lifecycle in the current chat. Use the current tool catalog; do not probe MCP resources or the filesystem. It does not repeat the check in later rounds unless a tool becomes unavailable, the MCP restarts, or a new chat begins. If the catalog is incomplete, ask the user to run **AI Artifacts: Install All Detected Integrations** (or the install command for their specific client), restart that AI client, and start a new chat.
+The artifact skill requires its five tools once when starting an artifact lifecycle in the current chat. Use the current tool catalog; do not probe MCP resources or the filesystem. It does not repeat the check in later rounds unless a tool becomes unavailable, the MCP restarts, or a new chat begins. If the catalog is incomplete, ask the user to run **AI Artifacts: Installer**, select their AI client, confirm with **OK**, **Run**, or **Enter**, restart that AI client, and start a new chat.
 
 ```text
 artifact lifetime > waiter lifetime > chat-turn lifetime

@@ -9,7 +9,9 @@ import { ArtifactStore } from "../src/extension/artifact-store";
 import { hasManagedCodexArtifactsMcp, upsertCodexArtifactsMcp } from "../src/extension/mcp-config";
 import {
   globalArtifactsRoot,
+  managedInstalledClientsPath,
   managedIntegrationVersionPath,
+  managedMcpScriptPath,
 } from "../src/shared/artifact-files";
 import {
   CREATE_REVIEW_ARTIFACT_SKILL_VERSION,
@@ -43,6 +45,10 @@ import {
   installAllDetectedIntegrations,
   installAntigravityIntegration,
   installClaudeIntegration,
+  installCursorIntegration,
+  installSelectedIntegrations,
+  installWindsurfIntegration,
+  listInstallerClients,
   readInstalledIntegrationVersion,
   sessionSkillAssetsAreCurrent,
   skillAssetsAreCurrent,
@@ -50,9 +56,11 @@ import {
   setupBaseMcpServer,
   uninstallAllDetectedIntegrations,
   uninstallAntigravityIntegration,
+  uninstallSelectedIntegrations,
   writeInstalledIntegrationVersion,
   type BaseIntegrationPaths,
 } from "../src/extension/workspace-integration";
+import { WindsurfClientDriver } from "../src/extension/mcp-clients/index";
 
 const installedMcpProcesses: ChildProcessWithoutNullStreams[] = [];
 const CURRENT_SKILL_DESCRIPTION = OFFICIAL_SKILL_DESCRIPTIONS.at(-1)!;
@@ -1153,5 +1161,341 @@ describe("Workspace Integration Asset Verifiers", () => {
 
     await fs.mkdir(path.join(targetDir, ".claude"), { recursive: true });
     expect(getDetectedSkillTargets()).toEqual(["agents", "claude", "antigravity"]);
+  });
+
+  it("installSelectedIntegrations installs only selected clients, records them, isolates failures, and surfaces status in listInstallerClients", async () => {
+    const repositoryRoot = path.resolve(import.meta.dirname, "..");
+    vi.spyOn(os, "homedir").mockReturnValue(targetDir);
+    const originalCodexHome = process.env.CODEX_HOME;
+    const codexHome = path.join(targetDir, ".codex");
+    process.env.CODEX_HOME = codexHome;
+
+    try {
+      const globalStoragePath = path.join(targetDir, "vscode-global-storage", "publisher.ai-artifacts");
+      const codexConfig = path.join(codexHome, "config.toml");
+      const cursorConfig = path.join(targetDir, ".cursor", "mcp.json");
+      const antigravityDir = path.join(targetDir, ".gemini", "antigravity");
+      const antigravityConfig = path.join(targetDir, ".gemini", "config", "mcp_config.json");
+
+      await fs.mkdir(codexHome, { recursive: true });
+      await fs.mkdir(path.dirname(cursorConfig), { recursive: true });
+      await fs.mkdir(antigravityDir, { recursive: true });
+
+      // Conflict in Codex should fail Codex without blocking Cursor or Antigravity
+      await fs.writeFile(
+        codexConfig,
+        '[mcp_servers.ai_artifacts]\ncommand = "node"\nargs = ["/custom/server.mjs"]\n',
+        "utf8",
+      );
+      await fs.writeFile(cursorConfig, JSON.stringify({ mcpServers: {} }, null, 2), "utf8");
+
+      const context = {
+        extensionUri: { fsPath: repositoryRoot },
+        globalStorageUri: { fsPath: globalStoragePath },
+      } as any;
+
+      const initialList = await listInstallerClients(context);
+      const codexInitial = initialList.clients.find((c) => c.id === "codex");
+      const cursorInitial = initialList.clients.find((c) => c.id === "cursor");
+      const claudeInitial = initialList.clients.find((c) => c.id === "claude");
+      expect(codexInitial).toMatchObject({
+        isDetected: true,
+        isSaved: false,
+        status: "configuration-conflict",
+      });
+      expect(cursorInitial).toMatchObject({
+        isDetected: true,
+        isSaved: false,
+        status: "missing",
+      });
+      expect(claudeInitial).toMatchObject({
+        isDetected: false,
+        isSaved: false,
+        status: "missing",
+      });
+
+      const installResult = await installSelectedIntegrations(
+        context,
+        ["cursor", "codex", "antigravity"],
+        { recordClientSelection: true },
+      );
+
+      expect(installResult.installedClients).toEqual([
+        { id: "cursor", name: "Cursor" },
+        { id: "antigravity", name: "Antigravity" },
+      ]);
+      expect(installResult.failedClients).toHaveLength(1);
+      expect(installResult.failedClients[0]!.id).toBe("codex");
+      await expect(fs.access(antigravityConfig)).resolves.toBeUndefined();
+
+      const updatedList = await listInstallerClients(context);
+      expect(updatedList.clients.find((c) => c.id === "cursor")).toMatchObject({
+        isDetected: true,
+        isSaved: true,
+        status: "ready",
+      });
+      expect(updatedList.clients.find((c) => c.id === "antigravity")).toMatchObject({
+        isDetected: true,
+        isSaved: true,
+        status: "ready",
+      });
+      expect(updatedList.clients.find((c) => c.id === "codex")).toMatchObject({
+        isDetected: true,
+        isSaved: false,
+        status: "configuration-conflict",
+      });
+      // Unselected client remains untouched
+      expect(updatedList.clients.find((c) => c.id === "claude")).toMatchObject({
+        isDetected: false,
+        isSaved: false,
+        status: "missing",
+      });
+
+      // Uninstall only Antigravity while leaving Cursor and shared base assets intact
+      const partialUninstall = await uninstallSelectedIntegrations(
+        context,
+        ["antigravity", "claude"],
+        { recordClientSelection: true },
+      );
+      expect(partialUninstall.uninstalledClients).toEqual([{ id: "antigravity", name: "Antigravity" }]);
+      expect(partialUninstall.notConfiguredClients).toEqual([{ id: "claude", name: "Claude" }]);
+      expect(partialUninstall.failedClients).toEqual([]);
+
+      const afterUninstallList = await listInstallerClients(context);
+      expect(afterUninstallList.baseCurrent).toBe(true);
+      expect(afterUninstallList.clients.find((c) => c.id === "antigravity")).toMatchObject({
+        isSaved: false,
+        status: "missing",
+      });
+      expect(afterUninstallList.clients.find((c) => c.id === "cursor")).toMatchObject({
+        isSaved: true,
+        status: "ready",
+      });
+    } finally {
+      if (originalCodexHome === undefined) {
+        delete process.env.CODEX_HOME;
+      } else {
+        process.env.CODEX_HOME = originalCodexHome;
+      }
+    }
+  });
+
+  it("isolates per-driver check failures in listInstallerClients and checkAllIntegrations so healthy clients remain selectable for install and uninstall", async () => {
+    const repositoryRoot = path.resolve(import.meta.dirname, "..");
+    vi.spyOn(os, "homedir").mockReturnValue(targetDir);
+    const originalCodexHome = process.env.CODEX_HOME;
+    const codexHome = path.join(targetDir, ".codex");
+    process.env.CODEX_HOME = codexHome;
+
+    try {
+      const globalStoragePath = path.join(targetDir, "vscode-global-storage", "publisher.ai-artifacts");
+      const cursorConfig = path.join(targetDir, ".cursor", "mcp.json");
+      const antigravityConfig = path.join(targetDir, ".gemini", "config", "mcp_config.json");
+      const corruptRaw = "{ \"mcpServers\": broken";
+
+      await fs.mkdir(path.dirname(cursorConfig), { recursive: true });
+      await fs.mkdir(path.dirname(antigravityConfig), { recursive: true });
+      await fs.writeFile(cursorConfig, JSON.stringify({ mcpServers: {} }, null, 2), "utf8");
+      await fs.writeFile(antigravityConfig, corruptRaw, "utf8");
+
+      const context = {
+        extensionUri: { fsPath: repositoryRoot },
+        globalStorageUri: { fsPath: globalStoragePath },
+      } as any;
+
+      const list = await listInstallerClients(context);
+      const antigravity = list.clients.find((c) => c.id === "antigravity");
+      const cursor = list.clients.find((c) => c.id === "cursor");
+      expect(antigravity).toMatchObject({
+        id: "antigravity",
+        isDetected: true,
+        status: "configuration-conflict",
+      });
+      expect(antigravity?.detail).toContain("Invalid JSON syntax");
+      expect(cursor).toMatchObject({
+        id: "cursor",
+        isDetected: true,
+        status: "missing",
+      });
+
+      const verifyReport = await checkAllIntegrations(context);
+      expect(verifyReport.clients.find((c) => c.id === "antigravity")?.status).toBe("configuration-conflict");
+      expect(verifyReport.clients.find((c) => c.id === "cursor")?.status).toBe("missing");
+
+      // User can still install and then uninstall Cursor despite Antigravity config corruption
+      const installResult = await installSelectedIntegrations(context, ["cursor"], {
+        recordClientSelection: true,
+      });
+      expect(installResult).toEqual({
+        installedClients: [{ id: "cursor", name: "Cursor" }],
+        failedClients: [],
+      });
+
+      const afterInstallList = await listInstallerClients(context);
+      expect(afterInstallList.clients.find((c) => c.id === "cursor")).toMatchObject({
+        isSaved: true,
+        status: "ready",
+      });
+      expect(afterInstallList.clients.find((c) => c.id === "antigravity")?.status).toBe("configuration-conflict");
+
+      const uninstallResult = await uninstallSelectedIntegrations(context, ["cursor"], {
+        recordClientSelection: true,
+        cleanupBase: true,
+      });
+      expect(uninstallResult).toEqual({
+        uninstalledClients: [{ id: "cursor", name: "Cursor" }],
+        notConfiguredClients: [],
+        failedClients: [],
+      });
+      // Base assets stay intact because Antigravity state is indeterminate (corrupt config)
+      await expect(fs.access(managedMcpScriptPath({ userHome: targetDir }))).resolves.toBeUndefined();
+      await expect(fs.readFile(antigravityConfig, "utf8")).resolves.toBe(corruptRaw);
+    } finally {
+      if (originalCodexHome === undefined) {
+        delete process.env.CODEX_HOME;
+      } else {
+        process.env.CODEX_HOME = originalCodexHome;
+      }
+    }
+  });
+
+  it("uninstallSelectedIntegrations cleans shared base assets once only when no remaining client uses or may use them", async () => {
+    const repositoryRoot = path.resolve(import.meta.dirname, "..");
+    vi.spyOn(os, "homedir").mockReturnValue(targetDir);
+    const originalCodexHome = process.env.CODEX_HOME;
+    const codexHome = path.join(targetDir, ".codex");
+    process.env.CODEX_HOME = codexHome;
+
+    try {
+      const globalStoragePath = path.join(targetDir, "vscode-global-storage", "publisher.ai-artifacts");
+      const context = {
+        extensionUri: { fsPath: repositoryRoot },
+        globalStorageUri: { fsPath: globalStoragePath },
+      } as any;
+      const runtimePath = managedMcpScriptPath({ userHome: targetDir });
+      const clientsManifestPath = managedInstalledClientsPath({ userHome: targetDir });
+      const sharedReviewSkillPath = path.join(targetDir, ".agents", "skills", "create-review-artifact", "SKILL.md");
+
+      // 1. Partial uninstall (Cursor + Windsurf installed -> uninstall Cursor only) keeps base & Windsurf intact
+      await installCursorIntegration(context, { recordClientSelection: true });
+      await installWindsurfIntegration(context, { recordClientSelection: true });
+
+      const step1 = await uninstallSelectedIntegrations(context, ["cursor"], {
+        recordClientSelection: true,
+        cleanupBase: true,
+      });
+      expect(step1.uninstalledClients).toEqual([{ id: "cursor", name: "Cursor" }]);
+      expect(step1.failedClients).toEqual([]);
+      await expect(fs.access(runtimePath)).resolves.toBeUndefined();
+      await expect(fs.access(sharedReviewSkillPath)).resolves.toBeUndefined();
+      const afterStep1 = await listInstallerClients(context);
+      expect(afterStep1.clients.find((c) => c.id === "windsurf")?.status).toBe("ready");
+
+      // 2. Final client uninstall cleans shared base assets once
+      const step2 = await uninstallSelectedIntegrations(context, ["windsurf"], {
+        recordClientSelection: true,
+        cleanupBase: true,
+      });
+      expect(step2.uninstalledClients).toEqual([{ id: "windsurf", name: "Windsurf" }]);
+      expect(step2.failedClients).toEqual([]);
+      await expect(fs.access(runtimePath)).rejects.toThrow();
+      await expect(fs.access(sharedReviewSkillPath)).rejects.toThrow();
+      await expect(fs.access(clientsManifestPath)).rejects.toThrow();
+
+      // 3. Failure on one selected client retains base assets for the failed client
+      await installCursorIntegration(context, { recordClientSelection: true });
+      await installWindsurfIntegration(context, { recordClientSelection: true });
+      vi.spyOn(WindsurfClientDriver.prototype, "uninstall").mockRejectedValueOnce(new Error("windsurf locked"));
+
+      const failedBatch = await uninstallSelectedIntegrations(context, ["cursor", "windsurf"], {
+        recordClientSelection: true,
+        cleanupBase: true,
+      });
+      expect(failedBatch.uninstalledClients).toEqual([{ id: "cursor", name: "Cursor" }]);
+      expect(failedBatch.failedClients).toEqual([
+        { id: "windsurf", name: "Windsurf", error: "windsurf locked" },
+      ]);
+      await expect(fs.access(runtimePath)).resolves.toBeUndefined();
+
+      // Finish Windsurf uninstall cleanly to clear base again
+      const clearStep = await uninstallSelectedIntegrations(context, ["windsurf"], {
+        recordClientSelection: true,
+        cleanupBase: true,
+      });
+      expect(clearStep.failedClients).toEqual([]);
+      await expect(fs.access(runtimePath)).rejects.toThrow();
+
+      // 4. Unselected client with corrupt JSON (indeterminate) keeps base assets even though Cursor succeeds
+      await installCursorIntegration(context, { recordClientSelection: true });
+      const windsurfConfig = path.join(targetDir, ".codeium", "windsurf", "mcp_config.json");
+      await fs.mkdir(path.dirname(windsurfConfig), { recursive: true });
+      await fs.writeFile(windsurfConfig, "{ invalid json", "utf8");
+
+      const withCorruptSibling = await uninstallSelectedIntegrations(context, ["cursor"], {
+        recordClientSelection: true,
+        cleanupBase: true,
+      });
+      expect(withCorruptSibling.uninstalledClients).toEqual([{ id: "cursor", name: "Cursor" }]);
+      await expect(fs.access(runtimePath)).resolves.toBeUndefined();
+      await fs.rm(windsurfConfig);
+
+      // 5. Unselected Claude client missing SKILL.md (driver.check() === "missing") but still pointing MCP to runtime keeps base
+      await installCursorIntegration(context, { recordClientSelection: true });
+      await installClaudeIntegration(context, { recordClientSelection: true });
+      await fs.rm(path.join(targetDir, ".claude", "skills", "create-review-artifact", "SKILL.md"));
+
+      const withPartialClaude = await uninstallSelectedIntegrations(context, ["cursor"], {
+        recordClientSelection: true,
+        cleanupBase: true,
+      });
+      expect(withPartialClaude.uninstalledClients).toEqual([{ id: "cursor", name: "Cursor" }]);
+      await expect(fs.access(runtimePath)).resolves.toBeUndefined();
+
+      await uninstallSelectedIntegrations(context, ["claude"], {
+        recordClientSelection: true,
+        cleanupBase: true,
+      });
+      await expect(fs.access(runtimePath)).rejects.toThrow();
+
+      // 6. Unselected client using an absolute Node executable path (e.g. process.execPath) still references runtime -> keep base
+      await installCursorIntegration(context, { recordClientSelection: true });
+      await installWindsurfIntegration(context, { recordClientSelection: true });
+      const windsurfAbsoluteCmdCfg = JSON.parse(await fs.readFile(windsurfConfig, "utf8"));
+      windsurfAbsoluteCmdCfg.mcpServers.ai_artifacts.command = process.execPath;
+      await fs.writeFile(windsurfConfig, `${JSON.stringify(windsurfAbsoluteCmdCfg, null, 2)}\n`, "utf8");
+
+      const withCustomNodePath = await uninstallSelectedIntegrations(context, ["cursor"], {
+        recordClientSelection: true,
+        cleanupBase: true,
+      });
+      expect(withCustomNodePath.uninstalledClients).toEqual([{ id: "cursor", name: "Cursor" }]);
+      await expect(fs.access(runtimePath)).resolves.toBeUndefined();
+      await uninstallSelectedIntegrations(context, ["windsurf"], {
+        recordClientSelection: true,
+        cleanupBase: true,
+      });
+      await expect(fs.access(runtimePath)).rejects.toThrow();
+
+      // 7. Selected Codex with unmanaged [mcp_servers.ai_artifacts] entry left on disk keeps base
+      await setupBaseMcpServer(context, { userHome: targetDir });
+      await fs.mkdir(codexHome, { recursive: true });
+      await fs.writeFile(
+        path.join(codexHome, "config.toml"),
+        `[mcp_servers.ai_artifacts]\ncommand = "node"\nargs = ${JSON.stringify([runtimePath])}\n`,
+        "utf8",
+      );
+      const unmanagedCodexResult = await uninstallSelectedIntegrations(context, ["codex"], {
+        recordClientSelection: true,
+        cleanupBase: true,
+      });
+      expect(unmanagedCodexResult.notConfiguredClients).toEqual([{ id: "codex", name: "Codex" }]);
+      await expect(fs.access(runtimePath)).resolves.toBeUndefined();
+    } finally {
+      if (originalCodexHome === undefined) {
+        delete process.env.CODEX_HOME;
+      } else {
+        process.env.CODEX_HOME = originalCodexHome;
+      }
+    }
   });
 });
