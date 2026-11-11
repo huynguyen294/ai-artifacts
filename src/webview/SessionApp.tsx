@@ -726,7 +726,9 @@ export function SessionApp({ initialState, initialPanelExpanded = true }: Sessio
         <div className="session-header-top">
           <div className="session-title-row">
             {isArchived && <span className="session-archived-badge">Archived</span>}
-            <h2 className="session-title">{data.title}</h2>
+            <h2 className="session-title" title={data.title}>
+              {data.title}
+            </h2>
             {!isArchived && (
               <button
                 type="button"
@@ -871,11 +873,6 @@ export function SessionApp({ initialState, initialPanelExpanded = true }: Sessio
               </div>
             </div>
           )}
-        </div>
-        <div className="session-header-meta">
-          <span>Updated: {data.updatedAt}</span>
-          <span>·</span>
-          <span>Created: {data.createdAt}</span>
         </div>
       </header>
 

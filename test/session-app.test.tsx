@@ -79,6 +79,8 @@ describe("SessionApp Webview Component (Phase 3)", () => {
 
       // Header
       expect(html).toContain("Feature Implementation Session");
+      expect(html).toContain('class="session-title" title="Feature Implementation Session"');
+      expect(html).not.toContain("session-header-meta");
       expect(html).toContain('title="Rename session"');
       expect(html).toContain('title="Collapse side panel"');
       expect(html).toContain("Connect");

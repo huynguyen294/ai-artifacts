@@ -763,19 +763,33 @@ button:disabled {
 }
 
 /* Work Session Tab Styles */
+html:has(.session-app-container),
+body:has(.session-app-container),
+#root:has(> .session-app-container),
+#root[data-app="session"] {
+  height: 100%;
+  overflow: hidden;
+}
+
 .session-app-container {
   container-type: inline-size;
   container-name: sessionApp;
   max-width: 1200px;
+  height: 100%;
+  max-height: 100%;
   margin: 0 auto;
-  padding: 24px 0 48px;
+  padding: 18px 0 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
   color: var(--vscode-foreground);
   font-family: var(--vscode-font-family);
 }
 
 .session-header {
-  margin-bottom: 24px;
-  padding-bottom: 16px;
+  flex-shrink: 0;
+  margin-bottom: 12px;
+  padding-bottom: 10px;
   border-bottom: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.2));
 }
 
@@ -783,20 +797,24 @@ button:disabled {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
+  gap: 12px;
+  flex-wrap: nowrap;
 }
 
 .session-title-row {
   display: flex;
   align-items: center;
-  gap: 8px;
-  flex: 1;
+  gap: 6px;
+  flex: 1 1 0%;
   min-width: 0;
+  overflow: hidden;
 }
 
 .session-title {
   margin: 0;
-  font-size: 1.5rem;
+  min-width: 0;
+  font-size: 1.2rem;
+  line-height: 1.3;
   font-weight: 600;
   color: var(--vscode-editor-foreground);
   overflow: hidden;
@@ -815,6 +833,7 @@ button:disabled {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  flex-shrink: 0;
   transition: all 0.15s ease;
 }
 
@@ -826,11 +845,28 @@ button:disabled {
 .session-header-actions {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
   gap: 8px;
+  flex-shrink: 0;
+  min-width: max-content;
+  white-space: nowrap;
+}
+
+.session-header-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 3px 10px;
+  font-size: 0.75rem;
+  font-weight: 500;
+  line-height: 1.4;
+  border-radius: 4px;
+  white-space: nowrap;
   flex-shrink: 0;
 }
 
-.session-panel-toggle-btn {
+.session-panel-toggle-btn,
+.session-more-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -842,38 +878,61 @@ button:disabled {
   background: transparent;
   color: var(--vscode-foreground);
   cursor: pointer;
+  flex-shrink: 0;
   transition: all 0.15s ease;
 }
 
-.session-panel-toggle-btn:hover {
+.session-panel-toggle-btn:hover,
+.session-more-btn:hover {
   background: color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
   color: var(--vscode-editor-foreground);
-}
-
-.session-header-meta {
-  margin-top: 8px;
-  font-size: 0.8rem;
-  color: var(--vscode-descriptionForeground);
-  display: flex;
-  gap: 8px;
 }
 
 .session-layout {
   display: flex;
   flex-direction: column;
+  flex: 1 1 0%;
+  min-height: 0;
   gap: 20px;
+  overflow-y: auto;
+  padding-bottom: 24px;
+}
+
+.session-app-container[data-panel-expanded="false"] .session-layout {
+  overflow: hidden;
+  padding-bottom: 0;
 }
 
 @container sessionApp (min-width: 720px) {
   .session-layout {
     flex-direction: row;
-    align-items: flex-start;
+    align-items: stretch;
+    overflow: hidden;
+    padding-bottom: 0;
   }
 }
 
 .session-main-column {
-  flex: 1 1 0%;
+  flex: 0 0 auto;
   min-width: 0;
+}
+
+.session-app-container[data-panel-expanded="false"] .session-main-column {
+  flex: 1 1 0%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+@container sessionApp (min-width: 720px) {
+  .session-main-column {
+    flex: 1 1 0%;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
 }
 
 .session-side-panel {
@@ -881,18 +940,28 @@ button:disabled {
   display: flex;
   flex-direction: column;
   gap: 12px;
+  flex-shrink: 0;
+}
+
+.session-side-panel > * {
+  flex-shrink: 0;
 }
 
 @container sessionApp (min-width: 720px) {
   .session-side-panel {
     width: 360px;
     flex-shrink: 0;
+    height: 100%;
+    min-height: 0;
+    overflow-y: auto;
+    padding-right: 4px;
+    padding-bottom: 24px;
   }
 }
 
 .session-side-panel .session-side-section,
 .session-side-panel .session-zone {
-  padding: 12px 14px;
+  padding: 10px;
 }
 
 .session-side-section {
@@ -911,8 +980,9 @@ button:disabled {
 
 .session-side-section-header h4 {
   margin: 0;
-  font-size: 0.9rem;
+  font-size: 1rem;
   font-weight: 600;
+  line-height: 1.15;
   color: var(--vscode-editor-foreground);
 }
 
@@ -997,14 +1067,8 @@ button:disabled {
   display: flex;
   justify-content: flex-end;
   align-items: center;
-  gap: 8px;
-  margin-top: 8px;
-}
-
-.session-instructions-actions {
-  display: flex;
-  align-items: center;
   gap: 6px;
+  margin-top: 0;
 }
 
 .session-open-instructions-btn {
@@ -1027,7 +1091,9 @@ button:disabled {
 .session-connect-btn {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 6px;
+  min-width: 88px;
   padding: 3px 10px;
   font-size: 0.75rem;
   font-weight: 500;
@@ -1037,6 +1103,8 @@ button:disabled {
   color: var(--vscode-button-foreground, #ffffff);
   cursor: pointer;
   line-height: 1.4;
+  white-space: nowrap;
+  flex-shrink: 0;
   transition:
     background-color 0.15s ease,
     color 0.15s ease;
@@ -1110,6 +1178,7 @@ button:disabled {
 }
 
 .session-banner-error {
+  flex-shrink: 0;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -1187,8 +1256,35 @@ button:disabled {
   background: transparent;
 }
 
+.session-app-container[data-panel-expanded="false"] .session-zone-working {
+  flex: 1 1 0%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+@container sessionApp (min-width: 720px) {
+  .session-zone-working {
+    flex: 1 1 0%;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+}
+
+.session-zone-working .session-zone-header,
+.session-zone-working .session-filter-bar {
+  flex-shrink: 0;
+}
+
 .session-zone-header {
   margin-bottom: 12px;
+}
+
+.session-side-panel .session-zone-header {
+  margin-bottom: 8px;
 }
 
 .session-zone-header-row {
@@ -1213,6 +1309,10 @@ button:disabled {
   font-size: 1rem;
   font-weight: 600;
   color: var(--vscode-editor-foreground);
+}
+
+.session-side-panel .session-zone-header h4 {
+  line-height: 1.15;
 }
 
 .session-zone-working .session-zone-header h4 {
@@ -1241,6 +1341,24 @@ button:disabled {
   display: grid;
   grid-template-columns: repeat(1, minmax(0, 1fr));
   gap: 12px;
+}
+
+.session-app-container[data-panel-expanded="false"] .session-zone-working .session-artifact-list {
+  flex: 1 1 0%;
+  min-height: 0;
+  overflow-y: auto;
+  align-content: start;
+  padding: 2px 4px 24px 0;
+}
+
+@container sessionApp (min-width: 720px) {
+  .session-zone-working .session-artifact-list {
+    flex: 1 1 0%;
+    min-height: 0;
+    overflow-y: auto;
+    align-content: start;
+    padding: 2px 4px 24px 0;
+  }
 }
 
 @container sessionApp (min-width: 720px) {
@@ -1455,6 +1573,7 @@ button:disabled {
 .session-header-more-anchor {
   position: relative;
   display: inline-flex;
+  flex-shrink: 0;
 }
 
 .session-header-dropdown {
@@ -1464,6 +1583,8 @@ button:disabled {
 
 .session-archived-badge {
   display: inline-block;
+  flex-shrink: 0;
+  white-space: nowrap;
   font-size: 0.72rem;
   font-weight: 600;
   text-transform: uppercase;
@@ -1472,7 +1593,7 @@ button:disabled {
   border-radius: 4px;
   background: var(--vscode-badge-background, rgba(128, 128, 128, 0.2));
   color: var(--vscode-badge-foreground, var(--vscode-editor-foreground));
-  margin-right: 8px;
+  margin-right: 2px;
   vertical-align: middle;
 }
 
