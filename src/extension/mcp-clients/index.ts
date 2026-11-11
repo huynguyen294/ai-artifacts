@@ -10,13 +10,14 @@ import { AntigravityClientDriver } from "./antigravity-client";
 
 export type ClientUpgradeContext = {
   mcpScriptPath: string;
+  previousMcpVersion: number;
   targetMcpVersion: number;
   updateReviewSkill: boolean;
   updateSessionSkill: boolean;
 };
 
 export type ClientUpgradeResult = {
-  status: "unchanged" | "updated" | "setup-required";
+  status: "unchanged" | "updated";
   detail?: string;
 };
 

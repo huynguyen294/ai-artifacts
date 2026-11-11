@@ -6,6 +6,7 @@ import type { IntegrationCheck } from "../global-integration-status";
 import type { ClientUpgradeContext, ClientUpgradeResult, McpClientDriver } from "./index";
 import {
   hasManagedCodexArtifactsMcp,
+  needsCodexArtifactsMcpUpgrade,
   patchCodexArtifactsMcpForUpgrade,
   removeCodexArtifactsMcp,
   upsertCodexArtifactsMcp,
@@ -73,45 +74,27 @@ export class CodexClientDriver implements McpClientDriver {
   }
 
   async upgrade(context: ClientUpgradeContext): Promise<ClientUpgradeResult> {
+    if (!needsCodexArtifactsMcpUpgrade(context.previousMcpVersion, context.targetMcpVersion)) {
+      return { status: "unchanged" };
+    }
+
     let content: string;
     try {
       content = await fs.readFile(this.configPath, "utf8");
     } catch (error: any) {
       if (error?.code === "ENOENT") {
-        return {
-          status: "setup-required",
-          detail: "Codex MCP configuration is missing or needs setup.",
-        };
+        return { status: "unchanged" };
       }
       throw error;
     }
 
-    const conflict = configurationConflict(content);
-    if (conflict) {
-      return {
-        status: "setup-required",
-        detail: conflict,
-      };
-    }
-
-    if (hasManagedCodexArtifactsMcp(content, context.mcpScriptPath)) {
+    const candidate = patchCodexArtifactsMcpForUpgrade(content);
+    if (candidate === content) {
       return { status: "unchanged" };
     }
 
-    const candidate = patchCodexArtifactsMcpForUpgrade(
-      content,
-      context.mcpScriptPath,
-      context.targetMcpVersion,
-    );
-    if (candidate !== content && hasManagedCodexArtifactsMcp(candidate, context.mcpScriptPath)) {
-      await writeTextFileAtomic(this.configPath, candidate);
-      return { status: "updated" };
-    }
-
-    return {
-      status: "setup-required",
-      detail: "Codex MCP configuration is missing or needs setup.",
-    };
+    await writeTextFileAtomic(this.configPath, candidate);
+    return { status: "updated" };
   }
 
   async uninstall(): Promise<boolean> {

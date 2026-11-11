@@ -61,6 +61,7 @@ import {
   installSelectedIntegrations,
   installWindsurfIntegration,
   installClineIntegration,
+  listInstallableClients,
   listInstallerClients,
   readInstalledIntegrationVersion,
   uninstallAllDetectedIntegrations,
@@ -144,14 +145,33 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   const installAllDetectedIntegrationsAndNotify = async (): Promise<void> => {
     try {
-      await installAllDetectedIntegrations(context, { recordClientSelection: true });
-      refreshViewsAndService();
-      const verification = await checkAllIntegrations(context);
-      const summary = summarizeIntegrationVerification(verification);
-      if (summary.severity === "warning") {
-        void vscode.window.showWarningMessage(summary.message);
+      const result = await installAllDetectedIntegrations(context, { recordClientSelection: true });
+      if (result.installedClients.length > 0) {
+        refreshViewsAndService();
+      }
+
+      if (result.failedClients.length === 0 && result.installedClients.length > 0) {
+        const names = result.installedClients.join(", ");
+        void vscode.window.showInformationMessage(
+          `AI Artifacts installed for ${names}. Restart your AI client(s) and start a new chat to apply changes.`,
+        );
+      } else if (result.installedClients.length > 0 && result.failedClients.length > 0) {
+        const installedNames = result.installedClients.join(", ");
+        const failedSummary = result.failedClients
+          .map((client) => `${client.name} (${client.error})`)
+          .join("; ");
+        void vscode.window.showWarningMessage(
+          `AI Artifacts installed for ${installedNames}, but failed for: ${failedSummary}. Restart updated client(s) and check failed configuration(s).`,
+        );
+      } else if (result.failedClients.length > 0) {
+        const failedSummary = result.failedClients
+          .map((client) => `${client.name} (${client.error})`)
+          .join("; ");
+        void vscode.window.showErrorMessage(`AI Artifacts installation failed: ${failedSummary}`);
       } else {
-        void vscode.window.showInformationMessage(summary.message);
+        void vscode.window.showInformationMessage(
+          "AI Artifacts: No supported AI clients were detected for installation.",
+        );
       }
     } catch (error) {
       void vscode.window.showErrorMessage(
@@ -453,7 +473,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.commands.registerCommand("agentPlus.installer", async () => {
       await runIntegrationInstallCommand({
         createQuickPick: () => vscode.window.createQuickPick<InstallerClientQuickPickItem>(),
-        listClients: () => listInstallerClients(context),
+        listClients: () => listInstallableClients(context),
         installClients: (clientIds) =>
           installSelectedIntegrations(context, clientIds, { recordClientSelection: true }),
         withProgress: (title, task) =>

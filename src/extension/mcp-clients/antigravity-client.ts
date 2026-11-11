@@ -226,14 +226,6 @@ export class AntigravityClientDriver implements McpClientDriver {
   }
 
   async upgrade(context: ClientUpgradeContext): Promise<ClientUpgradeResult> {
-    const definition = await this.checkDefinition(context.mcpScriptPath);
-    if (definition.status !== "ready") {
-      return {
-        status: "setup-required",
-        detail: definition.detail ?? "Antigravity MCP configuration is missing or needs setup.",
-      };
-    }
-
     if (!context.updateReviewSkill && !context.updateSessionSkill) {
       return { status: "unchanged" };
     }

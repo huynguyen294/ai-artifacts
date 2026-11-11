@@ -25,7 +25,10 @@ import {
   upsertJsonMcpServer,
   writeTextFileAtomic,
 } from "./mcp-clients/json-mcp-helper";
-import { hasManagedCodexArtifactsMcp } from "./mcp-config";
+import {
+  hasManagedCodexArtifactsMcp,
+  needsCodexArtifactsMcpUpgrade,
+} from "./mcp-config";
 import { cleanupBaseMcpServer } from "./mcp-clients/base-cleanup";
 import {
   REVIEW_SKILL_ASSETS,
@@ -138,13 +141,6 @@ export function getBaseIntegrationPaths(
     sourceSkill: vscode.Uri.joinPath(context.extensionUri, "skills", "create-review-artifact").fsPath,
     sourceSessionSkill: vscode.Uri.joinPath(context.extensionUri, "skills", "work-session").fsPath,
   };
-}
-
-async function pathExists(target: string): Promise<boolean> {
-  return fs.stat(target).then(() => true, (error: any) => {
-    if (error?.code === "ENOENT") return false;
-    throw error;
-  });
 }
 
 export async function skillAssetsAreCurrent(paths: BaseIntegrationPaths): Promise<boolean> {
@@ -262,7 +258,7 @@ async function syncSharedIntegrationAssets(
   paths: BaseIntegrationPaths,
   selection: SharedAssetSyncSelection,
   userHome: string,
-  options?: { skipPreflight?: boolean },
+  options?: { skipPreflight?: boolean; deferMcpReceipt?: boolean },
 ): Promise<StaleIntegrationAsset[]> {
   const { syncMcp, syncReviewSkill, syncSessionSkill } = selection;
   if (!syncMcp && !syncReviewSkill && !syncSessionSkill) {
@@ -289,15 +285,6 @@ async function syncSharedIntegrationAssets(
     await replaceOfficialSkillDirectory(paths.sourceSessionSkill, paths.targetSessionSkill);
   }
 
-  const [scriptCurrent, skillCurrent, sessionSkillCurrent] = await Promise.all([
-    syncMcp ? baseScriptIsCurrent(paths) : Promise.resolve(true),
-    syncReviewSkill ? skillAssetsAreCurrent(paths) : Promise.resolve(true),
-    syncSessionSkill ? sessionSkillAssetsAreCurrent(paths) : Promise.resolve(true),
-  ]);
-  if (!scriptCurrent || !skillCurrent || !sessionSkillCurrent) {
-    throw new Error("Base MCP runtime or shared review/session skills verification failed after installation.");
-  }
-
   const receiptPatch: {
     mcpVersion?: number;
     skills?: Partial<InstalledSkillVersions>;
@@ -306,7 +293,9 @@ async function syncSharedIntegrationAssets(
   const syncedAssets: StaleIntegrationAsset[] = [];
 
   if (syncMcp) {
-    receiptPatch.mcpVersion = MCP_VERSION;
+    if (!options?.deferMcpReceipt) {
+      receiptPatch.mcpVersion = MCP_VERSION;
+    }
     syncedAssets.push("mcp");
   }
   if (syncReviewSkill) {
@@ -318,14 +307,20 @@ async function syncSharedIntegrationAssets(
     syncedAssets.push("session-skill:agents");
   }
 
-  await writeInstalledIntegrationVersion(receiptPatch, { userHome });
+  if (
+    receiptPatch.mcpVersion !== undefined ||
+    receiptPatch.skills !== undefined ||
+    receiptPatch.sessionSkills !== undefined
+  ) {
+    await writeInstalledIntegrationVersion(receiptPatch, { userHome });
+  }
   return syncedAssets;
 }
 
 export async function setupBaseMcpServer(
   context: vscode.ExtensionContext,
   options?: { userHome?: string },
-): Promise<{ paths: BaseIntegrationPaths; assetsUpdated: boolean }> {
+): Promise<{ paths: BaseIntegrationPaths }> {
   const userHome = options?.userHome ?? os.homedir();
   const paths = getBaseIntegrationPaths(context, { userHome });
   const fullSelection: SharedAssetSyncSelection = {
@@ -334,16 +329,7 @@ export async function setupBaseMcpServer(
     syncSessionSkill: true,
   };
 
-  // Validate every packaged source before replacing any installed asset.
-  await validateSharedIntegrationSources(paths, fullSelection);
-  const [assetsCurrent, legacyScriptPresent, legacySkillPresent] = await Promise.all([
-    baseAssetsAreCurrent(paths),
-    pathExists(paths.targetLegacyMcpScript),
-    pathExists(paths.targetLegacySkill),
-  ]);
-  const assetsUpdated = !assetsCurrent || legacyScriptPresent || legacySkillPresent;
-
-  await syncSharedIntegrationAssets(paths, fullSelection, userHome, { skipPreflight: true });
+  await syncSharedIntegrationAssets(paths, fullSelection, userHome);
   await ensureManagedDirectory(paths.workspacesDirectory);
 
   // Clean up legacy runtime, skill, and obsolete config files if present.
@@ -352,7 +338,7 @@ export async function setupBaseMcpServer(
   const legacyDirectory = path.join(userHome, ".vscode", "ai-artifacts");
   await fs.rm(path.join(legacyDirectory, "mcp.json"), { force: true }).catch(() => {});
 
-  return { paths, assetsUpdated };
+  return { paths };
 }
 
 export function getMcpConfigSnippet(context: vscode.ExtensionContext): string {
@@ -384,7 +370,7 @@ export type IntegrationMutationOptions = {
   recordClientSelection?: boolean;
 };
 
-async function installAndVerifyClient(
+async function installClientAndRecordState(
   driver: McpClientDriver,
   targetMcpScript: string,
   options: {
@@ -393,12 +379,6 @@ async function installAndVerifyClient(
   },
 ): Promise<void> {
   await driver.install(targetMcpScript);
-  const check = await driver.check(targetMcpScript);
-  if (check.status !== "ready") {
-    throw new Error(
-      `${driver.name} integration verification failed after installation: ${check.detail ?? check.status}`,
-    );
-  }
   if (driver.id === "claude") {
     await writeInstalledIntegrationVersion(
       {
@@ -435,44 +415,35 @@ async function uninstallClient(
   return changed;
 }
 
-// 1. All detected
-export async function installAllDetectedIntegrations(
-  context: vscode.ExtensionContext,
-  options?: IntegrationMutationOptions,
-): Promise<{ installedClients: string[] }> {
-  const userHome = os.homedir();
-  const recordClientSelection = options?.recordClientSelection ?? false;
-  const { paths } = await setupBaseMcpServer(context, { userHome });
-  const copilotConfigPath = getCopilotConfigPath(context);
-  const clineConfigPath = getClineConfigPath(context);
-  const drivers = getAllClientDrivers(
-    copilotConfigPath,
-    clineConfigPath,
-    paths.sourceSkill,
-    paths.sourceSessionSkill,
-  );
-  const installedClients: string[] = [];
-
-  for (const driver of drivers) {
-    if (driver.isDetected()) {
-      await installAndVerifyClient(driver, paths.targetMcpScript, {
-        userHome,
-        recordClientSelection,
-      });
-      installedClients.push(driver.name);
-    }
-  }
-
-  const legacyBaseDir = path.join(userHome, ".vscode", "ai-artifacts");
-  await fs.rm(legacyBaseDir, { recursive: true, force: true }).catch(() => {});
-
-  return { installedClients };
-}
-
 export type SelectedIntegrationsInstallResult = {
   installedClients: Array<{ id: McpClientId; name: string }>;
   failedClients: Array<{ id: McpClientId; name: string; error: string }>;
 };
+
+export type AllDetectedIntegrationsInstallResult = {
+  installedClients: string[];
+  failedClients: SelectedIntegrationsInstallResult["failedClients"];
+};
+
+// 1. All detected
+export async function installAllDetectedIntegrations(
+  context: vscode.ExtensionContext,
+  options?: IntegrationMutationOptions,
+): Promise<AllDetectedIntegrationsInstallResult> {
+  const copilotConfigPath = getCopilotConfigPath(context);
+  const clineConfigPath = getClineConfigPath(context);
+  const drivers = getAllClientDrivers(copilotConfigPath, clineConfigPath);
+  const detectedIds = drivers.filter((driver) => driver.isDetected()).map((driver) => driver.id);
+  if (detectedIds.length === 0) {
+    return { installedClients: [], failedClients: [] };
+  }
+
+  const result = await installSelectedIntegrations(context, detectedIds, options);
+  return {
+    installedClients: result.installedClients.map((client) => client.name),
+    failedClients: result.failedClients,
+  };
+}
 
 export async function installSelectedIntegrations(
   context: vscode.ExtensionContext,
@@ -503,7 +474,7 @@ export async function installSelectedIntegrations(
 
   for (const driver of selectedDrivers) {
     try {
-      await installAndVerifyClient(driver, paths.targetMcpScript, {
+      await installClientAndRecordState(driver, paths.targetMcpScript, {
         userHome,
         recordClientSelection,
       });
@@ -534,7 +505,7 @@ export async function installCopilotIntegration(
   const { paths } = await setupBaseMcpServer(context, { userHome });
   const copilotConfigPath = getCopilotConfigPath(context);
   const copilotDriver = new CopilotClientDriver(copilotConfigPath);
-  await installAndVerifyClient(copilotDriver, paths.targetMcpScript, {
+  await installClientAndRecordState(copilotDriver, paths.targetMcpScript, {
     userHome,
     recordClientSelection: options?.recordClientSelection ?? false,
   });
@@ -550,7 +521,7 @@ export async function installCodexIntegration(
   const userHome = os.homedir();
   const { paths } = await setupBaseMcpServer(context, { userHome });
   const codexDriver = new CodexClientDriver();
-  await installAndVerifyClient(codexDriver, paths.targetMcpScript, {
+  await installClientAndRecordState(codexDriver, paths.targetMcpScript, {
     userHome,
     recordClientSelection: options?.recordClientSelection ?? false,
   });
@@ -564,7 +535,7 @@ export async function installCursorIntegration(
   const userHome = os.homedir();
   const { paths } = await setupBaseMcpServer(context, { userHome });
   const cursorDriver = new CursorClientDriver();
-  await installAndVerifyClient(cursorDriver, paths.targetMcpScript, {
+  await installClientAndRecordState(cursorDriver, paths.targetMcpScript, {
     userHome,
     recordClientSelection: options?.recordClientSelection ?? false,
   });
@@ -584,7 +555,7 @@ export async function installClaudeIntegration(
     undefined,
     paths.sourceSessionSkill,
   );
-  await installAndVerifyClient(claudeDriver, paths.targetMcpScript, {
+  await installClientAndRecordState(claudeDriver, paths.targetMcpScript, {
     userHome,
     recordClientSelection: options?.recordClientSelection ?? false,
   });
@@ -598,7 +569,7 @@ export async function installWindsurfIntegration(
   const userHome = os.homedir();
   const { paths } = await setupBaseMcpServer(context, { userHome });
   const windsurfDriver = new WindsurfClientDriver();
-  await installAndVerifyClient(windsurfDriver, paths.targetMcpScript, {
+  await installClientAndRecordState(windsurfDriver, paths.targetMcpScript, {
     userHome,
     recordClientSelection: options?.recordClientSelection ?? false,
   });
@@ -613,7 +584,7 @@ export async function installClineIntegration(
   const { paths } = await setupBaseMcpServer(context, { userHome });
   const clineConfigPath = getClineConfigPath(context);
   const clineDriver = new ClineClientDriver(clineConfigPath);
-  await installAndVerifyClient(clineDriver, paths.targetMcpScript, {
+  await installClientAndRecordState(clineDriver, paths.targetMcpScript, {
     userHome,
     recordClientSelection: options?.recordClientSelection ?? false,
   });
@@ -631,7 +602,7 @@ export async function installAntigravityIntegration(
     sourceSkillDirectory: paths.sourceSkill,
     sourceSessionSkillDirectory: paths.sourceSessionSkill,
   });
-  await installAndVerifyClient(antigravityDriver, paths.targetMcpScript, {
+  await installClientAndRecordState(antigravityDriver, paths.targetMcpScript, {
     userHome,
     recordClientSelection: options?.recordClientSelection ?? false,
   });
@@ -1006,16 +977,6 @@ export type IntegrationUpgradeReport = {
   clients: IntegrationUpgradeClientReport[];
 };
 
-function formatNonReadyUpgradeDetail(
-  clientName: string,
-  status: IntegrationCheck["status"],
-): string {
-  if (status === "restart-required") {
-    return `${clientName} integration status is ${status}. Restart ${clientName} and start a new chat to apply the updated integration.`;
-  }
-  return `${clientName} integration status is ${status}. Run the ${clientName} install command to configure it.`;
-}
-
 export async function upgradeDetectedIntegrations(
   context: vscode.ExtensionContext,
 ): Promise<IntegrationUpgradeReport> {
@@ -1051,6 +1012,7 @@ export async function upgradeDetectedIntegrations(
 
   const installedVersion = await readInstalledIntegrationVersion({ userHome });
   const manifest = installedVersion.status === "valid" ? installedVersion.manifest : undefined;
+  const previousMcpVersion = manifest?.mcpVersion ?? 0;
   const staleAssets = computeStaleIntegrationAssets(
     {
       mcpVersion: MCP_VERSION,
@@ -1061,17 +1023,22 @@ export async function upgradeDetectedIntegrations(
     skillTargets,
   );
   const staleSet = new Set<StaleIntegrationAsset>(staleAssets);
+  const syncMcp = staleSet.has("mcp");
+  const codexNeedsMigration =
+    clientIdSet.has("codex") && needsCodexArtifactsMcpUpgrade(previousMcpVersion, MCP_VERSION);
 
   const updatedAssets: StaleIntegrationAsset[] = await syncSharedIntegrationAssets(
     paths,
     {
-      syncMcp: staleSet.has("mcp"),
+      syncMcp,
       syncReviewSkill: staleSet.has("skill:agents"),
       syncSessionSkill: staleSet.has("session-skill:agents"),
     },
     userHome,
+    { deferMcpReceipt: true },
   );
 
+  let codexDefinitionMigrationFailed = false;
   const clients: IntegrationUpgradeClientReport[] = [];
   for (const driver of selectedDrivers) {
     const updateReviewSkill =
@@ -1090,34 +1057,11 @@ export async function upgradeDetectedIntegrations(
     try {
       const upgradeResult = await driver.upgrade({
         mcpScriptPath: paths.targetMcpScript,
+        previousMcpVersion,
         targetMcpVersion: MCP_VERSION,
         updateReviewSkill,
         updateSessionSkill,
       });
-
-      if (upgradeResult.status === "setup-required") {
-        clients.push({
-          id: driver.id,
-          name: driver.name,
-          status: "setup-required",
-          ...(upgradeResult.detail ? { detail: upgradeResult.detail } : {}),
-        });
-        continue;
-      }
-
-      const checkResult = await driver.check(paths.targetMcpScript);
-      if (checkResult.status !== "ready") {
-        const detail =
-          checkResult.detail?.trim() ||
-          formatNonReadyUpgradeDetail(driver.name, checkResult.status);
-        clients.push({
-          id: driver.id,
-          name: driver.name,
-          status: "setup-required",
-          detail,
-        });
-        continue;
-      }
 
       if (driver.id === "claude" || driver.id === "antigravity") {
         if (updateReviewSkill || updateSessionSkill) {
@@ -1150,6 +1094,9 @@ export async function upgradeDetectedIntegrations(
         ...(upgradeResult.detail ? { detail: upgradeResult.detail } : {}),
       });
     } catch (error) {
+      if (driver.id === "codex" && codexNeedsMigration) {
+        codexDefinitionMigrationFailed = true;
+      }
       clients.push({
         id: driver.id,
         name: driver.name,
@@ -1157,6 +1104,12 @@ export async function upgradeDetectedIntegrations(
         detail: error instanceof Error ? error.message : String(error),
       });
     }
+  }
+
+  if (syncMcp && !codexDefinitionMigrationFailed) {
+    await ensureManagedDirectory(aiArtifactsRoot({ userHome }));
+    await ensureManagedDirectory(paths.targetDirectory);
+    await writeInstalledIntegrationVersion({ mcpVersion: MCP_VERSION }, { userHome });
   }
 
   return {
@@ -1175,6 +1128,14 @@ export type ClientVerificationReport = {
   detail?: string;
 };
 
+export type InstallableClientDescriptor = {
+  id: McpClientId;
+  name: string;
+  configPath: string;
+  isDetected: boolean;
+  isSaved: boolean;
+};
+
 export type InstallerClientDescriptor = {
   id: McpClientId;
   name: string;
@@ -1184,6 +1145,27 @@ export type InstallerClientDescriptor = {
   status: IntegrationCheck["status"];
   detail?: string;
 };
+
+export async function listInstallableClients(
+  context: vscode.ExtensionContext,
+): Promise<{ clients: InstallableClientDescriptor[] }> {
+  const userHome = os.homedir();
+  const savedClients = await readInstalledClients({ userHome });
+  const savedSet = new Set(savedClients);
+  const copilotConfigPath = getCopilotConfigPath(context);
+  const clineConfigPath = getClineConfigPath(context);
+  const drivers = getAllClientDrivers(copilotConfigPath, clineConfigPath);
+
+  return {
+    clients: drivers.map((driver) => ({
+      id: driver.id,
+      name: driver.name,
+      configPath: driver.configPath,
+      isDetected: driver.isDetected(),
+      isSaved: savedSet.has(driver.id),
+    })),
+  };
+}
 
 function formatOutdatedBaseAssetsDetail(
   skillCurrent: boolean,
@@ -1337,6 +1319,5 @@ export async function installGlobalIntegration(
   context: vscode.ExtensionContext,
 ): Promise<IntegrationCheck> {
   await installCodexIntegration(context);
-  const installed = await checkGlobalIntegration(context);
-  return installed.status === "ready" ? { status: "restart-required" } : installed;
+  return { status: "restart-required" };
 }

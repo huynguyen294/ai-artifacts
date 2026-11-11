@@ -204,20 +204,21 @@ export function hasManagedCodexArtifactsMcp(config: string, serverScriptPath: st
   return true;
 }
 
-export function patchCodexArtifactsMcpForUpgrade(
-  config: string,
-  serverScriptPath: string,
+export function needsCodexArtifactsMcpUpgrade(
+  previousMcpVersion: number,
   targetMcpVersion: number,
-): string {
-  if (hasManagedCodexArtifactsMcp(config, serverScriptPath)) {
-    return config;
-  }
-  if (targetMcpVersion < 12) {
+): boolean {
+  return previousMcpVersion < 12 && targetMcpVersion >= 12;
+}
+
+export function patchCodexArtifactsMcpForUpgrade(config: string): string {
+  const bounds = findManagedBlockBounds(config, CURRENT_BEGIN_MARKER, CURRENT_END_MARKER);
+  if (!bounds) {
     return config;
   }
 
-  const bounds = findManagedBlockBounds(config, CURRENT_BEGIN_MARKER, CURRENT_END_MARKER);
-  if (!bounds) {
+  const block = config.slice(bounds.startIndex, bounds.endIndex);
+  if (!/^\s*\[mcp_servers\.ai_artifacts\]\s*$/m.test(block)) {
     return config;
   }
 
@@ -226,11 +227,6 @@ export function patchCodexArtifactsMcpForUpgrade(
     "m",
   );
   if (joinSessionHeader.test(config)) {
-    return config;
-  }
-
-  const block = config.slice(bounds.startIndex, bounds.endIndex);
-  if (!/^\s*\[mcp_servers\.ai_artifacts\]\s*$/m.test(block)) {
     return config;
   }
 

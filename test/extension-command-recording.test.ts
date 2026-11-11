@@ -34,9 +34,9 @@ const {
       return undefined;
     }),
     mockOpenExternal: vi.fn(async () => true),
-    mockShowInformationMessage: vi.fn(async () => undefined),
-    mockShowWarningMessage: vi.fn(async () => undefined),
-    mockShowErrorMessage: vi.fn(async () => undefined),
+    mockShowInformationMessage: vi.fn(async (_message: string, ..._items: unknown[]) => undefined),
+    mockShowWarningMessage: vi.fn(async (_message: string, ..._items: unknown[]) => undefined),
+    mockShowErrorMessage: vi.fn(async (_message: string, ..._items: unknown[]) => undefined),
     mockCreateQuickPick: vi.fn(),
     mockWithProgress: vi.fn(async (_opts: unknown, task: () => Promise<unknown>) => task()),
     mockClipboardWriteText: vi.fn(async () => undefined),
@@ -51,7 +51,10 @@ const {
       notifyChanged: vi.fn(),
     },
     workspaceIntegrationSpies: {
-      installAllDetectedIntegrations: vi.fn(async () => ({ installedClients: ["Codex"] })),
+      installAllDetectedIntegrations: vi.fn(async () => ({
+        installedClients: ["Codex"],
+        failedClients: [] as Array<{ id: string; name: string; error: string }>,
+      })),
       installCopilotIntegration: vi.fn(async () => ({ userConfigPath: "/tmp/mcp.json" })),
       installCodexIntegration: vi.fn(async () => undefined),
       installCursorIntegration: vi.fn(async () => undefined),
@@ -62,6 +65,17 @@ const {
       installSelectedIntegrations: vi.fn(async () => ({
         installedClients: [{ id: "codex" as const, name: "Codex" }],
         failedClients: [],
+      })),
+      listInstallableClients: vi.fn(async () => ({
+        clients: [
+          {
+            id: "codex" as const,
+            name: "Codex",
+            configPath: "/tmp/.codex/config.toml",
+            isDetected: true,
+            isSaved: false,
+          },
+        ],
       })),
       listInstallerClients: vi.fn(async () => ({
         skillCurrent: true,
@@ -331,7 +345,7 @@ describe("Extension activation auto-upgrade wiring & manual command recording", 
       expect(workspaceIntegrationSpies.installAllDetectedIntegrations).toHaveBeenCalledWith(context, {
         recordClientSelection: true,
       });
-      expect(workspaceIntegrationSpies.checkAllIntegrations).toHaveBeenCalledWith(context);
+      expect(workspaceIntegrationSpies.checkAllIntegrations).not.toHaveBeenCalled();
       expect(mockShowInformationMessage).toHaveBeenCalledTimes(1);
 
       const installWithContextCommands: Array<[string, keyof typeof workspaceIntegrationSpies]> = [
@@ -393,7 +407,9 @@ describe("Extension activation auto-upgrade wiring & manual command recording", 
 
       // Verify / Copy commands do not trigger install/uninstall recording
       workspaceIntegrationSpies.installAllDetectedIntegrations.mockClear();
+      workspaceIntegrationSpies.checkAllIntegrations.mockClear();
       await registeredCommands.get("agentPlus.verifyGlobalIntegration")!();
+      expect(workspaceIntegrationSpies.checkAllIntegrations).toHaveBeenCalledWith(context);
       await registeredCommands.get("agentPlus.copyMcpConfig")!();
       await registeredCommands.get("agentPlus.copyReviewSkill")!();
       expect(workspaceIntegrationSpies.installAllDetectedIntegrations).not.toHaveBeenCalled();
@@ -438,7 +454,8 @@ describe("Extension activation auto-upgrade wiring & manual command recording", 
       for (const fn of acceptListeners) fn();
       await installerPromise;
 
-      expect(workspaceIntegrationSpies.listInstallerClients).toHaveBeenCalledWith(context);
+      expect(workspaceIntegrationSpies.listInstallableClients).toHaveBeenCalledWith(context);
+      expect(workspaceIntegrationSpies.listInstallerClients).not.toHaveBeenCalled();
       expect(workspaceIntegrationSpies.installSelectedIntegrations).toHaveBeenCalledWith(
         context,
         ["codex"],
@@ -489,6 +506,7 @@ describe("Extension activation auto-upgrade wiring & manual command recording", 
       for (const fn of uninstallAcceptListeners) fn();
       await uninstallPromise;
 
+      expect(workspaceIntegrationSpies.listInstallerClients).toHaveBeenCalledWith(context);
       expect(workspaceIntegrationSpies.uninstallSelectedIntegrations).toHaveBeenCalledWith(
         context,
         ["codex"],
@@ -497,6 +515,116 @@ describe("Extension activation auto-upgrade wiring & manual command recording", 
       expect(sidebarSpies.sessionsRefresh).toHaveBeenCalledTimes(1);
       expect(sidebarSpies.recentRefresh).toHaveBeenCalledTimes(1);
       expect(conversationServiceSpies.notifyChanged).toHaveBeenCalledWith([{ kind: "support" }]);
+    } finally {
+      await fs.rm(tempRoot, { recursive: true, force: true }).catch(() => {});
+    }
+  });
+
+  it("reports Install All outcomes and refreshes views only when clients succeeded without post-verification", async () => {
+    const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "ai-artifacts-ext-install-all-"));
+    try {
+      vi.spyOn(os, "homedir").mockReturnValue(tempRoot);
+      const context = {
+        extensionUri: { fsPath: tempRoot },
+        globalStorageUri: { fsPath: path.join(tempRoot, "storage") },
+        globalState: { get: vi.fn(), update: vi.fn(async () => undefined) },
+        subscriptions: [] as Array<{ dispose: () => void }>,
+      } as any;
+
+      await activate(context);
+
+      const resetCommandSpies = (): void => {
+        workspaceIntegrationSpies.installAllDetectedIntegrations.mockClear();
+        workspaceIntegrationSpies.checkAllIntegrations.mockClear();
+        mockShowInformationMessage.mockClear();
+        mockShowWarningMessage.mockClear();
+        mockShowErrorMessage.mockClear();
+        sidebarSpies.sessionsRefresh.mockClear();
+        sidebarSpies.recentRefresh.mockClear();
+        conversationServiceSpies.notifyChanged.mockClear();
+      };
+
+      // 1. Success only
+      resetCommandSpies();
+      workspaceIntegrationSpies.installAllDetectedIntegrations.mockResolvedValueOnce({
+        installedClients: ["Codex", "Cursor"],
+        failedClients: [],
+      });
+      await registeredCommands.get("agentPlus.installAllIntegrations")!();
+      expect(workspaceIntegrationSpies.checkAllIntegrations).not.toHaveBeenCalled();
+      expect(mockShowInformationMessage).toHaveBeenCalledTimes(1);
+      expect(mockShowInformationMessage.mock.calls[0]![0]).toContain("Codex, Cursor");
+      expect(mockShowWarningMessage).not.toHaveBeenCalled();
+      expect(mockShowErrorMessage).not.toHaveBeenCalled();
+      expect(sidebarSpies.sessionsRefresh).toHaveBeenCalledTimes(1);
+      expect(sidebarSpies.recentRefresh).toHaveBeenCalledTimes(1);
+      expect(conversationServiceSpies.notifyChanged).toHaveBeenCalledTimes(1);
+      expect(conversationServiceSpies.notifyChanged).toHaveBeenCalledWith([{ kind: "support" }]);
+
+      // 2. Partial (success + failures)
+      resetCommandSpies();
+      workspaceIntegrationSpies.installAllDetectedIntegrations.mockResolvedValueOnce({
+        installedClients: ["Codex"],
+        failedClients: [{ id: "cursor", name: "Cursor", error: "EACCES permission denied" }],
+      });
+      await registeredCommands.get("agentPlus.installAllIntegrations")!();
+      expect(workspaceIntegrationSpies.checkAllIntegrations).not.toHaveBeenCalled();
+      expect(mockShowWarningMessage).toHaveBeenCalledTimes(1);
+      expect(mockShowWarningMessage.mock.calls[0]![0]).toContain("Codex");
+      expect(mockShowWarningMessage.mock.calls[0]![0]).toContain("Cursor");
+      expect(mockShowWarningMessage.mock.calls[0]![0]).toContain("EACCES permission denied");
+      expect(mockShowInformationMessage).not.toHaveBeenCalled();
+      expect(mockShowErrorMessage).not.toHaveBeenCalled();
+      expect(sidebarSpies.sessionsRefresh).toHaveBeenCalledTimes(1);
+      expect(sidebarSpies.recentRefresh).toHaveBeenCalledTimes(1);
+      expect(conversationServiceSpies.notifyChanged).toHaveBeenCalledTimes(1);
+
+      // 3. All failed (no success + failures)
+      resetCommandSpies();
+      workspaceIntegrationSpies.installAllDetectedIntegrations.mockResolvedValueOnce({
+        installedClients: [],
+        failedClients: [{ id: "codex", name: "Codex", error: "unmanaged conflict" }],
+      });
+      await registeredCommands.get("agentPlus.installAllIntegrations")!();
+      expect(workspaceIntegrationSpies.checkAllIntegrations).not.toHaveBeenCalled();
+      expect(mockShowErrorMessage).toHaveBeenCalledTimes(1);
+      expect(mockShowErrorMessage.mock.calls[0]![0]).toContain("Codex");
+      expect(mockShowErrorMessage.mock.calls[0]![0]).toContain("unmanaged conflict");
+      expect(mockShowInformationMessage).not.toHaveBeenCalled();
+      expect(mockShowWarningMessage).not.toHaveBeenCalled();
+      expect(sidebarSpies.sessionsRefresh).not.toHaveBeenCalled();
+      expect(sidebarSpies.recentRefresh).not.toHaveBeenCalled();
+      expect(conversationServiceSpies.notifyChanged).not.toHaveBeenCalled();
+
+      // 4. Empty (neither detected success nor failures)
+      resetCommandSpies();
+      workspaceIntegrationSpies.installAllDetectedIntegrations.mockResolvedValueOnce({
+        installedClients: [],
+        failedClients: [],
+      });
+      await registeredCommands.get("agentPlus.installAllIntegrations")!();
+      expect(workspaceIntegrationSpies.checkAllIntegrations).not.toHaveBeenCalled();
+      expect(mockShowInformationMessage).toHaveBeenCalledTimes(1);
+      expect(mockShowWarningMessage).not.toHaveBeenCalled();
+      expect(mockShowErrorMessage).not.toHaveBeenCalled();
+      expect(sidebarSpies.sessionsRefresh).not.toHaveBeenCalled();
+      expect(sidebarSpies.recentRefresh).not.toHaveBeenCalled();
+      expect(conversationServiceSpies.notifyChanged).not.toHaveBeenCalled();
+
+      // 5. Reject due to shared setup exception
+      resetCommandSpies();
+      workspaceIntegrationSpies.installAllDetectedIntegrations.mockRejectedValueOnce(
+        new Error("packaged runtime missing"),
+      );
+      await registeredCommands.get("agentPlus.installAllIntegrations")!();
+      expect(workspaceIntegrationSpies.checkAllIntegrations).not.toHaveBeenCalled();
+      expect(mockShowErrorMessage).toHaveBeenCalledTimes(1);
+      expect(mockShowErrorMessage.mock.calls[0]![0]).toContain("packaged runtime missing");
+      expect(mockShowInformationMessage).not.toHaveBeenCalled();
+      expect(mockShowWarningMessage).not.toHaveBeenCalled();
+      expect(sidebarSpies.sessionsRefresh).not.toHaveBeenCalled();
+      expect(sidebarSpies.recentRefresh).not.toHaveBeenCalled();
+      expect(conversationServiceSpies.notifyChanged).not.toHaveBeenCalled();
     } finally {
       await fs.rm(tempRoot, { recursive: true, force: true }).catch(() => {});
     }

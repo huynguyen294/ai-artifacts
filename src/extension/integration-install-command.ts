@@ -1,18 +1,9 @@
 import * as vscode from "vscode";
 import type { McpClientId } from "../shared/contracts";
-import type { IntegrationStatus } from "./global-integration-status";
 import type {
-  InstallerClientDescriptor,
+  InstallableClientDescriptor,
   SelectedIntegrationsInstallResult,
 } from "./workspace-integration";
-
-const STATUS_LABELS: Record<IntegrationStatus, string> = {
-  ready: "Ready",
-  missing: "Missing",
-  outdated: "Outdated",
-  "configuration-conflict": "Configuration conflict",
-  "restart-required": "Restart required",
-};
 
 export interface InstallerClientQuickPickItem extends vscode.QuickPickItem {
   clientId: McpClientId;
@@ -20,7 +11,7 @@ export interface InstallerClientQuickPickItem extends vscode.QuickPickItem {
 
 export interface IntegrationInstallCommandDeps {
   createQuickPick: () => vscode.QuickPick<InstallerClientQuickPickItem>;
-  listClients: () => Promise<{ clients: InstallerClientDescriptor[] }>;
+  listClients: () => Promise<{ clients: InstallableClientDescriptor[] }>;
   installClients: (clientIds: McpClientId[]) => Promise<SelectedIntegrationsInstallResult>;
   withProgress: <T>(
     title: string,
@@ -148,7 +139,6 @@ export async function runIntegrationInstallCommand(
 
         for (const client of clients) {
           const badges = [
-            STATUS_LABELS[client.status],
             client.isDetected ? "Detected" : undefined,
             client.isSaved ? "Saved" : undefined,
           ].filter((value): value is string => Boolean(value));
@@ -157,7 +147,7 @@ export async function runIntegrationInstallCommand(
             label: client.name,
             clientId: client.id,
             description: badges.join(" · "),
-            detail: client.detail ? `${client.configPath} — ${client.detail}` : client.configPath,
+            detail: client.configPath,
           };
           items.push(item);
           if (client.isDetected || client.isSaved) {

@@ -182,7 +182,7 @@ describe("Workspace Integration Auto-Upgrade Coordinator & Selection Policy", ()
     await fs.rm(tempRoot, { recursive: true, force: true }).catch(() => {});
   });
 
-  it("verifies all 7 individual drivers on install with recordClientSelection=false without creating installed-clients.json", async () => {
+  it("installs all 7 individual drivers with recordClientSelection=false without calling driver check() or creating installed-clients.json", async () => {
     const checkSpies = [
       vi.spyOn(CopilotClientDriver.prototype, "check"),
       vi.spyOn(CursorClientDriver.prototype, "check"),
@@ -205,12 +205,28 @@ describe("Workspace Integration Auto-Upgrade Coordinator & Selection Policy", ()
 
     for (const [idx, runInstall] of individualInstallers.entries()) {
       await runInstall();
-      expect(checkSpies[idx]).toHaveBeenCalledTimes(1);
+      expect(checkSpies[idx]).not.toHaveBeenCalled();
     }
     await expect(fs.access(managedInstalledClientsPath({ userHome: tempHome }))).rejects.toThrow();
+    expect(await readInstalledIntegrationVersion({ userHome: tempHome })).toMatchObject({
+      status: "valid",
+      manifest: {
+        mcpVersion: MCP_VERSION,
+        skills: {
+          agents: CREATE_REVIEW_ARTIFACT_SKILL_VERSION,
+          claude: CREATE_REVIEW_ARTIFACT_SKILL_VERSION,
+          antigravity: CREATE_REVIEW_ARTIFACT_SKILL_VERSION,
+        },
+        sessionSkills: {
+          agents: WORK_SESSION_SKILL_VERSION,
+          claude: WORK_SESSION_SKILL_VERSION,
+          antigravity: WORK_SESSION_SKILL_VERSION,
+        },
+      },
+    });
   });
 
-  it("verifies all 7 individual drivers on install with recordClientSelection=true and rejects non-ready check without recording", async () => {
+  it("installs all 7 individual drivers with recordClientSelection=true without calling driver check() and does not record client on install or state-write failure", async () => {
     const checkSpies = [
       vi.spyOn(CopilotClientDriver.prototype, "check"),
       vi.spyOn(CursorClientDriver.prototype, "check"),
@@ -233,9 +249,8 @@ describe("Workspace Integration Auto-Upgrade Coordinator & Selection Policy", ()
 
     for (const [idx, runInstall] of recordedInstallers.entries()) {
       await runInstall();
-      // Every driver check ran once per install (including Claude & Antigravity)
       const spyIndex = idx === 0 ? 6 : idx - 1;
-      expect(checkSpies[spyIndex]).toHaveBeenCalledTimes(1);
+      expect(checkSpies[spyIndex]).not.toHaveBeenCalled();
     }
 
     expect(await readInstalledClients({ userHome: tempHome })).toEqual([
@@ -248,49 +263,94 @@ describe("Workspace Integration Auto-Upgrade Coordinator & Selection Policy", ()
       "antigravity",
     ]);
 
-    // Check failure throws with client name + detail/status and does NOT record client ID
+    // Install throw blocks client recording and Claude skill receipt bump without calling check()
     await uninstallClaudeIntegration({ recordClientSelection: true });
-    vi.spyOn(ClaudeClientDriver.prototype, "check").mockResolvedValueOnce({
-      status: "outdated",
-      detail: "Claude verification failed cleanly",
-    });
+    await writeInstalledIntegrationVersion({ skills: { claude: 1 }, sessionSkills: { claude: 1 } }, { userHome: tempHome });
+    vi.spyOn(ClaudeClientDriver.prototype, "install").mockRejectedValueOnce(
+      new Error("Claude install failed cleanly"),
+    );
     await expect(installClaudeIntegration(context, { recordClientSelection: true })).rejects.toThrow(
-      "Claude integration verification failed after installation: Claude verification failed cleanly",
+      "Claude install failed cleanly",
     );
+    expect(checkSpies[3]).not.toHaveBeenCalled();
     expect(await readInstalledClients({ userHome: tempHome })).not.toContain("claude");
+    expect(await readInstalledIntegrationVersion({ userHome: tempHome })).toMatchObject({
+      status: "valid",
+      manifest: { skills: { claude: 1 }, sessionSkills: { claude: 1 } },
+    });
 
-    vi.spyOn(CursorClientDriver.prototype, "check").mockResolvedValueOnce({ status: "missing" });
+    // State write throw (installed-clients.json) rejects install and does NOT record client
     await uninstallCursorIntegration({ recordClientSelection: true });
+    const originalWriteFile = fs.writeFile.bind(fs);
+    const writeFileSpy = vi.spyOn(fs, "writeFile").mockImplementation(async (targetPath, data, options) => {
+      if (String(targetPath).includes("installed-clients.json")) {
+        throw Object.assign(new Error("injected client state write failed"), { code: "EIO" });
+      }
+      return originalWriteFile(targetPath, data as any, options as any);
+    });
     await expect(installCursorIntegration(context, { recordClientSelection: true })).rejects.toThrow(
-      "Cursor integration verification failed after installation: missing",
+      "injected client state write failed",
     );
+    writeFileSpy.mockRestore();
+    expect(checkSpies[1]).not.toHaveBeenCalled();
     expect(await readInstalledClients({ userHome: tempHome })).not.toContain("cursor");
   });
 
-  it("installAllDetectedIntegrations retains clients completed before failure, does not install saved-only clients, and updates selection incrementally", async () => {
-    // Only Copilot & Codex directories are detected; Claude is saved-only (not detected on disk)
+  it("installAllDetectedIntegrations returns empty without base writes when nothing detected, aggregates partial failures, skips saved-only clients, and respects recordClientSelection", async () => {
+    const emptyResult = await installAllDetectedIntegrations(context, { recordClientSelection: true });
+    expect(emptyResult).toEqual({ installedClients: [], failedClients: [] });
+    await expect(fs.access(managedMcpScriptPath({ userHome: tempHome }))).rejects.toThrow();
+    await expect(fs.access(managedIntegrationVersionPath({ userHome: tempHome }))).rejects.toThrow();
+
+    // Only Copilot, Cursor & Codex are detected; Claude is saved-only (not detected on disk)
     const copilotDir = path.resolve(globalStoragePath, "..", "..");
     await fs.mkdir(copilotDir, { recursive: true });
     await fs.mkdir(process.env.CODEX_HOME!, { recursive: true });
     await fs.mkdir(path.join(tempHome, ".cursor"), { recursive: true });
     await addInstalledClient("claude", { userHome: tempHome });
 
-    // Cursor fails on check() -> Copilot completed before Cursor must remain recorded, Cursor NOT recorded, Claude saved-only untouched
-    vi.spyOn(CursorClientDriver.prototype, "check").mockResolvedValueOnce({
-      status: "missing",
-      detail: "Cursor check injected failure",
+    const checkSpies = [
+      vi.spyOn(CopilotClientDriver.prototype, "check"),
+      vi.spyOn(CursorClientDriver.prototype, "check"),
+      vi.spyOn(CodexClientDriver.prototype, "check"),
+      vi.spyOn(ClaudeClientDriver.prototype, "check"),
+    ];
+    const runtimePath = path.resolve(managedMcpScriptPath({ userHome: tempHome }));
+    const originalRename = fs.rename.bind(fs);
+    const renameTargets: string[] = [];
+    const renameSpy = vi.spyOn(fs, "rename").mockImplementation(async (oldPath, newPath) => {
+      renameTargets.push(path.resolve(newPath.toString()));
+      return originalRename(oldPath, newPath);
     });
 
-    await expect(
-      installAllDetectedIntegrations(context, { recordClientSelection: true }),
-    ).rejects.toThrow("Cursor integration verification failed after installation: Cursor check injected failure");
+    // Cursor fails install -> Codex after it MUST still install & be recorded; Cursor NOT recorded; Claude saved-only untouched
+    vi.spyOn(CursorClientDriver.prototype, "install").mockRejectedValueOnce(
+      new Error("Cursor install injected failure"),
+    );
 
-    expect(await readInstalledClients({ userHome: tempHome })).toEqual(["copilot", "claude"]);
+    const firstResult = await installAllDetectedIntegrations(context, { recordClientSelection: true });
+    expect(firstResult).toEqual({
+      installedClients: ["GitHub Copilot (VS Code)", "Codex"],
+      failedClients: [{ id: "cursor", name: "Cursor", error: "Cursor install injected failure" }],
+    });
+    for (const spy of checkSpies) {
+      expect(spy).not.toHaveBeenCalled();
+    }
+    expect(renameTargets.filter((target) => target === runtimePath)).toHaveLength(1);
+    renameSpy.mockRestore();
+
+    expect(await readInstalledClients({ userHome: tempHome })).toEqual(["copilot", "codex", "claude"]);
     // Claude was saved-only, so Install All must not have created ~/.claude.json
     await expect(fs.access(path.join(tempHome, ".claude.json"))).rejects.toThrow();
-    // Programmatic Install All without flag does not add Codex even on full success
-    await installAllDetectedIntegrations(context);
-    expect(await readInstalledClients({ userHome: tempHome })).toEqual(["copilot", "claude"]);
+
+    // Newly detect Windsurf and run programmatic Install All without flag: must install without recording Windsurf or Cursor
+    await fs.mkdir(path.join(tempHome, ".codeium", "windsurf"), { recursive: true });
+    const programmaticResult = await installAllDetectedIntegrations(context);
+    expect(programmaticResult).toEqual({
+      installedClients: ["GitHub Copilot (VS Code)", "Cursor", "Codex", "Windsurf"],
+      failedClients: [],
+    });
+    expect(await readInstalledClients({ userHome: tempHome })).toEqual(["copilot", "codex", "claude"]);
   });
 
   it("handles uninstall selection policies across individual, manual Uninstall All, programmatic Uninstall All, mid-way error, and cleanupBase: false", async () => {
@@ -395,7 +455,17 @@ describe("Workspace Integration Auto-Upgrade Coordinator & Selection Policy", ()
     await fs.rm(path.join(claudeDriver.skillDirectory, "SKILL.md"));
     await fs.rm(path.join(agDriver.sessionSkillDirectory, "SKILL.md"));
 
+    const upgradeCheckSpies = [
+      vi.spyOn(CursorClientDriver.prototype, "check"),
+      vi.spyOn(CodexClientDriver.prototype, "check"),
+      vi.spyOn(ClaudeClientDriver.prototype, "check"),
+      vi.spyOn(AntigravityClientDriver.prototype, "check"),
+    ];
     const report = await upgradeDetectedIntegrations(context);
+    for (const spy of upgradeCheckSpies) {
+      expect(spy).not.toHaveBeenCalled();
+      spy.mockRestore();
+    }
     expect(report.clientIds).toEqual(["cursor", "codex", "claude", "antigravity"]);
     expect(report.skillTargets).toEqual(["agents", "claude", "antigravity"]);
     expect(report.updatedAssets).toEqual([
@@ -495,7 +565,7 @@ describe("Workspace Integration Auto-Upgrade Coordinator & Selection Policy", ()
     });
   });
 
-  it("maps non-ready check statuses (missing, outdated, configuration-conflict, restart-required), exceptions, and preserves independent customizations", async () => {
+  it("maps driver exceptions to failed, upgrades stale Claude/Antigravity skills regardless of JSON config state while preserving customizations, leaves current receipts untouched, and leaves JSON drivers unchanged", async () => {
     await setupBaseMcpServer(context, { userHome: tempHome });
     const targetMcp = managedMcpScriptPath({ userHome: tempHome });
     const copilotDriver = new CopilotClientDriver(path.resolve(globalStoragePath, "..", "..", "mcp.json"));
@@ -546,6 +616,12 @@ describe("Workspace Integration Auto-Upgrade Coordinator & Selection Policy", ()
       "utf8",
     );
 
+    // Corrupt Cursor & Antigravity JSON configs and remove ~/.claude.json:
+    // JSON drivers are unchanged without reading config; Claude/Antigravity upgrade stale skills without inspecting config.
+    await fs.writeFile(cursorDriver.configPath, "{ broken cursor", "utf8");
+    await fs.writeFile(agDriver.configPath, "{ broken antigravity", "utf8");
+    await fs.rm(claudeDriver.configPath);
+
     await writeRawReceipt(
       {
         mcpVersion: MCP_VERSION - 1,
@@ -554,15 +630,19 @@ describe("Workspace Integration Auto-Upgrade Coordinator & Selection Policy", ()
       tempHome,
     );
 
-    // Check non-ready mapping with empty detail fallback (restart-required & outdated) + conflict on Codex + exception on Copilot
+    const checkSpies = [
+      vi.spyOn(CopilotClientDriver.prototype, "check"),
+      vi.spyOn(CursorClientDriver.prototype, "check"),
+      vi.spyOn(CodexClientDriver.prototype, "check"),
+      vi.spyOn(ClaudeClientDriver.prototype, "check"),
+      vi.spyOn(AntigravityClientDriver.prototype, "check"),
+    ];
     vi.spyOn(CopilotClientDriver.prototype, "upgrade").mockRejectedValueOnce(new Error("copilot boom"));
-    vi.spyOn(CursorClientDriver.prototype, "check").mockResolvedValueOnce({ status: "restart-required" });
-    vi.spyOn(CodexClientDriver.prototype, "check").mockResolvedValueOnce({
-      status: "configuration-conflict",
-      detail: "conflict in config.toml",
-    });
 
     const report = await upgradeDetectedIntegrations(context);
+    for (const spy of checkSpies) {
+      expect(spy).not.toHaveBeenCalled();
+    }
     expect(report.updatedAssets).toEqual([
       "mcp",
       "skill:agents",
@@ -574,18 +654,13 @@ describe("Workspace Integration Auto-Upgrade Coordinator & Selection Policy", ()
     ]);
     expect(report.clients).toEqual([
       { id: "copilot", name: "GitHub Copilot (VS Code)", status: "failed", detail: "copilot boom" },
-      {
-        id: "cursor",
-        name: "Cursor",
-        status: "setup-required",
-        detail: "Cursor integration status is restart-required. Restart Cursor and start a new chat to apply the updated integration.",
-      },
-      { id: "codex", name: "Codex", status: "setup-required", detail: "conflict in config.toml" },
+      { id: "cursor", name: "Cursor", status: "unchanged" },
+      { id: "codex", name: "Codex", status: "unchanged" },
       { id: "claude", name: "Claude", status: "updated" },
       { id: "antigravity", name: "Antigravity", status: "updated" },
     ]);
 
-    // Verify independent customizations survived without cross-contamination
+    // Verify independent customizations survived without cross-contamination, configs untouched, and mcpVersion committed
     const agentsAfter = await fs.readFile(path.join(tempHome, ".agents", "skills", "create-review-artifact", "SKILL.md"), "utf8");
     const claudeAfter = await fs.readFile(path.join(claudeDriver.skillDirectory, "SKILL.md"), "utf8");
     const agAfter = await fs.readFile(path.join(agDriver.skillDirectory, "SKILL.md"), "utf8");
@@ -598,19 +673,38 @@ describe("Workspace Integration Auto-Upgrade Coordinator & Selection Policy", ()
     expect(agAfter).toContain("Antigravity custom description.");
     expect(agAfter).toContain("- Antigravity custom rule");
     expect(agAfter).not.toContain("Claude custom");
+    await expect(fs.readFile(cursorDriver.configPath, "utf8")).resolves.toBe("{ broken cursor");
+    await expect(fs.readFile(agDriver.configPath, "utf8")).resolves.toBe("{ broken antigravity");
+    await expect(fs.access(claudeDriver.configPath)).rejects.toThrow();
+    expect(await readInstalledIntegrationVersion({ userHome: tempHome })).toMatchObject({
+      status: "valid",
+      manifest: {
+        mcpVersion: MCP_VERSION,
+        skills: {
+          agents: CREATE_REVIEW_ARTIFACT_SKILL_VERSION,
+          claude: CREATE_REVIEW_ARTIFACT_SKILL_VERSION,
+          antigravity: CREATE_REVIEW_ARTIFACT_SKILL_VERSION,
+        },
+        sessionSkills: {
+          agents: WORK_SESSION_SKILL_VERSION,
+          claude: WORK_SESSION_SKILL_VERSION,
+          antigravity: WORK_SESSION_SKILL_VERSION,
+        },
+      },
+    });
 
-    // Current receipt + missing/modified Claude skill on disk -> NOT force-reinstalled; maps to setup-required
+    // Current receipt + modified/missing Claude skill on disk -> NOT scanned or "repaired"; stays unchanged
     const currentButModifiedContent = buildReviewSkillMarkdown("# Tampered Core", "- Keep custom").replace(
       OFFICIAL_SKILL_DESCRIPTIONS.at(-1)!,
       "Tampered.",
     );
     await fs.writeFile(path.join(claudeDriver.skillDirectory, "SKILL.md"), currentButModifiedContent, "utf8");
     const currentButModifiedDisk = await upgradeDetectedIntegrations(context);
+    expect(currentButModifiedDisk.updatedAssets).toEqual([]);
     expect(currentButModifiedDisk.clients.find((c) => c.id === "claude")).toEqual({
       id: "claude",
       name: "Claude",
-      status: "setup-required",
-      detail: "Claude review skill assets are outdated.",
+      status: "unchanged",
     });
     await expect(fs.readFile(path.join(claudeDriver.skillDirectory, "SKILL.md"), "utf8")).resolves.toBe(
       currentButModifiedContent,
@@ -618,31 +712,19 @@ describe("Workspace Integration Auto-Upgrade Coordinator & Selection Policy", ()
 
     await fs.rm(path.join(claudeDriver.skillDirectory, "SKILL.md"));
     const currentButMissingDisk = await upgradeDetectedIntegrations(context);
+    expect(currentButMissingDisk.updatedAssets).toEqual([]);
     expect(currentButMissingDisk.clients.find((c) => c.id === "claude")).toEqual({
       id: "claude",
       name: "Claude",
-      status: "setup-required",
-      detail: "Claude skill directory is missing SKILL.md.",
+      status: "unchanged",
     });
     await expect(fs.access(path.join(claudeDriver.skillDirectory, "SKILL.md"))).rejects.toThrow();
 
-    // Preserves asymmetric JSON syntax parse error behavior through coordinator:
-    // Cursor/Claude corrupt JSON -> setup-required, Antigravity corrupt JSON -> failed
-    await fs.writeFile(cursorDriver.configPath, "{ broken cursor", "utf8");
-    await fs.writeFile(agDriver.configPath, "{ broken antigravity", "utf8");
-    const corruptJsonReport = await upgradeDetectedIntegrations(context);
-    expect(corruptJsonReport.clients.find((c) => c.id === "cursor")?.status).toBe("setup-required");
-    expect(corruptJsonReport.clients.find((c) => c.id === "antigravity")).toMatchObject({
-      id: "antigravity",
-      name: "Antigravity",
-      status: "failed",
-    });
+    // Missing Claude packaged source when ONLY Claude skill is stale (agents is current) -> throws -> failed before touching target
     await fs.rm(cursorDriver.configPath);
     await fs.rm(agDriver.configPath);
     await cursorDriver.install(targetMcp);
     await agDriver.install(targetMcp);
-
-    // Missing Claude packaged source when ONLY Claude skill is stale (agents is current) -> throws -> failed before touching target
     await claudeDriver.install(targetMcp);
     await writeInstalledIntegrationVersion(
       {
@@ -670,50 +752,61 @@ describe("Workspace Integration Auto-Upgrade Coordinator & Selection Policy", ()
       status: "failed",
     });
     expect(claudeMissingSrcReport.updatedAssets).not.toContain("skill:claude");
+    expect(await readInstalledIntegrationVersion({ userHome: tempHome })).toMatchObject({
+      status: "valid",
+      manifest: { skills: { claude: 1 } },
+    });
     expect(sha256(await fs.readFile(path.join(claudeDriver.skillDirectory, "SKILL.md")))).toBe(claudeBeforeHash);
+    for (const spy of checkSpies) {
+      expect(spy).not.toHaveBeenCalled();
+    }
   });
 
-  it("does not commit per-client receipt or add asset to updatedAssets when per-client verification fails", async () => {
+  it("preserves per-client skill receipt on operation or receipt-write failure, still commits mcpVersion when runtime and Codex succeed, and rejects when final MCP receipt commit fails", async () => {
     await setupBaseMcpServer(context, { userHome: tempHome });
     const targetMcp = managedMcpScriptPath({ userHome: tempHome });
+    const codexDriver = new CodexClientDriver();
     const agDriver = new AntigravityClientDriver({
       userHome: tempHome,
       sourceSkillDirectory: path.join(sourceDir, "skills", "create-review-artifact"),
       sourceSessionSkillDirectory: path.join(sourceDir, "skills", "work-session"),
     });
+    await codexDriver.install(targetMcp);
     await agDriver.install(targetMcp);
     await writeInstalledIntegrationVersion(
       {
-        mcpVersion: MCP_VERSION,
+        mcpVersion: MCP_VERSION - 1,
         skills: { agents: CREATE_REVIEW_ARTIFACT_SKILL_VERSION, antigravity: 1 },
         sessionSkills: { agents: WORK_SESSION_SKILL_VERSION, antigravity: 1 },
       },
       { userHome: tempHome },
     );
 
-    vi.spyOn(AntigravityClientDriver.prototype, "check").mockResolvedValueOnce({
-      status: "outdated",
-      detail: "post-upgrade verification rejected",
-    });
+    // 1. Only Antigravity skill upgrade throws while runtime + Codex succeed -> Antigravity fails & preserves 1, but mcpVersion commits MCP_VERSION
+    vi.spyOn(AntigravityClientDriver.prototype, "upgrade").mockRejectedValueOnce(
+      new Error("antigravity skill update failed"),
+    );
     const report = await upgradeDetectedIntegrations(context);
-    expect(report.updatedAssets).toEqual([]);
+    expect(report.updatedAssets).toEqual(["mcp"]);
     expect(report.clients).toEqual([
+      { id: "codex", name: "Codex", status: "unchanged" },
       {
         id: "antigravity",
         name: "Antigravity",
-        status: "setup-required",
-        detail: "post-upgrade verification rejected",
+        status: "failed",
+        detail: "antigravity skill update failed",
       },
     ]);
     expect(await readInstalledIntegrationVersion({ userHome: tempHome })).toMatchObject({
       status: "valid",
       manifest: {
+        mcpVersion: MCP_VERSION,
         skills: { antigravity: 1 },
         sessionSkills: { antigravity: 1 },
       },
     });
 
-    // Simulate per-client receipt commit I/O failure: client becomes failed and updatedAssets keeps it excluded
+    // 2. Per-client receipt commit I/O failure: client becomes failed, updatedAssets excludes it, receipt stays 1
     const originalWriteFile = fs.writeFile.bind(fs);
     vi.spyOn(fs, "writeFile").mockImplementation(async (targetPath, data, options) => {
       if (String(targetPath).includes("integration-version.json")) {
@@ -724,6 +817,7 @@ describe("Workspace Integration Auto-Upgrade Coordinator & Selection Policy", ()
     const receiptFailReport = await upgradeDetectedIntegrations(context);
     expect(receiptFailReport.updatedAssets).toEqual([]);
     expect(receiptFailReport.clients).toEqual([
+      { id: "codex", name: "Codex", status: "unchanged" },
       {
         id: "antigravity",
         name: "Antigravity",
@@ -740,9 +834,39 @@ describe("Workspace Integration Auto-Upgrade Coordinator & Selection Policy", ()
         sessionSkills: { antigravity: 1 },
       },
     });
+
+    // 3. Final deferred MCP receipt commit I/O failure rejects the coordinator with the root write error
+    await writeInstalledIntegrationVersion(
+      {
+        mcpVersion: MCP_VERSION - 1,
+        skills: {
+          agents: CREATE_REVIEW_ARTIFACT_SKILL_VERSION,
+          antigravity: CREATE_REVIEW_ARTIFACT_SKILL_VERSION,
+        },
+        sessionSkills: {
+          agents: WORK_SESSION_SKILL_VERSION,
+          antigravity: WORK_SESSION_SKILL_VERSION,
+        },
+      },
+      { userHome: tempHome },
+    );
+    const originalWriteFileForFinal = fs.writeFile.bind(fs);
+    vi.spyOn(fs, "writeFile").mockImplementation(async (targetPath, data, options) => {
+      if (String(targetPath).includes("integration-version.json")) {
+        throw Object.assign(new Error("final mcp receipt write failed"), { code: "EIO" });
+      }
+      return originalWriteFileForFinal(targetPath, data as any, options as any);
+    });
+    await expect(upgradeDetectedIntegrations(context)).rejects.toThrow("final mcp receipt write failed");
+    vi.restoreAllMocks();
+    vi.spyOn(os, "homedir").mockReturnValue(tempHome);
+    expect(await readInstalledIntegrationVersion({ userHome: tempHome })).toMatchObject({
+      status: "valid",
+      manifest: { mcpVersion: MCP_VERSION - 1 },
+    });
   });
 
-  it("retries Codex definition patch on subsequent run even when runtime receipt is already current, and leaves Antigravity config/rules/permissions untouched", async () => {
+  it("defers MCP receipt until Codex migration succeeds, commits Skill receipts independently, and skips Codex config read once current", async () => {
     await fs.mkdir(process.env.CODEX_HOME!, { recursive: true });
     await fs.mkdir(path.join(tempHome, ".gemini", "antigravity"), { recursive: true });
     const targetMcp = managedMcpScriptPath({ userHome: tempHome });
@@ -812,7 +936,8 @@ describe("Workspace Integration Auto-Upgrade Coordinator & Selection Policy", ()
       tempHome,
     );
 
-    // First run: shared MCP syncs & commits, Antigravity upgrades skills without touching config/rules, Codex upgrade throws transiently
+    // First run: shared MCP copies ("mcp" in updatedAssets) but mcpVersion stays 11 because Codex failed during migration;
+    // Antigravity upgrades & commits its skill receipts without touching config/rules.
     vi.spyOn(CodexClientDriver.prototype, "upgrade").mockRejectedValueOnce(new Error("transient config write failure"));
 
     const firstReport = await upgradeDetectedIntegrations(context);
@@ -825,23 +950,47 @@ describe("Workspace Integration Auto-Upgrade Coordinator & Selection Policy", ()
       { id: "codex", name: "Codex", status: "failed", detail: "transient config write failure" },
       { id: "antigravity", name: "Antigravity", status: "updated" },
     ]);
+    expect(await readInstalledIntegrationVersion({ userHome: tempHome })).toMatchObject({
+      status: "valid",
+      manifest: {
+        mcpVersion: 11,
+        skills: {
+          agents: CREATE_REVIEW_ARTIFACT_SKILL_VERSION,
+          antigravity: CREATE_REVIEW_ARTIFACT_SKILL_VERSION,
+        },
+        sessionSkills: {
+          agents: WORK_SESSION_SKILL_VERSION,
+          antigravity: WORK_SESSION_SKILL_VERSION,
+        },
+      },
+    });
     await expect(fs.readFile(agDriver.configPath, "utf8")).resolves.toBe(agConfigBefore);
     await expect(fs.readFile(geminiRules, "utf8")).resolves.toBe("# My GEMINI\n");
     await expect(fs.readFile(globalRule, "utf8")).resolves.toBe("# My Policy\n");
     await expect(fs.access(path.join(tempHome, ".gemini", "config", "ai-artifacts-review-mcp.mjs"))).rejects.toThrow();
 
-    // Second run: all receipts are NOW current, yet Codex driver still runs and patches join_session!
+    // Second run: mcpVersion stayed 11 so shared MCP syncs & Codex sees previousMcpVersion=11 -> patches join_session & commits MCP_VERSION
     const retryReport = await upgradeDetectedIntegrations(context);
-    expect(retryReport.updatedAssets).toEqual([]);
+    expect(retryReport.updatedAssets).toEqual(["mcp"]);
     expect(retryReport.clients).toEqual([
       { id: "codex", name: "Codex", status: "updated" },
       { id: "antigravity", name: "Antigravity", status: "unchanged" },
     ]);
+    expect(await readInstalledIntegrationVersion({ userHome: tempHome })).toMatchObject({
+      status: "valid",
+      manifest: { mcpVersion: MCP_VERSION },
+    });
     const codexPatched = await fs.readFile(codexConfigPath, "utf8");
     expect(codexPatched).toContain("[mcp_servers.ai_artifacts.tools.join_session]");
 
-    // Third run: both unchanged, Codex config not rewritten
+    // Third run: receipt is now at MCP_VERSION (12), so Codex & Antigravity neither read config nor rewrite files
     const beforeThird = codexPatched;
+    const originalReadFile = fs.readFile.bind(fs);
+    const readPaths: string[] = [];
+    vi.spyOn(fs, "readFile").mockImplementation((async (filePath: any, options: any) => {
+      readPaths.push(path.resolve(filePath.toString()));
+      return originalReadFile(filePath, options);
+    }) as any);
     const renameSpy = vi.spyOn(fs, "rename");
     const thirdReport = await upgradeDetectedIntegrations(context);
     expect(thirdReport.updatedAssets).toEqual([]);
@@ -850,6 +999,9 @@ describe("Workspace Integration Auto-Upgrade Coordinator & Selection Policy", ()
       { id: "antigravity", name: "Antigravity", status: "unchanged" },
     ]);
     expect(renameSpy).not.toHaveBeenCalled();
+    expect(readPaths).not.toContain(path.resolve(codexConfigPath));
+    expect(readPaths).not.toContain(path.resolve(agDriver.configPath));
+    expect(readPaths).not.toContain(path.resolve(targetMcp));
     await expect(fs.readFile(codexConfigPath, "utf8")).resolves.toBe(beforeThird);
 
     // Upgrade never created or modified installed-clients.json

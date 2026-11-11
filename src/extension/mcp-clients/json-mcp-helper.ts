@@ -68,6 +68,10 @@ export async function writeJsonConfig(filePath: string, data: Record<string, any
   await writeTextFileAtomic(filePath, contents);
 }
 
+function isPlainJsonObject(value: unknown): value is Record<string, any> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 export async function upsertJsonMcpServer(
   filePath: string,
   serverName: string,
@@ -75,6 +79,9 @@ export async function upsertJsonMcpServer(
   defaultContainerKey: "mcpServers" | "servers" = "mcpServers",
 ): Promise<void> {
   const config = await readJsonConfig(filePath);
+  if (!isPlainJsonObject(config)) {
+    throw new Error(`Configuration file at "${filePath}" must contain a JSON object.`);
+  }
   // Respect existing "servers" key if already present in file, or use defaultContainerKey
   const hasServersKey =
     config.servers && typeof config.servers === "object" && !Array.isArray(config.servers);

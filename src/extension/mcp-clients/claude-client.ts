@@ -140,24 +140,12 @@ export class ClaudeClientDriver implements McpClientDriver {
   ): Promise<void> {
     await upsertJsonMcpServer(this.configPath, "ai_artifacts", mcpScriptPath);
     const source = sourceSkillPath || this.sourceSkill;
-    if (source && fsSync.existsSync(source)) {
-      await replaceSkillDirectory(source, this.skillDirectory);
-    }
+    await replaceSkillDirectory(source, this.skillDirectory);
     const sourceSession = sourceSessionSkillPath || this.sourceSessionSkill;
-    if (sourceSession && fsSync.existsSync(sourceSession)) {
-      await replaceOfficialSkillDirectory(sourceSession, this.sessionSkillDirectory);
-    }
+    await replaceOfficialSkillDirectory(sourceSession, this.sessionSkillDirectory);
   }
 
   async upgrade(context: ClientUpgradeContext): Promise<ClientUpgradeResult> {
-    const definition = await this.checkDefinition(context.mcpScriptPath);
-    if (definition.status !== "ready") {
-      return {
-        status: "setup-required",
-        detail: definition.detail ?? "Claude MCP configuration is missing or needs setup.",
-      };
-    }
-
     if (!context.updateReviewSkill && !context.updateSessionSkill) {
       return { status: "unchanged" };
     }

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   CODEX_ARTIFACTS_MCP_TIMEOUT_SECONDS,
   hasManagedCodexArtifactsMcp,
+  needsCodexArtifactsMcpUpgrade,
   patchCodexArtifactsMcpForUpgrade,
   removeCodexArtifactsMcp,
   upsertCodexArtifactsMcp,
@@ -123,7 +124,16 @@ describe("Codex Artifacts MCP config", () => {
     expect(hasManagedCodexArtifactsMcp(updated, "D:/new/path/ai-artifacts-review-mcp.mjs")).toBe(true);
   });
 
-  it("patches missing join_session into a 5-tool managed block at MCP >= 12 while preserving overrides and CRLF", () => {
+  it("checks the Codex MCP version upgrade gate around MCP 12", () => {
+    expect(needsCodexArtifactsMcpUpgrade(0, 12)).toBe(true);
+    expect(needsCodexArtifactsMcpUpgrade(11, 12)).toBe(true);
+    expect(needsCodexArtifactsMcpUpgrade(10, 13)).toBe(true);
+    expect(needsCodexArtifactsMcpUpgrade(12, 12)).toBe(false);
+    expect(needsCodexArtifactsMcpUpgrade(12, 13)).toBe(false);
+    expect(needsCodexArtifactsMcpUpgrade(11, 11)).toBe(false);
+  });
+
+  it("patches missing join_session into a 5-tool managed block while preserving overrides, non-standard settings, and CRLF", () => {
     const scriptPath = "C:/Users/Admin/.ai-artifacts/managed/runtime/ai-artifacts-review-mcp.mjs";
     const fiveToolConfig = [
       'model = "gpt-5.6-sol"',
@@ -157,9 +167,7 @@ describe("Codex Artifacts MCP config", () => {
       "",
     ].join("\r\n");
 
-    expect(patchCodexArtifactsMcpForUpgrade(fiveToolConfig, scriptPath, 11)).toBe(fiveToolConfig);
-
-    const patched = patchCodexArtifactsMcpForUpgrade(fiveToolConfig, scriptPath, 12);
+    const patched = patchCodexArtifactsMcpForUpgrade(fiveToolConfig);
     expect(patched).not.toBe(fiveToolConfig);
     expect(patched).toContain("\r\n");
     expect(patched.replaceAll("\r\n", "")).not.toContain("\n");
@@ -169,8 +177,20 @@ describe("Codex Artifacts MCP config", () => {
     expect(patched).toContain("[mcp_servers.other]");
     expect(hasManagedCodexArtifactsMcp(patched, scriptPath)).toBe(true);
 
+    // Preserves custom args and timeout without rewriting the managed block
+    const customSettingsFiveTool = fiveToolConfig
+      .replace("tool_timeout_sec = 3600", "tool_timeout_sec = 180")
+      .replace(
+        'args = ["C:/Users/Admin/.ai-artifacts/managed/runtime/ai-artifacts-review-mcp.mjs"]',
+        'args = ["D:/custom/other-runtime.mjs"]',
+      );
+    const patchedCustom = patchCodexArtifactsMcpForUpgrade(customSettingsFiveTool);
+    expect(patchedCustom).toContain("tool_timeout_sec = 180");
+    expect(patchedCustom).toContain('args = ["D:/custom/other-runtime.mjs"]');
+    expect(patchedCustom).toContain("[mcp_servers.ai_artifacts.tools.join_session]");
+
     // Calling again on already 6-tool config is an exact no-op
-    expect(patchCodexArtifactsMcpForUpgrade(patched, scriptPath, 12)).toBe(patched);
+    expect(patchCodexArtifactsMcpForUpgrade(patched)).toBe(patched);
   });
 
   it("handles displaced closing marker when patching join_session and leaves existing join_session or missing block untouched", () => {
@@ -204,7 +224,7 @@ describe("Codex Artifacts MCP config", () => {
       "",
     ].join("\n");
 
-    const patchedDisplaced = patchCodexArtifactsMcpForUpgrade(displacedFiveTool, scriptPath, 12);
+    const patchedDisplaced = patchCodexArtifactsMcpForUpgrade(displacedFiveTool);
     expect(hasManagedCodexArtifactsMcp(patchedDisplaced, scriptPath)).toBe(true);
     expect(patchedDisplaced.indexOf("[mcp_servers.ai_artifacts.tools.join_session]")).toBeLessThan(
       patchedDisplaced.indexOf("[mcp_servers.node_repl]"),
@@ -215,9 +235,9 @@ describe("Codex Artifacts MCP config", () => {
       '[mcp_servers.ai_artifacts.tools.join_session]\napproval_mode = "approve"',
       '[mcp_servers.ai_artifacts.tools.join_session]\napproval_mode = "prompt"',
     );
-    expect(patchCodexArtifactsMcpForUpgrade(customJoinSession, scriptPath, 12)).toBe(customJoinSession);
+    expect(patchCodexArtifactsMcpForUpgrade(customJoinSession)).toBe(customJoinSession);
 
     const unmanaged = '[mcp_servers.ai_artifacts]\ncommand = "node"\nargs = ["/tmp/server.mjs"]\n';
-    expect(patchCodexArtifactsMcpForUpgrade(unmanaged, "/tmp/server.mjs", 12)).toBe(unmanaged);
+    expect(patchCodexArtifactsMcpForUpgrade(unmanaged)).toBe(unmanaged);
   });
 });

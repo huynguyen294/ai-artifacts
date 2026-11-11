@@ -13,7 +13,7 @@ import {
   type InstallerClientQuickPickItem,
   type IntegrationInstallCommandDeps,
 } from "../src/extension/integration-install-command";
-import type { InstallerClientDescriptor } from "../src/extension/workspace-integration";
+import type { InstallableClientDescriptor } from "../src/extension/workspace-integration";
 
 class MockMultiQuickPick {
   title: string | undefined;
@@ -66,7 +66,7 @@ class MockMultiQuickPick {
   }
 }
 
-function createSampleClients(): InstallerClientDescriptor[] {
+function createSampleClients(): InstallableClientDescriptor[] {
   return [
     {
       id: "copilot",
@@ -74,7 +74,6 @@ function createSampleClients(): InstallerClientDescriptor[] {
       configPath: "/home/user/.config/Code/User/mcp.json",
       isDetected: true,
       isSaved: true,
-      status: "ready",
     },
     {
       id: "cursor",
@@ -82,7 +81,6 @@ function createSampleClients(): InstallerClientDescriptor[] {
       configPath: "/home/user/.cursor/mcp.json",
       isDetected: true,
       isSaved: false,
-      status: "missing",
     },
     {
       id: "codex",
@@ -90,8 +88,6 @@ function createSampleClients(): InstallerClientDescriptor[] {
       configPath: "/home/user/.codex/config.toml",
       isDetected: false,
       isSaved: true,
-      status: "configuration-conflict",
-      detail: "config.toml defines mcp_servers.ai_artifacts outside the extension-managed block.",
     },
     {
       id: "claude",
@@ -99,7 +95,6 @@ function createSampleClients(): InstallerClientDescriptor[] {
       configPath: "/home/user/.claude.json",
       isDetected: false,
       isSaved: false,
-      status: "missing",
     },
   ];
 }
@@ -125,7 +120,7 @@ function createDeps(
 }
 
 describe("integration-install-command", () => {
-  it("enables checkboxes, exposes a Run button, formats status, and pre-selects detected/saved clients", async () => {
+  it("enables checkboxes, exposes a Run button, formats metadata badges and config path, and pre-selects detected/saved clients", async () => {
     const qp = new MockMultiQuickPick();
     const deps = createDeps(qp);
 
@@ -139,10 +134,12 @@ describe("integration-install-command", () => {
     expect(qp.buttons).toHaveLength(1);
     expect(qp.buttons[0]!.tooltip).toBe("Run Installer for selected clients");
     expect(qp.items.map((item) => item.clientId)).toEqual(["copilot", "cursor", "codex", "claude"]);
-    expect(qp.items[0]!.description).toBe("Ready · Detected · Saved");
-    expect(qp.items[1]!.description).toBe("Missing · Detected");
-    expect(qp.items[2]!.description).toBe("Configuration conflict · Saved");
-    expect(qp.items[2]!.detail).toContain("outside the extension-managed block");
+    expect(qp.items[0]!.description).toBe("Detected · Saved");
+    expect(qp.items[1]!.description).toBe("Detected");
+    expect(qp.items[2]!.description).toBe("Saved");
+    expect(qp.items[3]!.description).toBe("");
+    expect(qp.items[0]!.detail).toBe("/home/user/.config/Code/User/mcp.json");
+    expect(qp.items[2]!.detail).toBe("/home/user/.codex/config.toml");
     expect(qp.selectedItems.map((item) => item.clientId)).toEqual(["copilot", "cursor", "codex"]);
 
     qp.hide();

@@ -47,6 +47,20 @@ describe("JSON MCP Helper", () => {
     await expect(readJsonConfig(corruptFile)).rejects.toThrow("Invalid JSON syntax");
   });
 
+  it.each(["[]", "null", "123", '"scalar"', "true"])(
+    "rejects non-object JSON root %s in upsertJsonMcpServer without modifying the file",
+    async (rawRoot) => {
+      const targetFile = path.join(tempDir, "mcp.json");
+      await fs.writeFile(targetFile, rawRoot, "utf8");
+
+      await expect(
+        upsertJsonMcpServer(targetFile, "ai_artifacts", "C:/path/to/ai-artifacts-review-mcp.mjs"),
+      ).rejects.toThrow("must contain a JSON object");
+
+      await expect(fs.readFile(targetFile, "utf8")).resolves.toBe(rawRoot);
+    },
+  );
+
   it("adds ai_artifacts server and preserves other servers and properties", async () => {
     const targetFile = path.join(tempDir, "nested", "mcp.json");
     const existing = {
@@ -203,6 +217,27 @@ describe("Client Drivers", () => {
     const claudeSkill = await fs.readFile(path.join(claudeDriver.skillDirectory, "SKILL.md"), "utf8");
     expect(claudeSkill).toContain("# Create Review Artifact");
     expect(claudeSkill).not.toContain("Contaminated agents-only customization");
+  });
+
+  it("Claude driver throws on install when review or session skill source is missing", async () => {
+    const customConfig = path.join(tempHome, ".claude.json");
+    const scriptPath = "/Users/test/.ai-artifacts/managed/runtime/ai-artifacts-review-mcp.mjs";
+
+    const missingReviewDriver = new ClaudeClientDriver(
+      customConfig,
+      undefined,
+      path.join(tempHome, "missing-review-skill"),
+    );
+    await expect(missingReviewDriver.install(scriptPath)).rejects.toThrow();
+
+    const missingSessionDriver = new ClaudeClientDriver(
+      customConfig,
+      undefined,
+      undefined,
+      undefined,
+      path.join(tempHome, "missing-session-skill"),
+    );
+    await expect(missingSessionDriver.install(scriptPath)).rejects.toThrow();
   });
 
   it("Claude driver accepts valid custom regions and reports modified core content as outdated", async () => {
@@ -990,7 +1025,7 @@ describe("Client Driver Upgrade", () => {
     await fs.rm(tempHome, { recursive: true, force: true }).catch(() => {});
   });
 
-  it("JSON-only drivers report unchanged without writes when ready, and setup-required on missing, mismatched, or invalid JSON config", async () => {
+  it("JSON-only drivers return unchanged immediately without reading or writing config files", async () => {
     const scriptPath = "D:/runtime/ai-artifacts-review-mcp.mjs";
     const copilotConfig = path.join(tempHome, "Code", "User", "mcp.json");
     const clineConfig = path.join(tempHome, "Code", "User", "globalStorage", "saoudrizwan.claude-dev", "settings", "cline_mcp_settings.json");
@@ -1002,70 +1037,85 @@ describe("Client Driver Upgrade", () => {
       new ClineClientDriver(clineConfig),
     ];
 
-    // Missing config files -> setup-required without creating files
+    const readFileSpy = vi.spyOn(fs, "readFile");
+    const writeFileSpy = vi.spyOn(fs, "writeFile");
+    const renameSpy = vi.spyOn(fs, "rename");
+
+    // Missing config files -> unchanged without reading or creating files
     for (const driver of drivers) {
       const missingRes = await driver.upgrade({
         mcpScriptPath: scriptPath,
+        previousMcpVersion: 11,
         targetMcpVersion: 12,
         updateReviewSkill: true,
         updateSessionSkill: true,
       });
-      expect(missingRes.status).toBe("setup-required");
+      expect(missingRes).toEqual({ status: "unchanged" });
       await expect(fs.access(driver.configPath)).rejects.toThrow();
     }
+    expect(readFileSpy).not.toHaveBeenCalled();
 
-    // Install all 4, record exact contents, verify upgrade() is unchanged without disk writes
+    // Install all 4, record exact contents, verify upgrade() is unchanged without reading or writing
     for (const driver of drivers) {
       await driver.install(scriptPath);
     }
     const beforeContents = await Promise.all(drivers.map((d) => fs.readFile(d.configPath, "utf8")));
-    const writeFileSpy = vi.spyOn(fs, "writeFile");
-    const renameSpy = vi.spyOn(fs, "rename");
+    readFileSpy.mockClear();
+    writeFileSpy.mockClear();
+    renameSpy.mockClear();
 
     for (const driver of drivers) {
       const readyRes = await driver.upgrade({
         mcpScriptPath: scriptPath,
+        previousMcpVersion: 11,
         targetMcpVersion: 12,
         updateReviewSkill: true,
         updateSessionSkill: true,
       });
       expect(readyRes).toEqual({ status: "unchanged" });
     }
+    expect(readFileSpy).not.toHaveBeenCalled();
     expect(writeFileSpy).not.toHaveBeenCalled();
     expect(renameSpy).not.toHaveBeenCalled();
     for (const [index, driver] of drivers.entries()) {
       await expect(fs.readFile(driver.configPath, "utf8")).resolves.toBe(beforeContents[index]);
     }
 
-    // Mismatched runtime path and corrupt JSON both yield setup-required without writing
+    // Mismatched runtime path and corrupt JSON both still yield unchanged without reading or writing
     for (const [index, driver] of drivers.entries()) {
+      readFileSpy.mockClear();
       const mismatchRes = await driver.upgrade({
         mcpScriptPath: "D:/runtime/other.mjs",
-        targetMcpVersion: 12,
+        previousMcpVersion: 12,
+        targetMcpVersion: 13,
         updateReviewSkill: false,
         updateSessionSkill: false,
       });
-      expect(mismatchRes.status).toBe("setup-required");
+      expect(mismatchRes).toEqual({ status: "unchanged" });
+      expect(readFileSpy).not.toHaveBeenCalled();
       await expect(fs.readFile(driver.configPath, "utf8")).resolves.toBe(beforeContents[index]);
 
       const corruptRaw = "{ invalid json";
       await fs.writeFile(driver.configPath, corruptRaw, "utf8");
+      readFileSpy.mockClear();
       writeFileSpy.mockClear();
       renameSpy.mockClear();
       const corruptRes = await driver.upgrade({
         mcpScriptPath: scriptPath,
+        previousMcpVersion: 11,
         targetMcpVersion: 12,
         updateReviewSkill: false,
         updateSessionSkill: false,
       });
-      expect(corruptRes.status).toBe("setup-required");
+      expect(corruptRes).toEqual({ status: "unchanged" });
+      expect(readFileSpy).not.toHaveBeenCalled();
       expect(writeFileSpy).not.toHaveBeenCalled();
       expect(renameSpy).not.toHaveBeenCalled();
       await expect(fs.readFile(driver.configPath, "utf8")).resolves.toBe(corruptRaw);
     }
   });
 
-  it("Codex driver upgrades 5-tool managed config, skips 6-tool, avoids writes if candidate still invalid, handles conflicts, and ignores legacy hooks", async () => {
+  it("Codex driver gates patching at MCP 12, handles ENOENT/I/O/unmanaged configs, preserves overrides and custom block fields, and ignores legacy hooks", async () => {
     const originalCodexHome = process.env.CODEX_HOME;
     const codexHome = path.join(tempHome, ".codex");
     process.env.CODEX_HOME = codexHome;
@@ -1073,13 +1123,14 @@ describe("Client Driver Upgrade", () => {
       const scriptPath = "C:/Users/Test/.ai-artifacts/managed/runtime/ai-artifacts-review-mcp.mjs";
       const codexDriver = new CodexClientDriver();
 
-      // Missing config -> setup-required without creating .codex/config.toml
+      // Missing config when crossing version 12 -> unchanged without creating .codex/config.toml
       expect(await codexDriver.upgrade({
         mcpScriptPath: scriptPath,
+        previousMcpVersion: 11,
         targetMcpVersion: 12,
         updateReviewSkill: false,
         updateSessionSkill: false,
-      })).toMatchObject({ status: "setup-required" });
+      })).toEqual({ status: "unchanged" });
       await expect(fs.access(codexDriver.configPath)).rejects.toThrow();
 
       await fs.mkdir(codexHome, { recursive: true });
@@ -1120,8 +1171,38 @@ describe("Client Driver Upgrade", () => {
       ].join("\n");
       await fs.writeFile(codexDriver.configPath, fiveTool, "utf8");
 
+      // Version gate 12 -> 12 and 12 -> 13 never even read config.toml
+      const readSpy = vi.spyOn(fs, "readFile");
+      expect(await codexDriver.upgrade({
+        mcpScriptPath: scriptPath,
+        previousMcpVersion: 12,
+        targetMcpVersion: 12,
+        updateReviewSkill: false,
+        updateSessionSkill: false,
+      })).toEqual({ status: "unchanged" });
+      expect(await codexDriver.upgrade({
+        mcpScriptPath: scriptPath,
+        previousMcpVersion: 12,
+        targetMcpVersion: 13,
+        updateReviewSkill: false,
+        updateSessionSkill: false,
+      })).toEqual({ status: "unchanged" });
+      expect(readSpy).not.toHaveBeenCalled();
+
+      // I/O error other than ENOENT throws
+      readSpy.mockRejectedValueOnce(Object.assign(new Error("EACCES permission denied"), { code: "EACCES" }));
+      await expect(codexDriver.upgrade({
+        mcpScriptPath: scriptPath,
+        previousMcpVersion: 11,
+        targetMcpVersion: 12,
+        updateReviewSkill: false,
+        updateSessionSkill: false,
+      })).rejects.toThrow("EACCES permission denied");
+
+      // Crossing 11 -> 12 patches 5-tool block while leaving legacy hooks untouched
       const firstUpgrade = await codexDriver.upgrade({
         mcpScriptPath: scriptPath,
+        previousMcpVersion: 11,
         targetMcpVersion: 12,
         updateReviewSkill: false,
         updateSessionSkill: false,
@@ -1134,45 +1215,49 @@ describe("Client Driver Upgrade", () => {
       expect(patchedContent).toContain("[mcp_servers.ai_artifacts.tools.join_session]\napproval_mode = \"approve\"");
       await expect(fs.readFile(legacyHooksPath, "utf8")).resolves.toBe(legacyHookContent);
 
-      // Re-running on ready 6-tool config is unchanged with no write
+      // Re-running on ready 6-tool config even across 10 -> 13 is unchanged with no write
       const writeSpy = vi.spyOn(fs, "writeFile");
       const renameSpy = vi.spyOn(fs, "rename");
       expect(await codexDriver.upgrade({
         mcpScriptPath: scriptPath,
-        targetMcpVersion: 12,
+        previousMcpVersion: 10,
+        targetMcpVersion: 13,
         updateReviewSkill: false,
         updateSessionSkill: false,
       })).toEqual({ status: "unchanged" });
       expect(writeSpy).not.toHaveBeenCalled();
       expect(renameSpy).not.toHaveBeenCalled();
 
-      // Candidate that would still fail verification (bad timeout) must NOT be written
-      const badTimeoutFiveTool = fiveTool.replace("tool_timeout_sec = 3600", "tool_timeout_sec = 180");
-      await fs.writeFile(codexDriver.configPath, badTimeoutFiveTool, "utf8");
-      writeSpy.mockClear();
-      renameSpy.mockClear();
-      const badCandidateRes = await codexDriver.upgrade({
+      // Managed 5-tool block with custom timeout/args still receives pure patch without rewriting timeout/args
+      const customFiveTool = fiveTool.replace("tool_timeout_sec = 3600", "tool_timeout_sec = 180");
+      await fs.writeFile(codexDriver.configPath, customFiveTool, "utf8");
+      const customUpgradeRes = await codexDriver.upgrade({
         mcpScriptPath: scriptPath,
-        targetMcpVersion: 12,
+        previousMcpVersion: 10,
+        targetMcpVersion: 13,
         updateReviewSkill: false,
         updateSessionSkill: false,
       });
-      expect(badCandidateRes.status).toBe("setup-required");
-      expect(writeSpy).not.toHaveBeenCalled();
-      expect(renameSpy).not.toHaveBeenCalled();
-      await expect(fs.readFile(codexDriver.configPath, "utf8")).resolves.toBe(badTimeoutFiveTool);
+      expect(customUpgradeRes).toEqual({ status: "updated" });
+      const customAfter = await fs.readFile(codexDriver.configPath, "utf8");
+      expect(customAfter).toContain("tool_timeout_sec = 180");
+      expect(customAfter).toContain("[mcp_servers.ai_artifacts.tools.join_session]");
 
-      // Unmanaged conflict returns setup-required without throwing or overwriting
+      // Unmanaged entry returns unchanged without throwing conflict or overwriting
       const conflictConfig = '[mcp_servers.ai_artifacts]\ncommand = "node"\nargs = ["/other.mjs"]\n';
       await fs.writeFile(codexDriver.configPath, conflictConfig, "utf8");
-      const conflictRes = await codexDriver.upgrade({
+      writeSpy.mockClear();
+      renameSpy.mockClear();
+      const unmanagedRes = await codexDriver.upgrade({
         mcpScriptPath: scriptPath,
+        previousMcpVersion: 11,
         targetMcpVersion: 12,
         updateReviewSkill: false,
         updateSessionSkill: false,
       });
-      expect(conflictRes.status).toBe("setup-required");
-      expect(conflictRes.detail).toContain("outside the extension-managed block");
+      expect(unmanagedRes).toEqual({ status: "unchanged" });
+      expect(writeSpy).not.toHaveBeenCalled();
+      expect(renameSpy).not.toHaveBeenCalled();
       await expect(fs.readFile(codexDriver.configPath, "utf8")).resolves.toBe(conflictConfig);
     } finally {
       if (originalCodexHome === undefined) {
@@ -1183,7 +1268,7 @@ describe("Client Driver Upgrade", () => {
     }
   });
 
-  it("Claude driver upgrades only flagged skills while keeping .claude.json untouched and validating sources before writes", async () => {
+  it("Claude driver upgrades only flagged skills regardless of missing or corrupt .claude.json and validates sources before writes", async () => {
     const customConfig = path.join(tempHome, ".claude.json");
     const scriptPath = "/Users/test/.ai-artifacts/managed/runtime/ai-artifacts-review-mcp.mjs";
 
@@ -1214,25 +1299,33 @@ describe("Client Driver Upgrade", () => {
 
     const claudeDriver = new ClaudeClientDriver(customConfig, undefined, reviewSource, undefined, sessionSource);
 
-    // Missing config -> setup-required even if flags are true, without deploying skills
+    // Missing config still upgrades flagged skills without creating .claude.json
     expect(await claudeDriver.upgrade({
       mcpScriptPath: scriptPath,
+      previousMcpVersion: 11,
       targetMcpVersion: 12,
       updateReviewSkill: true,
       updateSessionSkill: true,
-    })).toMatchObject({ status: "setup-required" });
-    await expect(fs.access(claudeDriver.skillDirectory)).rejects.toThrow();
+    })).toEqual({ status: "updated" });
+    await expect(fs.access(customConfig)).rejects.toThrow();
+    await expect(fs.readFile(path.join(claudeDriver.skillDirectory, "SKILL.md"), "utf8")).resolves.toContain("# New Review Core");
+    await expect(fs.readFile(path.join(claudeDriver.sessionSkillDirectory, "SKILL.md"), "utf8")).resolves.toBe("# Session v2");
 
-    // Corrupt config -> setup-required without touching file
+    // Corrupt config still upgrades flagged skills without touching .claude.json
     await fs.writeFile(customConfig, "{ broken json", "utf8");
-    expect((await claudeDriver.upgrade({
+    await fs.rm(claudeDriver.skillDirectory, { recursive: true, force: true });
+    await fs.rm(claudeDriver.sessionSkillDirectory, { recursive: true, force: true });
+    expect(await claudeDriver.upgrade({
       mcpScriptPath: scriptPath,
+      previousMcpVersion: 12,
       targetMcpVersion: 12,
       updateReviewSkill: true,
       updateSessionSkill: true,
-    })).status).toBe("setup-required");
+    })).toEqual({ status: "updated" });
     await expect(fs.readFile(customConfig, "utf8")).resolves.toBe("{ broken json");
     await fs.rm(customConfig);
+    await fs.rm(claudeDriver.skillDirectory, { recursive: true, force: true });
+    await fs.rm(claudeDriver.sessionSkillDirectory, { recursive: true, force: true });
 
     // Valid config + independent .agents contamination + existing custom Claude review skill + missing session skill
     await fs.writeFile(customConfig, JSON.stringify({ opusProMigrationComplete: true }), "utf8");
@@ -1264,6 +1357,7 @@ describe("Client Driver Upgrade", () => {
     await fs.rm(path.join(sessionSource, "agents", "openai.yaml"));
     await expect(claudeDriver.upgrade({
       mcpScriptPath: scriptPath,
+      previousMcpVersion: 12,
       targetMcpVersion: 12,
       updateReviewSkill: true,
       updateSessionSkill: true,
@@ -1273,6 +1367,7 @@ describe("Client Driver Upgrade", () => {
     // Selective review-only upgrade works cleanly when session flag is false
     const reviewOnlyRes = await claudeDriver.upgrade({
       mcpScriptPath: scriptPath,
+      previousMcpVersion: 12,
       targetMcpVersion: 12,
       updateReviewSkill: true,
       updateSessionSkill: false,
@@ -1286,18 +1381,21 @@ describe("Client Driver Upgrade", () => {
     expect(updatedClaudeReview).not.toContain("Agents contamination");
     await expect(fs.access(claudeDriver.sessionSkillDirectory)).rejects.toThrow();
 
-    // False flags -> unchanged without disk writes
+    // False flags -> unchanged without reading config or writing disk
     await fs.writeFile(path.join(sessionSource, "agents", "openai.yaml"), "prompt: session", "utf8");
+    const readSpy = vi.spyOn(fs, "readFile");
     const unchangedRes = await claudeDriver.upgrade({
       mcpScriptPath: scriptPath,
+      previousMcpVersion: 12,
       targetMcpVersion: 12,
       updateReviewSkill: false,
       updateSessionSkill: false,
     });
     expect(unchangedRes).toEqual({ status: "unchanged" });
+    expect(readSpy).not.toHaveBeenCalled();
   });
 
-  it("Antigravity driver keeps config, rules, and permissions untouched in upgrade, rejects corrupt JSON, and requires setup on bad timeout", async () => {
+  it("Antigravity driver upgrades only flagged skills without reading mcp_config.json or touching rules and permissions", async () => {
     const scriptPath = "D:/runtime/ai-artifacts-review-mcp.mjs";
     const reviewSource = path.join(tempHome, "src-ag", "create-review-artifact");
     const sessionSource = path.join(tempHome, "src-ag", "work-session");
@@ -1337,7 +1435,19 @@ describe("Client Driver Upgrade", () => {
     await fs.writeFile(geminiRulesDoc, "# GEMINI custom rules\n", "utf8");
     await fs.writeFile(globalRule, "# Policy rule\n", "utf8");
 
-    // Bad timeoutSeconds in mcp_config.json -> setup-required, no auto-normalization, no skill touch
+    const readSpy = vi.spyOn(fs, "readFile");
+
+    // False flags -> unchanged immediately without reading mcp_config.json
+    expect(await driver.upgrade({
+      mcpScriptPath: scriptPath,
+      previousMcpVersion: 12,
+      targetMcpVersion: 12,
+      updateReviewSkill: false,
+      updateSessionSkill: false,
+    })).toEqual({ status: "unchanged" });
+    expect(readSpy).not.toHaveBeenCalled();
+
+    // Bad timeoutSeconds or corrupt JSON in mcp_config.json are ignored during skill upgrade
     await writeJsonConfig(driver.configPath, {
       mcpServers: {
         ai_artifacts: {
@@ -1349,39 +1459,19 @@ describe("Client Driver Upgrade", () => {
       },
     });
     const badTimeoutRaw = await fs.readFile(driver.configPath, "utf8");
+    readSpy.mockClear();
     const badTimeoutRes = await driver.upgrade({
       mcpScriptPath: scriptPath,
+      previousMcpVersion: 11,
       targetMcpVersion: 12,
       updateReviewSkill: true,
       updateSessionSkill: true,
     });
-    expect(badTimeoutRes.status).toBe("setup-required");
-    expect(badTimeoutRes.detail).toContain("timeoutSeconds");
+    expect(badTimeoutRes).toEqual({ status: "updated" });
+    expect(readSpy.mock.calls.some(([p]) => path.resolve(String(p)) === path.resolve(driver.configPath))).toBe(false);
     await expect(fs.readFile(driver.configPath, "utf8")).resolves.toBe(badTimeoutRaw);
-    await expect(fs.access(driver.skillDirectory)).rejects.toThrow();
 
-    // Corrupt JSON -> throwsSyntaxError (preserved readJsonConfig behavior)
     await fs.writeFile(driver.configPath, "{ broken", "utf8");
-    await expect(driver.upgrade({
-      mcpScriptPath: scriptPath,
-      targetMcpVersion: 12,
-      updateReviewSkill: true,
-      updateSessionSkill: true,
-    })).rejects.toThrow("Invalid JSON syntax");
-
-    // Valid timeout + permission settings -> upgrade updates flagged skills and preserves config & rules
-    await writeJsonConfig(driver.configPath, {
-      mcpServers: {
-        ai_artifacts: {
-          command: "node",
-          args: [scriptPath],
-          timeoutSeconds: ANTIGRAVITY_MCP_TIMEOUT_SECONDS,
-          disabled: false,
-          disabledTools: ["join_session"],
-        },
-      },
-    });
-    const validConfigBefore = await fs.readFile(driver.configPath, "utf8");
     await fs.mkdir(driver.skillDirectory, { recursive: true });
     await fs.writeFile(
       path.join(driver.skillDirectory, "SKILL.md"),
@@ -1399,15 +1489,17 @@ describe("Client Driver Upgrade", () => {
       "utf8",
     );
 
+    readSpy.mockClear();
     const res = await driver.upgrade({
       mcpScriptPath: scriptPath,
+      previousMcpVersion: 12,
       targetMcpVersion: 12,
       updateReviewSkill: true,
       updateSessionSkill: true,
     });
     expect(res).toEqual({ status: "updated" });
-    expect((await driver.check(scriptPath)).status).toBe("ready");
-    await expect(fs.readFile(driver.configPath, "utf8")).resolves.toBe(validConfigBefore);
+    expect(readSpy.mock.calls.some(([p]) => path.resolve(String(p)) === path.resolve(driver.configPath))).toBe(false);
+    await expect(fs.readFile(driver.configPath, "utf8")).resolves.toBe("{ broken");
     await expect(fs.readFile(geminiRulesDoc, "utf8")).resolves.toBe("# GEMINI custom rules\n");
     await expect(fs.readFile(globalRule, "utf8")).resolves.toBe("# Policy rule\n");
     const agSkillAfter = await fs.readFile(path.join(driver.skillDirectory, "SKILL.md"), "utf8");

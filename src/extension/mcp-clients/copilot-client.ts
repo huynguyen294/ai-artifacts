@@ -48,15 +48,8 @@ export class CopilotClientDriver implements McpClientDriver {
     await upsertJsonMcpServer(this.configPath, "ai_artifacts", mcpScriptPath, "servers");
   }
 
-  async upgrade(context: ClientUpgradeContext): Promise<ClientUpgradeResult> {
-    const configured = await hasJsonMcpServer(this.configPath, "ai_artifacts", context.mcpScriptPath);
-    if (configured) {
-      return { status: "unchanged" };
-    }
-    return {
-      status: "setup-required",
-      detail: `${this.name} MCP configuration is missing or needs setup.`,
-    };
+  async upgrade(_context: ClientUpgradeContext): Promise<ClientUpgradeResult> {
+    return { status: "unchanged" };
   }
 
   async uninstall(): Promise<boolean> {

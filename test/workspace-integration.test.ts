@@ -15,10 +15,12 @@ import {
 } from "../src/shared/artifact-files";
 import {
   CREATE_REVIEW_ARTIFACT_SKILL_VERSION,
+  MCP_CLIENT_IDS,
   MCP_VERSION,
   SKILL_VERSION,
   WORK_SESSION_SKILL_VERSION,
 } from "../src/shared/contracts";
+import { addInstalledClient, readInstalledClients } from "../src/extension/installed-client-state";
 import {
   OFFICIAL_SKILL_DESCRIPTIONS,
   USER_CUSTOM_RULES_BEGIN,
@@ -48,6 +50,7 @@ import {
   installCursorIntegration,
   installSelectedIntegrations,
   installWindsurfIntegration,
+  listInstallableClients,
   listInstallerClients,
   readInstalledIntegrationVersion,
   sessionSkillAssetsAreCurrent,
@@ -60,7 +63,15 @@ import {
   writeInstalledIntegrationVersion,
   type BaseIntegrationPaths,
 } from "../src/extension/workspace-integration";
-import { WindsurfClientDriver } from "../src/extension/mcp-clients/index";
+import {
+  AntigravityClientDriver,
+  ClaudeClientDriver,
+  ClineClientDriver,
+  CodexClientDriver,
+  CopilotClientDriver,
+  CursorClientDriver,
+  WindsurfClientDriver,
+} from "../src/extension/mcp-clients/index";
 
 const installedMcpProcesses: ChildProcessWithoutNullStreams[] = [];
 const CURRENT_SKILL_DESCRIPTION = OFFICIAL_SKILL_DESCRIPTIONS.at(-1)!;
@@ -760,7 +771,7 @@ describe("Workspace Integration Asset Verifiers", () => {
     });
   });
 
-  it("commits the Antigravity receipt only after Antigravity install and verification succeed and preserves prior entries on failure", async () => {
+  it("commits the Antigravity receipt only after Antigravity install succeeds without calling post-check and preserves prior entries on failure", async () => {
     const repositoryRoot = path.resolve(import.meta.dirname, "..");
     vi.spyOn(os, "homedir").mockReturnValue(targetDir);
     const context = {
@@ -797,16 +808,14 @@ describe("Workspace Integration Asset Verifiers", () => {
     );
 
     await fs.rm(antigravitySkillDir, { recursive: true, force: true });
-    const { AntigravityClientDriver } = await import("../src/extension/mcp-clients/index");
-    vi.spyOn(AntigravityClientDriver.prototype, "check").mockResolvedValueOnce({
-      status: "outdated",
-      detail: "injected check failure",
-    });
-    await expect(installAntigravityIntegration(context)).rejects.toThrow(
-      "Antigravity integration verification failed after installation: injected check failure",
+    const checkSpy = vi.spyOn(AntigravityClientDriver.prototype, "check");
+    vi.spyOn(AntigravityClientDriver.prototype, "install").mockRejectedValueOnce(
+      new Error("injected install failure"),
     );
-    const afterCheckFailure = await readInstalledIntegrationVersion({ userHome: targetDir });
-    expect(afterCheckFailure).toMatchObject({
+    await expect(installAntigravityIntegration(context)).rejects.toThrow("injected install failure");
+    expect(checkSpy).not.toHaveBeenCalled();
+    const afterInstallFailure = await readInstalledIntegrationVersion({ userHome: targetDir });
+    expect(afterInstallFailure).toMatchObject({
       status: "valid",
       manifest: {
         mcpVersion: MCP_VERSION,
@@ -816,6 +825,7 @@ describe("Workspace Integration Asset Verifiers", () => {
     });
 
     await installAntigravityIntegration(context);
+    expect(checkSpy).not.toHaveBeenCalled();
     expect(await readInstalledIntegrationVersion({ userHome: targetDir })).toMatchObject({
       status: "valid",
       manifest: {
@@ -993,8 +1003,25 @@ describe("Workspace Integration Asset Verifiers", () => {
       expect(staleAntigravityReport.clients.find((client) => client.id === "antigravity")?.status).toBe("outdated");
 
       const currentSetup = await setupBaseMcpServer(context);
-      expect(currentSetup.assetsUpdated).toBe(false);
+      expect(currentSetup).not.toHaveProperty("assetsUpdated");
       const installedPaths = currentSetup.paths;
+      expect(await baseAssetsAreCurrent(installedPaths)).toBe(true);
+      expect(await readInstalledIntegrationVersion({ userHome: targetDir })).toMatchObject({
+        status: "valid",
+        manifest: {
+          mcpVersion: MCP_VERSION,
+          skills: {
+            agents: CREATE_REVIEW_ARTIFACT_SKILL_VERSION,
+            claude: CREATE_REVIEW_ARTIFACT_SKILL_VERSION,
+            antigravity: CREATE_REVIEW_ARTIFACT_SKILL_VERSION,
+          },
+          sessionSkills: {
+            agents: WORK_SESSION_SKILL_VERSION,
+            claude: WORK_SESSION_SKILL_VERSION,
+            antigravity: WORK_SESSION_SKILL_VERSION,
+          },
+        },
+      });
       await fs.writeFile(installedPaths.targetMcpScript, "// stale runtime\n", "utf8");
       await fs.writeFile(path.join(installedPaths.targetSkill, "SKILL.md"), "# Stale skill\n", "utf8");
       await fs.writeFile(path.join(installedPaths.targetSkill, "obsolete-instruction.md"), "obsolete\n", "utf8");
@@ -1171,7 +1198,13 @@ describe("Workspace Integration Asset Verifiers", () => {
     process.env.CODEX_HOME = codexHome;
 
     try {
-      const globalStoragePath = path.join(targetDir, "vscode-global-storage", "publisher.ai-artifacts");
+      const globalStoragePath = path.join(
+        targetDir,
+        "Code",
+        "User",
+        "globalStorage",
+        "huynguyen294.ai-artifacts",
+      );
       const codexConfig = path.join(codexHome, "config.toml");
       const cursorConfig = path.join(targetDir, ".cursor", "mcp.json");
       const antigravityDir = path.join(targetDir, ".gemini", "antigravity");
@@ -1288,7 +1321,13 @@ describe("Workspace Integration Asset Verifiers", () => {
     process.env.CODEX_HOME = codexHome;
 
     try {
-      const globalStoragePath = path.join(targetDir, "vscode-global-storage", "publisher.ai-artifacts");
+      const globalStoragePath = path.join(
+        targetDir,
+        "Code",
+        "User",
+        "globalStorage",
+        "huynguyen294.ai-artifacts",
+      );
       const cursorConfig = path.join(targetDir, ".cursor", "mcp.json");
       const antigravityConfig = path.join(targetDir, ".gemini", "config", "mcp_config.json");
       const corruptRaw = "{ \"mcpServers\": broken";
@@ -1367,7 +1406,13 @@ describe("Workspace Integration Asset Verifiers", () => {
     process.env.CODEX_HOME = codexHome;
 
     try {
-      const globalStoragePath = path.join(targetDir, "vscode-global-storage", "publisher.ai-artifacts");
+      const globalStoragePath = path.join(
+        targetDir,
+        "Code",
+        "User",
+        "globalStorage",
+        "huynguyen294.ai-artifacts",
+      );
       const context = {
         extensionUri: { fsPath: repositoryRoot },
         globalStorageUri: { fsPath: globalStoragePath },
@@ -1496,6 +1541,291 @@ describe("Workspace Integration Asset Verifiers", () => {
       } else {
         process.env.CODEX_HOME = originalCodexHome;
       }
+    }
+  });
+
+  it("listInstallableClients returns metadata for all 7 clients in factory order without check(), config/skill reads, or asset comparison", async () => {
+    const repositoryRoot = path.resolve(import.meta.dirname, "..");
+    vi.spyOn(os, "homedir").mockReturnValue(targetDir);
+    const originalCodexHome = process.env.CODEX_HOME;
+    const codexHome = path.join(targetDir, ".codex");
+    process.env.CODEX_HOME = codexHome;
+
+    try {
+      const globalStoragePath = path.join(
+        targetDir,
+        "Code",
+        "User",
+        "globalStorage",
+        "huynguyen294.ai-artifacts",
+      );
+      const copilotConfig = path.resolve(globalStoragePath, "..", "..", "mcp.json");
+      const cursorConfig = path.join(targetDir, ".cursor", "mcp.json");
+      const claudeConfig = path.join(targetDir, ".claude.json");
+      const claudeSkillFile = path.join(targetDir, ".claude", "skills", "create-review-artifact", "SKILL.md");
+      const windsurfConfig = path.join(targetDir, ".codeium", "windsurf", "mcp_config.json");
+      const clineConfig = path.resolve(
+        globalStoragePath,
+        "..",
+        "saoudrizwan.claude-dev",
+        "settings",
+        "cline_mcp_settings.json",
+      );
+      const antigravityConfig = path.join(targetDir, ".gemini", "config", "mcp_config.json");
+      const runtimePath = managedMcpScriptPath({ userHome: targetDir });
+
+      // Seed detected state (corrupt Cursor JSON + Claude dir/skill) and saved-only Windsurf
+      await fs.mkdir(path.dirname(cursorConfig), { recursive: true });
+      await fs.writeFile(cursorConfig, "{ broken cursor json", "utf8");
+      await fs.mkdir(path.dirname(claudeSkillFile), { recursive: true });
+      await fs.writeFile(claudeSkillFile, "# corrupt skill without markers", "utf8");
+      await fs.mkdir(path.dirname(runtimePath), { recursive: true });
+      await fs.writeFile(runtimePath, "// existing runtime\n", "utf8");
+      await writeInstalledIntegrationVersion(
+        {
+          mcpVersion: MCP_VERSION,
+          skills: { agents: CREATE_REVIEW_ARTIFACT_SKILL_VERSION },
+        },
+        { userHome: targetDir },
+      );
+      await addInstalledClient("claude", { userHome: targetDir });
+      await addInstalledClient("windsurf", { userHome: targetDir });
+
+      const context = {
+        extensionUri: { fsPath: repositoryRoot },
+        globalStorageUri: { fsPath: globalStoragePath },
+      } as any;
+
+      const checkSpies = [
+        vi.spyOn(CopilotClientDriver.prototype, "check"),
+        vi.spyOn(CursorClientDriver.prototype, "check"),
+        vi.spyOn(CodexClientDriver.prototype, "check"),
+        vi.spyOn(ClaudeClientDriver.prototype, "check"),
+        vi.spyOn(WindsurfClientDriver.prototype, "check"),
+        vi.spyOn(ClineClientDriver.prototype, "check"),
+        vi.spyOn(AntigravityClientDriver.prototype, "check"),
+      ];
+
+      const originalReadFile = fs.readFile.bind(fs);
+      const readPaths: string[] = [];
+      vi.spyOn(fs, "readFile").mockImplementation((async (filePath: any, options: any) => {
+        readPaths.push(path.resolve(filePath.toString()));
+        return originalReadFile(filePath, options);
+      }) as any);
+      const readdirSpy = vi.spyOn(fs, "readdir");
+
+      const result = await listInstallableClients(context);
+
+      expect(Object.keys(result)).toEqual(["clients"]);
+      expect(result.clients.map((c) => c.id)).toEqual([...MCP_CLIENT_IDS]);
+      for (const client of result.clients) {
+        expect(Object.keys(client).sort()).toEqual([
+          "configPath",
+          "id",
+          "isDetected",
+          "isSaved",
+          "name",
+        ]);
+      }
+
+      expect(result.clients).toEqual([
+        {
+          id: "copilot",
+          name: "GitHub Copilot (VS Code)",
+          configPath: copilotConfig,
+          isDetected: false,
+          isSaved: false,
+        },
+        {
+          id: "cursor",
+          name: "Cursor",
+          configPath: cursorConfig,
+          isDetected: true,
+          isSaved: false,
+        },
+        {
+          id: "codex",
+          name: "Codex",
+          configPath: path.join(codexHome, "config.toml"),
+          isDetected: false,
+          isSaved: false,
+        },
+        {
+          id: "claude",
+          name: "Claude",
+          configPath: claudeConfig,
+          isDetected: true,
+          isSaved: true,
+        },
+        {
+          id: "windsurf",
+          name: "Windsurf",
+          configPath: windsurfConfig,
+          isDetected: false,
+          isSaved: true,
+        },
+        {
+          id: "cline",
+          name: "Cline",
+          configPath: clineConfig,
+          isDetected: false,
+          isSaved: false,
+        },
+        {
+          id: "antigravity",
+          name: "Antigravity",
+          configPath: antigravityConfig,
+          isDetected: false,
+          isSaved: false,
+        },
+      ]);
+
+      for (const spy of checkSpies) {
+        expect(spy).not.toHaveBeenCalled();
+      }
+      expect(readPaths).toEqual([path.resolve(managedInstalledClientsPath({ userHome: targetDir }))]);
+      expect(readdirSpy).not.toHaveBeenCalled();
+    } finally {
+      if (originalCodexHome === undefined) {
+        delete process.env.CODEX_HOME;
+      } else {
+        process.env.CODEX_HOME = originalCodexHome;
+      }
+    }
+  });
+
+  it("handles empty selection without writing base assets and writes shared runtime once in a batch without target read-back", async () => {
+    const repositoryRoot = path.resolve(import.meta.dirname, "..");
+    vi.spyOn(os, "homedir").mockReturnValue(targetDir);
+    const originalCodexHome = process.env.CODEX_HOME;
+    const codexHome = path.join(targetDir, ".codex");
+    process.env.CODEX_HOME = codexHome;
+
+    try {
+      const globalStoragePath = path.join(
+        targetDir,
+        "Code",
+        "User",
+        "globalStorage",
+        "huynguyen294.ai-artifacts",
+      );
+      const context = {
+        extensionUri: { fsPath: repositoryRoot },
+        globalStorageUri: { fsPath: globalStoragePath },
+      } as any;
+      const runtimePath = path.resolve(managedMcpScriptPath({ userHome: targetDir }));
+      const versionPath = path.resolve(managedIntegrationVersionPath({ userHome: targetDir }));
+      const clientsPath = path.resolve(managedInstalledClientsPath({ userHome: targetDir }));
+
+      const emptyResult = await installSelectedIntegrations(context, [], { recordClientSelection: true });
+      expect(emptyResult).toEqual({ installedClients: [], failedClients: [] });
+      await expect(fs.access(runtimePath)).rejects.toThrow();
+      await expect(fs.access(versionPath)).rejects.toThrow();
+      await expect(fs.access(clientsPath)).rejects.toThrow();
+
+      const originalReadFile = fs.readFile.bind(fs);
+      const originalRename = fs.rename.bind(fs);
+      const readPaths: string[] = [];
+      const renameTargets: string[] = [];
+
+      vi.spyOn(fs, "readFile").mockImplementation((async (filePath: any, options: any) => {
+        readPaths.push(path.resolve(filePath.toString()));
+        return originalReadFile(filePath, options);
+      }) as any);
+      vi.spyOn(fs, "rename").mockImplementation(async (oldPath, newPath) => {
+        renameTargets.push(path.resolve(newPath.toString()));
+        return originalRename(oldPath, newPath);
+      });
+
+      const checkSpies = [
+        vi.spyOn(CodexClientDriver.prototype, "check"),
+        vi.spyOn(CursorClientDriver.prototype, "check"),
+        vi.spyOn(WindsurfClientDriver.prototype, "check"),
+      ];
+      vi.spyOn(CursorClientDriver.prototype, "install").mockRejectedValueOnce(
+        new Error("cursor batch failure"),
+      );
+
+      const batchResult = await installSelectedIntegrations(
+        context,
+        ["cursor", "codex", "windsurf"],
+        { recordClientSelection: true },
+      );
+
+      // Canonical order is cursor -> codex -> windsurf; cursor error must not stop codex or windsurf
+      expect(batchResult).toEqual({
+        installedClients: [
+          { id: "codex", name: "Codex" },
+          { id: "windsurf", name: "Windsurf" },
+        ],
+        failedClients: [
+          { id: "cursor", name: "Cursor", error: "cursor batch failure" },
+        ],
+      });
+      for (const spy of checkSpies) {
+        expect(spy).not.toHaveBeenCalled();
+      }
+      expect(renameTargets.filter((target) => target === runtimePath)).toHaveLength(1);
+      expect(readPaths).not.toContain(runtimePath);
+      expect(readPaths).not.toContain(
+        path.resolve(targetDir, ".agents", "skills", "create-review-artifact", "references", "artifact-contract.md"),
+      );
+      expect(readPaths).not.toContain(
+        path.resolve(targetDir, ".agents", "skills", "create-review-artifact", "references", "ai-feedback.md"),
+      );
+      expect(readPaths).not.toContain(
+        path.resolve(targetDir, ".agents", "skills", "create-review-artifact", "agents", "openai.yaml"),
+      );
+      expect(readPaths).not.toContain(
+        path.resolve(targetDir, ".agents", "skills", "work-session", "SKILL.md"),
+      );
+    } finally {
+      if (originalCodexHome === undefined) {
+        delete process.env.CODEX_HOME;
+      } else {
+        process.env.CODEX_HOME = originalCodexHome;
+      }
+    }
+  });
+
+  it("reports a per-client failure and skips saving selection when a JSON client config has a root array", async () => {
+    const repositoryRoot = path.resolve(import.meta.dirname, "..");
+    vi.spyOn(os, "homedir").mockReturnValue(targetDir);
+    const globalStoragePath = path.join(
+      targetDir,
+      "Code",
+      "User",
+      "globalStorage",
+      "huynguyen294.ai-artifacts",
+    );
+    const cursorConfig = path.join(targetDir, ".cursor", "mcp.json");
+    await fs.mkdir(path.dirname(cursorConfig), { recursive: true });
+    await fs.writeFile(cursorConfig, "[]", "utf8");
+
+    const checkSpies = [
+      vi.spyOn(CursorClientDriver.prototype, "check"),
+      vi.spyOn(WindsurfClientDriver.prototype, "check"),
+    ];
+    const context = {
+      extensionUri: { fsPath: repositoryRoot },
+      globalStorageUri: { fsPath: globalStoragePath },
+    } as any;
+
+    const result = await installSelectedIntegrations(context, ["cursor", "windsurf"], {
+      recordClientSelection: true,
+    });
+
+    expect(result.installedClients).toEqual([{ id: "windsurf", name: "Windsurf" }]);
+    expect(result.failedClients).toHaveLength(1);
+    expect(result.failedClients[0]).toMatchObject({
+      id: "cursor",
+      name: "Cursor",
+    });
+    expect(result.failedClients[0]?.error).toContain("must contain a JSON object");
+    await expect(readInstalledClients({ userHome: targetDir })).resolves.toEqual(["windsurf"]);
+    await expect(fs.readFile(cursorConfig, "utf8")).resolves.toBe("[]");
+    for (const spy of checkSpies) {
+      expect(spy).not.toHaveBeenCalled();
     }
   });
 });
