@@ -417,9 +417,7 @@ export class WorkSessionProvider implements vscode.CustomReadonlyEditorProvider<
             if (!allArtifacts.has(msg.artifactId)) {
               throw new Error(`Artifact "${msg.artifactId}" does not belong to session.`);
             }
-            const targetList = session[msg.zone];
-            const targetIndex = targetList.length;
-            await this.service.moveArtifactInSession(document.sessionId, msg.artifactId, msg.zone, targetIndex);
+            await this.service.moveArtifactInSession(document.sessionId, msg.artifactId, msg.zone, 0);
           } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
             void post({ type: "actionError", action: "moveArtifact", message });

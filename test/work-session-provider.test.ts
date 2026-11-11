@@ -334,15 +334,15 @@ describe("WorkSessionProvider", () => {
     expect(updated3.working).toEqual([art2]);
     expect(updated3.references).toEqual([art1]);
 
-    // 5. Reorder artifact in references (already single item, stays same)
+    // 5. Moving art2 to references prepends it to the start of the zone
     await messageListener!({ type: "moveArtifact", artifactId: art2, zone: "references" });
     const updated4 = await service.getWorkSession(session.sessionId);
-    expect(updated4.references).toEqual([art1, art2]);
+    expect(updated4.references).toEqual([art2, art1]);
 
-    // Reorder art2 up
-    await messageListener!({ type: "reorderArtifact", artifactId: art2, direction: "up" });
+    // Reorder art1 up
+    await messageListener!({ type: "reorderArtifact", artifactId: art1, direction: "up" });
     const updated5 = await service.getWorkSession(session.sessionId);
-    expect(updated5.references).toEqual([art2, art1]);
+    expect(updated5.references).toEqual([art1, art2]);
 
     // 6. Remove artifact
     await messageListener!({ type: "removeArtifact", artifactId: art1 });
@@ -543,5 +543,85 @@ describe("WorkSessionProvider", () => {
     expect(postMessage).toHaveBeenCalledWith({
       type: "sessionConnectPromptCopied",
     });
+  });
+
+  it("prepends moved artifacts to the start of working, references, and archived zones", async () => {
+    const session = await createSession({
+      title: "Prepend Zone Move Session",
+      userHome: tempHome,
+    });
+
+    const artA = "art-01";
+    const artB = "art-02";
+    const artC = "art-03";
+    for (const [idx, artId] of [artA, artB, artC].entries()) {
+      const artDir = path.join(globalArtifactsRoot({ userHome: tempHome }), artId);
+      await mkdir(artDir, { recursive: true });
+      await writeFile(
+        path.join(artDir, "artifact.json"),
+        JSON.stringify({
+          schemaVersion: 6,
+          kind: "implementation-plan",
+          artifactId: artId,
+          title: `Title ${artId}`,
+          createdAt: "2026-04-10T10:00:00.000Z",
+          updatedAt: "2026-04-10T11:00:00.000Z",
+          reviewRound: 1,
+          reviewSessionId: "00000000-0000-4000-8000-000000000001",
+        }),
+      );
+      await writeFile(path.join(artDir, "artifact.md"), "# Content\n");
+      await registerArtifactInSession(session.sessionId, artId, {
+        registeredAt: `2026-04-10T10:0${idx}:00.000Z`,
+        userHome: tempHome,
+      });
+    }
+
+    const provider = new WorkSessionProvider(
+      mockContext,
+      service,
+      openCoordinator,
+      { userHome: tempHome },
+    );
+
+    const doc = new WorkSessionDocument(
+      { fsPath: path.join(conversationDirectory(session.sessionId, { userHome: tempHome }), "conversation.json") } as any,
+      session.sessionId,
+    );
+
+    let messageListener: ((msg: any) => any) | undefined;
+    const panel = {
+      webview: {
+        options: {},
+        html: "",
+        cspSource: "vscode-webview://test",
+        asWebviewUri: (uri: any) => uri.fsPath ?? String(uri),
+        onDidReceiveMessage: (listener: any) => {
+          messageListener = listener;
+          return { dispose: () => {} };
+        },
+        postMessage: vi.fn(),
+      },
+      onDidDispose: () => ({ dispose: () => {} }),
+    };
+
+    await provider.resolveCustomEditor(doc, panel as any, {} as any);
+
+    await messageListener!({ type: "moveArtifact", artifactId: artA, zone: "references" });
+    await messageListener!({ type: "moveArtifact", artifactId: artB, zone: "references" });
+    let current = await service.getWorkSession(session.sessionId);
+    expect(current.references).toEqual([artB, artA]);
+    expect(current.working).toEqual([artC]);
+
+    await messageListener!({ type: "moveArtifact", artifactId: artA, zone: "archived" });
+    await messageListener!({ type: "moveArtifact", artifactId: artB, zone: "archived" });
+    current = await service.getWorkSession(session.sessionId);
+    expect(current.archived).toEqual([artB, artA]);
+    expect(current.references).toEqual([]);
+
+    await messageListener!({ type: "moveArtifact", artifactId: artA, zone: "working" });
+    current = await service.getWorkSession(session.sessionId);
+    expect(current.working).toEqual([artA, artC]);
+    expect(current.archived).toEqual([artB]);
   });
 });
