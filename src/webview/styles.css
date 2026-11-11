@@ -1386,6 +1386,7 @@ body:has(.session-app-container),
 }
 
 .session-artifact-card {
+  min-width: 0;
   padding: 10px 14px;
   border: 1px solid var(--vscode-editorWidget-border, rgba(128, 128, 128, 0.15));
   border-radius: 4px;
@@ -1421,8 +1422,27 @@ body:has(.session-app-container),
 
 .session-card-title {
   font-size: 0.95rem;
-  font-weight: 500;
+  line-height: 1.35;
   color: var(--vscode-editor-foreground);
+}
+
+.session-zone-references .session-card-header,
+.session-zone-archived .session-card-header {
+  align-items: center;
+}
+
+.session-zone-references .session-card-main,
+.session-zone-archived .session-card-main {
+  flex-wrap: nowrap;
+}
+
+.session-zone-references .session-card-title,
+.session-zone-archived .session-card-title {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .session-card-kind-badge {
@@ -1538,6 +1558,7 @@ body:has(.session-app-container),
 }
 
 .session-card-unavailable-badge {
+  flex-shrink: 0;
   font-size: 0.7rem;
   padding: 1px 6px;
   border-radius: 8px;

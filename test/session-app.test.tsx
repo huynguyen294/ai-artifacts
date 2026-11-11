@@ -4,6 +4,7 @@ import type { WorkSessionViewData } from "../src/shared/contracts";
 import {
   createInitialSessionManagerState,
   formatArtifactDate,
+  formatArtifactHoverInfo,
   SessionApp,
   sessionManagerReducer,
 } from "../src/webview/SessionApp";
@@ -608,6 +609,79 @@ describe("SessionApp Webview Component (Phase 3)", () => {
       );
       expect(html).toContain('class="session-card-description"');
       expect(html).toContain("A summary snippet describing this artifact.");
+    });
+
+    it("omits card description in references and archived while providing hover info tooltip", () => {
+      const viewDataCompact: WorkSessionViewData = {
+        ...sampleViewData,
+        working: [
+          {
+            artifactId: "art-working",
+            title: "Working Artifact",
+            kind: "plan",
+            description: "Visible working description",
+            createdAt: "2026-04-10T10:00:00.000Z",
+            updatedAt: "2026-04-10T11:00:00.000Z",
+          },
+        ],
+        references: [
+          {
+            artifactId: "art-ref",
+            title: "Reference Artifact With Very Long Title",
+            kind: "analysis",
+            description: "Hidden reference description",
+            createdAt: "2026-04-10T10:00:00.000Z",
+            updatedAt: "2026-04-10T11:00:00.000Z",
+          },
+        ],
+        archived: [
+          {
+            artifactId: "art-arch",
+            title: "Archived Artifact",
+            kind: "spec",
+            description: "Hidden archived description",
+            createdAt: "2026-04-09T10:00:00.000Z",
+            updatedAt: "2026-04-09T10:00:00.000Z",
+          },
+          {
+            artifactId: "art-arch-unavail",
+            title: "art-arch-unavail",
+            kind: "spec",
+            updatedAt: "2026-04-08T10:00:00.000Z",
+            unavailable: true,
+          },
+        ],
+      };
+
+      const html = renderToStaticMarkup(
+        <SessionApp initialState={{ status: "ready", data: viewDataCompact }} initialPanelExpanded={true} />,
+      );
+
+      // Working keeps rendered description block and has no card-level title tooltip
+      expect(html).toContain('<div class="session-card-description">Visible working description</div>');
+      expect(html).toContain('data-artifact-id="art-working" class="session-artifact-card " role="button"');
+
+      // References & Archived omit rendered description block
+      expect(html).not.toContain('<div class="session-card-description">Hidden reference description</div>');
+      expect(html).not.toContain('<div class="session-card-description">Hidden archived description</div>');
+
+      // References & Archived expose full info in card title attribute and suppress tooltip inheritance on menu anchor
+      const refHover = formatArtifactHoverInfo(viewDataCompact.references[0]!);
+      expect(refHover).toContain("Reference Artifact With Very Long Title");
+      expect(refHover).toContain("Hidden reference description");
+      expect(refHover).toContain("Type: Analysis · Updated:");
+      expect(html).toContain(`data-artifact-id="art-ref" class="session-artifact-card " title="${refHover}"`);
+
+      const archHover = formatArtifactHoverInfo(viewDataCompact.archived[0]!);
+      expect(archHover).toContain("Archived Artifact");
+      expect(archHover).toContain("Hidden archived description");
+      expect(archHover).toContain("Type: Spec · Created:");
+      expect(html).toContain(`data-artifact-id="art-arch" class="session-artifact-card " title="${archHover}"`);
+
+      const unavailHover = formatArtifactHoverInfo(viewDataCompact.archived[1]!);
+      expect(unavailHover).toContain("art-arch-unavail");
+      expect(unavailHover).toContain("Unavailable · Created:");
+      expect(html).toContain('class="session-card-menu-anchor" title=""');
     });
 
     it("renders loading and error states without hooks violation", () => {

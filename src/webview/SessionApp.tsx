@@ -291,6 +291,19 @@ export function formatArtifactDate(updatedAt: string, createdAt?: string): strin
   }
 }
 
+export function formatArtifactHoverInfo(artifact: WorkSessionArtifactRow): string {
+  const dateText = formatArtifactDate(artifact.updatedAt, artifact.createdAt);
+  const statusOrKind = artifact.unavailable
+    ? "Unavailable"
+    : `Type: ${formatArtifactKindLabel(artifact.kind)}`;
+  const parts = [artifact.title];
+  if (artifact.description) {
+    parts.push(artifact.description);
+  }
+  parts.push(`${statusOrKind} · ${dateText}`);
+  return parts.join("\n");
+}
+
 export function SessionApp({ initialState, initialPanelExpanded = true }: SessionAppProps = {}) {
   const [managerState, dispatch] = useReducer(
     sessionManagerReducer,
@@ -572,12 +585,14 @@ export function SessionApp({ initialState, initialPanelExpanded = true }: Sessio
               const rawIndex = rawItems.findIndex((it) => it.artifactId === artifact.artifactId);
               const isFirst = rawIndex === 0;
               const isLast = rawIndex === rawItems.length - 1;
+              const isCompactZone = zoneKey === "references" || zoneKey === "archived";
 
               return (
                 <div
                   key={artifact.artifactId}
                   data-artifact-id={artifact.artifactId}
                   className={`session-artifact-card ${artifact.unavailable ? "session-artifact-card-unavailable" : ""}`}
+                  title={isCompactZone ? formatArtifactHoverInfo(artifact) : undefined}
                   onClick={() => {
                     if (artifact.unavailable) return;
                     vscode.postMessage({ type: "openArtifact", artifactId: artifact.artifactId });
@@ -601,6 +616,7 @@ export function SessionApp({ initialState, initialPanelExpanded = true }: Sessio
                     </div>
                     <div
                       className="session-card-menu-anchor"
+                      title=""
                       onClick={(e) => e.stopPropagation()}
                       onKeyDown={(e) => e.stopPropagation()}
                     >
@@ -698,7 +714,7 @@ export function SessionApp({ initialState, initialPanelExpanded = true }: Sessio
                       )}
                     </div>
                   </div>
-                  {artifact.description && (
+                  {zoneKey === "working" && artifact.description && (
                     <div className="session-card-description">{artifact.description}</div>
                   )}
                   <div className="session-card-meta">
