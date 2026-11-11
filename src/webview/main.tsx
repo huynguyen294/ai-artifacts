@@ -2,6 +2,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { App as ReviewApp } from "./ReviewApp";
 import { SessionApp } from "./SessionApp";
+import { WhatsNewApp } from "./WhatsNewApp";
 import "./styles.css";
 
 const root = document.getElementById("root");
@@ -11,6 +12,12 @@ const appName = root.getAttribute("data-app");
 
 createRoot(root).render(
   <StrictMode>
-    {appName === "session" ? <SessionApp /> : <ReviewApp />}
+    {appName === "session" ? (
+      <SessionApp />
+    ) : appName === "whats-new" ? (
+      <WhatsNewApp />
+    ) : (
+      <ReviewApp />
+    )}
   </StrictMode>,
 );

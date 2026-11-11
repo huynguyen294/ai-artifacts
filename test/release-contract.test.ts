@@ -215,6 +215,20 @@ describe("v1.1.4 release contract", () => {
     );
   });
 
+  it("contributes agentPlus.openWhatsNew command and matching activation event", async () => {
+    const packageJson = JSON.parse(await read("package.json"));
+
+    expect(packageJson.activationEvents).toContain("onCommand:agentPlus.openWhatsNew");
+    expect(packageJson.contributes.commands).toEqual(
+      expect.arrayContaining([
+        {
+          command: "agentPlus.openWhatsNew",
+          title: "AI Artifacts: What's New",
+        },
+      ]),
+    );
+  });
+
   it("keeps release-facing docs on global v6 and independent integration versions", async () => {
     const [readme, philosophy, architecture, components, instructions, contract, changelog, documentationChanges] =
       await Promise.all([

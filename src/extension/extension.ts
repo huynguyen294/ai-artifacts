@@ -102,6 +102,7 @@ import {
   ConversationArtifactService,
   setupConversationRegistryWatcher,
 } from "./conversation-artifact-service";
+import { WhatsNewPanelController } from "./whats-new-panel";
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
 // Initialize extension services
@@ -266,12 +267,14 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const managementCoordinator = new WorkSessionManagementCoordinator({
     service: conversationArtifactService,
   });
+  const whatsNewController = new WhatsNewPanelController(context.extensionUri);
 
   context.subscriptions.push(
     workspaceRegistryPublisher,
     conversationArtifactService,
     recentArtifactsProvider,
     workSessionsProvider,
+    whatsNewController,
     sessionsTreeView,
     recentArtifactsTreeView,
     workSessionsProvider.onDidChangeTreeData(() => {
@@ -509,6 +512,14 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
           ? { kindFilter: options.kindFilter }
           : undefined,
       );
+    }),
+    vscode.commands.registerCommand("agentPlus.openWhatsNew", () => {
+      try {
+        whatsNewController.show();
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        void vscode.window.showErrorMessage(`Failed to open What's New: ${msg}`);
+      }
     }),
 
     // Interactive multi-client installer

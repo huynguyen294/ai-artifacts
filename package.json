@@ -64,6 +64,7 @@
     "onCommand:agentPlus.manageSessionTypes",
     "onCommand:agentPlus.openArtifactReview",
     "onCommand:agentPlus.searchArtifact",
+    "onCommand:agentPlus.openWhatsNew",
     "onCommand:agentPlus.installer",
     "onCommand:agentPlus.installAllIntegrations",
     "onCommand:agentPlus.installCopilotIntegration",
@@ -97,6 +98,10 @@
       {
         "command": "agentPlus.searchArtifact",
         "title": "AI Artifacts: Search Artifact"
+      },
+      {
+        "command": "agentPlus.openWhatsNew",
+        "title": "AI Artifacts: What's New"
       },
       {
         "command": "agentPlus.filterRecentArtifacts",

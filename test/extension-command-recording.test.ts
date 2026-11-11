@@ -31,6 +31,7 @@ const {
   sidebarSpies,
   conversationServiceSpies,
   workspaceIntegrationSpies,
+  whatsNewSpies,
 } = vi.hoisted(() => {
   const commands = new Map<string, (...args: unknown[]) => unknown>();
   return {
@@ -131,6 +132,11 @@ const {
         clients: [{ id: "codex" as const, name: "Codex", status: "updated" as const }],
       })),
     },
+    whatsNewSpies: {
+      constructorSpy: vi.fn(),
+      show: vi.fn(),
+      dispose: vi.fn(),
+    },
   };
 });
 
@@ -191,6 +197,15 @@ vi.mock("../src/extension/artifact-review-provider", () => ({
 }));
 vi.mock("../src/extension/work-session-provider", () => ({
   WorkSessionProvider: Object.assign(class {}, { viewType: "agentPlus.workSession" }),
+}));
+vi.mock("../src/extension/whats-new-panel", () => ({
+  WhatsNewPanelController: class {
+    constructor(extensionUri: unknown) {
+      whatsNewSpies.constructorSpy(extensionUri);
+    }
+    show = whatsNewSpies.show;
+    dispose = whatsNewSpies.dispose;
+  },
 }));
 vi.mock("../src/extension/work-session-sidebar", () => ({
   RecentArtifactsTreeDataProvider: class {
@@ -746,6 +761,44 @@ describe("Extension activation wiring & manual command recording", () => {
       expect(mockShowInformationMessage).toHaveBeenCalledTimes(1);
       expect(mockShowErrorMessage).not.toHaveBeenCalled();
       expect(consoleErrorSpy).toHaveBeenCalled();
+    } finally {
+      await fs.rm(tempRoot, { recursive: true, force: true }).catch(() => {});
+    }
+  });
+
+  it("registers agentPlus.openWhatsNew without opening panel on activation and calls controller.show on command execution", async () => {
+    const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "ai-artifacts-ext-whats-new-"));
+    try {
+      vi.spyOn(os, "homedir").mockReturnValue(tempRoot);
+      const context = {
+        extensionUri: { fsPath: tempRoot },
+        globalStorageUri: { fsPath: path.join(tempRoot, "storage") },
+        globalState: { get: vi.fn(), update: vi.fn(async () => undefined) },
+        subscriptions: [] as Array<{ dispose: () => void }>,
+      } as any;
+
+      await activate(context);
+
+      expect(whatsNewSpies.constructorSpy).toHaveBeenCalledTimes(1);
+      expect(whatsNewSpies.constructorSpy).toHaveBeenCalledWith(context.extensionUri);
+      expect(whatsNewSpies.show).not.toHaveBeenCalled();
+      expect(registeredCommands.has("agentPlus.openWhatsNew")).toBe(true);
+      expect(
+        context.subscriptions.some(
+          (item: { dispose?: unknown }) => item.dispose === whatsNewSpies.dispose,
+        ),
+      ).toBe(true);
+
+      registeredCommands.get("agentPlus.openWhatsNew")!();
+      expect(whatsNewSpies.show).toHaveBeenCalledTimes(1);
+      expect(workspaceIntegrationSpies.installAllDetectedIntegrations).not.toHaveBeenCalled();
+      expect(workspaceIntegrationSpies.checkAllIntegrations).not.toHaveBeenCalled();
+
+      whatsNewSpies.show.mockImplementationOnce(() => {
+        throw new Error("panel failure");
+      });
+      registeredCommands.get("agentPlus.openWhatsNew")!();
+      expect(mockShowErrorMessage).toHaveBeenCalledWith("Failed to open What's New: panel failure");
     } finally {
       await fs.rm(tempRoot, { recursive: true, force: true }).catch(() => {});
     }

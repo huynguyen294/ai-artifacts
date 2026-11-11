@@ -6,7 +6,7 @@ export function generateWebviewNonce(): string {
 }
 
 export type WebviewHtmlOptions = {
-  appName: "review" | "session";
+  appName: "review" | "session" | "whats-new";
   extensionUri: vscode.Uri;
   webview: vscode.Webview;
 };
