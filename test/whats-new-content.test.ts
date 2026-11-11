@@ -24,13 +24,25 @@ describe("whats-new-content", () => {
     expect(tipsMarkdown).toContain("https://");
   });
 
-  it("exposes preview metadata and references existing valid PNG/GIF sample assets without raw HTML or disallowed topics", async () => {
+  it("exposes migrated features/bugFixes metadata, unique versions, and references existing valid PNG/GIF sample assets", async () => {
     expect(whatsNewContent.articles).toHaveLength(1);
+    const versions = whatsNewContent.articles.map((item) => item.version);
+    expect(new Set(versions).size).toBe(versions.length);
+
     const article = whatsNewContent.articles[0]!;
     expect(article.version).toBe("1.2.0");
     expect(article.title).toContain("Work Sessions");
     expect(article.description.trim().length).toBeGreaterThan(0);
-    expect(article.highlights.length).toBeGreaterThanOrEqual(2);
+    expect(article.features).toEqual([
+      "A Session Manager for your Working, References, and Archived artifacts.",
+      "Shared instructions and artifacts across multiple AI agents and chats.",
+      "Agent-to-agent review: one agent waits while another submits feedback.",
+      "A dedicated sidebar with pinning, archiving, search, and session types.",
+    ]);
+    expect(article.bugFixes).toEqual([]);
+    expect(article.preview).toBe(true);
+    expect(article.icon).toBe("layers");
+    expect(article.publishedAt).toBeUndefined();
     expect(article.markdown).toBe(previewMarkdown);
     expect(whatsNewContent.tipsMarkdown).toBe(tipsMarkdown);
 

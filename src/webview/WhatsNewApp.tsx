@@ -1,16 +1,30 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { whatsNewContent } from "./whats-new-content";
 import { WhatsNewDocument } from "./WhatsNewDocument";
+import { WhatsNewReleaseCard, WhatsNewReleaseMeta } from "./WhatsNewReleaseCard";
 
-export type WhatsNewTab = "whats-new" | "tips";
+export type WhatsNewView = { kind: "list" } | { kind: "article"; version: string } | { kind: "tips" };
 
-export function WhatsNewApp(props?: {
-  initialTab?: WhatsNewTab;
-  mediaBaseUri?: string;
-}): ReactNode {
-  const [activeTab, setActiveTab] = useState<WhatsNewTab>(props?.initialTab ?? "whats-new");
+export function WhatsNewApp(props?: { initialView?: WhatsNewView; mediaBaseUri?: string }): ReactNode {
+  const [view, setView] = useState<WhatsNewView>(props?.initialView ?? { kind: "list" });
+  const hasMountedRef = useRef(false);
   const mediaBaseUri = props?.mediaBaseUri ?? "";
-  const previewArticle = whatsNewContent.articles[0];
+  const visibleArticles = whatsNewContent.articles.filter((article) => article.markdown.trim().length > 0);
+  const selectedArticle =
+    view.kind === "article" ? visibleArticles.find((article) => article.version === view.version) : undefined;
+
+  useEffect(() => {
+    if (!hasMountedRef.current) {
+      hasMountedRef.current = true;
+      return;
+    }
+    if (typeof window !== "undefined" && typeof window.scrollTo === "function") {
+      window.scrollTo(0, 0);
+    }
+  }, [view]);
+
+  const isTipsActive = view.kind === "tips";
+  const isWhatsNewActive = !isTipsActive;
 
   return (
     <div className="whats-new-shell">
@@ -23,17 +37,17 @@ export function WhatsNewApp(props?: {
           <nav className="whats-new-tabs" aria-label="What's New sections">
             <button
               type="button"
-              className={`whats-new-tab-btn${activeTab === "whats-new" ? " is-active" : ""}`}
-              aria-pressed={activeTab === "whats-new"}
-              onClick={() => setActiveTab("whats-new")}
+              className={`whats-new-tab-btn${isWhatsNewActive ? " is-active" : ""}`}
+              aria-pressed={isWhatsNewActive}
+              onClick={() => setView({ kind: "list" })}
             >
               What&apos;s New
             </button>
             <button
               type="button"
-              className={`whats-new-tab-btn${activeTab === "tips" ? " is-active" : ""}`}
-              aria-pressed={activeTab === "tips"}
-              onClick={() => setActiveTab("tips")}
+              className={`whats-new-tab-btn${isTipsActive ? " is-active" : ""}`}
+              aria-pressed={isTipsActive}
+              onClick={() => setView({ kind: "tips" })}
             >
               Tips
             </button>
@@ -41,28 +55,42 @@ export function WhatsNewApp(props?: {
         </header>
 
         <main className="whats-new-content">
-          {activeTab === "whats-new" ? (
-            previewArticle ? (
-              <div className="whats-new-preview-view">
-                <section className="whats-new-article-meta" aria-label="Release preview metadata">
-                  <div className="whats-new-meta-badges">
-                    <span className="whats-new-preview-badge">Preview content</span>
-                    <span className="whats-new-version-badge">Version {previewArticle.version}</span>
-                  </div>
-                  <h2 className="whats-new-meta-title">{previewArticle.title}</h2>
-                  <p className="whats-new-meta-description">{previewArticle.description}</p>
-                  {previewArticle.highlights.length > 0 && (
-                    <ul className="whats-new-highlights">
-                      {previewArticle.highlights.map((highlight, index) => (
-                        <li key={index}>{highlight}</li>
-                      ))}
-                    </ul>
-                  )}
-                </section>
-                <WhatsNewDocument markdown={previewArticle.markdown} mediaBaseUri={mediaBaseUri} />
+          {view.kind === "list" ? (
+            visibleArticles.length > 0 ? (
+              <div className="whats-new-release-list">
+                {visibleArticles.map((article) => (
+                  <WhatsNewReleaseCard
+                    key={article.version}
+                    article={article}
+                    onExplore={(version) => setView({ kind: "article", version })}
+                  />
+                ))}
               </div>
             ) : (
               <div className="whats-new-empty">No updates to show yet.</div>
+            )
+          ) : view.kind === "article" ? (
+            selectedArticle ? (
+              <div className="whats-new-article-view">
+                <div className="whats-new-article-nav">
+                  <button type="button" className="whats-new-back-btn" onClick={() => setView({ kind: "list" })}>
+                    ← All updates
+                  </button>
+                  <WhatsNewReleaseMeta article={selectedArticle} />
+                </div>
+                <WhatsNewDocument markdown={selectedArticle.markdown} mediaBaseUri={mediaBaseUri} />
+              </div>
+            ) : (
+              <div className="whats-new-article-view">
+                <div className="whats-new-article-nav">
+                  <button type="button" className="whats-new-back-btn" onClick={() => setView({ kind: "list" })}>
+                    ← All updates
+                  </button>
+                </div>
+                <div className="whats-new-empty" role="status">
+                  Release notes for version {view.version} were not found.
+                </div>
+              </div>
             )
           ) : (
             <WhatsNewDocument markdown={whatsNewContent.tipsMarkdown} mediaBaseUri={mediaBaseUri} />
@@ -72,4 +100,3 @@ export function WhatsNewApp(props?: {
     </div>
   );
 }
-
