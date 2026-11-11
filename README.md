@@ -91,23 +91,11 @@ To build the VSIX yourself from source, follow [Development](#development) below
 
 ### 2. Install the AI / MCP integration
 
+When AI Artifacts activates for the first time without an existing `~/.ai-artifacts/managed/integration-version.json` file, it prompts once with **Run Installer** to open the installer picker cleanly without scanning client configs first. You can also open it at any time from the Command Palette:
+
 1. Open the Command Palette (`Ctrl+Shift+P` on Windows/Linux or `Cmd+Shift+P` on macOS) and run **`AI Artifacts: Installer`**.
-2. Select one or more AI clients using the checkboxes. Detected clients and clients saved by earlier manual installs are selected by default; adjust the selection before running. Each row shows its integration status, `Detected` / `Saved` badges where applicable, and configuration path or error detail.
+2. Select one or more AI clients using the checkboxes. Detected clients and clients saved by earlier manual installs are selected by default; adjust the selection before running. Each row shows `Detected` / `Saved` badges where applicable and its configuration path.
 3. Click **OK**, click the **Run** button in the title bar, or press **Enter** to install all selected clients in one operation. Use the same command to reinstall or repair selected integrations.
-
-The installer prepares the shared MCP runtime and both shared skills once, then configures each selected client. A client configuration error is reported without stopping the remaining clients; the final message summarizes successful and failed installations. Successful installs are merged into the saved client list used by automatic upgrades. Closing the picker or confirming with no clients selected makes no changes.
-
-| Client | Managed configuration | Client-specific skills |
-| --- | --- | --- |
-| GitHub Copilot (VS Code) | VS Code User `mcp.json` (`Code/User/mcp.json`) | No additional copy |
-| Cursor | `~/.cursor/mcp.json` | No additional copy |
-| Codex | `~/.codex/config.toml` (or the configured `CODEX_HOME`) | No additional copy |
-| Claude | `~/.claude.json` | Both skills under `~/.claude/skills/` |
-| Windsurf | `~/.codeium/windsurf/mcp_config.json` | No additional copy |
-| Cline | Cline extension settings, `cline_mcp_settings.json` | No additional copy |
-| Antigravity | `~/.gemini/config/mcp_config.json` | Both skills under `~/.gemini/config/skills/` |
-
-The earlier all-detected and per-client install/uninstall commands remain available. Some existing Reinstall actions and automatic-upgrade recovery messages still use those command names; the grouped **Installer** and **Uninstall** pickers are the recommended manual entry points.
 
 For custom setup:
 
@@ -138,20 +126,20 @@ The installer preserves all unrelated MCP configurations, custom skills, and wor
 
 ### 3. Reload and verify the integration
 
-After initial setup (or when a manual client install is required), reload your editor and restart your agent to load the new tools and skill.
+After an install command succeeds for one or more clients, choose **Reload Window** in the completion notification (or reload manually) and restart any external AI clients to load the new tools and skill.
 
-1. Run **Developer: Reload Window** from the Command Palette.
-2. Restart your AI chat extension or agent.
+1. Click **Reload Window** on the notification, or run **Developer: Reload Window** from the Command Palette.
+2. Restart your AI chat extension or external AI client.
 3. Start a new chat.
-4. Run **AI Artifacts: Verify All Integrations** from the Command Palette.
+4. Optional: Run **AI Artifacts: Verify All Integrations** from the Command Palette to check on-disk `Ready` status for shared assets and client configs.
 
 > [!NOTE]
-> **After an extension update:** When AI Artifacts activates, it automatically upgrades outdated managed assets and reconciles required client tool definitions for your saved and detected AI clients without prompting you to click a separate installer button. Successful or no-op upgrades stay silent; if a client is missing setup, misconfigured, or encounters an upgrade error, VS Code displays a single warning or error naming the affected client(s) and exact Command Palette install command. Extension-only UI or documentation updates with current receipts and valid client definitions leave installed files untouched. Whenever the managed MCP runtime, client definition, or skills change on disk, restart the affected AI client and start a new chat so it loads the updated tools and skills.
+> **After an extension update:** On activation, AI Artifacts reads `~/.ai-artifacts/managed/integration-version.json` once. When no receipt file exists yet, it skips client detection and automatic upgrade and offers **Run Installer** (until clicked or already configured). When a receipt file exists, it automatically upgrades outdated managed assets and reconciles required client tool definitions for your saved and detected AI clients without prompting you to click a separate installer button. Successful, unchanged, and empty-target runs stay silent; VS Code displays a single error notification naming the failed client(s) and **AI Artifacts: Installer** only if automatic upgrade fails. Extension-only UI or documentation updates with current receipts leave installed files untouched. Whenever the managed MCP runtime, client definition, or skills change on disk, restart the affected AI client and start a new chat so it loads the updated tools and skills.
 
 <details>
 <summary>Runtime version and expected tools</summary>
 
-The current source bundles numeric MCP version 12, review skill version 4, and work session skill version 1 (with `SKILL_VERSION = 4` bridge constant). The MCP catalog contains exactly six tools: `resolve_artifact_window`, `create_artifact`, `wait_for_artifact_review`, `inspect_artifact_review`, `advance_and_wait_for_artifact`, and `join_session`. Clients using an older tool catalog require reloading/upgrading (or running **AI Artifacts: Installer** and selecting the affected client if manual setup is reported) followed by a client restart and fresh chat to expose the current tools.
+The current source bundles numeric MCP version 12, review skill version 4, and work session skill version 1 (with `SKILL_VERSION = 4` bridge constant). The MCP catalog contains exactly six tools: `resolve_artifact_window`, `create_artifact`, `wait_for_artifact_review`, `inspect_artifact_review`, `advance_and_wait_for_artifact`, and `join_session`. Clients using an older tool catalog require reloading/upgrading (or running **AI Artifacts: Installer** and selecting the affected client) followed by a client restart and fresh chat to expose the current tools.
 
 MCP version 12 is reserved for the unreleased Work Session feature and remains its release version across implementation stages. The current runtime supports schema-v2 Sessions and explicit migration from legacy v1 conversations. Session instructions are read from `instructions.md`; existing v2 metadata may still contain an optional inline `instructions` string, which is accepted but not used as the instructions source. New metadata writes omit that field. Updating a test runtime bundle still requires reinstalling the changed runtime even when its numeric version remains 12.
 
@@ -160,8 +148,6 @@ MCP version 12 is reserved for the unreleased Work Session feature and remains i
 ### Optional: Antigravity global rule
 
 The AI Artifacts installer manages `~/.gemini/config/mcp_config.json` and both skills (`create-review-artifact` and `work-session`). Any global rule is **optional** and **user-managed**—AI Artifacts never reads, writes, checks, or removes your Antigravity rule files.
-
-Without a global rule, explicit skill invocations still work directly. However, when you type an ordinary prompt without tagging a skill—for example, `"Create a review artifact for this API design."`—Antigravity may prefer its built-in artifact workflow instead of `create-review-artifact`. Adding a short rule prioritizes AI Artifacts only when you explicitly ask to create an artifact (general planning or documentation requests are unaffected). Not configuring this rule is not an installer error and does not affect `Ready` status.
 
 Choose **one** of the following options (do not duplicate both):
 
@@ -181,8 +167,6 @@ trigger: always_on
 ```
 
 **Alternative — append to `~/.gemini/GEMINI.md`:** Append only the Markdown section starting from `# Artifact Creation Policy` (omit the first three `---` / `trigger: always_on` / `---` YAML frontmatter lines) to `~/.gemini/GEMINI.md`, keeping your existing rules intact.
-
-See [Antigravity rules](https://antigravity.google/docs/rules) for rule placement details: modular rule files under `~/.gemini/config/rules/` require a valid `trigger` frontmatter (`always_on`), whereas `~/.gemini/GEMINI.md` does not use YAML frontmatter.
 
 ## Customizing the Review Skill
 
@@ -394,12 +378,12 @@ Work Sessions organize artifacts independently of their review lifecycles and AI
 
 - Version 1.1.0 supports only schema v6 stored under `~/.ai-artifacts/artifacts/`.
 - The current integration uses numeric `MCP_VERSION = 12`, `CREATE_REVIEW_ARTIFACT_SKILL_VERSION = 4` (`SKILL_VERSION = 4`), and `WORK_SESSION_SKILL_VERSION = 1`. These are independent monotonic asset versions, not SemVer and not the extension package version.
-- Successful manual client installation merges the client selection into `~/.ai-artifacts/managed/installed-clients.json`; successful manual uninstall removes only the selected client IDs from that list. Verified MCP runtime, shared `.agents` skills (`skills` and `sessionSkills`), Claude, and Antigravity skill versions are tracked independently in `~/.ai-artifacts/managed/integration-version.json`. A missing, invalid, absent, or mismatched receipt entry is stale.
-- On extension activation, AI Artifacts runs an asynchronous automatic upgrade across the merged `saved ∪ detected` client set: it deploys stale shared assets once, verifies and commits receipts incrementally, reconciles required client definitions (such as adding `join_session` to Codex's managed config), and updates stale Claude/Antigravity skills while keeping current files, customizations, and Antigravity rules/permissions untouched. Successful or unchanged runs are silent.
-- Missing or conflicting client setup (or damaged installed skills when receipts are current) is reported as a non-intrusive `setup-required` warning or error pointing to that client's manual install command rather than silently overwriting user configs or creating new client entries. If no clients are detected or saved and shared assets are stale or uninitialized, a warning directs you to manual setup. For either case, you can run **AI Artifacts: Installer** and select the affected client.
+- Successful manual client installation merges the client selection into `~/.ai-artifacts/managed/installed-clients.json`; successful manual uninstall removes only the selected client IDs from that list. Installed MCP runtime, shared `.agents` skills (`skills` and `sessionSkills`), Claude, and Antigravity skill versions are tracked independently in `~/.ai-artifacts/managed/integration-version.json`. An absent or mismatched receipt entry is stale.
+- On extension activation, AI Artifacts reads `~/.ai-artifacts/managed/integration-version.json` once. When the version file is absent, it skips client detection and automatic upgrade and offers **Run Installer** once until clicked (re-offering on later activations if dismissed while still absent). When an existing valid or invalid receipt file is present, AI Artifacts runs an asynchronous automatic upgrade across the merged `saved ∪ detected` client set: it deploys stale shared assets once, commits receipts as steps complete, reconciles required client definitions (such as adding `join_session` to Codex's managed config), and updates stale Claude/Antigravity skills while keeping current files, customizations, and Antigravity rules/permissions untouched. Healthy updates, unchanged clients, and runs with no target clients stay silent.
+- Automatic upgrade never auto-installs unconfigured clients or overwrites damaged skills when receipts are current. Use **AI Artifacts: Verify All Integrations** to inspect on-disk `Ready` status, and run **AI Artifacts: Installer** to add or repair clients. If reading the receipt file or running an automatic upgrade hits an error, VS Code shows a single error notification naming the failed client(s) (when applicable) and **AI Artifacts: Installer**, with a **View Installation Guide** action.
 - Schema v3/v4/v5 and workspace-local `.ai-artifacts` or `.codex-artifacts` lifecycles are not opened, advanced, or migrated by v1.1.x. Existing files remain untouched on disk.
 - This is a hard compatibility cutoff. A rollback to a 0.9.x extension also requires reinstalling the matching older runtime and skill; do not use a 0.9.x runtime with v1.1.x artifacts.
-- Extension-only updates with current receipts and valid client definitions leave already installed files untouched without warnings.
+- Extension-only updates with current receipts leave already installed files untouched without warnings.
 - Upgrades and manual reinstalls preserve a valid custom `description:` and `USER CUSTOM RULES` block. Malformed customization fails closed without replacing the existing skill; fix the reported target, then run **AI Artifacts: Installer** and select the affected client again.
 - After an automatic upgrade or manual reinstall updates assets or client definitions on disk, restart the affected AI client and start a new chat so it loads the updated runtime, tool definitions, or skills (AI Artifacts does not restart external clients or live chats automatically).
 

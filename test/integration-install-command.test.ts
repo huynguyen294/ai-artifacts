@@ -8,6 +8,7 @@ vi.mock("vscode", () => ({
   },
 }));
 
+import { RELOAD_WINDOW_ACTION } from "../src/extension/install-notification";
 import {
   runIntegrationInstallCommand,
   type InstallerClientQuickPickItem,
@@ -111,9 +112,11 @@ function createDeps(
       failedClients: [],
     })),
     withProgress: vi.fn(async (_title, task) => task()),
-    showInformationMessage: vi.fn(),
-    showWarningMessage: vi.fn(),
-    showErrorMessage: vi.fn(),
+    showInformationMessage: vi.fn(async () => undefined),
+    showWarningMessage: vi.fn(async () => undefined),
+    showErrorMessage: vi.fn(async () => undefined),
+    reloadWindow: vi.fn(async () => undefined),
+    reportDiagnostic: vi.fn(),
     onDidInstall: vi.fn(),
     ...overrides,
   };
@@ -145,10 +148,13 @@ describe("integration-install-command", () => {
     qp.hide();
     await promise;
     expect(deps.installClients).not.toHaveBeenCalled();
+    expect(deps.showInformationMessage).not.toHaveBeenCalled();
+    expect(deps.showWarningMessage).not.toHaveBeenCalled();
+    expect(deps.showErrorMessage).not.toHaveBeenCalled();
     expect(qp.dispose).toHaveBeenCalledTimes(1);
   });
 
-  it("installs selected clients when the custom Run button is clicked", async () => {
+  it("installs selected clients when Run is clicked, shows Reload Window, and triggers reload only on click", async () => {
     const qp = new MockMultiQuickPick();
     const deps = createDeps(qp, {
       installClients: vi.fn(async () => ({
@@ -158,6 +164,7 @@ describe("integration-install-command", () => {
         ],
         failedClients: [],
       })),
+      showInformationMessage: vi.fn(async () => RELOAD_WINDOW_ACTION),
     });
 
     const promise = runIntegrationInstallCommand(deps);
@@ -167,16 +174,20 @@ describe("integration-install-command", () => {
 
     qp.selectedItems = qp.items.filter((item) => item.clientId === "cursor" || item.clientId === "claude");
     qp.triggerButton(qp.buttons[0]!);
+    qp.triggerAccept();
     await promise;
 
+    expect(deps.installClients).toHaveBeenCalledTimes(1);
     expect(deps.installClients).toHaveBeenCalledWith(["cursor", "claude"]);
     expect(deps.onDidInstall).toHaveBeenCalledTimes(1);
     expect(deps.showInformationMessage).toHaveBeenCalledWith(
-      "AI Artifacts installed for Cursor, Claude. Restart your AI client(s) and start a new chat to apply changes.",
+      "AI Artifacts installed for Cursor, Claude. Reload this window to apply changes. For AI clients running outside this window, restart the client and start a new chat.",
+      RELOAD_WINDOW_ACTION,
     );
+    expect(deps.reloadWindow).toHaveBeenCalledTimes(1);
   });
 
-  it("installs selected clients on OK / Enter acceptance and reports partial failures", async () => {
+  it("installs selected clients on OK / Enter acceptance and reports partial failures with Reload Window", async () => {
     const qp = new MockMultiQuickPick();
     const deps = createDeps(qp, {
       installClients: vi.fn(async () => ({
@@ -197,8 +208,40 @@ describe("integration-install-command", () => {
     expect(deps.installClients).toHaveBeenCalledWith(["cursor", "codex"]);
     expect(deps.onDidInstall).toHaveBeenCalledTimes(1);
     expect(deps.showWarningMessage).toHaveBeenCalledWith(
-      "AI Artifacts installed for Cursor, but failed for: Codex (config conflict). Restart updated client(s) and check failed configuration(s).",
+      "AI Artifacts installed for Cursor. Failed for: Codex (config conflict). Reload this window to apply successful installations. For AI clients running outside this window, restart the client and start a new chat.",
+      RELOAD_WINDOW_ACTION,
     );
+    expect(deps.reloadWindow).not.toHaveBeenCalled();
+  });
+
+  it("keeps success notification and does not report fake install error when onDidInstall throws", async () => {
+    const refreshError = new Error("sidebar tree refresh failed");
+    const qp = new MockMultiQuickPick();
+    const deps = createDeps(qp, {
+      installClients: vi.fn(async () => ({
+        installedClients: [{ id: "codex" as const, name: "Codex" }],
+        failedClients: [],
+      })),
+      onDidInstall: vi.fn(() => {
+        throw refreshError;
+      }),
+    });
+
+    const promise = runIntegrationInstallCommand(deps);
+    await vi.waitFor(() => {
+      expect(qp.busy).toBe(false);
+    });
+
+    qp.selectedItems = qp.items.filter((item) => item.clientId === "codex");
+    qp.triggerAccept();
+    await promise;
+
+    expect(deps.reportDiagnostic).toHaveBeenCalledWith(
+      "Could not refresh integration support after installation.",
+      refreshError,
+    );
+    expect(deps.showInformationMessage).toHaveBeenCalledTimes(1);
+    expect(deps.showErrorMessage).not.toHaveBeenCalled();
   });
 
   it("skips installation and shows an info message when zero clients are selected", async () => {
@@ -242,6 +285,49 @@ describe("integration-install-command", () => {
     expect(deps.onDidInstall).not.toHaveBeenCalled();
     expect(deps.showErrorMessage).toHaveBeenCalledWith(
       "AI Artifacts installation failed: Codex (boom)",
+    );
+  });
+
+  it("shows a single fatal error when listClients or shared install throws, settling after notification", async () => {
+    let errorNotificationDone = false;
+    const qpLoadFail = new MockMultiQuickPick();
+    const loadFailDeps = createDeps(qpLoadFail, {
+      listClients: vi.fn(async () => {
+        throw new Error("cannot read installed-clients.json");
+      }),
+      showErrorMessage: vi.fn(async () => {
+        await Promise.resolve();
+        errorNotificationDone = true;
+        return undefined;
+      }),
+    });
+
+    await runIntegrationInstallCommand(loadFailDeps);
+    expect(errorNotificationDone).toBe(true);
+    expect(loadFailDeps.showErrorMessage).toHaveBeenCalledTimes(1);
+    expect(loadFailDeps.showErrorMessage).toHaveBeenCalledWith(
+      "AI Artifacts installation could not complete: cannot read installed-clients.json",
+    );
+    expect(loadFailDeps.showInformationMessage).not.toHaveBeenCalled();
+    expect(loadFailDeps.installClients).not.toHaveBeenCalled();
+
+    const qpSharedFail = new MockMultiQuickPick();
+    const sharedFailDeps = createDeps(qpSharedFail, {
+      installClients: vi.fn(async () => {
+        throw new Error("packaged runtime missing");
+      }),
+    });
+    const sharedPromise = runIntegrationInstallCommand(sharedFailDeps);
+    await vi.waitFor(() => {
+      expect(qpSharedFail.busy).toBe(false);
+    });
+    qpSharedFail.selectedItems = qpSharedFail.items.filter((item) => item.clientId === "codex");
+    qpSharedFail.triggerAccept();
+    await sharedPromise;
+
+    expect(sharedFailDeps.onDidInstall).not.toHaveBeenCalled();
+    expect(sharedFailDeps.showErrorMessage).toHaveBeenCalledWith(
+      "AI Artifacts installation could not complete: packaged runtime missing",
     );
   });
 });

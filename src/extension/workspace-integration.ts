@@ -963,10 +963,15 @@ export async function uninstallAntigravityIntegration(
   });
 }
 
+export type ExistingInstalledIntegrationVersionReadResult = Exclude<
+  InstalledIntegrationVersionReadResult,
+  { status: "missing" }
+>;
+
 export type IntegrationUpgradeClientReport = {
   id: McpClientId;
   name: string;
-  status: "unchanged" | "updated" | "setup-required" | "failed";
+  status: "unchanged" | "updated" | "failed";
   detail?: string;
 };
 
@@ -979,6 +984,7 @@ export type IntegrationUpgradeReport = {
 
 export async function upgradeDetectedIntegrations(
   context: vscode.ExtensionContext,
+  installedVersion: ExistingInstalledIntegrationVersionReadResult,
 ): Promise<IntegrationUpgradeReport> {
   const userHome = os.homedir();
   const paths = getBaseIntegrationPaths(context, { userHome });
@@ -1010,7 +1016,6 @@ export async function upgradeDetectedIntegrations(
   if (clientIdSet.has("claude")) skillTargets.push("claude");
   if (clientIdSet.has("antigravity")) skillTargets.push("antigravity");
 
-  const installedVersion = await readInstalledIntegrationVersion({ userHome });
   const manifest = installedVersion.status === "valid" ? installedVersion.manifest : undefined;
   const previousMcpVersion = manifest?.mcpVersion ?? 0;
   const staleAssets = computeStaleIntegrationAssets(

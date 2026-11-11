@@ -33,6 +33,7 @@ import {
   USER_CUSTOM_RULES_END,
 } from "../src/extension/mcp-clients/skill-helper";
 import {
+  type ExistingInstalledIntegrationVersionReadResult,
   installAllDetectedIntegrations,
   installAntigravityIntegration,
   installClaudeIntegration,
@@ -93,6 +94,15 @@ async function writeRawReceipt(
     )}\n`,
     "utf8",
   );
+}
+
+async function readExistingSnapshot(userHome: string): Promise<ExistingInstalledIntegrationVersionReadResult> {
+  const result = await readInstalledIntegrationVersion({ userHome });
+  expect(result.status).not.toBe("missing");
+  if (result.status === "missing") {
+    throw new Error("Expected existing integration version receipt in test setup.");
+  }
+  return result;
 }
 
 function buildReviewSkillMarkdown(body = "# Core Instructions", customRules = ""): string {
@@ -400,7 +410,10 @@ describe("Workspace Integration Auto-Upgrade Coordinator & Selection Policy", ()
 
   it("merges saved ∪ detected targets deduplicated in factory order, skips receipt/writes when empty, and includes saved-only Claude/Antigravity skill targets", async () => {
     const readVersionSpy = vi.spyOn(fs, "readFile");
-    const emptyReport = await upgradeDetectedIntegrations(context);
+    const emptyReport = await upgradeDetectedIntegrations(context, {
+      status: "invalid",
+      error: new Error("empty target test snapshot"),
+    });
     expect(emptyReport).toEqual({
       clientIds: [],
       skillTargets: [],
@@ -410,6 +423,7 @@ describe("Workspace Integration Auto-Upgrade Coordinator & Selection Policy", ()
     expect(
       readVersionSpy.mock.calls.some(([p]) => String(p).endsWith("integration-version.json")),
     ).toBe(false);
+    readVersionSpy.mockRestore();
     await expect(fs.access(path.join(tempHome, ".ai-artifacts", "managed", "runtime"))).rejects.toThrow();
 
     // Prepare Claude + Antigravity valid configs on disk but spy on isDetected to return false (saved-only simulation),
@@ -461,7 +475,8 @@ describe("Workspace Integration Auto-Upgrade Coordinator & Selection Policy", ()
       vi.spyOn(ClaudeClientDriver.prototype, "check"),
       vi.spyOn(AntigravityClientDriver.prototype, "check"),
     ];
-    const report = await upgradeDetectedIntegrations(context);
+    const claudeAgSnapshot = await readExistingSnapshot(tempHome);
+    const report = await upgradeDetectedIntegrations(context, claudeAgSnapshot);
     for (const spy of upgradeCheckSpies) {
       expect(spy).not.toHaveBeenCalled();
       spy.mockRestore();
@@ -515,7 +530,8 @@ describe("Workspace Integration Auto-Upgrade Coordinator & Selection Policy", ()
       { userHome: tempHome },
     );
 
-    const runtimeOnlyReport = await upgradeDetectedIntegrations(context);
+    const runtimeStaleSnapshot = await readExistingSnapshot(tempHome);
+    const runtimeOnlyReport = await upgradeDetectedIntegrations(context, runtimeStaleSnapshot);
     expect(runtimeOnlyReport.updatedAssets).toEqual(["mcp"]);
     await expect(fs.readFile(targetMcp, "utf8")).resolves.toBe("// MCP server v-bundle\n");
     await expect(fs.readFile(agentsReviewPath, "utf8")).resolves.toBe("# untouched review sentinel\n");
@@ -540,7 +556,8 @@ describe("Workspace Integration Auto-Upgrade Coordinator & Selection Policy", ()
       },
       tempHome,
     );
-    const sessionOnlyReport = await upgradeDetectedIntegrations(context);
+    const sessionStaleSnapshot = await readExistingSnapshot(tempHome);
+    const sessionOnlyReport = await upgradeDetectedIntegrations(context, sessionStaleSnapshot);
     expect(sessionOnlyReport.updatedAssets).toEqual(["session-skill:agents"]);
     await expect(fs.readFile(targetMcp, "utf8")).resolves.toBe("// sentinel runtime\n");
     await expect(fs.readFile(agentsReviewPath, "utf8")).resolves.toBe("# untouched review sentinel\n");
@@ -557,7 +574,8 @@ describe("Workspace Integration Auto-Upgrade Coordinator & Selection Policy", ()
       },
       { userHome: tempHome },
     );
-    await expect(upgradeDetectedIntegrations(context)).rejects.toThrow();
+    const abortedBaseSnapshot = await readExistingSnapshot(tempHome);
+    await expect(upgradeDetectedIntegrations(context, abortedBaseSnapshot)).rejects.toThrow();
     expect(cursorUpgradeSpy).not.toHaveBeenCalled();
     expect((await readInstalledIntegrationVersion({ userHome: tempHome }))).toMatchObject({
       status: "valid",
@@ -639,7 +657,8 @@ describe("Workspace Integration Auto-Upgrade Coordinator & Selection Policy", ()
     ];
     vi.spyOn(CopilotClientDriver.prototype, "upgrade").mockRejectedValueOnce(new Error("copilot boom"));
 
-    const report = await upgradeDetectedIntegrations(context);
+    const allStaleSnapshot = await readExistingSnapshot(tempHome);
+    const report = await upgradeDetectedIntegrations(context, allStaleSnapshot);
     for (const spy of checkSpies) {
       expect(spy).not.toHaveBeenCalled();
     }
@@ -693,13 +712,22 @@ describe("Workspace Integration Auto-Upgrade Coordinator & Selection Policy", ()
       },
     });
 
-    // Current receipt + modified/missing Claude skill on disk -> NOT scanned or "repaired"; stays unchanged
+    // Current receipt + modified/missing Claude skill on disk -> NOT scanned, does not read receipt for stale decision, and stays unchanged
     const currentButModifiedContent = buildReviewSkillMarkdown("# Tampered Core", "- Keep custom").replace(
       OFFICIAL_SKILL_DESCRIPTIONS.at(-1)!,
       "Tampered.",
     );
     await fs.writeFile(path.join(claudeDriver.skillDirectory, "SKILL.md"), currentButModifiedContent, "utf8");
-    const currentButModifiedDisk = await upgradeDetectedIntegrations(context);
+    const currentSnapshot = await readExistingSnapshot(tempHome);
+    const originalNoOpReadFile = fs.readFile.bind(fs);
+    const noOpReadPaths: string[] = [];
+    const noOpReadSpy = vi.spyOn(fs, "readFile").mockImplementation((async (filePath: any, options: any) => {
+      noOpReadPaths.push(path.resolve(filePath.toString()));
+      return originalNoOpReadFile(filePath, options);
+    }) as any);
+    const currentButModifiedDisk = await upgradeDetectedIntegrations(context, currentSnapshot);
+    noOpReadSpy.mockRestore();
+    expect(noOpReadPaths).not.toContain(path.resolve(managedIntegrationVersionPath({ userHome: tempHome })));
     expect(currentButModifiedDisk.updatedAssets).toEqual([]);
     expect(currentButModifiedDisk.clients.find((c) => c.id === "claude")).toEqual({
       id: "claude",
@@ -711,7 +739,14 @@ describe("Workspace Integration Auto-Upgrade Coordinator & Selection Policy", ()
     );
 
     await fs.rm(path.join(claudeDriver.skillDirectory, "SKILL.md"));
-    const currentButMissingDisk = await upgradeDetectedIntegrations(context);
+    const currentMissingReadPaths: string[] = [];
+    const noOpMissingReadSpy = vi.spyOn(fs, "readFile").mockImplementation((async (filePath: any, options: any) => {
+      currentMissingReadPaths.push(path.resolve(filePath.toString()));
+      return originalNoOpReadFile(filePath, options);
+    }) as any);
+    const currentButMissingDisk = await upgradeDetectedIntegrations(context, currentSnapshot);
+    noOpMissingReadSpy.mockRestore();
+    expect(currentMissingReadPaths).not.toContain(path.resolve(managedIntegrationVersionPath({ userHome: tempHome })));
     expect(currentButMissingDisk.updatedAssets).toEqual([]);
     expect(currentButMissingDisk.clients.find((c) => c.id === "claude")).toEqual({
       id: "claude",
@@ -745,7 +780,8 @@ describe("Workspace Integration Auto-Upgrade Coordinator & Selection Policy", ()
     const claudeBeforeHash = sha256(await fs.readFile(path.join(claudeDriver.skillDirectory, "SKILL.md")));
     await fs.rm(path.join(sourceDir, "skills", "create-review-artifact", "references", "ai-feedback.md"));
 
-    const claudeMissingSrcReport = await upgradeDetectedIntegrations(context);
+    const claudeMissingSrcSnapshot = await readExistingSnapshot(tempHome);
+    const claudeMissingSrcReport = await upgradeDetectedIntegrations(context, claudeMissingSrcSnapshot);
     expect(claudeMissingSrcReport.clients.find((c) => c.id === "claude")).toMatchObject({
       id: "claude",
       name: "Claude",
@@ -786,7 +822,8 @@ describe("Workspace Integration Auto-Upgrade Coordinator & Selection Policy", ()
     vi.spyOn(AntigravityClientDriver.prototype, "upgrade").mockRejectedValueOnce(
       new Error("antigravity skill update failed"),
     );
-    const report = await upgradeDetectedIntegrations(context);
+    const agFailSnapshot = await readExistingSnapshot(tempHome);
+    const report = await upgradeDetectedIntegrations(context, agFailSnapshot);
     expect(report.updatedAssets).toEqual(["mcp"]);
     expect(report.clients).toEqual([
       { id: "codex", name: "Codex", status: "unchanged" },
@@ -807,6 +844,7 @@ describe("Workspace Integration Auto-Upgrade Coordinator & Selection Policy", ()
     });
 
     // 2. Per-client receipt commit I/O failure: client becomes failed, updatedAssets excludes it, receipt stays 1
+    const receiptFailSnapshot = await readExistingSnapshot(tempHome);
     const originalWriteFile = fs.writeFile.bind(fs);
     vi.spyOn(fs, "writeFile").mockImplementation(async (targetPath, data, options) => {
       if (String(targetPath).includes("integration-version.json")) {
@@ -814,7 +852,7 @@ describe("Workspace Integration Auto-Upgrade Coordinator & Selection Policy", ()
       }
       return originalWriteFile(targetPath, data as any, options as any);
     });
-    const receiptFailReport = await upgradeDetectedIntegrations(context);
+    const receiptFailReport = await upgradeDetectedIntegrations(context, receiptFailSnapshot);
     expect(receiptFailReport.updatedAssets).toEqual([]);
     expect(receiptFailReport.clients).toEqual([
       { id: "codex", name: "Codex", status: "unchanged" },
@@ -850,6 +888,7 @@ describe("Workspace Integration Auto-Upgrade Coordinator & Selection Policy", ()
       },
       { userHome: tempHome },
     );
+    const finalReceiptFailSnapshot = await readExistingSnapshot(tempHome);
     const originalWriteFileForFinal = fs.writeFile.bind(fs);
     vi.spyOn(fs, "writeFile").mockImplementation(async (targetPath, data, options) => {
       if (String(targetPath).includes("integration-version.json")) {
@@ -857,7 +896,7 @@ describe("Workspace Integration Auto-Upgrade Coordinator & Selection Policy", ()
       }
       return originalWriteFileForFinal(targetPath, data as any, options as any);
     });
-    await expect(upgradeDetectedIntegrations(context)).rejects.toThrow("final mcp receipt write failed");
+    await expect(upgradeDetectedIntegrations(context, finalReceiptFailSnapshot)).rejects.toThrow("final mcp receipt write failed");
     vi.restoreAllMocks();
     vi.spyOn(os, "homedir").mockReturnValue(tempHome);
     expect(await readInstalledIntegrationVersion({ userHome: tempHome })).toMatchObject({
@@ -940,7 +979,8 @@ describe("Workspace Integration Auto-Upgrade Coordinator & Selection Policy", ()
     // Antigravity upgrades & commits its skill receipts without touching config/rules.
     vi.spyOn(CodexClientDriver.prototype, "upgrade").mockRejectedValueOnce(new Error("transient config write failure"));
 
-    const firstReport = await upgradeDetectedIntegrations(context);
+    const firstSnapshot = await readExistingSnapshot(tempHome);
+    const firstReport = await upgradeDetectedIntegrations(context, firstSnapshot);
     expect(firstReport.updatedAssets).toEqual([
       "mcp",
       "skill:antigravity",
@@ -970,7 +1010,8 @@ describe("Workspace Integration Auto-Upgrade Coordinator & Selection Policy", ()
     await expect(fs.access(path.join(tempHome, ".gemini", "config", "ai-artifacts-review-mcp.mjs"))).rejects.toThrow();
 
     // Second run: mcpVersion stayed 11 so shared MCP syncs & Codex sees previousMcpVersion=11 -> patches join_session & commits MCP_VERSION
-    const retryReport = await upgradeDetectedIntegrations(context);
+    const retrySnapshot = await readExistingSnapshot(tempHome);
+    const retryReport = await upgradeDetectedIntegrations(context, retrySnapshot);
     expect(retryReport.updatedAssets).toEqual(["mcp"]);
     expect(retryReport.clients).toEqual([
       { id: "codex", name: "Codex", status: "updated" },
@@ -983,8 +1024,9 @@ describe("Workspace Integration Auto-Upgrade Coordinator & Selection Policy", ()
     const codexPatched = await fs.readFile(codexConfigPath, "utf8");
     expect(codexPatched).toContain("[mcp_servers.ai_artifacts.tools.join_session]");
 
-    // Third run: receipt is now at MCP_VERSION (12), so Codex & Antigravity neither read config nor rewrite files
+    // Third run: receipt is now at MCP_VERSION (12), so Codex & Antigravity neither read receipt/config nor rewrite files
     const beforeThird = codexPatched;
+    const thirdSnapshot = await readExistingSnapshot(tempHome);
     const originalReadFile = fs.readFile.bind(fs);
     const readPaths: string[] = [];
     vi.spyOn(fs, "readFile").mockImplementation((async (filePath: any, options: any) => {
@@ -992,19 +1034,48 @@ describe("Workspace Integration Auto-Upgrade Coordinator & Selection Policy", ()
       return originalReadFile(filePath, options);
     }) as any);
     const renameSpy = vi.spyOn(fs, "rename");
-    const thirdReport = await upgradeDetectedIntegrations(context);
+    const thirdReport = await upgradeDetectedIntegrations(context, thirdSnapshot);
     expect(thirdReport.updatedAssets).toEqual([]);
     expect(thirdReport.clients).toEqual([
       { id: "codex", name: "Codex", status: "unchanged" },
       { id: "antigravity", name: "Antigravity", status: "unchanged" },
     ]);
     expect(renameSpy).not.toHaveBeenCalled();
+    expect(readPaths).not.toContain(path.resolve(managedIntegrationVersionPath({ userHome: tempHome })));
     expect(readPaths).not.toContain(path.resolve(codexConfigPath));
     expect(readPaths).not.toContain(path.resolve(agDriver.configPath));
     expect(readPaths).not.toContain(path.resolve(targetMcp));
     await expect(fs.readFile(codexConfigPath, "utf8")).resolves.toBe(beforeThird);
 
     // Upgrade never created or modified installed-clients.json
+    await expect(fs.access(managedInstalledClientsPath({ userHome: tempHome }))).rejects.toThrow();
+  });
+
+  it("upgrades stale shared assets when an existing user passes an invalid version snapshot with detector-only targets", async () => {
+    await fs.mkdir(path.join(tempHome, ".cursor"), { recursive: true });
+    await new CursorClientDriver().install(managedMcpScriptPath({ userHome: tempHome }));
+    const receiptPath = managedIntegrationVersionPath({ userHome: tempHome });
+    await fs.mkdir(path.dirname(receiptPath), { recursive: true });
+    await fs.writeFile(receiptPath, "{ corrupted receipt json", "utf8");
+
+    const invalidSnapshot = await readExistingSnapshot(tempHome);
+    expect(invalidSnapshot.status).toBe("invalid");
+
+    const report = await upgradeDetectedIntegrations(context, invalidSnapshot);
+    expect(report).toEqual({
+      clientIds: ["cursor"],
+      skillTargets: ["agents"],
+      updatedAssets: ["mcp", "skill:agents", "session-skill:agents"],
+      clients: [{ id: "cursor", name: "Cursor", status: "unchanged" }],
+    });
+    expect(await readInstalledIntegrationVersion({ userHome: tempHome })).toMatchObject({
+      status: "valid",
+      manifest: {
+        mcpVersion: MCP_VERSION,
+        skills: { agents: CREATE_REVIEW_ARTIFACT_SKILL_VERSION },
+        sessionSkills: { agents: WORK_SESSION_SKILL_VERSION },
+      },
+    });
     await expect(fs.access(managedInstalledClientsPath({ userHome: tempHome }))).rejects.toThrow();
   });
 });

@@ -85,15 +85,19 @@ import {
 } from "./work-session-management-command";
 import { summarizeIntegrationVerification } from "./integration-verification";
 import {
+  INSTALLER_ONBOARDING_ACCEPTED_KEY,
+  runIntegrationActivation,
+} from "./integration-activation";
+import {
+  notifyInstallationError,
+  notifyInstallationResult,
+  type InstallationNotificationDeps,
+} from "./install-notification";
+import {
   INSTALLATION_GUIDE_URL,
   runAutomaticIntegrationUpgrade,
 } from "./upgrade-notification";
-import {
-  artifactIdSchema,
-  CREATE_REVIEW_ARTIFACT_SKILL_VERSION,
-  MCP_VERSION,
-  WORK_SESSION_SKILL_VERSION,
-} from "../shared/contracts";
+import { artifactIdSchema } from "../shared/contracts";
 import {
   ConversationArtifactService,
   setupConversationRegistryWatcher,
@@ -143,41 +147,79 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     conversationArtifactService.notifyChanged([{ kind: "support" }]);
   };
 
-  const installAllDetectedIntegrationsAndNotify = async (): Promise<void> => {
-    try {
-      const result = await installAllDetectedIntegrations(context, { recordClientSelection: true });
-      if (result.installedClients.length > 0) {
-        refreshViewsAndService();
-      }
+  const installNotificationDeps: InstallationNotificationDeps = {
+    showInformationMessage: (message, ...actions) =>
+      vscode.window.showInformationMessage(message, ...actions),
+    showWarningMessage: (message, ...actions) =>
+      vscode.window.showWarningMessage(message, ...actions),
+    showErrorMessage: (message, ...actions) =>
+      vscode.window.showErrorMessage(message, ...actions),
+    reloadWindow: () => vscode.commands.executeCommand("workbench.action.reloadWindow"),
+    reportDiagnostic: (message, error) => {
+      console.error(`AI Artifacts installer: ${message}`, error);
+    },
+  };
 
-      if (result.failedClients.length === 0 && result.installedClients.length > 0) {
-        const names = result.installedClients.join(", ");
-        void vscode.window.showInformationMessage(
-          `AI Artifacts installed for ${names}. Restart your AI client(s) and start a new chat to apply changes.`,
-        );
-      } else if (result.installedClients.length > 0 && result.failedClients.length > 0) {
-        const installedNames = result.installedClients.join(", ");
-        const failedSummary = result.failedClients
-          .map((client) => `${client.name} (${client.error})`)
-          .join("; ");
-        void vscode.window.showWarningMessage(
-          `AI Artifacts installed for ${installedNames}, but failed for: ${failedSummary}. Restart updated client(s) and check failed configuration(s).`,
-        );
-      } else if (result.failedClients.length > 0) {
-        const failedSummary = result.failedClients
-          .map((client) => `${client.name} (${client.error})`)
-          .join("; ");
-        void vscode.window.showErrorMessage(`AI Artifacts installation failed: ${failedSummary}`);
-      } else {
-        void vscode.window.showInformationMessage(
-          "AI Artifacts: No supported AI clients were detected for installation.",
-        );
+  const refreshViewsSafelyForInstall = (contextLabel: string): void => {
+    try {
+      refreshViewsAndService();
+    } catch (refreshError) {
+      try {
+        installNotificationDeps.reportDiagnostic(contextLabel, refreshError);
+      } catch {
+        // Diagnostics must never affect install notification flow.
       }
+    }
+  };
+
+  const installAllDetectedIntegrationsAndNotify = async (): Promise<void> => {
+    let result: {
+      installedClients: string[];
+      failedClients: Array<{ name: string; error: string }>;
+    };
+    try {
+      result = await installAllDetectedIntegrations(context, { recordClientSelection: true });
     } catch (error) {
-      void vscode.window.showErrorMessage(
-        error instanceof Error ? error.message : String(error),
+      await notifyInstallationError(installNotificationDeps, error);
+      return;
+    }
+
+    if (result.installedClients.length > 0) {
+      refreshViewsSafelyForInstall(
+        "Could not refresh integration support after installing all detected clients.",
       );
     }
+
+    await notifyInstallationResult(
+      installNotificationDeps,
+      result,
+      "AI Artifacts: No supported AI clients were detected for installation.",
+    );
+  };
+
+  const installSingleClientAndNotify = async (
+    clientName: string,
+    installOperation: () => Promise<unknown>,
+  ): Promise<void> => {
+    try {
+      await installOperation();
+    } catch (error) {
+      const errorText = error instanceof Error ? error.message : String(error);
+      await notifyInstallationResult(installNotificationDeps, {
+        installedClients: [],
+        failedClients: [{ name: clientName, error: errorText }],
+      });
+      return;
+    }
+
+    refreshViewsSafelyForInstall(
+      `Could not refresh integration support after installing ${clientName}.`,
+    );
+
+    await notifyInstallationResult(installNotificationDeps, {
+      installedClients: [clientName],
+      failedClients: [],
+    });
   };
 
   const sessionsTreeView = vscode.window.createTreeView("agentPlus.sessions", {
@@ -472,6 +514,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     // Interactive multi-client installer
     vscode.commands.registerCommand("agentPlus.installer", async () => {
       await runIntegrationInstallCommand({
+        ...installNotificationDeps,
         createQuickPick: () => vscode.window.createQuickPick<InstallerClientQuickPickItem>(),
         listClients: () => listInstallableClients(context),
         installClients: (clientIds) =>
@@ -487,9 +530,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
               () => task(),
             ),
           ),
-        showInformationMessage: (message) => vscode.window.showInformationMessage(message),
-        showWarningMessage: (message) => vscode.window.showWarningMessage(message),
-        showErrorMessage: (message) => vscode.window.showErrorMessage(message),
         onDidInstall: refreshViewsAndService,
       });
     }),
@@ -502,93 +542,51 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
     // 2. Copilot (base setup + Code/User/mcp.json)
     vscode.commands.registerCommand("agentPlus.installCopilotIntegration", async () => {
-      try {
-        const result = await installCopilotIntegration(context, { recordClientSelection: true });
-        refreshViewsAndService();
-        void vscode.window.showInformationMessage(
-          `AI Artifacts MCP installed for GitHub Copilot in VS Code User configuration (${result.userConfigPath}).`,
-        );
-      } catch (error) {
-        void vscode.window.showErrorMessage(error instanceof Error ? error.message : String(error));
-      }
+      await installSingleClientAndNotify("GitHub Copilot (VS Code)", () =>
+        installCopilotIntegration(context, { recordClientSelection: true }),
+      );
     }),
 
     // 3. Codex
     vscode.commands.registerCommand("agentPlus.installCodexIntegration", async () => {
-      try {
-        await installCodexIntegration(context, { recordClientSelection: true });
-        refreshViewsAndService();
-        void vscode.window.showInformationMessage(
-          "AI Artifacts MCP installed for Codex (~/.codex/config.toml). Please restart Codex to activate.",
-        );
-      } catch (error) {
-        void vscode.window.showErrorMessage(error instanceof Error ? error.message : String(error));
-      }
+      await installSingleClientAndNotify("Codex", () =>
+        installCodexIntegration(context, { recordClientSelection: true }),
+      );
     }),
 
     // 4. Cursor
     vscode.commands.registerCommand("agentPlus.installCursorIntegration", async () => {
-      try {
-        await installCursorIntegration(context, { recordClientSelection: true });
-        refreshViewsAndService();
-        void vscode.window.showInformationMessage(
-          "AI Artifacts MCP installed for Cursor (~/.cursor/mcp.json). Please restart Cursor to activate.",
-        );
-      } catch (error) {
-        void vscode.window.showErrorMessage(error instanceof Error ? error.message : String(error));
-      }
+      await installSingleClientAndNotify("Cursor", () =>
+        installCursorIntegration(context, { recordClientSelection: true }),
+      );
     }),
 
     // 5. Claude
     vscode.commands.registerCommand("agentPlus.installClaudeIntegration", async () => {
-      try {
-        await installClaudeIntegration(context, { recordClientSelection: true });
-        refreshViewsAndService();
-        void vscode.window.showInformationMessage(
-          "AI Artifacts MCP installed for Claude (~/.claude.json). Please restart Claude to activate.",
-        );
-      } catch (error) {
-        void vscode.window.showErrorMessage(error instanceof Error ? error.message : String(error));
-      }
+      await installSingleClientAndNotify("Claude", () =>
+        installClaudeIntegration(context, { recordClientSelection: true }),
+      );
     }),
 
     // 6. Windsurf
     vscode.commands.registerCommand("agentPlus.installWindsurfIntegration", async () => {
-      try {
-        await installWindsurfIntegration(context, { recordClientSelection: true });
-        refreshViewsAndService();
-        void vscode.window.showInformationMessage(
-          "AI Artifacts MCP installed for Windsurf (~/.codeium/windsurf/mcp_config.json). Please restart Windsurf to activate.",
-        );
-      } catch (error) {
-        void vscode.window.showErrorMessage(error instanceof Error ? error.message : String(error));
-      }
+      await installSingleClientAndNotify("Windsurf", () =>
+        installWindsurfIntegration(context, { recordClientSelection: true }),
+      );
     }),
 
     // 7. Cline
     vscode.commands.registerCommand("agentPlus.installClineIntegration", async () => {
-      try {
-        await installClineIntegration(context, { recordClientSelection: true });
-        refreshViewsAndService();
-        void vscode.window.showInformationMessage(
-          "AI Artifacts MCP installed for Cline (cline_mcp_settings.json). Please reload Cline or window to activate.",
-        );
-      } catch (error) {
-        void vscode.window.showErrorMessage(error instanceof Error ? error.message : String(error));
-      }
+      await installSingleClientAndNotify("Cline", () =>
+        installClineIntegration(context, { recordClientSelection: true }),
+      );
     }),
 
     // Antigravity
     vscode.commands.registerCommand("agentPlus.installAntigravityIntegration", async () => {
-      try {
-        await installAntigravityIntegration(context, { recordClientSelection: true });
-        refreshViewsAndService();
-        void vscode.window.showInformationMessage(
-          "AI Artifacts MCP and skills (create-review-artifact, work-session) installed for Antigravity (~/.gemini/config/mcp_config.json). Please restart Antigravity and start a new chat to activate.",
-        );
-      } catch (error) {
-        void vscode.window.showErrorMessage(error instanceof Error ? error.message : String(error));
-      }
+      await installSingleClientAndNotify("Antigravity", () =>
+        installAntigravityIntegration(context, { recordClientSelection: true }),
+      );
     }),
 
     // 8. Copy MCP Configuration JSON
@@ -795,23 +793,31 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     }),
   );
 
-  void runAutomaticIntegrationUpgrade({
-    bundledVersions: {
-      mcpVersion: MCP_VERSION,
-      skillVersion: CREATE_REVIEW_ARTIFACT_SKILL_VERSION,
-      sessionSkillVersion: WORK_SESSION_SKILL_VERSION,
-    },
-    upgradeIntegrations: () => upgradeDetectedIntegrations(context),
+  void runIntegrationActivation({
     getInstalledIntegrationVersion: () => readInstalledIntegrationVersion(),
-    refreshIntegrationSupport: refreshViewsAndService,
-    showWarningMessage: (message, ...actions) =>
-      vscode.window.showWarningMessage(message, ...actions),
+    isOnboardingAccepted: () =>
+      context.globalState.get<boolean>(INSTALLER_ONBOARDING_ACCEPTED_KEY, false),
+    acceptOnboarding: () =>
+      context.globalState.update(INSTALLER_ONBOARDING_ACCEPTED_KEY, true),
+    runInstaller: () => vscode.commands.executeCommand("agentPlus.installer"),
+    runUpgrade: (installedVersion) =>
+      runAutomaticIntegrationUpgrade({
+        upgradeIntegrations: () => upgradeDetectedIntegrations(context, installedVersion),
+        refreshIntegrationSupport: refreshViewsAndService,
+        showErrorMessage: (message, ...actions) =>
+          vscode.window.showErrorMessage(message, ...actions),
+        openInstallationGuide: () =>
+          vscode.env.openExternal(vscode.Uri.parse(INSTALLATION_GUIDE_URL)),
+        reportDiagnostic: (message, error) => {
+          console.error(`AI Artifacts automatic integration upgrade: ${message}`, error);
+        },
+      }),
+    showInformationMessage: (message, ...actions) =>
+      vscode.window.showInformationMessage(message, ...actions),
     showErrorMessage: (message, ...actions) =>
       vscode.window.showErrorMessage(message, ...actions),
-    openInstallationGuide: () =>
-      vscode.env.openExternal(vscode.Uri.parse(INSTALLATION_GUIDE_URL)),
     reportDiagnostic: (message, error) => {
-      console.error(`AI Artifacts automatic integration upgrade: ${message}`, error);
+      console.error(`AI Artifacts integration activation: ${message}`, error);
     },
   });
 

@@ -1,5 +1,10 @@
 import * as vscode from "vscode";
 import type { McpClientId } from "../shared/contracts";
+import {
+  notifyInstallationError,
+  notifyInstallationResult,
+  type InstallationNotificationDeps,
+} from "./install-notification";
 import type {
   InstallableClientDescriptor,
   SelectedIntegrationsInstallResult,
@@ -9,7 +14,7 @@ export interface InstallerClientQuickPickItem extends vscode.QuickPickItem {
   clientId: McpClientId;
 }
 
-export interface IntegrationInstallCommandDeps {
+export interface IntegrationInstallCommandDeps extends InstallationNotificationDeps {
   createQuickPick: () => vscode.QuickPick<InstallerClientQuickPickItem>;
   listClients: () => Promise<{ clients: InstallableClientDescriptor[] }>;
   installClients: (clientIds: McpClientId[]) => Promise<SelectedIntegrationsInstallResult>;
@@ -17,9 +22,6 @@ export interface IntegrationInstallCommandDeps {
     title: string,
     task: () => Promise<T>,
   ) => Promise<T>;
-  showInformationMessage: (message: string) => void | Thenable<unknown>;
-  showWarningMessage: (message: string) => void | Thenable<unknown>;
-  showErrorMessage: (message: string) => void | Thenable<unknown>;
   onDidInstall?: () => void;
 }
 
@@ -43,6 +45,7 @@ export async function runIntegrationInstallCommand(
   const disposables: vscode.Disposable[] = [];
   let isDisposed = false;
   let isSubmitting = false;
+  let isHandlingLoadError = false;
 
   const disposeQuickPick = (): void => {
     if (isDisposed) return;
@@ -62,49 +65,58 @@ export async function runIntegrationInstallCommand(
     };
 
     const handleConfirm = async (): Promise<void> => {
-      if (isDisposed || quickPick.busy || isSubmitting) return;
+      if (isDisposed || quickPick.busy || isSubmitting || isHandlingLoadError) return;
       const selectedIds = quickPick.selectedItems.map((item) => item.clientId);
       isSubmitting = true;
       quickPick.hide();
 
       if (selectedIds.length === 0) {
-        void deps.showInformationMessage("AI Artifacts Installer: No AI clients were selected.");
-        settle();
+        try {
+          await notifyInstallationResult(
+            deps,
+            { installedClients: [], failedClients: [] },
+            "AI Artifacts Installer: No AI clients were selected.",
+          );
+        } finally {
+          settle();
+        }
         return;
       }
 
+      let result: SelectedIntegrationsInstallResult;
       try {
-        const result = await deps.withProgress("Installing AI Artifacts integrations...", () =>
+        result = await deps.withProgress("Installing AI Artifacts integrations...", () =>
           deps.installClients(selectedIds),
         );
-
-        if (result.installedClients.length > 0) {
-          deps.onDidInstall?.();
-        }
-
-        if (result.failedClients.length === 0 && result.installedClients.length > 0) {
-          const names = result.installedClients.map((client) => client.name).join(", ");
-          void deps.showInformationMessage(
-            `AI Artifacts installed for ${names}. Restart your AI client(s) and start a new chat to apply changes.`,
-          );
-        } else if (result.installedClients.length > 0 && result.failedClients.length > 0) {
-          const installedNames = result.installedClients.map((client) => client.name).join(", ");
-          const failedSummary = result.failedClients
-            .map((client) => `${client.name} (${client.error})`)
-            .join("; ");
-          void deps.showWarningMessage(
-            `AI Artifacts installed for ${installedNames}, but failed for: ${failedSummary}. Restart updated client(s) and check failed configuration(s).`,
-          );
-        } else if (result.failedClients.length > 0) {
-          const failedSummary = result.failedClients
-            .map((client) => `${client.name} (${client.error})`)
-            .join("; ");
-          void deps.showErrorMessage(`AI Artifacts installation failed: ${failedSummary}`);
-        } else {
-          void deps.showInformationMessage("AI Artifacts Installer: No AI clients were installed.");
-        }
       } catch (error) {
-        void deps.showErrorMessage(error instanceof Error ? error.message : String(error));
+        try {
+          await notifyInstallationError(deps, error);
+        } finally {
+          settle();
+        }
+        return;
+      }
+
+      if (result.installedClients.length > 0) {
+        try {
+          deps.onDidInstall?.();
+        } catch (refreshError) {
+          try {
+            deps.reportDiagnostic(
+              "Could not refresh integration support after installation.",
+              refreshError,
+            );
+          } catch {
+            // Diagnostics must never affect installer completion.
+          }
+        }
+      }
+
+      try {
+        await notifyInstallationResult(deps, {
+          installedClients: result.installedClients.map((client) => client.name),
+          failedClients: result.failedClients,
+        });
       } finally {
         settle();
       }
@@ -121,7 +133,7 @@ export async function runIntegrationInstallCommand(
       }),
       quickPick.onDidHide(() => {
         disposeQuickPick();
-        if (!isSubmitting) {
+        if (!isSubmitting && !isHandlingLoadError) {
           settle();
         }
       }),
@@ -160,10 +172,14 @@ export async function runIntegrationInstallCommand(
         quickPick.busy = false;
       } catch (error) {
         if (isDisposed) return;
+        isHandlingLoadError = true;
         quickPick.busy = false;
         quickPick.hide();
-        void deps.showErrorMessage(error instanceof Error ? error.message : String(error));
-        settle();
+        try {
+          await notifyInstallationError(deps, error);
+        } finally {
+          settle();
+        }
       }
     })();
   });
