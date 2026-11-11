@@ -1,6 +1,6 @@
 # AI Artifacts Tips
 
-> **Preview content:** Sample tips content for Phase 1 layout review.
+> **Preview content:** Sample tips content for Phase 2 renderer and media review.
 
 ## Keep shared guidance in Session Instructions
 
@@ -14,5 +14,16 @@ Store team conventions, workflow rules, and handoff expectations in a Work Sessi
 
 Use **Connect** in the Work Session header (or from the Sessions sidebar) to copy a join prompt with the exact session ID rather than pasting long chat transcripts.
 
-For project documentation and updates, visit the [AI Artifacts GitHub repository](https://github.com/huynguyen294/ai-artifacts).
+```text
+Use the work-session skill to join this work session and apply its instructions:
+tool: "join_session"
+sessionId: "<your-session-id>"
+```
 
+## Leave inline feedback on exact text
+
+*Preview sample asset:* the GIF below reuses `media/select-comment.gif` from the repository to verify shared media rendering inside **Tips**.
+
+![Inline feedback interaction sample](media/samples/inline-feedback.gif "Preview content: GIF sample in Tips")
+
+For project documentation and updates, visit the [AI Artifacts GitHub repository](https://github.com/huynguyen294/ai-artifacts).

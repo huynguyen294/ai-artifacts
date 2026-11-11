@@ -9,13 +9,14 @@ const root = document.getElementById("root");
 if (!root) throw new Error("Missing webview root element.");
 
 const appName = root.getAttribute("data-app");
+const mediaBaseUri = root.getAttribute("data-content-media-base-uri") ?? "";
 
 createRoot(root).render(
   <StrictMode>
     {appName === "session" ? (
       <SessionApp />
     ) : appName === "whats-new" ? (
-      <WhatsNewApp />
+      <WhatsNewApp mediaBaseUri={mediaBaseUri} />
     ) : (
       <ReviewApp />
     )}

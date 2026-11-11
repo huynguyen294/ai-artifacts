@@ -1,23 +1,17 @@
 import type { ReactNode } from "react";
-import type { MarkdownBlock, ReviewComment } from "../shared/contracts";
 import { MarkdownRenderer } from "./MarkdownRenderer";
-
-const EMPTY_BLOCKS: MarkdownBlock[] = [];
-const EMPTY_COMMENTS = new Map<string, ReviewComment[]>();
-const ignoreCommentClick = () => {};
 
 export function WhatsNewDocument(props: {
   markdown: string;
+  mediaBaseUri: string;
 }): ReactNode {
   return (
     <div className="artifact-document whats-new-document">
       <MarkdownRenderer
+        mode="content"
         markdown={props.markdown}
-        blocks={EMPTY_BLOCKS}
-        commentsByBlock={EMPTY_COMMENTS}
-        onCommentClick={ignoreCommentClick}
+        mediaBaseUri={props.mediaBaseUri}
       />
     </div>
   );
 }
-

@@ -153,22 +153,44 @@ describe("WhatsNewPanelController & webview HTML", () => {
     vi.clearAllMocks();
   });
 
-  it("renders getWebviewHtml for whats-new using shared review bundle and strict CSP", () => {
-    const html = getWebviewHtml({
+  it("renders getWebviewHtml for whats-new with media CSP and escaped media base URI while keeping review and session strict", () => {
+    const whatsNewHtml = getWebviewHtml({
       appName: "whats-new",
       extensionUri,
       webview: {
         cspSource: "vscode-webview://unit",
         asWebviewUri: (uri: { fsPath: string }) => ({
-          toString: () => `vscode-resource://${uri.fsPath.replace(/\\/g, "/")}`,
+          toString: () => `vscode-resource://${uri.fsPath.replace(/\\/g, "/")}?a=1&b="quoted"<tag>'s`,
         }),
       } as any,
     });
 
-    expect(html).toContain('data-app="whats-new"');
-    expect(html).toContain("review.js");
-    expect(html).toContain("review.css");
-    expect(html).toContain("default-src 'none'; img-src data:;");
+    expect(whatsNewHtml).toContain('data-app="whats-new"');
+    expect(whatsNewHtml).toContain("review.js");
+    expect(whatsNewHtml).toContain("review.css");
+    expect(whatsNewHtml).toContain("default-src 'none'; img-src data: vscode-webview://unit;");
+    expect(whatsNewHtml).not.toContain("media-src");
+    expect(whatsNewHtml).not.toContain("frame-src");
+    expect(whatsNewHtml).toContain(
+      'data-content-media-base-uri="vscode-resource:///mock/extension/media/whats-new?a=1&amp;b=&quot;quoted&quot;&lt;tag&gt;&#39;s"',
+    );
+
+    for (const appName of ["review", "session"] as const) {
+      const otherHtml = getWebviewHtml({
+        appName,
+        extensionUri,
+        webview: {
+          cspSource: "vscode-webview://unit",
+          asWebviewUri: (uri: { fsPath: string }) => ({
+            toString: () => `vscode-resource://${uri.fsPath.replace(/\\/g, "/")}`,
+          }),
+        } as any,
+      });
+
+      expect(otherHtml).toContain(`data-app="${appName}"`);
+      expect(otherHtml).toContain("default-src 'none'; img-src data:; style-src");
+      expect(otherHtml).not.toContain("data-content-media-base-uri");
+    }
   });
 
   it("does not create a Webview in constructor, creates and reuses one panel on show, recreates after close, and disposes cleanly", () => {
@@ -184,9 +206,15 @@ describe("WhatsNewPanelController & webview HTML", () => {
     expect(firstPanel.viewColumn).toBe(1);
     expect(firstPanel.options).toEqual({
       enableScripts: true,
-      localResourceRoots: [{ fsPath: path.join("/mock/extension", "dist", "webview") }],
+      localResourceRoots: [
+        { fsPath: path.join("/mock/extension", "dist", "webview") },
+        { fsPath: path.join("/mock/extension", "media", "whats-new") },
+      ],
     });
     expect(firstPanel.webview.html).toContain('data-app="whats-new"');
+    expect(firstPanel.webview.html).toContain(
+      'data-content-media-base-uri="vscode-resource:///mock/extension/media/whats-new"',
+    );
     const initialHtml = firstPanel.webview.html;
 
     // Second show reveals existing panel without recreating or reassigning HTML

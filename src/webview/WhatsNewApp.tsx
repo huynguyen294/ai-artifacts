@@ -6,8 +6,10 @@ export type WhatsNewTab = "whats-new" | "tips";
 
 export function WhatsNewApp(props?: {
   initialTab?: WhatsNewTab;
+  mediaBaseUri?: string;
 }): ReactNode {
   const [activeTab, setActiveTab] = useState<WhatsNewTab>(props?.initialTab ?? "whats-new");
+  const mediaBaseUri = props?.mediaBaseUri ?? "";
   const previewArticle = whatsNewContent.articles[0];
 
   return (
@@ -57,13 +59,13 @@ export function WhatsNewApp(props?: {
                     </ul>
                   )}
                 </section>
-                <WhatsNewDocument markdown={previewArticle.markdown} />
+                <WhatsNewDocument markdown={previewArticle.markdown} mediaBaseUri={mediaBaseUri} />
               </div>
             ) : (
               <div className="whats-new-empty">No updates to show yet.</div>
             )
           ) : (
-            <WhatsNewDocument markdown={whatsNewContent.tipsMarkdown} />
+            <WhatsNewDocument markdown={whatsNewContent.tipsMarkdown} mediaBaseUri={mediaBaseUri} />
           )}
         </main>
       </div>

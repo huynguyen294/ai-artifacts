@@ -5,6 +5,15 @@ export function generateWebviewNonce(): string {
   return randomBytes(16).toString("base64");
 }
 
+function escapeHtmlAttribute(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 export type WebviewHtmlOptions = {
   appName: "review" | "session" | "whats-new";
   extensionUri: vscode.Uri;
@@ -25,6 +34,15 @@ export function getWebviewHtml(options: WebviewHtmlOptions): string {
   const mermaidUri = webview.asWebviewUri(
     vscode.Uri.joinPath(extensionUri, "dist", "webview", "mermaid.js"),
   );
+  const contentMediaBaseUri =
+    appName === "whats-new"
+      ? webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, "media", "whats-new")).toString()
+      : undefined;
+  const imgSrc = appName === "whats-new" ? `data: ${webview.cspSource}` : "data:";
+  const mediaBaseAttr =
+    contentMediaBaseUri !== undefined
+      ? ` data-content-media-base-uri="${escapeHtmlAttribute(contentMediaBaseUri)}"`
+      : "";
   const token = generateWebviewNonce();
 
   return `<!doctype html>
@@ -32,11 +50,11 @@ export function getWebviewHtml(options: WebviewHtmlOptions): string {
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src ${webview.cspSource} 'nonce-${token}'; script-src 'nonce-${token}';" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${imgSrc}; style-src ${webview.cspSource} 'nonce-${token}'; script-src 'nonce-${token}';" />
     <link rel="stylesheet" href="${styleUri}" />
   </head>
   <body>
-    <div id="root" data-app="${appName}" data-style-nonce="${token}" data-shiki-uri="${shikiUri}" data-mermaid-uri="${mermaidUri}"></div>
+    <div id="root" data-app="${appName}" data-style-nonce="${token}" data-shiki-uri="${shikiUri}" data-mermaid-uri="${mermaidUri}"${mediaBaseAttr}></div>
     <script nonce="${token}" src="${scriptUri}"></script>
   </body>
 </html>`;

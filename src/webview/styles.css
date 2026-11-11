@@ -1819,12 +1819,75 @@ body:has(.session-app-container),
   font-size: 14px;
 }
 
+.whats-new-document {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.whats-new-document img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 16px 0;
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--vscode-widget-border, var(--vscode-panel-border)) 72%, transparent);
+}
+
+.whats-new-document .whats-new-image-placeholder {
+  display: inline-block;
+  margin: 8px 0;
+  padding: 8px 10px;
+  border: 1px dashed var(--vscode-panel-border);
+  border-radius: 6px;
+  color: var(--vscode-descriptionForeground);
+  font-size: 12px;
+}
+
+.whats-new-document pre {
+  max-width: 100%;
+  margin: 18px 0;
+  padding: 14px 16px;
+  overflow-x: auto;
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 8px;
+  background-color: color-mix(in srgb, var(--vscode-editor-background) 70%, var(--vscode-sideBar-background));
+  background-image: linear-gradient(var(--vscode-textCodeBlock-background), var(--vscode-textCodeBlock-background));
+  font-family: var(--vscode-editor-font-family);
+  font-size: var(--vscode-editor-font-size, 13px);
+  line-height: 1.55;
+}
+
+.whats-new-document pre code {
+  display: block;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--vscode-editor-foreground);
+  font-family: inherit;
+  font-size: inherit;
+  line-height: inherit;
+  white-space: pre;
+}
+
+.whats-new-document a:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
 .vscode-high-contrast .whats-new-article-meta,
 .vscode-high-contrast-light .whats-new-article-meta,
 .vscode-high-contrast .whats-new-tab-btn,
 .vscode-high-contrast-light .whats-new-tab-btn,
 .vscode-high-contrast .whats-new-empty,
-.vscode-high-contrast-light .whats-new-empty {
+.vscode-high-contrast-light .whats-new-empty,
+.vscode-high-contrast .whats-new-document img,
+.vscode-high-contrast-light .whats-new-document img,
+.vscode-high-contrast .whats-new-document .whats-new-image-placeholder,
+.vscode-high-contrast-light .whats-new-document .whats-new-image-placeholder,
+.vscode-high-contrast .whats-new-document pre,
+.vscode-high-contrast-light .whats-new-document pre {
   border-color: var(--vscode-contrastBorder, var(--vscode-panel-border));
 }
 

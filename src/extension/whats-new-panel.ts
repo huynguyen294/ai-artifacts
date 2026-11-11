@@ -25,7 +25,10 @@ export class WhatsNewPanelController implements vscode.Disposable {
       column,
       {
         enableScripts: true,
-        localResourceRoots: [vscode.Uri.joinPath(this.extensionUri, "dist", "webview")],
+        localResourceRoots: [
+          vscode.Uri.joinPath(this.extensionUri, "dist", "webview"),
+          vscode.Uri.joinPath(this.extensionUri, "media", "whats-new"),
+        ],
       },
     );
 

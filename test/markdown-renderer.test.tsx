@@ -77,4 +77,107 @@ describe("MarkdownRenderer", () => {
     expect(html).not.toContain("<mark");
     expect(html).not.toContain("data-comment-ids");
   });
+
+  it("keeps review-mode images as placeholders and skipHtml enabled by default", () => {
+    const markdown = "![Local](media/samples/ai-artifacts.png)\n\n![Remote](https://example.com/a.png)";
+    const html = renderToStaticMarkup(
+      <MarkdownRenderer
+        markdown={markdown}
+        blocks={parseMarkdownBlocks(markdown)}
+        commentsByBlock={new Map()}
+        onCommentClick={() => {}}
+      />,
+    );
+
+    expect(html).not.toContain("<img");
+    expect(html).toContain("remote-image-placeholder");
+    expect(html).toContain("[Local]");
+    expect(html).toContain("[Remote]");
+  });
+
+  it("renders standard markdown, code fences, packaged images, placeholders, and safe links in content mode", () => {
+    const baseUri = "https://file+.vscode-resource.vscode-cdn.net/ext/media/whats-new";
+    const markdown = [
+      "# Update Title",
+      "",
+      "Paragraph with **bold**, [docs](https://example.com/docs), and [bad local](media/samples/ai-artifacts.png).",
+      "",
+      "- Item one",
+      "",
+      "1. Step one",
+      "",
+      "| Col A | Col B |",
+      "| --- | --- |",
+      "| Val 1 | Val 2 |",
+      "",
+      "```ts",
+      "const ready = true;",
+      "```",
+      "",
+      '![Sample PNG](media/samples/ai-artifacts.png "PNG Caption")',
+      "",
+      "![Sample GIF](media/samples/inline-feedback.gif)",
+      "",
+      "[![Linked PNG](media/samples/ai-artifacts.png)](https://example.com/linked)",
+      "",
+      "![Blocked remote](https://example.com/remote.png)",
+      "",
+      "![Blocked traversal](media/../secret.png)",
+      "",
+      "<script>alert(1)</script><video src=\"clip.mp4\"></video>",
+    ].join("\n");
+
+    const html = renderToStaticMarkup(
+      <MarkdownRenderer mode="content" markdown={markdown} mediaBaseUri={baseUri} />,
+    );
+
+    // Headings, lists, table, native pre/code without review annotations or ReviewCode chrome
+    expect(html).toContain("<h1>Update Title</h1>");
+    expect(html).toContain("<ul>");
+    expect(html).toContain("<ol>");
+    expect(html).toContain("<table>");
+    expect(html).toContain("<pre><code class=\"language-ts\">const ready = true;");
+    expect(html).not.toContain("data-block-id");
+    expect(html).not.toContain("review-block");
+    expect(html).not.toContain("code-block-shell");
+    expect(html).not.toContain("<mark");
+
+    // Packaged images & linked image resolve beneath mediaBaseUri
+    expect(html).toContain(
+      `src="${baseUri}/samples/ai-artifacts.png" alt="Sample PNG" title="PNG Caption"`,
+    );
+    expect(html).toContain(`src="${baseUri}/samples/inline-feedback.gif" alt="Sample GIF"`);
+    expect(html).toContain(
+      `<a href="https://example.com/linked" rel="noreferrer"><img src="${baseUri}/samples/ai-artifacts.png" alt="Linked PNG"/></a>`,
+    );
+
+    // External HTTPS href allowed, relative href in <a> still stripped by safeArtifactUrl
+    expect(html).toContain('href="https://example.com/docs"');
+    expect(html).not.toContain('href="media/samples/ai-artifacts.png"');
+
+    // Disallowed image sources become placeholders instead of <img>, and raw HTML is skipped
+    expect(html).not.toContain("https://example.com/remote.png");
+    expect(html).not.toContain("secret.png");
+    expect(html).toContain('class="whats-new-image-placeholder"');
+    expect(html).toContain("[Blocked remote]");
+    expect(html).toContain("[Blocked traversal]");
+    expect(html).not.toContain("<script>");
+    expect(html).not.toContain("<video");
+  });
+
+  it("renders placeholders when mediaBaseUri is empty in content mode", () => {
+    const html = renderToStaticMarkup(
+      <MarkdownRenderer
+        mode="content"
+        markdown={"# Title\n\n![Preview](media/samples/ai-artifacts.png)\n\nSee [repo](https://example.com)."}
+        mediaBaseUri=""
+      />,
+    );
+
+    expect(html).toContain("<h1>Title</h1>");
+    expect(html).toContain('href="https://example.com"');
+    expect(html).not.toContain("<img");
+    expect(html).toContain('class="whats-new-image-placeholder"');
+    expect(html).toContain("[Preview]");
+  });
 });
