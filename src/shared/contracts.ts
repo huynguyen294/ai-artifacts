@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { isLocalFileLink } from "./local-file-link";
 
 export const ARTIFACT_SCHEMA_VERSION = 6 as const;
 export const ARTIFACT_CONNECTION_SCHEMA_VERSION = 1 as const;
@@ -547,6 +548,7 @@ export const webviewToExtensionMessageSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("copyArtifactConnectPrompt") }).strict(),
   z.object({ type: z.literal("startWorkSession") }).strict(),
   z.object({ type: z.literal("openExternal"), url: z.string().url() }),
+  z.object({ type: z.literal("openLocalFile"), url: z.string().refine(isLocalFileLink) }).strict(),
   z.object({ type: z.literal("openConversationArtifact"), artifactId: artifactIdSchema }).strict(),
   z.object({ type: z.literal("openArtifactSessions") }).strict(),
   z.object({ type: z.literal("migrateSelectedConversation"), sessionId: artifactConversationIdSchema }).strict(),

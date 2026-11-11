@@ -12,6 +12,21 @@ import { MarkdownRenderer } from "../src/webview/MarkdownRenderer";
 vi.mock("../src/webview/vscode-api", () => ({ vscode: { postMessage: vi.fn() } }));
 
 describe("MarkdownRenderer", () => {
+  it("preserves local file links in review mode while content mode keeps its external-only policy", () => {
+    const markdown = "[file](file:///D:/workspace/plan.md) [path](D:/workspace/plan.md) [posix](/workspace/plan%20notes.md) [bad](command:run)";
+    const reviewHtml = renderToStaticMarkup(
+      <MarkdownRenderer markdown={markdown} blocks={parseMarkdownBlocks(markdown)} commentsByBlock={new Map()} onCommentClick={() => {}} />,
+    );
+    const contentHtml = renderToStaticMarkup(
+      <MarkdownRenderer mode="content" markdown={markdown} mediaBaseUri="" />,
+    );
+    for (const url of ["file:///D:/workspace/plan.md", "D:/workspace/plan.md", "/workspace/plan%20notes.md"]) {
+      expect(reviewHtml).toContain(`href="${url}"`);
+      expect(contentHtml).not.toContain(`href="${url}"`);
+    }
+    expect(reviewHtml).not.toContain('href="command:run"');
+  });
+
   it("preserves inline Markdown while applying a block-bound comment highlight", () => {
     const markdown = "# Plan\n\nUse **strong** text and [docs](https://example.com).";
     const blocks = parseMarkdownBlocks(markdown);

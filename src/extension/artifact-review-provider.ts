@@ -1,4 +1,5 @@
 import { promises as fs } from "node:fs";
+import { fileURLToPath } from "node:url";
 import * as vscode from "vscode";
 import { buildArtifactConnectPrompt } from "../shared/artifact-connect-prompt";
 import { ARTIFACT_UI_STATE_FILE, type GlobalArtifactsRootOptions } from "../shared/artifact-files";
@@ -419,6 +420,17 @@ export class ArtifactReviewProvider implements vscode.CustomTextEditorProvider {
                 void refreshSessions();
               },
             });
+            return;
+          }
+          case "openLocalFile": {
+            const filePath = /^file:/i.test(message.url)
+              ? fileURLToPath(message.url)
+              : decodeURIComponent(message.url);
+            const uri = vscode.Uri.file(filePath);
+            if (!(await fs.stat(uri.fsPath)).isFile()) {
+              throw new Error("Only local files can be opened in the editor.");
+            }
+            await vscode.window.showTextDocument(uri, { preview: false });
             return;
           }
           case "openExternal": {

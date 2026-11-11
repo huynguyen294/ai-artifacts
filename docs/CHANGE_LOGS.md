@@ -14,6 +14,13 @@ Minor typos, formatting fixes, or cosmetic wording adjustments that do not chang
 
 Each entry includes the date, category, summary of changes, rationale, and affected components or files.
 
+## 2026-11-11 — Open local file links from Artifact Review
+
+- **Behavior and rationale:** Local file links that previously rendered without a clickable target now open in the VS Code text editor. Supported targets are absolute local paths and local `file://` URLs. Directories and missing files report errors through the existing review UI; relative paths are not resolved.
+- **Components:** Added shared local-file classification and the typed `openLocalFile` webview message; updated the review renderer's URL policy and Artifact Review provider. The host verifies that the target is an existing regular file before opening it. External links, What's New link policy, comments, MCP, and artifact lifecycle contracts retain their existing behavior.
+- **Documentation:** Updated `README.md`, `docs/ARCHITECTURE.md`, and the unreleased release notes in `CHANGELOG.md`.
+- **Validation:** `npm.cmd run check`, focused tests (7 files, 100 tests), full `npm.cmd test -- --maxWorkers=2` (66 files, 871 passed, 3 skipped), `npm.cmd run build`, and `git diff --check` passed. Live Extension Host click verification was not run.
+
 ## 2026-11-11 — Activation onboarding, error-only auto-upgrade, and unified install notifications
 
 - **Single-read activation & onboarding (`src/extension/integration-activation.ts`, `src/extension/extension.ts`, `src/extension/workspace-integration.ts`):** Added non-blocking `runIntegrationActivation` to read `~/.ai-artifacts/managed/integration-version.json` once at activation before client detection or upgrade: read I/O failures log a diagnostic and emit one Error citing **`AI Artifacts: Installer`**; `missing` receipts skip detection/upgrade and invite new users once until clicked (`globalState` key `installer.onboardingAccepted`, persisted before opening `agentPlus.installer`; dismissed invitations re-offer on later activations while missing, and acceptance alone never triggers upgrades); existing `valid` or `invalid` snapshots pass straight into `upgradeDetectedIntegrations(context, installedVersion)` (`ExistingInstalledIntegrationVersionReadResult`). Narrowed `IntegrationUpgradeClientReport.status` to `"unchanged" | "updated" | "failed"`. Kept numeric `MCP_VERSION` (`12`), `CREATE_REVIEW_ARTIFACT_SKILL_VERSION` (`4`), `WORK_SESSION_SKILL_VERSION` (`1`), schema `v6`, package `1.1.4`, and Phase 1's two deferred P2 items (`mcpVersion` sharing / Codex retry migration) unchanged as scoped.

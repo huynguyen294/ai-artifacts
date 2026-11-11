@@ -1,5 +1,7 @@
+import { promises as fs, type Stats } from "node:fs";
 import path from "node:path";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { pathToFileURL } from "node:url";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   ArtifactSessionTarget,
   ExtensionToWebviewMessage,
@@ -16,6 +18,7 @@ const {
   showInputBoxMock,
   writeTextMock,
   openExternalMock,
+  showTextDocumentMock,
   mockResolveWorkSessionSupport,
   mockRunSingleMigration,
   mockValidateArtifactReviewTarget,
@@ -29,6 +32,7 @@ const {
   showInputBoxMock: vi.fn<(_options?: any) => Promise<string | undefined>>(async () => undefined),
   writeTextMock: vi.fn(async () => undefined),
   openExternalMock: vi.fn(async () => true),
+  showTextDocumentMock: vi.fn(async () => undefined),
   mockResolveWorkSessionSupport: vi.fn<
     () => Promise<{
       supported: boolean;
@@ -52,6 +56,7 @@ const {
 
 vi.mock("vscode", () => ({
   Uri: {
+    file: (fsPath: string) => ({ fsPath: path.normalize(fsPath) }),
     joinPath: (base: { fsPath: string }, ...segments: string[]) => ({
       fsPath: path.join(base.fsPath, ...segments),
     }),
@@ -73,6 +78,7 @@ vi.mock("vscode", () => ({
     executeCommand: executeCommandMock,
   },
   window: {
+    showTextDocument: showTextDocumentMock,
     showInformationMessage: showInformationMessageMock,
     showWarningMessage: showWarningMessageMock,
     showErrorMessage: showErrorMessageMock,
@@ -235,6 +241,8 @@ function createSampleWorkSession(sessionId: string, title: string): WorkSession 
 }
 
 describe("ArtifactReviewProvider sessions transport (Chặng 3)", () => {
+  afterEach(() => vi.restoreAllMocks());
+
   beforeEach(() => {
     vi.clearAllMocks();
     mockResolveWorkSessionSupport.mockResolvedValue({
@@ -258,6 +266,53 @@ describe("ArtifactReviewProvider sessions transport (Chặng 3)", () => {
       },
     });
     mockRemoveConversation.mockResolvedValue(true);
+  });
+
+  it.each(["path", "file URI"])("opens a local %s in the VS Code text editor", async (format) => {
+    const filePath = path.resolve("test/local file.ts");
+    const url = format === "file URI" ? pathToFileURL(filePath).href : filePath.replaceAll("\\", "/").replaceAll(" ", "%20");
+    const stat = vi.spyOn(fs, "stat").mockResolvedValueOnce({ isFile: () => true } as Stats);
+    const store = createFakeStore();
+    const provider = new ArtifactReviewProvider({ extensionUri: { fsPath: "/ext" } } as any, undefined, () => store);
+    const { panel, sendMessage, postedMessages } = createFakePanel();
+    await provider.resolveCustomTextEditor({ uri: { fsPath: `${store.artifactDirectory}/artifact.md` } } as any, panel);
+
+    await sendMessage({ type: "openLocalFile", url });
+
+    expect(stat).toHaveBeenCalledWith(filePath);
+    expect(showTextDocumentMock).toHaveBeenCalledWith({ fsPath: filePath }, { preview: false });
+    expect(openExternalMock).not.toHaveBeenCalled();
+    expect(postedMessages).toEqual([]);
+    expect(store.loadMock).not.toHaveBeenCalled();
+  });
+
+  it("reports missing files and directories without opening an editor", async () => {
+    const stat = vi.spyOn(fs, "stat");
+    const store = createFakeStore();
+    const provider = new ArtifactReviewProvider({ extensionUri: { fsPath: "/ext" } } as any, undefined, () => store);
+    const { panel, sendMessage, postedMessages } = createFakePanel();
+    await provider.resolveCustomTextEditor({ uri: { fsPath: `${store.artifactDirectory}/artifact.md` } } as any, panel);
+
+    stat.mockRejectedValueOnce(new Error("File not found."));
+    await sendMessage({ type: "openLocalFile", url: "/workspace/missing.ts" });
+    expect(postedMessages).toContainEqual({ type: "error", message: "File not found." });
+
+    stat.mockResolvedValueOnce({ isFile: () => false } as Stats);
+    await sendMessage({ type: "openLocalFile", url: "/workspace/folder" });
+    expect(postedMessages).toContainEqual({ type: "error", message: "Only local files can be opened in the editor." });
+    expect(showTextDocumentMock).not.toHaveBeenCalled();
+    expect(openExternalMock).not.toHaveBeenCalled();
+  });
+
+  it("keeps external links in the existing external opener", async () => {
+    const store = createFakeStore();
+    const provider = new ArtifactReviewProvider({ extensionUri: { fsPath: "/ext" } } as any, undefined, () => store);
+    const { panel, sendMessage } = createFakePanel();
+    await provider.resolveCustomTextEditor({ uri: { fsPath: `${store.artifactDirectory}/artifact.md` } } as any, panel);
+
+    await sendMessage({ type: "openExternal", url: "https://example.com/docs" });
+    expect(openExternalMock).toHaveBeenCalledWith(expect.objectContaining({ scheme: "https" }));
+    expect(showTextDocumentMock).not.toHaveBeenCalled();
   });
 
   it("posts central ReviewState and artifactSessionsState on ready", async () => {

@@ -263,6 +263,8 @@ A file link in the agent's response is a regular file link, not a deep link, and
 
 #### Review, annotate, and drive execution
 
+Click a local file link in the review document to open it in the VS Code text editor. Use an absolute path (`D:/project/src/app.ts` or `/project/src/app.ts`) or a `file://` URL. Missing files and directories report an error; relative paths are not resolved. HTTP, HTTPS, and mail links continue to open externally.
+
 1. **Highlight text:** Select any paragraph, heading, list item, quote, code block, or table cell.
 2. **Add inline comments:** Type your feedback in the floating comment popover. Press `Enter` or click **Comment** to save your feedback.
 3. **Browse feedback:** Open the **Comments (N)** drawer to jump between annotated passages.

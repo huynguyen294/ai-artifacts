@@ -1,3 +1,5 @@
+import { isLocalFileLink } from "../shared/local-file-link";
+
 const SAFE_PROTOCOLS = new Set(["http:", "https:", "mailto:"]);
 
 export function safeArtifactUrl(url: string): string {
@@ -8,4 +10,8 @@ export function safeArtifactUrl(url: string): string {
   } catch {
     return "";
   }
+}
+
+export function safeReviewUrl(url: string): string {
+  return isLocalFileLink(url) ? url : safeArtifactUrl(url);
 }

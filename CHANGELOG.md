@@ -33,6 +33,7 @@ Release history has been standardized and tracked starting from version **0.2.6*
 
 ### Review Editor and Approval Behavior
 
+- Added opening local file links from Artifact Review in the VS Code text editor, supporting absolute paths and local `file://` URLs. Directories and missing files report errors; external links retain their existing behavior.
 - Updated the header to show the review round before the artifact kind, with native actions to edit the title and kind. The kind picker supports fixed kinds, discovered open kinds, and creation of new hyphenated kinds.
 - Standardized Proceed behavior: `plan` and `implementation-plan` return `execute-approved-plan`; other fixed and open kinds return `approved` without automatic code execution.
 - Review submission handling reads the current artifact kind so a type change made while an agent is waiting is reflected in the returned result and Proceed action.

@@ -11,12 +11,13 @@ import {
 import ReactMarkdown, { type Components, type UrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { MarkdownBlock, ReviewComment } from "../shared/contracts";
+import { isLocalFileLink } from "../shared/local-file-link";
 import { vscode } from "./vscode-api";
 import { annotateChildren } from "./review-annotations";
 import { CodeBlock } from "./CodeBlock";
 import { MermaidBlock } from "./MermaidBlock";
 import { resolveContentImage } from "./content-media";
-import { safeArtifactUrl } from "./url-policy";
+import { safeArtifactUrl, safeReviewUrl } from "./url-policy";
 
 type ReviewRendererProps = {
   mode?: "review";
@@ -99,9 +100,10 @@ function MarkdownLink({
   node: _node,
   href,
   children,
+  allowLocalFiles = false,
   ...props
-}: ComponentPropsWithoutRef<"a"> & { node?: unknown }): ReactNode {
-  const target = href ? safeArtifactUrl(href) : "";
+}: ComponentPropsWithoutRef<"a"> & { node?: unknown; allowLocalFiles?: boolean }): ReactNode {
+  const target = href ? (allowLocalFiles ? safeReviewUrl(href) : safeArtifactUrl(href)) : "";
   return (
     <a
       {...props}
@@ -110,7 +112,7 @@ function MarkdownLink({
       onClick={(event) => {
         if (!target || target.startsWith("#")) return;
         event.preventDefault();
-        vscode.postMessage({ type: "openExternal", url: target });
+        vscode.postMessage({ type: isLocalFileLink(target) ? "openLocalFile" : "openExternal", url: target });
       }}
     >
       {children}
@@ -161,7 +163,7 @@ const REVIEW_COMPONENTS: Components = {
   th: ({ node, children, ...props }) => <ReviewElement tag="th" node={node} type="table-cell" elementProps={props}>{children}</ReviewElement>,
   pre: ({ children }) => <>{children}</>,
   code: (props) => <ReviewCode {...props} />,
-  a: MarkdownLink,
+  a: (props) => <MarkdownLink {...props} allowLocalFiles />,
   img: ({ alt }) => <span className="remote-image-placeholder" role="img" aria-label={alt ?? "Remote image"}>[{alt || "Remote image not loaded"}]</span>,
   input: DisabledInput,
 };
@@ -189,7 +191,7 @@ function ReviewMarkdownRenderer({
         remarkPlugins={REMARK_PLUGINS}
         components={REVIEW_COMPONENTS}
         skipHtml
-        urlTransform={safeArtifactUrl}
+        urlTransform={safeReviewUrl}
       >
         {markdown.replace(/\r\n/g, "\n")}
       </ReactMarkdown>

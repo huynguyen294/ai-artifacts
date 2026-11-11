@@ -525,6 +525,19 @@ describe("artifact conversation schema v1 contract", () => {
     });
   });
 
+  it("validates local file opening without allowing other URI schemes or extra actions", () => {
+    for (const url of ["file:///D:/workspace/plan.md", "D:/workspace/plan.md", "/workspace/plan.md"]) {
+      expect(contracts.webviewToExtensionMessageSchema.parse({ type: "openLocalFile", url }))
+        .toEqual({ type: "openLocalFile", url });
+    }
+    for (const url of ["https://example.com", "command:run", "javascript:alert(1)", "./plan.md", ""]) {
+      expect(contracts.webviewToExtensionMessageSchema.safeParse({ type: "openLocalFile", url }).success).toBe(false);
+    }
+    expect(contracts.webviewToExtensionMessageSchema.safeParse({
+      type: "openLocalFile", url: "/workspace/plan.md", command: "run",
+    }).success).toBe(false);
+  });
+
   it("validates openConversationArtifact webview message and rejects arbitrary file paths", () => {
     expect(contracts.webviewToExtensionMessageSchema.parse({
       type: "openConversationArtifact",
