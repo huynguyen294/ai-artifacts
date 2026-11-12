@@ -1,9 +1,13 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+const { mockPostMessage } = vi.hoisted(() => ({
+  mockPostMessage: vi.fn(),
+}));
+
 vi.mock("../src/webview/vscode-api", () => ({
   vscode: {
-    postMessage: vi.fn(),
+    postMessage: mockPostMessage,
     getState: vi.fn(),
     setState: vi.fn(),
   },
@@ -17,12 +21,16 @@ describe("WhatsNewApp and WhatsNewDocument", () => {
   const mediaBaseUri = "https://file+.vscode-resource.vscode-cdn.net/ext/media/whats-new";
 
   afterEach(() => {
+    mockPostMessage.mockClear();
     vi.doUnmock("../src/webview/whats-new-content");
     vi.resetModules();
   });
 
-  it("renders the release list by default without article body or media", () => {
+  // SSR (renderToStaticMarkup) verifies markup and version fallback for initialView;
+  // it does not execute useEffect, so window listener setup and post-commit ACK are not tested here.
+  it("renders the release list by default without article body or media and without posting effect messages during SSR", () => {
     const html = renderToStaticMarkup(<WhatsNewApp mediaBaseUri={mediaBaseUri} />);
+    expect(mockPostMessage).not.toHaveBeenCalled();
     const previewArticle = whatsNewContent.articles[0]!;
 
     expect(html).toContain(">What&#x27;s New</button>");

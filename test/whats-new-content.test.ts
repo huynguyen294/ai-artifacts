@@ -3,6 +3,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import previewMarkdown from "../src/content/whats-new/preview.md?raw";
 import tipsMarkdown from "../src/content/tips.md?raw";
+import { whatsNewReleases } from "../src/shared/whats-new-releases";
 import { resolveContentImage } from "../src/webview/content-media";
 import { whatsNewContent } from "../src/webview/whats-new-content";
 
@@ -24,10 +25,16 @@ describe("whats-new-content", () => {
     expect(tipsMarkdown).toContain("https://");
   });
 
-  it("exposes migrated features/bugFixes metadata, unique versions, and references existing valid PNG/GIF sample assets", async () => {
-    expect(whatsNewContent.articles).toHaveLength(1);
+  it("maps every shared release metadata entry to non-empty Markdown in source order with valid assets", async () => {
+    expect(whatsNewContent.articles).toHaveLength(whatsNewReleases.length);
     const versions = whatsNewContent.articles.map((item) => item.version);
     expect(new Set(versions).size).toBe(versions.length);
+
+    for (const [index, release] of whatsNewReleases.entries()) {
+      const article = whatsNewContent.articles[index]!;
+      expect(article).toMatchObject(release);
+      expect(article.markdown.trim().length).toBeGreaterThan(0);
+    }
 
     const article = whatsNewContent.articles[0]!;
     expect(article.version).toBe("1.2.0");
@@ -42,6 +49,7 @@ describe("whats-new-content", () => {
     expect(article.bugFixes).toEqual([]);
     expect(article.preview).toBe(true);
     expect(article.icon).toBe("layers");
+    expect(article.notify).toBe(false);
     expect(article.publishedAt).toBeUndefined();
     expect(article.markdown).toBe(previewMarkdown);
     expect(whatsNewContent.tipsMarkdown).toBe(tipsMarkdown);
