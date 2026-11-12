@@ -502,10 +502,10 @@
         },
         "agentPlus.artifactRetentionDays": {
           "type": "integer",
-          "default": 30,
+          "default": 90,
           "minimum": 1,
           "scope": "machine",
-          "description": "Permanently delete AI Artifacts whose artifact.json updatedAt is older than this many days when the extension activates."
+          "description": "Permanently delete globally archived artifacts and Work Sessions this many days after their archivedAt timestamp when the extension activates. Unarchived items are kept. Deleting a Work Session preserves its artifacts."
         }
       }
     }

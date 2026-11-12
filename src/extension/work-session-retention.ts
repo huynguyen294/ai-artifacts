@@ -1,21 +1,14 @@
 import { promises as fs } from "node:fs";
-import {
-  conversationRegistryRoot,
-  type GlobalArtifactsRootOptions,
-} from "../shared/artifact-files";
-import {
-  deleteSession,
-  ensureSafeConversationRegistryRoot,
-} from "../shared/conversation-artifact-registry";
+import { conversationRegistryRoot, type GlobalArtifactsRootOptions } from "../shared/artifact-files";
+import { deleteSession, ensureSafeConversationRegistryRoot } from "../shared/conversation-artifact-registry";
 import { artifactConversationIdSchema } from "../shared/contracts";
 import { getSessionUiState } from "./artifact-ui-state";
-import { DAY_IN_MS } from "./artifact-retention";
+import { DAY_IN_MS, DEFAULT_RETENTION_DAYS, normalizeRetentionDays } from "./artifact-retention";
 
 export { DAY_IN_MS };
-export const ARCHIVED_SESSION_RETENTION_DAYS = 30;
 
 export type WorkSessionRetentionOptions = {
-  retentionDays?: number;
+  retentionDays?: unknown;
   now?: number;
   rootOptions?: GlobalArtifactsRootOptions;
   logDiagnostic?: (message: string, error?: unknown) => void;
@@ -30,11 +23,7 @@ export type WorkSessionRetentionResult = {
   deletedSessionIds: string[];
 };
 
-export function isSessionCandidateExpired(
-  archivedAtIso: string,
-  retentionDays: number,
-  nowMs: number,
-): boolean {
+export function isSessionCandidateExpired(archivedAtIso: string, retentionDays: number, nowMs: number): boolean {
   const archivedAtMs = Date.parse(archivedAtIso);
   if (Number.isNaN(archivedAtMs)) return false;
   return nowMs >= archivedAtMs + retentionDays * DAY_IN_MS;
@@ -43,12 +32,17 @@ export function isSessionCandidateExpired(
 export async function executeWorkSessionArchiveCleanup(
   options: WorkSessionRetentionOptions = {},
 ): Promise<WorkSessionRetentionResult> {
-  const logDiagnostic = options.logDiagnostic ?? ((msg, err) => {
-    if (err) console.warn(`[AI Artifacts Session Retention] ${msg}`, err);
-    else console.warn(`[AI Artifacts Session Retention] ${msg}`);
-  });
+  const logDiagnostic =
+    options.logDiagnostic ??
+    ((msg, err) => {
+      if (err) console.warn(`[AI Artifacts Session Retention] ${msg}`, err);
+      else console.warn(`[AI Artifacts Session Retention] ${msg}`);
+    });
 
-  const retentionDays = options.retentionDays ?? ARCHIVED_SESSION_RETENTION_DAYS;
+  const retentionDays = normalizeRetentionDays(
+    options.retentionDays ?? DEFAULT_RETENTION_DAYS,
+    (message) => logDiagnostic(message),
+  );
   const nowMs = options.now ?? Date.now();
   const rootOptions = options.rootOptions ?? {};
 
@@ -104,10 +98,7 @@ export async function executeWorkSessionArchiveCleanup(
 
       // Revalidate before deleting
       const recheckUiState = await getSessionUiState(sessionId, rootOptions);
-      if (
-        !recheckUiState.archivedAt
-        || !isSessionCandidateExpired(recheckUiState.archivedAt, retentionDays, nowMs)
-      ) {
+      if (!recheckUiState.archivedAt || !isSessionCandidateExpired(recheckUiState.archivedAt, retentionDays, nowMs)) {
         result.skippedCount++;
         continue;
       }

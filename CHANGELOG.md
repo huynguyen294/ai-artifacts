@@ -28,7 +28,8 @@ Release history has been standardized and tracked starting from version **0.2.6*
 
 - Added context menus, Pin, Archive, and Delete actions for artifacts and Sessions. Archived items are hidden from normal sidebar lists, remain searchable, and open with a primary Restore action.
 - Added separate UI state files for Pin and Archive without changing the artifact schema. Deleting a Session preserves its artifacts; artifact deletion prunes related Session membership and layout entries.
-- Added activation-time cleanup of Sessions archived for at least 30 days, preserving their artifacts. Empty active v2 Sessions remain available.
+- Added activation-time cleanup of archived Sessions using the same `agentPlus.artifactRetentionDays` setting as artifacts (default 90 days), measured from the Session Archive timestamp. Session deletion preserves artifacts, and empty active v2 Sessions remain available.
+- Changed artifact retention to delete only globally archived artifacts after `artifact-ui-state.json.archivedAt` plus `agentPlus.artifactRetentionDays` (default 90 days). Unarchived artifacts, including older artifacts without UI state, are kept; Restore cancels eligibility and archiving again starts a new period. Artifact `updatedAt` no longer determines cleanup.
 - Added human-readable Session ZIP export with `Instructions.md` and numbered Markdown artifacts grouped into Working, References, and Archived folders.
 
 ### Review Editor and Approval Behavior

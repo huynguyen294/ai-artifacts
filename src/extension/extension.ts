@@ -931,7 +931,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     .getConfiguration("agentPlus")
     .get<unknown>("artifactRetentionDays");
   void executeArtifactRetentionCleanup({ retentionDays })
-    .then(() => executeWorkSessionArchiveCleanup())
+    .then(() => executeWorkSessionArchiveCleanup({ retentionDays }))
     .catch((error) => {
       console.error("AI Artifacts retention cleanup failed:", error);
     });

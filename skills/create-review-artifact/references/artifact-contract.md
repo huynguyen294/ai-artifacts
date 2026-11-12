@@ -49,7 +49,7 @@ The artifact skill requires its five tools once when starting an artifact lifecy
 artifact lifetime > waiter lifetime > chat-turn lifetime
 ```
 
-The artifact is per-user data whose lifetime is bounded by configured retention (`agentPlus.artifactRetentionDays`, default 30 days). When the extension activates, validated expired artifacts are permanently deleted based on `artifact.json.updatedAt`. Retention eligibility evaluates `updatedAt` directly: creating an artifact sets this timestamp, and successfully advancing a review round (including question-only or unchanged-Markdown advances) updates it. Inspecting, searching, reopening, reconnecting, waiting, saving comments, and submitting decisions do not modify `updatedAt` and do not extend retention. A waiter is an in-memory connection for one exact artifact. Cancellation, takeover, turn completion, or MCP restart may detach the waiter but never deletes or ends the artifact. Proceed and Just save end only the submitted round. An exact handle may become permanently missing after retention cleanup; the agent must not retry, scan for a replacement, or recreate the same artifact ID. To preserve content beyond the retention window, the user must complete Just save, Copy Markdown, or export content manually.
+The artifact is per-user data. Only globally archived artifacts are subject to configured retention (`agentPlus.artifactRetentionDays`, default 90 days). When the extension activates, validated expired archived artifacts are permanently deleted based on `artifact-ui-state.json.archivedAt`, when `now >= archivedAt + retentionDays`. Missing UI state or `archivedAt` means unarchived and preserves the artifact regardless of age, without migration; malformed or unreadable state is skipped. Restore clears `archivedAt`, and archiving again starts a new retention period. Pin, review-round advances, and `artifact.json.updatedAt` do not reset or exempt archive retention. A Session's Archived layout zone does not archive artifacts globally. A waiter is an in-memory connection for one exact artifact. Cancellation, takeover, turn completion, or MCP restart may detach the waiter but never deletes or ends the artifact. Proceed and Just save end only the submitted round. An exact handle may become permanently missing after retention cleanup; the agent must not retry, scan for a replacement, or recreate the same artifact ID. To preserve archived content beyond its retention window, restore the artifact or save a copy with Just save, Copy Markdown, or manual export before cleanup.
 
 ## Directory
 
@@ -60,6 +60,7 @@ The artifact is per-user data whose lifetime is bounded by configured retention 
   comments.json
   review-submission.json    # present only after submission
   artifact-connection.json  # optional window-routing state
+  artifact-ui-state.json    # optional Pin/Archive state; archivedAt drives retention
 ```
 
 Lifecycle management remains server- or extension-owned. Agents must not create, update, or repair these files directly, except `comments.json` and a `revise` submission in `review-submission.json` for explicitly requested [AI-authored feedback](ai-feedback.md). Schema v6 is the only supported lifecycle contract. Older schemas are unsupported and are not live-migrated.
