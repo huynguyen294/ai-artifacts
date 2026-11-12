@@ -5,7 +5,7 @@ export const VIEW_WHATS_NEW_ACTION = "View what's new";
 export interface WhatsNewNotificationDeps {
   getCurrentVersion: () => unknown;
   releases: readonly WhatsNewRelease[];
-  claimUpgradeNotification: (
+  recordVersion: (
     version: string,
     notifyEnabled: boolean,
   ) => Promise<boolean>;
@@ -53,15 +53,15 @@ export async function runWhatsNewNotification(
   const matchingRelease = deps.releases.find((release) => release.version === currentVersion);
   const notifyEnabled = matchingRelease?.notify === true;
 
-  let claimed: boolean;
+  let shouldNotify: boolean;
   try {
-    claimed = await deps.claimUpgradeNotification(currentVersion, notifyEnabled);
+    shouldNotify = await deps.recordVersion(currentVersion, notifyEnabled);
   } catch (stateError) {
     reportDiagnosticSafely(deps, "Could not update What's New notification state.", stateError);
     return;
   }
 
-  if (!claimed || !matchingRelease || !notifyEnabled) {
+  if (!shouldNotify || !matchingRelease || !notifyEnabled) {
     return;
   }
 

@@ -35,7 +35,7 @@ const {
   mockRunIntegrationActivation,
   mockRunAutomaticIntegrationUpgrade,
   mockRunWhatsNewNotification,
-  mockClaimWhatsNewUpgradeNotification,
+  mockRecordWhatsNewVersion,
   sidebarSpies,
   conversationServiceSpies,
   workspaceIntegrationSpies,
@@ -65,9 +65,9 @@ const {
     mockRunWhatsNewNotification: vi.fn(
       async (_deps: WhatsNewNotificationDeps): Promise<void> => undefined,
     ),
-    mockClaimWhatsNewUpgradeNotification: vi.fn(
+    mockRecordWhatsNewVersion: vi.fn(
       async (
-        _storageDirectory: string,
+        _state: unknown,
         _currentVersion: string,
         _notifyEnabled: boolean,
         _existingIntegration: boolean,
@@ -274,7 +274,7 @@ vi.mock("../src/extension/whats-new-notification", async (importOriginal) => {
   };
 });
 vi.mock("../src/extension/whats-new-notification-state", () => ({
-  claimWhatsNewUpgradeNotification: mockClaimWhatsNewUpgradeNotification,
+  recordWhatsNewVersion: mockRecordWhatsNewVersion,
 }));
 vi.mock("../src/extension/workspace-integration", () => workspaceIntegrationSpies);
 
@@ -657,11 +657,11 @@ describe("Extension activation wiring & manual command recording", () => {
         await activationDeps.runUpgrade(snapshot);
       }
       const notificationDeps = mockRunWhatsNewNotification.mock.calls[0]![0];
-      await notificationDeps.claimUpgradeNotification("1.2.0", true);
+      await notificationDeps.recordVersion("1.2.0", true);
       expect(await activationDeps.getInstalledIntegrationVersion()).toBe(snapshot);
       expect(workspaceIntegrationSpies.readInstalledIntegrationVersion).toHaveBeenCalledTimes(1);
-      expect(mockClaimWhatsNewUpgradeNotification).toHaveBeenCalledWith(
-        path.join(tempRoot, "storage", "whats-new-notification"),
+      expect(mockRecordWhatsNewVersion).toHaveBeenCalledWith(
+        context.globalState,
         "1.2.0",
         true,
         snapshot.status !== "missing",
@@ -688,10 +688,10 @@ describe("Extension activation wiring & manual command recording", () => {
       const activationDeps = mockRunIntegrationActivation.mock.calls[0]![0];
       await expect(activationDeps.getInstalledIntegrationVersion()).rejects.toBe(readError);
       const notificationDeps = mockRunWhatsNewNotification.mock.calls[0]![0];
-      await expect(notificationDeps.claimUpgradeNotification("1.2.0", true)).resolves.toBe(false);
+      await expect(notificationDeps.recordVersion("1.2.0", true)).resolves.toBe(false);
       expect(workspaceIntegrationSpies.readInstalledIntegrationVersion).toHaveBeenCalledTimes(1);
-      expect(mockClaimWhatsNewUpgradeNotification).toHaveBeenCalledWith(
-        path.join(tempRoot, "storage", "whats-new-notification"), "1.2.0", true, false,
+      expect(mockRecordWhatsNewVersion).toHaveBeenCalledWith(
+        context.globalState, "1.2.0", true, false,
       );
       expect(consoleErrorSpy).toHaveBeenCalledWith(
         "AI Artifacts What's New notification: Could not determine whether integration was previously installed.",
@@ -742,11 +742,11 @@ describe("Extension activation wiring & manual command recording", () => {
       expect(capturedDeps.getCurrentVersion()).toBe("1.2.0");
       expect(capturedDeps.releases).toBe(whatsNewReleases);
 
-      mockClaimWhatsNewUpgradeNotification.mockResolvedValueOnce(true);
-      await expect(capturedDeps.claimUpgradeNotification("1.2.0", true)).resolves.toBe(true);
-      expect(mockClaimWhatsNewUpgradeNotification).toHaveBeenCalledTimes(1);
-      expect(mockClaimWhatsNewUpgradeNotification).toHaveBeenCalledWith(
-        path.join(storagePath, "whats-new-notification"),
+      mockRecordWhatsNewVersion.mockResolvedValueOnce(true);
+      await expect(capturedDeps.recordVersion("1.2.0", true)).resolves.toBe(true);
+      expect(mockRecordWhatsNewVersion).toHaveBeenCalledTimes(1);
+      expect(mockRecordWhatsNewVersion).toHaveBeenCalledWith(
+        context.globalState,
         "1.2.0",
         true,
         false,
@@ -779,7 +779,7 @@ describe("Extension activation wiring & manual command recording", () => {
       releaseActivation();
       await pendingActivation;
 
-      // Non-file globalStorageUri scheme skips local filesystem state safely with diagnostic
+      // vscode-userdata storage must use globalState normally, without URI checks.
       vi.clearAllMocks();
       registeredCommands.clear();
       const virtualContext = {
@@ -792,12 +792,12 @@ describe("Extension activation wiring & manual command recording", () => {
       await activate(virtualContext);
       const virtualDeps = mockRunWhatsNewNotification.mock.calls[0]![0];
       expect(virtualDeps.getCurrentVersion()).toBeUndefined();
-      await expect(virtualDeps.claimUpgradeNotification("1.2.0", true)).resolves.toBe(false);
-      expect(mockClaimWhatsNewUpgradeNotification).not.toHaveBeenCalled();
-      expect(consoleErrorSpy).toHaveBeenCalledWith(
-        "AI Artifacts What's New notification: Skipping upgrade notification state because globalStorageUri is not a local file URI.",
-        { scheme: "vscode-userdata" },
+      mockRecordWhatsNewVersion.mockResolvedValueOnce(true);
+      await expect(virtualDeps.recordVersion("1.2.0", true)).resolves.toBe(true);
+      expect(mockRecordWhatsNewVersion).toHaveBeenCalledWith(
+        virtualContext.globalState, "1.2.0", true, false,
       );
+      expect(consoleErrorSpy).not.toHaveBeenCalled();
     } finally {
       await fs.rm(tempRoot, { recursive: true, force: true }).catch(() => {});
     }

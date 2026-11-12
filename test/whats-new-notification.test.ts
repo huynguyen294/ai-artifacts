@@ -42,7 +42,7 @@ function makeDeps(
   return {
     getCurrentVersion: vi.fn(() => "1.2.0"),
     releases: sampleReleases,
-    claimUpgradeNotification: vi.fn(async () => true),
+    recordVersion: vi.fn(async () => true),
     showInformationMessage: vi.fn(async () => undefined),
     openVersion: vi.fn(),
     reportDiagnostic: vi.fn(),
@@ -51,15 +51,15 @@ function makeDeps(
 }
 
 describe("whats-new notification controller", () => {
-  it("shows one non-modal Info notification when exact runtime release has notify: true and state claims true, opening the version only on button click", async () => {
+  it("shows one non-modal Info notification when exact runtime release has notify: true and state permits notification, opening the version only on button click", async () => {
     const clickDeps = makeDeps({
       showInformationMessage: vi.fn(async () => VIEW_WHATS_NEW_ACTION),
     });
 
     await runWhatsNewNotification(clickDeps);
 
-    expect(clickDeps.claimUpgradeNotification).toHaveBeenCalledTimes(1);
-    expect(clickDeps.claimUpgradeNotification).toHaveBeenCalledWith("1.2.0", true);
+    expect(clickDeps.recordVersion).toHaveBeenCalledTimes(1);
+    expect(clickDeps.recordVersion).toHaveBeenCalledWith("1.2.0", true);
     expect(clickDeps.showInformationMessage).toHaveBeenCalledTimes(1);
     expect(clickDeps.showInformationMessage).toHaveBeenCalledWith(
       "AI Artifacts 1.2.0: Work Sessions are here — with multi-agent support",
@@ -74,7 +74,7 @@ describe("whats-new notification controller", () => {
       showInformationMessage: vi.fn(async () => undefined),
     });
     await runWhatsNewNotification(dismissDeps);
-    expect(dismissDeps.claimUpgradeNotification).toHaveBeenCalledWith("1.2.0", true);
+    expect(dismissDeps.recordVersion).toHaveBeenCalledWith("1.2.0", true);
     expect(dismissDeps.openVersion).not.toHaveBeenCalled();
 
     const otherActionDeps = makeDeps({
@@ -86,39 +86,39 @@ describe("whats-new notification controller", () => {
 
   it("always observes runtime version with notifyEnabled=false for missing, false, omitted, or mismatched releases without catch-up", async () => {
     for (const version of ["1.3.0", "1.1.4", "1.1.3", "v1.2.0"]) {
-      const claimMock = vi.fn(async () => false);
+      const recordMock = vi.fn(async () => false);
       const deps = makeDeps({
         getCurrentVersion: vi.fn(() => version),
-        claimUpgradeNotification: claimMock,
+        recordVersion: recordMock,
       });
 
       await runWhatsNewNotification(deps);
 
-      expect(claimMock).toHaveBeenCalledTimes(1);
-      expect(claimMock).toHaveBeenCalledWith(version, false);
+      expect(recordMock).toHaveBeenCalledTimes(1);
+      expect(recordMock).toHaveBeenCalledWith(version, false);
       expect(deps.showInformationMessage).not.toHaveBeenCalled();
       expect(deps.openVersion).not.toHaveBeenCalled();
       expect(deps.reportDiagnostic).not.toHaveBeenCalled();
     }
 
-    // Even if a test double claims true while notify is false/missing, UI stays suppressed
+    // Even if a test double returns true while notify is false/missing, UI stays suppressed
     const safetyDeps = makeDeps({
       getCurrentVersion: vi.fn(() => "1.3.0"),
-      claimUpgradeNotification: vi.fn(async () => true),
+      recordVersion: vi.fn(async () => true),
     });
     await runWhatsNewNotification(safetyDeps);
     expect(safetyDeps.showInformationMessage).not.toHaveBeenCalled();
     expect(safetyDeps.openVersion).not.toHaveBeenCalled();
   });
 
-  it("stays silent when state returns false (fresh bootstrap, reload, downgrade, or lost race)", async () => {
+  it("stays silent when state returns false (fresh bootstrap, reload, or downgrade)", async () => {
     const deps = makeDeps({
-      claimUpgradeNotification: vi.fn(async () => false),
+      recordVersion: vi.fn(async () => false),
     });
 
     await runWhatsNewNotification(deps);
 
-    expect(deps.claimUpgradeNotification).toHaveBeenCalledWith("1.2.0", true);
+    expect(deps.recordVersion).toHaveBeenCalledWith("1.2.0", true);
     expect(deps.showInformationMessage).not.toHaveBeenCalled();
     expect(deps.openVersion).not.toHaveBeenCalled();
     expect(deps.reportDiagnostic).not.toHaveBeenCalled();
@@ -137,7 +137,7 @@ describe("whats-new notification controller", () => {
       "Could not read current extension version.",
       versionErr,
     );
-    expect(getVersionThrowDeps.claimUpgradeNotification).not.toHaveBeenCalled();
+    expect(getVersionThrowDeps.recordVersion).not.toHaveBeenCalled();
     expect(getVersionThrowDeps.showInformationMessage).not.toHaveBeenCalled();
 
     // 2. Non-string or empty version
@@ -147,13 +147,13 @@ describe("whats-new notification controller", () => {
       });
       await expect(runWhatsNewNotification(badVersionDeps)).resolves.toBeUndefined();
       expect(badVersionDeps.reportDiagnostic).toHaveBeenCalledTimes(1);
-      expect(badVersionDeps.claimUpgradeNotification).not.toHaveBeenCalled();
+      expect(badVersionDeps.recordVersion).not.toHaveBeenCalled();
     }
 
     // 3. State rejects
-    const stateErr = new Error("EACCES baseline");
+    const stateErr = new Error("globalState update failed");
     const stateFailDeps = makeDeps({
-      claimUpgradeNotification: vi.fn(async () => {
+      recordVersion: vi.fn(async () => {
         throw stateErr;
       }),
     });
@@ -165,7 +165,7 @@ describe("whats-new notification controller", () => {
     expect(stateFailDeps.showInformationMessage).not.toHaveBeenCalled();
     expect(stateFailDeps.openVersion).not.toHaveBeenCalled();
 
-    // 4. showInformationMessage rejects -> claimed once, no retry, no openVersion
+    // 4. showInformationMessage rejects -> version recorded once, no retry, no openVersion
     const uiErr = new Error("notification host unavailable");
     const uiFailDeps = makeDeps({
       showInformationMessage: vi.fn(async () => {
@@ -173,7 +173,7 @@ describe("whats-new notification controller", () => {
       }),
     });
     await expect(runWhatsNewNotification(uiFailDeps)).resolves.toBeUndefined();
-    expect(uiFailDeps.claimUpgradeNotification).toHaveBeenCalledTimes(1);
+    expect(uiFailDeps.recordVersion).toHaveBeenCalledTimes(1);
     expect(uiFailDeps.showInformationMessage).toHaveBeenCalledTimes(1);
     expect(uiFailDeps.openVersion).not.toHaveBeenCalled();
     expect(uiFailDeps.reportDiagnostic).toHaveBeenCalledWith(
@@ -193,7 +193,7 @@ describe("whats-new notification controller", () => {
       }),
     });
     await expect(runWhatsNewNotification(openFailDeps)).resolves.toBeUndefined();
-    expect(openFailDeps.claimUpgradeNotification).toHaveBeenCalledTimes(1);
+    expect(openFailDeps.recordVersion).toHaveBeenCalledTimes(1);
     expect(openFailDeps.openVersion).toHaveBeenCalledTimes(1);
   });
 

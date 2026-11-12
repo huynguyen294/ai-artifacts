@@ -14,6 +14,14 @@ Minor typos, formatting fixes, or cosmetic wording adjustments that do not chang
 
 Each entry includes the date, category, summary of changes, rationale, and affected components or files.
 
+## 2026-11-12 - Use standard VS Code globalState for release announcements
+
+- **Behavior and rationale:** Replaced custom notification filesystem state and cross-window exclusive claims with `context.globalState.get/update`. The previous file-only URI guard rejected the real `vscode-userdata` storage URI and skipped announcements before creating any state. Notification tracking now needs no storage path or URI scheme check.
+- **State:** `whatsNew.highestObservedVersion` stores one stable extension version, updated before Info UI. Fresh users stay silent; pre-existing integration receipts still identify legacy users on first tracked activation. Higher silent versions advance history; ordinary reload/downgrade/dismissal does not replay. Shared pre-install/upgrade receipt snapshots are preserved. Old development notification files are left unused and untouched.
+- **Trade-off and scope:** Simultaneous windows can both announce; cross-window deduplication is deliberately removed. MCP/skills, integration deployment, review/Session lifecycles, release content, and package version are unchanged.
+- **Docs and tests:** Synchronized README, architecture, philosophy, component ownership, contributor instructions, and unreleased changelog. Replaced filesystem/child-process tests with globalState version/persistence coverage and changed the `vscode-userdata` activation regression to verify normal version recording.
+- **Validation:** Type check, focused tests (4 files, 30 passed), full suite (70 files, 912 passed, 3 skipped), production build, and whitespace validation passed. Live Extension Host popup verification was not run; repackage before testing this implementation.
+
 ## 2026-11-12 - Align Search Artifact ordering with Recent Artifacts
 
 - **Behavior:** Search Artifact and Recent Artifacts share pin-first, updated-time-descending, artifact-ID-ascending ordering. Search caches a sorted copy before filtering and the 1,000-result cap, preserving order as the title query changes. Archived artifacts remain searchable and hidden from Recent.

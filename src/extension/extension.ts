@@ -84,7 +84,7 @@ import {
 } from "./conversation-artifact-service";
 import { whatsNewReleases } from "../shared/whats-new-releases";
 import { runWhatsNewNotification } from "./whats-new-notification";
-import { claimWhatsNewUpgradeNotification } from "./whats-new-notification-state";
+import { recordWhatsNewVersion } from "./whats-new-notification-state";
 import { WhatsNewPanelController } from "./whats-new-panel";
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
@@ -574,26 +574,15 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     getCurrentVersion: () =>
       (context.extension?.packageJSON as { version?: unknown } | undefined)?.version,
     releases: whatsNewReleases,
-    claimUpgradeNotification: async (version, notifyEnabled) => {
-      if (
-        context.globalStorageUri?.scheme !== "file"
-        || typeof context.globalStorageUri.fsPath !== "string"
-        || context.globalStorageUri.fsPath.length === 0
-      ) {
-        reportWhatsNewDiagnostic(
-          "Skipping upgrade notification state because globalStorageUri is not a local file URI.",
-          { scheme: context.globalStorageUri?.scheme },
-        );
-        return false;
-      }
+    recordVersion: async (version, notifyEnabled) => {
       let existingIntegration = false;
       try {
         existingIntegration = (await getInstalledIntegrationVersion()).status !== "missing";
       } catch (error) {
         reportWhatsNewDiagnostic("Could not determine whether integration was previously installed.", error);
       }
-      return claimWhatsNewUpgradeNotification(
-        path.join(context.globalStorageUri.fsPath, "whats-new-notification"),
+      return recordWhatsNewVersion(
+        context.globalState,
         version,
         notifyEnabled,
         existingIntegration,
