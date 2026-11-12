@@ -55,6 +55,15 @@ The AI must use the exact `artifactDirectory` returned when creating the artifac
 
 This safety invariant takes precedence over convenience: binding to the wrong artifact could attach comments, document content, and execution authorization to the wrong conversation.
 
+## Curated feature announcements (What's New & Tips)
+
+AI Artifacts treats release announcements (**What's New & Tips**) separately from the exhaustive release changelog and from MCP/skill integration management:
+
+- **Curated over exhaustive:** **What's New** presents high-level feature highlights and preview/release guides rather than every implementation detail in `CHANGELOG.md`; **Tips** focuses on practical workflows without turning the extension into an intrusive onboarding wizard.
+- **Upgrade-only, silent on initial baseline:** What's New notifications never fire on fresh installs, and there is no welcome/Tips popup or standalone Tips command. Missing local notification state does not reliably prove an install is brand new, so the first run with this tracking records a conservative baseline and stays quiet rather than guessing from integration receipts or stored artifacts.
+- **Exact-version opt-in, no catch-up:** A notification fires only when the runtime upgrades to a higher stable `X.Y.Z` version whose exact shared release entry sets `notify: true` (currently preview entries keep `notify: false`). Intermediate skipped versions are never backfilled, and reloads, downgrades, dismissals, UI errors, or manual views via **AI Artifacts: What's New** never re-arm or replay a popup.
+- **At-most-once within local global storage:** Claim ownership is persisted atomically before invoking VS Code's notification API (`notificationClaimed` records the pre-UI claim, not confirmed read status), prioritizing at-most-once delivery within the same local extension storage directory and keeping it completely independent of integration onboarding (**Run Installer**) and automatic integration upgrades.
+
 ## Product intent
 
 AI Artifacts provides a dedicated review layer for AI-generated Markdown. It enables users to read, annotate, and drive the feedback loop without turning the extension into a task manager or a second chat interface. Conversational interaction belongs in AI chat; the webview provides document review and Work Session organization: shared Instructions, artifact zones, and navigation across agents and chats.

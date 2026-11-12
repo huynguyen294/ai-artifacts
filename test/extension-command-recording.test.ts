@@ -15,6 +15,8 @@ import {
 } from "../src/extension/integration-activation";
 import type { AutomaticIntegrationUpgradeDeps } from "../src/extension/upgrade-notification";
 import { INSTALLATION_GUIDE_URL } from "../src/extension/upgrade-notification";
+import type { WhatsNewNotificationDeps } from "../src/extension/whats-new-notification";
+import { whatsNewReleases } from "../src/shared/whats-new-releases";
 import type { ExistingInstalledIntegrationVersionReadResult } from "../src/extension/workspace-integration";
 
 const {
@@ -29,6 +31,8 @@ const {
   mockClipboardWriteText,
   mockRunIntegrationActivation,
   mockRunAutomaticIntegrationUpgrade,
+  mockRunWhatsNewNotification,
+  mockClaimWhatsNewUpgradeNotification,
   sidebarSpies,
   conversationServiceSpies,
   workspaceIntegrationSpies,
@@ -54,6 +58,16 @@ const {
     ),
     mockRunAutomaticIntegrationUpgrade: vi.fn(
       async (_deps: AutomaticIntegrationUpgradeDeps): Promise<void> => undefined,
+    ),
+    mockRunWhatsNewNotification: vi.fn(
+      async (_deps: WhatsNewNotificationDeps): Promise<void> => undefined,
+    ),
+    mockClaimWhatsNewUpgradeNotification: vi.fn(
+      async (
+        _storageDirectory: string,
+        _currentVersion: string,
+        _notifyEnabled: boolean,
+      ): Promise<boolean> => false,
     ),
     sidebarSpies: {
       recentRefresh: vi.fn(),
@@ -136,6 +150,7 @@ const {
     whatsNewSpies: {
       constructorSpy: vi.fn(),
       show: vi.fn(),
+      showVersion: vi.fn(),
       dispose: vi.fn(),
     },
   };
@@ -205,6 +220,7 @@ vi.mock("../src/extension/whats-new-panel", () => ({
       whatsNewSpies.constructorSpy(extensionUri);
     }
     show = whatsNewSpies.show;
+    showVersion = whatsNewSpies.showVersion;
     dispose = whatsNewSpies.dispose;
   },
 }));
@@ -265,6 +281,16 @@ vi.mock("../src/extension/upgrade-notification", async (importOriginal) => {
     runAutomaticIntegrationUpgrade: mockRunAutomaticIntegrationUpgrade,
   };
 });
+vi.mock("../src/extension/whats-new-notification", async (importOriginal) => {
+  const original = await importOriginal<typeof import("../src/extension/whats-new-notification")>();
+  return {
+    ...original,
+    runWhatsNewNotification: mockRunWhatsNewNotification,
+  };
+});
+vi.mock("../src/extension/whats-new-notification-state", () => ({
+  claimWhatsNewUpgradeNotification: mockClaimWhatsNewUpgradeNotification,
+}));
 vi.mock("../src/extension/workspace-integration", () => workspaceIntegrationSpies);
 
 import { activate } from "../src/extension/extension";
@@ -827,6 +853,106 @@ describe("Extension activation wiring & manual command recording", () => {
       });
       registeredCommands.get("agentPlus.openWhatsNew")!();
       expect(mockShowErrorMessage).toHaveBeenCalledWith("Failed to open What's New: panel failure");
+    } finally {
+      await fs.rm(tempRoot, { recursive: true, force: true }).catch(() => {});
+    }
+  });
+
+  it("wires What's New notification non-blockingly and independently of integration activation", async () => {
+    const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "ai-artifacts-ext-wn-wiring-"));
+    try {
+      vi.spyOn(os, "homedir").mockReturnValue(tempRoot);
+
+      let releaseActivation!: () => void;
+      const pendingActivation = new Promise<void>((resolve) => {
+        releaseActivation = resolve;
+      });
+      mockRunIntegrationActivation.mockReturnValueOnce(pendingActivation);
+
+      let releaseWhatsNew!: () => void;
+      const pendingWhatsNew = new Promise<void>((resolve) => {
+        releaseWhatsNew = resolve;
+      });
+      mockRunWhatsNewNotification.mockReturnValueOnce(pendingWhatsNew);
+
+      const storagePath = path.join(tempRoot, "storage");
+      const context = {
+        extension: { packageJSON: { version: "1.2.0" } },
+        extensionUri: { fsPath: tempRoot },
+        globalStorageUri: { scheme: "file", fsPath: storagePath },
+        globalState: { get: vi.fn(), update: vi.fn(async () => undefined) },
+        subscriptions: [] as Array<{ dispose: () => void }>,
+      } as any;
+
+      // activate(context) resolves cleanly even while both notification controllers remain pending
+      await activate(context);
+
+      expect(mockRunIntegrationActivation).toHaveBeenCalledTimes(1);
+      expect(mockRunWhatsNewNotification).toHaveBeenCalledTimes(1);
+      expect(registeredCommands.has("agentPlus.openWhatsNew")).toBe(true);
+      expect(registeredCommands.has("agentPlus.installer")).toBe(true);
+      expect(whatsNewSpies.show).not.toHaveBeenCalled();
+      expect(whatsNewSpies.showVersion).not.toHaveBeenCalled();
+
+      const capturedDeps = mockRunWhatsNewNotification.mock.calls[0]![0];
+      expect(capturedDeps.getCurrentVersion()).toBe("1.2.0");
+      expect(capturedDeps.releases).toBe(whatsNewReleases);
+
+      mockClaimWhatsNewUpgradeNotification.mockResolvedValueOnce(true);
+      await expect(capturedDeps.claimUpgradeNotification("1.2.0", true)).resolves.toBe(true);
+      expect(mockClaimWhatsNewUpgradeNotification).toHaveBeenCalledTimes(1);
+      expect(mockClaimWhatsNewUpgradeNotification).toHaveBeenCalledWith(
+        path.join(storagePath, "whats-new-notification"),
+        "1.2.0",
+        true,
+      );
+
+      await capturedDeps.showInformationMessage(
+        "AI Artifacts 1.2.0: Work Sessions",
+        "View what's new",
+      );
+      expect(mockShowInformationMessage).toHaveBeenCalledWith(
+        "AI Artifacts 1.2.0: Work Sessions",
+        "View what's new",
+      );
+
+      await capturedDeps.openVersion("1.2.0");
+      expect(whatsNewSpies.showVersion).toHaveBeenCalledTimes(1);
+      expect(whatsNewSpies.showVersion).toHaveBeenCalledWith("1.2.0");
+      expect(whatsNewSpies.show).not.toHaveBeenCalled();
+
+      const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      const wnErr = new Error("notification boom");
+      capturedDeps.reportDiagnostic("ui check", wnErr);
+      expect(consoleErrorSpy).toHaveBeenCalledWith(
+        "AI Artifacts What's New notification: ui check",
+        wnErr,
+      );
+
+      releaseWhatsNew();
+      await pendingWhatsNew;
+      releaseActivation();
+      await pendingActivation;
+
+      // Non-file globalStorageUri scheme skips local filesystem state safely with diagnostic
+      vi.clearAllMocks();
+      registeredCommands.clear();
+      const virtualContext = {
+        extensionUri: { fsPath: tempRoot },
+        globalStorageUri: { scheme: "vscode-userdata", fsPath: storagePath },
+        globalState: { get: vi.fn(), update: vi.fn(async () => undefined) },
+        subscriptions: [] as Array<{ dispose: () => void }>,
+      } as any;
+
+      await activate(virtualContext);
+      const virtualDeps = mockRunWhatsNewNotification.mock.calls[0]![0];
+      expect(virtualDeps.getCurrentVersion()).toBeUndefined();
+      await expect(virtualDeps.claimUpgradeNotification("1.2.0", true)).resolves.toBe(false);
+      expect(mockClaimWhatsNewUpgradeNotification).not.toHaveBeenCalled();
+      expect(consoleErrorSpy).toHaveBeenCalledWith(
+        "AI Artifacts What's New notification: Skipping upgrade notification state because globalStorageUri is not a local file URI.",
+        { scheme: "vscode-userdata" },
+      );
     } finally {
       await fs.rm(tempRoot, { recursive: true, force: true }).catch(() => {});
     }

@@ -102,6 +102,9 @@ import {
   ConversationArtifactService,
   setupConversationRegistryWatcher,
 } from "./conversation-artifact-service";
+import { whatsNewReleases } from "../shared/whats-new-releases";
+import { runWhatsNewNotification } from "./whats-new-notification";
+import { claimWhatsNewUpgradeNotification } from "./whats-new-notification-state";
 import { WhatsNewPanelController } from "./whats-new-panel";
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
@@ -830,6 +833,38 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     reportDiagnostic: (message, error) => {
       console.error(`AI Artifacts integration activation: ${message}`, error);
     },
+  });
+
+  const reportWhatsNewDiagnostic = (message: string, error: unknown): void => {
+    console.error(`AI Artifacts What's New notification: ${message}`, error);
+  };
+
+  void runWhatsNewNotification({
+    getCurrentVersion: () =>
+      (context.extension?.packageJSON as { version?: unknown } | undefined)?.version,
+    releases: whatsNewReleases,
+    claimUpgradeNotification: async (version, notifyEnabled) => {
+      if (
+        context.globalStorageUri?.scheme !== "file"
+        || typeof context.globalStorageUri.fsPath !== "string"
+        || context.globalStorageUri.fsPath.length === 0
+      ) {
+        reportWhatsNewDiagnostic(
+          "Skipping upgrade notification state because globalStorageUri is not a local file URI.",
+          { scheme: context.globalStorageUri?.scheme },
+        );
+        return false;
+      }
+      return claimWhatsNewUpgradeNotification(
+        path.join(context.globalStorageUri.fsPath, "whats-new-notification"),
+        version,
+        notifyEnabled,
+      );
+    },
+    showInformationMessage: (message, ...actions) =>
+      vscode.window.showInformationMessage(message, ...actions),
+    openVersion: (version) => whatsNewController.showVersion(version),
+    reportDiagnostic: reportWhatsNewDiagnostic,
   });
 
   try {

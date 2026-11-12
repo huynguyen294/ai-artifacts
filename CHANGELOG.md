@@ -6,6 +6,12 @@ Release history has been standardized and tracked starting from version **0.2.6*
 
 ## [1.2.0] - Unreleased
 
+### What's New & Tips and Upgrade Announcements
+
+- Added **`AI Artifacts: What's New`** (`agentPlus.openWhatsNew`) and a standalone **What's New & Tips** Webview panel (`WhatsNewPanelController`, `WhatsNewApp`) with top-level **What's New** and **Tips** tabs, curated release cards (version label, optional date and `Preview content` badge, title, description, collapsed **Features** / **Bug fixes** lists, and **View more details →**), full article views with **← All updates** navigation, content-mode Markdown rendering (`MarkdownRenderer` `mode="content"`, external HTTP/HTTPS/mailto links only), and packaged PNG/GIF media support (`media/whats-new/`, no video/YouTube embeds). Curated release cards currently ship preview `1.2.0` content (`preview: true`, `notify: false`) and sample Tips alongside existing preview illustrations.
+- Added shared pure-Node release metadata (`src/shared/whats-new-releases.ts`), strict host/webview What's New messaging (`src/shared/whats-new-protocol.ts`) with ready/visible flush gating and ACK clearing (`showVersion(version)`), and a client navigation adapter (`src/webview/whats-new-navigation.ts`).
+- Added upgrade-only What's New notifications (`src/extension/whats-new-notification.ts`, `src/extension/whats-new-notification-state.ts`), invoked non-blockingly at activation independently of onboarding and automatic integration upgrades: conservatively initializes missing local state (`<globalStorageUri>/whats-new-notification/`) silently without a welcome/Tips popup or Tips command, matches exact higher stable `X.Y.Z` versions opted in via `notify: true` with no catch-up or repeat popups on reload/downgrade/dismissal, deduplicates concurrent same-version claims within the same local storage directory using exclusive `"wx"` per-version receipts before UI invocation, and opens the target article when clicking **View what's new**.
+
 ### Multi-Agent Work Sessions
 
 - Added Work Sessions for organizing artifacts and shared instructions across agents and chats, with a dedicated **AI Artifacts** Activity Bar containing **Recent Artifacts** and **Sessions** views.

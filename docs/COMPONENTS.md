@@ -66,13 +66,14 @@ The core responsibility split is:
 | Workspace Registry       | Evidence of currently open VS Code workspaces | Short-lived, per-window workspace snapshots                                  |
 | Work Session Registry    | Work Session organization and zones           | Schema-v2 metadata, instructions.md, layout.json zones, registered artifact indexes, and global session types |
 | Artifact file protocol   | Persistent lifecycle and routing communication | Manifest, Markdown, comments, decision, and optional connection state         |
-| Extension entry          | VS Code activation and composition            | Commands, watchers, Activity Bar views, activation onboarding & auto-upgrade trigger, and provider registration |
+| Extension entry          | VS Code activation and composition            | Commands, watchers, Activity Bar views, activation onboarding, auto-upgrade & What's New triggers, and panel/provider registration |
 | Artifact Review Provider | Webview/extension orchestration               | One custom-editor session, submission guard, and its subscriptions        |
 | Work Session Provider    | Work Session management orchestration         | `agentPlus.workSession` custom readonly editor, scoped patches, per-session panel state, and host actions |
+| What's New panel & notifications | Standalone release viewer & upgrade alerts | `agentPlus.whatsNew` panel controller, navigation handshake, upgrade-only controller, and `<globalStorageUri>/whats-new-notification/` state |
 | Artifact Store           | Trusted artifact persistence adapter          | Validated review state, comments, and submission writes                      |
-| Review Webview & Session Tab | Human review and Work Session management  | Ephemeral UI state, ReviewApp, SessionApp (two-column manager), and typed user intent |
-| Markdown review pipeline | Document rendering and comment anchoring      | Parsed blocks and rendered annotations                                       |
-| Shared contracts         | Cross-process protocol definition             | Schemas, types, filenames, and binding rules                                 |
+| Review Webview, Session & What's New | Human review, Work Session management & updates | Ephemeral UI state, `ReviewApp`, `SessionApp`, `WhatsNewApp`, and typed user intent |
+| Markdown review pipeline | Document rendering and comment anchoring      | Parsed blocks and rendered annotations (plus external-only `mode="content"`) |
+| Shared contracts & metadata | Cross-process protocol and release metadata | Schemas, types, filenames, binding rules, `whats-new-releases`, and `whats-new-protocol` |
 | Integration manager      | Installation, upgrade, and verification       | Extension-managed MCP runtime, both skills, saved client selections, version receipts, and supported-client configuration |
 
 The governing lifetime relationship is `artifact lifetime > waiter lifetime > chat-turn lifetime`. Only globally archived artifacts are subject to configured retention (`agentPlus.artifactRetentionDays`), measured from `artifact-ui-state.json.archivedAt`; expired archived artifacts are permanently deleted when the extension activates. Missing UI state or `archivedAt` preserves the artifact regardless of age. Artifact files persist across cancellation, takeover, chat completion, and MCP restart. The MCP waiter registry is temporary process state, while the skill retains the exact artifact handle needed to inspect or reconnect that persistent state.
@@ -297,8 +298,10 @@ The protocol is the communication medium between the independently running MCP p
   - Search all v2 Work Sessions by title (`agentPlus.searchSessions`).
   - Manage global session types via native QuickPick (`agentPlus.manageSessionTypes`).
   - Run single and bulk conversation migration (`agentPlus.migrateConversations`).
+  - Open or reveal the standalone What's New & Tips panel (`agentPlus.openWhatsNew`).
   - Open grouped Installer (`agentPlus.installer`, status-free via `listInstallableClients` and shared `install-notification.ts`) and Uninstall (`agentPlus.uninstall`, statusful via `listInstallerClients`) checkbox pickers, verify integrations (`AI Artifacts: Verify All Integrations`), and retain the earlier all-detected/per-client commands (sharing `install-notification.ts` across all install entry points).
   - Copy the current MCP configuration or production skill.
+- Trigger non-blocking `runWhatsNewNotification` alongside (and independent of) `runIntegrationActivation`: validate `globalStorageUri.scheme === "file"` for `<globalStorageUri>/whats-new-notification/`, pass runtime `packageJSON.version` and `whatsNewReleases`, display at most one non-modal Info notification (`View what's new`) for opt-in upgrades, and route clicks to `whatsNewController.showVersion(version)`.
 - Trigger non-blocking integration activation (`runIntegrationActivation`) at activation: read `~/.ai-artifacts/managed/integration-version.json` once before any client detection or upgrade; invite missing-receipt users once until clicked with `Run Installer` (persisting `installer.onboardingAccepted` before opening the picker, without triggering upgrades if canceled); route existing `valid` or `invalid` snapshots to `runAutomaticIntegrationUpgrade` -> `upgradeDetectedIntegrations(context, installedVersion)`, refreshing integration support views once on settlement, staying silent on empty/unchanged/healthy-update reports, and showing a single error notification naming the failed client(s), **`AI Artifacts: Installer`**, and `View Installation Guide` on failures or coordinator/version-read rejection.
 - Schedule best-effort asynchronous retention cleanup at activation: read `agentPlus.artifactRetentionDays`, enumerate validated schema-v6 candidates, and permanently delete only globally archived artifacts whose `artifact-ui-state.json.archivedAt` has expired, via atomic rename to managed cleanup staging. Re-read Archive state before deletion; missing state preserves the artifact, and invalid or unreadable state is skipped. Pass the same configured retention days to archived Work Session cleanup, which uses `session-ui-state.json.archivedAt` and the shared default/normalization while preserving artifacts. Cleanup does not block activation or commands.
 - Own and dispose top-level VS Code subscriptions.
@@ -385,13 +388,16 @@ The provider is the orchestration bridge between an untrusted webview and truste
 
 Only schema-v6 artifacts at exact validated global handles are loaded. Schemas v3/v4/v5 and workspace-local artifacts are rejected before review state is exposed.
 
-## 8. Review Webview & Session Tab
+## 8. Review Webview, Session Tab & What's New
 
 **Source**
 
 - Entry & discriminator: [`src/webview/main.tsx`](../src/webview/main.tsx)
 - Review Application: [`src/webview/ReviewApp.tsx`](../src/webview/ReviewApp.tsx)
 - Session Application: [`src/webview/SessionApp.tsx`](../src/webview/SessionApp.tsx)
+- What's New & Tips Application and views: [`src/webview/WhatsNewApp.tsx`](../src/webview/WhatsNewApp.tsx), [`src/webview/WhatsNewReleaseCard.tsx`](../src/webview/WhatsNewReleaseCard.tsx), [`src/webview/WhatsNewDocument.tsx`](../src/webview/WhatsNewDocument.tsx)
+- What's New content, media resolver & navigation listener: [`src/webview/whats-new-content.ts`](../src/webview/whats-new-content.ts), [`src/webview/content-media.ts`](../src/webview/content-media.ts), [`src/webview/whats-new-navigation.ts`](../src/webview/whats-new-navigation.ts), [`src/content/whats-new/`](../src/content/whats-new/), [`src/content/tips.md`](../src/content/tips.md), [`media/whats-new/`](../media/whats-new/)
+- What's New host panel & upgrade notification modules: [`src/shared/whats-new-releases.ts`](../src/shared/whats-new-releases.ts), [`src/shared/whats-new-protocol.ts`](../src/shared/whats-new-protocol.ts), [`src/extension/whats-new-panel.ts`](../src/extension/whats-new-panel.ts), [`src/extension/whats-new-notification.ts`](../src/extension/whats-new-notification.ts), [`src/extension/whats-new-notification-state.ts`](../src/extension/whats-new-notification-state.ts)
 - Comments drawer: [`src/webview/CommentsDrawer.tsx`](../src/webview/CommentsDrawer.tsx)
 - Focus management: [`src/webview/focus-trap.ts`](../src/webview/focus-trap.ts)
 - Action policy: [`src/webview/review-actions.ts`](../src/webview/review-actions.ts)
@@ -409,6 +415,11 @@ Only schema-v6 artifacts at exact validated global handles are loaded. Schemas v
   - Provide controls to rename the session, change or quick-create its session type, edit and explicitly **Save** Markdown `instructions`, toggle the per-session side panel (`globalState`), and organize/reorder/remove artifacts across `Working`, `References`, and `Archived`.
   - Preserve unsaved `instructions` draft across unrelated background refreshes while accepting `workSessionInstructionsPatch` when the persisted `instructions.md` file on disk actually changes, and surface action errors inline without tearing down the manager view.
   - Route artifact card clicks to the host for safe opening.
+- In **What's New & Tips & Notifications**:
+  - `src/shared/whats-new-releases.ts` and `src/shared/whats-new-protocol.ts` own pure release metadata (`notify` opt-in) and the strict What's New messaging schema cleanly separated from Review/Session and filesystem state.
+  - `WhatsNewPanelController` owns the single `agentPlus.whatsNew` panel lifecycle, `media/whats-new` media root / CSP scoping via `webview-html.ts`, `show()` / `showVersion(version)` target queuing, ready/visible gating, ACK clearing, and disposal.
+  - `whats-new-content.ts` binds shared metadata to `?raw` Markdown (preview `1.2.0` + `tips.md`); `WhatsNewApp`, `WhatsNewReleaseCard`, and `WhatsNewDocument` own the **What's New** / **Tips** tabs, collapsed accordions, **View more details →** / **← All updates** navigation, post-commit ACK, and `content` Markdown rendering with packaged local PNG/GIF resolution (`content-media.ts`) and external-only links.
+  - `whats-new-notification-state.ts` owns `<globalStorageUri>/whats-new-notification/` (`baseline.json`, immutable exclusive `"wx"` version receipts, and strict local numeric stable `X.Y.Z` comparison); `whats-new-notification.ts` owns upgrade-only filtering, Info prompt presentation, diagnostic isolation, and routing **View what's new** clicks to `openVersion` without mutating or coupling to integration state.
 - Reset transient UI upon round or session state change.
 - Copy Markdown or Connect prompt to clipboard.
 
@@ -658,6 +669,7 @@ Tests document the expected responsibility boundaries:
 | Seven-client install/reinstall/verify/uninstall, version receipts, customization merge, and artifact retention | `test/workspace-integration.test.ts`, `test/mcp-client-drivers.test.ts`, `test/integration-verification.test.ts`, `test/skill-contract.test.ts`, `test/artifact-retention.test.ts` |
 | Grouped Installer/Uninstall picker selection, confirmation, cancellation, and unified install/reload notifications | `test/integration-install-command.test.ts`, `test/install-notification.test.ts`, `test/integration-uninstall-command.test.ts` |
 | Automatic integration upgrade coordinator, driver upgrades, saved client selections, activation/onboarding controller, error-only upgrade controller, and release-facing documentation contract | `test/integration-upgrade.test.ts`, `test/installed-client-state.test.ts`, `test/integration-activation.test.ts`, `test/extension-command-recording.test.ts`, `test/upgrade-notification.test.ts`, `test/release-contract.test.ts` |
+| What's New & Tips metadata, protocol, content/media, panel navigation, UI rendering, upgrade-only notification controller, and multi-process local state dedupe | `test/whats-new-releases.test.ts`, `test/whats-new-protocol.test.ts`, `test/whats-new-content.test.ts`, `test/whats-new-navigation.test.ts`, `test/whats-new-panel.test.ts`, `test/whats-new-app.test.tsx`, `test/whats-new-notification.test.ts`, `test/whats-new-notification-state.test.ts`, `test/extension-command-recording.test.ts` |
 
 For responsibility or protocol changes, update the shared contract first, trace every producer and consumer, and run:
 

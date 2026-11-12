@@ -21,6 +21,7 @@
   - [Multi-Agent Work Sessions](#multi-agent-work-sessions)
   - [Organize Session Artifacts](#organize-session-artifacts)
   - [Shared Instructions](#shared-instructions)
+  - [What's New & Tips](#whats-new--tips)
 - [Storage, behavior and security](#storage-behavior-and-security)
 - [Compatibility and upgrades](#compatibility-and-upgrades)
 - [Uninstalling and cleanup](#uninstalling-and-cleanup)
@@ -335,6 +336,16 @@ Session Instructions hold rules, workflows, and other guidance for agents workin
 - Closing or reloading the manager before clicking Save discards unsaved text. Changes saved to `instructions.md` outside the manager are reflected in the open Instructions field.
 
 The `work-session` skill applies the latest instructions to related requests and uses the artifact catalog to find supporting plans, references, or other documents. Instructions are stored in `instructions.md` inside the session directory; the file is separate from session metadata and artifact review state.
+
+### What's New & Tips
+
+Run **`AI Artifacts: What's New`** (`agentPlus.openWhatsNew`) from the Command Palette at any time to open or reveal the **What's New & Tips** view. This viewer is standalone and separate from Artifact Review editors, Work Sessions, and integration setup; manually opening or reading it never alters upgrade-notification history.
+
+- **Two views:** Switch between **What's New** (curated release highlights) and **Tips** (direct usage guides) using the top tabs.
+- **Release cards & full articles:** Each card shows its version label (plus an optional release date and `Preview content` badge when in preview), title, short description, **Features** and optional **Bug fixes** lists collapsed by default, and **View more details →** to open the full Markdown article with **← All updates** navigation. Release highlights are curated and distinct from the exhaustive [Changelog](CHANGELOG.md).
+- **Rich content & safety:** Both release articles and **Tips** render sanitized Markdown with local PNG/GIF illustrations under `media/whats-new/` and external HTTP/HTTPS/mailto links only (video and YouTube embeds are not included). The packaged `1.2.0` entry (`preview: true`, `notify: false`) and **Tips** currently ship preview content and sample assets while final release notes are authored.
+- **Upgrade-only notifications:** Fresh installs—and existing installations running this version-tracking mechanism for the first time without prior notification state—silently record their runtime version as a local baseline without showing a welcome or Tips popup (there is no automatic welcome notification or separate Tips command). When you upgrade to a higher stable `X.Y.Z` extension version whose exact entry sets `notify: true`, VS Code displays at most one non-modal Info notification (`AI Artifacts <version>: <title>`) with a **View what's new** action that opens the panel directly to that release article.
+- **Deduplication & independence:** Skipped opt-in versions are never catch-up notified later, and same-version reloads, dismissals, downgrades, or returns to already-observed versions stay silent. Claims are recorded under `<globalStorageUri>/whats-new-notification/` (`baseline.json` and per-version receipts) to prevent duplicate popups across concurrent windows sharing the same local extension global storage directory (not across different machines, profiles, or remote hosts). What's New notifications remain completely independent of **Run Installer** onboarding and automatic integration upgrades.
 
 ## Storage, behavior and security
 
