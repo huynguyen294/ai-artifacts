@@ -8,13 +8,13 @@ async function read(relativePath: string): Promise<string> {
   return readFile(path.join(repositoryRoot, relativePath), "utf8");
 }
 
-describe("v1.1.4 release contract", () => {
+describe("v1.2.0 release contract", () => {
   it("keeps package and lock metadata synchronized", async () => {
     const packageJson = JSON.parse(await read("package.json"));
     const packageLock = JSON.parse(await read("package-lock.json"));
 
     expect(packageJson.name).toBe("ai-artifacts");
-    expect(packageJson.version).toBe("1.1.4");
+    expect(packageJson.version).toBe("1.2.0");
     expect(packageLock.name).toBe(packageJson.name);
     expect(packageLock.version).toBe(packageJson.version);
     expect(packageLock.packages[""].name).toBe(packageJson.name);
@@ -192,27 +192,36 @@ describe("v1.1.4 release contract", () => {
     });
   });
 
-  it("contributes Antigravity install and uninstall commands with matching activation events", async () => {
+  it("contributes only the grouped Installer and Uninstall integration commands with matching activation events", async () => {
     const packageJson = JSON.parse(await read("package.json"));
 
     expect(packageJson.activationEvents).toEqual(
-      expect.arrayContaining([
-        "onCommand:agentPlus.installAntigravityIntegration",
-        "onCommand:agentPlus.uninstallAntigravityIntegration",
-      ]),
+      expect.arrayContaining(["onCommand:agentPlus.installer", "onCommand:agentPlus.uninstall"]),
     );
     expect(packageJson.contributes.commands).toEqual(
       expect.arrayContaining([
-        {
-          command: "agentPlus.installAntigravityIntegration",
-          title: "AI Artifacts: Install Integration for Antigravity",
-        },
-        {
-          command: "agentPlus.uninstallAntigravityIntegration",
-          title: "AI Artifacts: Uninstall Integration for Antigravity",
-        },
+        { command: "agentPlus.installer", title: "AI Artifacts: Installer" },
+        { command: "agentPlus.uninstall", title: "AI Artifacts: Uninstall" },
       ]),
     );
+
+    const removedCommandIds = [
+      "agentPlus.reinstallIntegration",
+      "agentPlus.installWorkspaceIntegration",
+      "agentPlus.installAllIntegrations",
+      "agentPlus.uninstallAllIntegrations",
+      ...["Copilot", "Codex", "Cursor", "Claude", "Windsurf", "Cline", "Antigravity"].flatMap((client) => [
+        `agentPlus.install${client}Integration`,
+        `agentPlus.uninstall${client}Integration`,
+      ]),
+    ];
+    const contributedCommandIds = packageJson.contributes.commands.map(
+      (command: { command: string }) => command.command,
+    );
+    for (const commandId of removedCommandIds) {
+      expect(contributedCommandIds).not.toContain(commandId);
+      expect(packageJson.activationEvents).not.toContain(`onCommand:${commandId}`);
+    }
   });
 
   it("contributes agentPlus.openWhatsNew command and matching activation event", async () => {
@@ -301,7 +310,7 @@ describe("v1.1.4 release contract", () => {
     const autoOpen = packageJson.contributes.configuration.properties["agentPlus.autoOpenArtifactReview"];
     const retentionDays = packageJson.contributes.configuration.properties["agentPlus.artifactRetentionDays"];
 
-    expect(packageJson.version).toBe("1.1.4");
+    expect(packageJson.version).toBe("1.2.0");
     expect(autoOpen.type).toBe("boolean");
     expect(autoOpen.default).toBe(true);
     expect(autoOpen.description).toContain("selected target window");

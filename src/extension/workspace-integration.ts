@@ -2,18 +2,10 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import * as vscode from "vscode";
-import {
-  classifyGlobalIntegration,
-  type IntegrationCheck,
-} from "./global-integration-status";
+import type { IntegrationCheck } from "./global-integration-status";
 import {
   AntigravityClientDriver,
   ClaudeClientDriver,
-  ClineClientDriver,
-  CodexClientDriver,
-  CopilotClientDriver,
-  CursorClientDriver,
-  WindsurfClientDriver,
   getAllClientDrivers,
   getClineSettingsPath,
   getVsCodeUserMcpPath,
@@ -22,7 +14,6 @@ import {
 import {
   normalizePathForComparison,
   readJsonConfig,
-  upsertJsonMcpServer,
   writeTextFileAtomic,
 } from "./mcp-clients/json-mcp-helper";
 import {
@@ -109,13 +100,6 @@ export function getClineConfigPath(context?: vscode.ExtensionContext): string {
   return getClineSettingsPath();
 }
 
-export function getDetectedSkillTargets(): Array<keyof InstalledSkillVersions> {
-  const targets: Array<keyof InstalledSkillVersions> = ["agents"];
-  if (new ClaudeClientDriver().isDetected()) targets.push("claude");
-  if (new AntigravityClientDriver().isDetected()) targets.push("antigravity");
-  return targets;
-}
-
 export function getBaseIntegrationPaths(
   context: vscode.ExtensionContext,
   options?: { userHome?: string },
@@ -153,15 +137,6 @@ export async function sessionSkillAssetsAreCurrent(paths: BaseIntegrationPaths):
 
 export async function baseScriptIsCurrent(paths: BaseIntegrationPaths): Promise<boolean> {
   return sameFile(paths.sourceMcpScript, paths.targetMcpScript);
-}
-
-export async function baseAssetsAreCurrent(paths: BaseIntegrationPaths): Promise<boolean> {
-  const [skillCurrent, sessionSkillCurrent, scriptCurrent] = await Promise.all([
-    skillAssetsAreCurrent(paths),
-    sessionSkillAssetsAreCurrent(paths),
-    baseScriptIsCurrent(paths),
-  ]);
-  return skillCurrent && sessionSkillCurrent && scriptCurrent;
 }
 
 export type InstalledIntegrationVersionReadResult =
@@ -420,31 +395,6 @@ export type SelectedIntegrationsInstallResult = {
   failedClients: Array<{ id: McpClientId; name: string; error: string }>;
 };
 
-export type AllDetectedIntegrationsInstallResult = {
-  installedClients: string[];
-  failedClients: SelectedIntegrationsInstallResult["failedClients"];
-};
-
-// 1. All detected
-export async function installAllDetectedIntegrations(
-  context: vscode.ExtensionContext,
-  options?: IntegrationMutationOptions,
-): Promise<AllDetectedIntegrationsInstallResult> {
-  const copilotConfigPath = getCopilotConfigPath(context);
-  const clineConfigPath = getClineConfigPath(context);
-  const drivers = getAllClientDrivers(copilotConfigPath, clineConfigPath);
-  const detectedIds = drivers.filter((driver) => driver.isDetected()).map((driver) => driver.id);
-  if (detectedIds.length === 0) {
-    return { installedClients: [], failedClients: [] };
-  }
-
-  const result = await installSelectedIntegrations(context, detectedIds, options);
-  return {
-    installedClients: result.installedClients.map((client) => client.name),
-    failedClients: result.failedClients,
-  };
-}
-
 export async function installSelectedIntegrations(
   context: vscode.ExtensionContext,
   clientIds: readonly McpClientId[],
@@ -494,150 +444,6 @@ export async function installSelectedIntegrations(
   }
 
   return { installedClients, failedClients };
-}
-
-// 2. Copilot (base setup + Code/User/mcp.json)
-export async function installCopilotIntegration(
-  context: vscode.ExtensionContext,
-  options?: IntegrationMutationOptions,
-): Promise<{ userConfigPath: string }> {
-  const userHome = os.homedir();
-  const { paths } = await setupBaseMcpServer(context, { userHome });
-  const copilotConfigPath = getCopilotConfigPath(context);
-  const copilotDriver = new CopilotClientDriver(copilotConfigPath);
-  await installClientAndRecordState(copilotDriver, paths.targetMcpScript, {
-    userHome,
-    recordClientSelection: options?.recordClientSelection ?? false,
-  });
-
-  return { userConfigPath: copilotConfigPath };
-}
-
-// 3. Codex
-export async function installCodexIntegration(
-  context: vscode.ExtensionContext,
-  options?: IntegrationMutationOptions,
-): Promise<void> {
-  const userHome = os.homedir();
-  const { paths } = await setupBaseMcpServer(context, { userHome });
-  const codexDriver = new CodexClientDriver();
-  await installClientAndRecordState(codexDriver, paths.targetMcpScript, {
-    userHome,
-    recordClientSelection: options?.recordClientSelection ?? false,
-  });
-}
-
-// 4. Cursor
-export async function installCursorIntegration(
-  context: vscode.ExtensionContext,
-  options?: IntegrationMutationOptions,
-): Promise<void> {
-  const userHome = os.homedir();
-  const { paths } = await setupBaseMcpServer(context, { userHome });
-  const cursorDriver = new CursorClientDriver();
-  await installClientAndRecordState(cursorDriver, paths.targetMcpScript, {
-    userHome,
-    recordClientSelection: options?.recordClientSelection ?? false,
-  });
-}
-
-// 5. Claude
-export async function installClaudeIntegration(
-  context: vscode.ExtensionContext,
-  options?: IntegrationMutationOptions,
-): Promise<void> {
-  const userHome = os.homedir();
-  const { paths } = await setupBaseMcpServer(context, { userHome });
-  const claudeDriver = new ClaudeClientDriver(
-    undefined,
-    undefined,
-    paths.sourceSkill,
-    undefined,
-    paths.sourceSessionSkill,
-  );
-  await installClientAndRecordState(claudeDriver, paths.targetMcpScript, {
-    userHome,
-    recordClientSelection: options?.recordClientSelection ?? false,
-  });
-}
-
-// 6. Windsurf
-export async function installWindsurfIntegration(
-  context: vscode.ExtensionContext,
-  options?: IntegrationMutationOptions,
-): Promise<void> {
-  const userHome = os.homedir();
-  const { paths } = await setupBaseMcpServer(context, { userHome });
-  const windsurfDriver = new WindsurfClientDriver();
-  await installClientAndRecordState(windsurfDriver, paths.targetMcpScript, {
-    userHome,
-    recordClientSelection: options?.recordClientSelection ?? false,
-  });
-}
-
-// 7. Cline
-export async function installClineIntegration(
-  context: vscode.ExtensionContext,
-  options?: IntegrationMutationOptions,
-): Promise<void> {
-  const userHome = os.homedir();
-  const { paths } = await setupBaseMcpServer(context, { userHome });
-  const clineConfigPath = getClineConfigPath(context);
-  const clineDriver = new ClineClientDriver(clineConfigPath);
-  await installClientAndRecordState(clineDriver, paths.targetMcpScript, {
-    userHome,
-    recordClientSelection: options?.recordClientSelection ?? false,
-  });
-}
-
-// 8. Antigravity
-export async function installAntigravityIntegration(
-  context: vscode.ExtensionContext,
-  options?: IntegrationMutationOptions,
-): Promise<void> {
-  const userHome = os.homedir();
-  const { paths } = await setupBaseMcpServer(context, { userHome });
-  const antigravityDriver = new AntigravityClientDriver({
-    userHome,
-    sourceSkillDirectory: paths.sourceSkill,
-    sourceSessionSkillDirectory: paths.sourceSessionSkill,
-  });
-  await installClientAndRecordState(antigravityDriver, paths.targetMcpScript, {
-    userHome,
-    recordClientSelection: options?.recordClientSelection ?? false,
-  });
-}
-
-// 8. Uninstall all detected integrations
-export async function uninstallAllDetectedIntegrations(
-  context?: vscode.ExtensionContext,
-  options?: { cleanupBase?: boolean; userHome?: string; recordClientSelection?: boolean },
-): Promise<{ uninstalledClients: string[] }> {
-  const userHome = options?.userHome ?? os.homedir();
-  const recordClientSelection = options?.recordClientSelection ?? false;
-  const copilotConfigPath = getCopilotConfigPath(context);
-  const clineConfigPath = getClineConfigPath(context);
-  const drivers = getAllClientDrivers(copilotConfigPath, clineConfigPath);
-  const savedClientIds = recordClientSelection
-    ? new Set(await readInstalledClients({ userHome }))
-    : undefined;
-  const targetDrivers = drivers.filter((driver) =>
-    savedClientIds ? savedClientIds.has(driver.id) || driver.isDetected() : driver.isDetected(),
-  );
-  const uninstalledClients: string[] = [];
-
-  for (const driver of targetDrivers) {
-    const changed = await uninstallClient(driver, { userHome, recordClientSelection });
-    if (changed) {
-      uninstalledClients.push(driver.name);
-    }
-  }
-
-  if (options?.cleanupBase !== false) {
-    await cleanupBaseMcpServer({ userHome });
-  }
-
-  return { uninstalledClients };
 }
 
 export type SelectedIntegrationsUninstallResult = {
@@ -886,81 +692,6 @@ export async function uninstallSelectedIntegrations(
     notConfiguredClients,
     failedClients,
   };
-}
-
-// 8. Individual uninstall functions
-export async function uninstallCopilotIntegration(
-  context?: vscode.ExtensionContext,
-  options?: IntegrationMutationOptions,
-): Promise<boolean> {
-  const copilotConfigPath = getCopilotConfigPath(context);
-  const driver = new CopilotClientDriver(copilotConfigPath);
-  return uninstallClient(driver, {
-    userHome: os.homedir(),
-    recordClientSelection: options?.recordClientSelection ?? false,
-  });
-}
-
-export async function uninstallCodexIntegration(
-  options?: IntegrationMutationOptions,
-): Promise<boolean> {
-  const driver = new CodexClientDriver();
-  return uninstallClient(driver, {
-    userHome: os.homedir(),
-    recordClientSelection: options?.recordClientSelection ?? false,
-  });
-}
-
-export async function uninstallCursorIntegration(
-  options?: IntegrationMutationOptions,
-): Promise<boolean> {
-  const driver = new CursorClientDriver();
-  return uninstallClient(driver, {
-    userHome: os.homedir(),
-    recordClientSelection: options?.recordClientSelection ?? false,
-  });
-}
-
-export async function uninstallClaudeIntegration(
-  options?: IntegrationMutationOptions,
-): Promise<boolean> {
-  const driver = new ClaudeClientDriver();
-  return uninstallClient(driver, {
-    userHome: os.homedir(),
-    recordClientSelection: options?.recordClientSelection ?? false,
-  });
-}
-
-export async function uninstallWindsurfIntegration(
-  options?: IntegrationMutationOptions,
-): Promise<boolean> {
-  const driver = new WindsurfClientDriver();
-  return uninstallClient(driver, {
-    userHome: os.homedir(),
-    recordClientSelection: options?.recordClientSelection ?? false,
-  });
-}
-
-export async function uninstallClineIntegration(
-  context?: vscode.ExtensionContext,
-  options?: IntegrationMutationOptions,
-): Promise<boolean> {
-  const clineConfigPath = getClineConfigPath(context);
-  const driver = new ClineClientDriver(clineConfigPath);
-  return uninstallClient(driver, {
-    userHome: os.homedir(),
-    recordClientSelection: options?.recordClientSelection ?? false,
-  });
-}
-
-export async function uninstallAntigravityIntegration(
-  options?: IntegrationMutationOptions,
-): Promise<boolean> {
-  const driver = new AntigravityClientDriver();
-  return uninstallClient(driver, {
-    userHome: os.homedir(),
-    recordClientSelection: options?.recordClientSelection ?? false,
-  });
 }
 
 export type ExistingInstalledIntegrationVersionReadResult = Exclude<
@@ -1303,26 +1034,4 @@ export async function checkAllIntegrations(
   }
 
   return { skillCurrent, sessionSkillCurrent, baseCurrent, clients };
-}
-
-// Backward compatibility methods for existing tests and callers
-export async function checkGlobalIntegration(
-  context: vscode.ExtensionContext,
-): Promise<IntegrationCheck> {
-  const paths = getBaseIntegrationPaths(context);
-  const codexDriver = new CodexClientDriver();
-  const codexCheck = await codexDriver.check(paths.targetMcpScript);
-  const assetsCurrent = await baseAssetsAreCurrent(paths);
-  return classifyGlobalIntegration({
-    configured: codexCheck.status === "ready",
-    assetsCurrent,
-    ...(codexCheck.detail ? { configurationConflict: codexCheck.detail } : {}),
-  });
-}
-
-export async function installGlobalIntegration(
-  context: vscode.ExtensionContext,
-): Promise<IntegrationCheck> {
-  await installCodexIntegration(context);
-  return { status: "restart-required" };
 }

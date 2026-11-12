@@ -197,6 +197,58 @@ describe("artifact-search-command", () => {
   });
 
   describe("runArtifactSearchCommand", () => {
+    it("uses Recent ordering for initial results and preserves it while filtering", async () => {
+      const qp = new MockQuickPick();
+      const artifacts = [
+        makeArtifact({ artifactId: "new-b", title: "Alpha match", normalizedTitle: "alpha match", updatedAt: "2026-11-12T00:00:00Z" }),
+        makeArtifact({ artifactId: "old", title: "Beta match", normalizedTitle: "beta match", updatedAt: "2026-11-01T00:00:00Z" }),
+        makeArtifact({ artifactId: "new-a", title: "Zebra match", normalizedTitle: "zebra match", updatedAt: "2026-11-12T00:00:00Z", isArchived: true }),
+        makeArtifact({ artifactId: "pin-old", title: "Pinned old", normalizedTitle: "pinned old", updatedAt: "2026-10-01T00:00:00Z", isPinned: true }),
+        makeArtifact({ artifactId: "pin-new", title: "Pinned match", normalizedTitle: "pinned match", updatedAt: "2026-10-02T00:00:00Z", isPinned: true }),
+      ];
+      const originalOrder = artifacts.map((a) => a.artifactId);
+      const discoverArtifacts = vi.fn().mockResolvedValue({ artifacts, skippedCount: 0 });
+      await runArtifactSearchCommand({
+        createQuickPick: () => qp,
+        discoverArtifacts,
+        openArtifact: vi.fn(),
+        showErrorMessage: vi.fn(),
+      });
+
+      const expectedOrder = ["pin-new", "pin-old", "new-a", "new-b", "old"];
+      expect(qp.items.map((item) => item.artifact.artifactId)).toEqual(expectedOrder);
+      expect(qp.items.find((item) => item.artifact.artifactId === "new-a")?.description).toContain("Archived");
+      qp.simulateChangeValue("match");
+      expect(qp.items.map((item) => item.artifact.artifactId)).toEqual(["pin-new", "new-a", "new-b", "old"]);
+      qp.simulateChangeValue("");
+      expect(qp.items.map((item) => item.artifact.artifactId)).toEqual(expectedOrder);
+      expect(discoverArtifacts).toHaveBeenCalledTimes(1);
+      expect(artifacts.map((a) => a.artifactId)).toEqual(originalOrder);
+    });
+
+    it("applies Recent ordering before limiting search results to 1000", async () => {
+      const qp = new MockQuickPick();
+      const artifacts = Array.from({ length: 1005 }, (_, i) => makeArtifact({
+        artifactId: `art-${String(i).padStart(4, "0")}`,
+        title: `Plan ${i}`,
+        normalizedTitle: `plan ${i}`,
+        updatedAt: new Date(Date.UTC(2026, 0, 1 + i)).toISOString(),
+        isPinned: i === 0,
+      }));
+      await runArtifactSearchCommand({
+        createQuickPick: () => qp,
+        discoverArtifacts: vi.fn().mockResolvedValue({ artifacts, skippedCount: 0 }),
+        openArtifact: vi.fn(),
+        showErrorMessage: vi.fn(),
+      });
+
+      expect(qp.items).toHaveLength(1000);
+      expect(qp.items[0]!.artifact.artifactId).toBe("art-0000");
+      expect(qp.items[1]!.artifact.artifactId).toBe("art-1004");
+      expect(qp.items[999]!.artifact.artifactId).toBe("art-0006");
+      expect(qp.title).toContain("Showing 1,000 of 1,005");
+    });
+
     it("opens Quick Pick immediately, marks busy, and populates items on discovery", async () => {
       const qp = new MockQuickPick();
       const artifacts = [

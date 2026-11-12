@@ -48,7 +48,7 @@ export function summarizeIntegrationVerification(
   if (detectedClients.length === 0) {
     summary.push(
       isBaseReady
-        ? "No supported AI clients were detected. Use a client-specific install command if needed."
+        ? "No supported AI clients were detected. Use AI Artifacts: Installer if needed."
         : "No supported AI clients were detected. Review the installation guide, then verify again.",
     );
     return {
@@ -75,7 +75,7 @@ export function summarizeIntegrationVerification(
   }
 
   summary.push(
-    "Review the installation guide or use a client-specific install command, then verify again.",
+    "Review the installation guide or use AI Artifacts: Installer, then verify again.",
   );
   return {
     severity: "warning",

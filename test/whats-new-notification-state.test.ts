@@ -64,6 +64,75 @@ describe("whats-new-notification-state", () => {
     }
   });
 
+  it("notifies a legacy integration on first tracked activation exactly once", async () => {
+    const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "ai-artifacts-wn-legacy-"));
+    try {
+      const storageDir = path.join(tempRoot, "whats-new-notification");
+      expect(await claimWhatsNewUpgradeNotification(storageDir, "1.2.0", true, true)).toBe(true);
+      expect(await readJson(path.join(storageDir, "baseline.json"))).toEqual({
+        schemaVersion: 1,
+        version: "1.2.0",
+        legacyIntegration: true,
+      });
+      expect(await readJson(path.join(storageDir, "versions", "1.2.0.json"))).toEqual({
+        schemaVersion: 1,
+        version: "1.2.0",
+        notificationClaimed: true,
+      });
+      expect(await claimWhatsNewUpgradeNotification(storageDir, "1.2.0", true, true)).toBe(false);
+      expect(await claimWhatsNewUpgradeNotification(storageDir, "1.1.4", true, true)).toBe(false);
+      expect(await claimWhatsNewUpgradeNotification(storageDir, "1.3.0", true, true)).toBe(true);
+    } finally {
+      await fs.rm(tempRoot, { recursive: true, force: true }).catch(() => {});
+    }
+  });
+
+  it("does not reclassify a fresh baseline after Installer creates integration receipts", async () => {
+    const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "ai-artifacts-wn-fresh-install-"));
+    try {
+      expect(await claimWhatsNewUpgradeNotification(tempRoot, "1.2.0", true, false)).toBe(false);
+      expect(await claimWhatsNewUpgradeNotification(tempRoot, "1.2.0", true, true)).toBe(false);
+      expect(await readJson(path.join(tempRoot, "baseline.json"))).toEqual({
+        schemaVersion: 1,
+        version: "1.2.0",
+      });
+    } finally {
+      await fs.rm(tempRoot, { recursive: true, force: true }).catch(() => {});
+    }
+  });
+
+  it("does not catch up a legacy bootstrap initially observed with notify disabled", async () => {
+    const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "ai-artifacts-wn-legacy-silent-"));
+    try {
+      expect(await claimWhatsNewUpgradeNotification(tempRoot, "1.2.0", false, true)).toBe(false);
+      expect(await claimWhatsNewUpgradeNotification(tempRoot, "1.2.0", true, true)).toBe(false);
+      expect(await claimWhatsNewUpgradeNotification(tempRoot, "1.3.0", true, true)).toBe(true);
+    } finally {
+      await fs.rm(tempRoot, { recursive: true, force: true }).catch(() => {});
+    }
+  });
+
+  it("shares legacy bootstrap eligibility between windows and claims the receipt once", async () => {
+    const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "ai-artifacts-wn-legacy-race-"));
+    try {
+      // Baseline written by the first window; no version receipt has been claimed yet.
+      await fs.writeFile(path.join(tempRoot, "baseline.json"), JSON.stringify({
+        schemaVersion: 1,
+        version: "1.2.0",
+        legacyIntegration: true,
+      }));
+      const outcomes = await Promise.all([
+        claimWhatsNewUpgradeNotification(tempRoot, "1.2.0", true, true),
+        claimWhatsNewUpgradeNotification(tempRoot, "1.2.0", true, false),
+      ]);
+      expect(outcomes.filter(Boolean)).toHaveLength(1);
+      expect(await claimWhatsNewUpgradeNotification(tempRoot, "1.3.0", false, true)).toBe(false);
+      expect(await claimWhatsNewUpgradeNotification(tempRoot, "1.2.0", true, true)).toBe(false);
+    } finally {
+      await fs.rm(tempRoot, { recursive: true, force: true }).catch(() => {});
+    }
+  });
+
   it("claims exactly once on upgrade to an opt-in version and persists claimed receipt before returning", async () => {
     const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "ai-artifacts-wn-upgrade-"));
     try {

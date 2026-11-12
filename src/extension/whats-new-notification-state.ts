@@ -15,6 +15,11 @@ type ParsedStableVersion = {
   patch: number;
 };
 
+type NotificationBaseline = {
+  version: ParsedStableVersion;
+  legacyIntegration: boolean;
+};
+
 function errorCode(error: unknown): string | undefined {
   return error instanceof Error && "code" in error && typeof error.code === "string"
     ? error.code
@@ -96,7 +101,7 @@ async function writeExclusiveJsonFile(filePath: string, payload: unknown): Promi
   return true;
 }
 
-async function readAndValidateBaseline(baselinePath: string): Promise<ParsedStableVersion> {
+async function readAndValidateBaseline(baselinePath: string): Promise<NotificationBaseline> {
   const stat = await fs.lstat(baselinePath);
   if (stat.isSymbolicLink() || !stat.isFile()) {
     throw new Error(`Notification baseline must be a regular file at ${baselinePath}.`);
@@ -120,19 +125,29 @@ async function readAndValidateBaseline(baselinePath: string): Promise<ParsedStab
     throw new Error("Invalid What's New notification baseline version.");
   }
 
-  return parsedVersion;
+  if ("legacyIntegration" in parsed && typeof parsed.legacyIntegration !== "boolean") {
+    throw new Error("Invalid What's New notification baseline integration marker.");
+  }
+  return {
+    version: parsedVersion,
+    legacyIntegration: "legacyIntegration" in parsed && parsed.legacyIntegration === true,
+  };
 }
 
 async function ensureOrReadBaseline(
   baselinePath: string,
   currentVersion: ParsedStableVersion,
-): Promise<ParsedStableVersion> {
+  existingIntegration: boolean,
+): Promise<NotificationBaseline> {
   const created = await writeExclusiveJsonFile(baselinePath, {
     schemaVersion: NOTIFICATION_STATE_SCHEMA_VERSION,
     version: currentVersion.version,
+    // Persist bootstrap eligibility so concurrent windows agree without inventing
+    // an earlier extension version from independent MCP/skill version numbers.
+    ...(existingIntegration ? { legacyIntegration: true } : {}),
   });
   if (created) {
-    return currentVersion;
+    return { version: currentVersion, legacyIntegration: existingIntegration };
   }
   return readAndValidateBaseline(baselinePath);
 }
@@ -159,6 +174,7 @@ export async function claimWhatsNewUpgradeNotification(
   storageDirectory: string,
   currentVersion: string,
   notifyEnabled: boolean,
+  existingIntegration = false,
 ): Promise<boolean> {
   if (typeof storageDirectory !== "string" || storageDirectory.trim().length === 0) {
     throw new Error("Notification state storage directory must be a non-empty string.");
@@ -176,10 +192,10 @@ export async function claimWhatsNewUpgradeNotification(
   await assertRealDirectory(versionsDir);
 
   const baselinePath = path.join(resolvedStorageDir, BASELINE_FILE);
-  const baselineVersion = await ensureOrReadBaseline(baselinePath, parsedCurrent);
+  const baseline = await ensureOrReadBaseline(baselinePath, parsedCurrent, existingIntegration);
   const existingReceiptVersions = await listObservedReceiptVersions(versionsDir);
 
-  let highestObserved = baselineVersion;
+  let highestObserved = baseline.version;
   for (const candidate of existingReceiptVersions) {
     if (compareStableVersions(candidate, highestObserved) > 0) {
       highestObserved = candidate;
@@ -187,7 +203,10 @@ export async function claimWhatsNewUpgradeNotification(
   }
 
   const isUpgrade = compareStableVersions(parsedCurrent, highestObserved) > 0;
-  const shouldClaim = isUpgrade && notifyEnabled;
+  const isLegacyBootstrap = baseline.legacyIntegration
+    && compareStableVersions(parsedCurrent, baseline.version) === 0
+    && compareStableVersions(parsedCurrent, highestObserved) === 0;
+  const shouldClaim = (isUpgrade || isLegacyBootstrap) && notifyEnabled;
 
   const receiptPath = path.join(versionsDir, `${parsedCurrent.version}${VERSION_RECEIPT_SUFFIX}`);
   const createdReceipt = await writeExclusiveJsonFile(receiptPath, {

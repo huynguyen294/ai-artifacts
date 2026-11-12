@@ -386,6 +386,7 @@ describe("WorkSession Sidebar Tree Data Providers", () => {
 
       const item = provider.getTreeItem(children[0]!);
       expect(item.label).toContain("Sessions require MCP server version 12 or higher");
+      expect(item.command?.command).toBe("agentPlus.installer");
     });
 
     it("renders sessions and migration candidates when MCP version 12 is present", async () => {

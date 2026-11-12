@@ -49,7 +49,7 @@ describe("whats-new-content", () => {
     expect(article.bugFixes).toEqual([]);
     expect(article.preview).toBe(true);
     expect(article.icon).toBe("layers");
-    expect(article.notify).toBe(false);
+    expect(article.notify).toBe(true);
     expect(article.publishedAt).toBeUndefined();
     expect(article.markdown).toBe(previewMarkdown);
     expect(whatsNewContent.tipsMarkdown).toBe(tipsMarkdown);

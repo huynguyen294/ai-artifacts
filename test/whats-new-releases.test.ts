@@ -27,10 +27,10 @@ describe("whats-new-releases", () => {
       bugFixes: [],
       icon: "layers",
       preview: true,
-      notify: false,
+      notify: true,
     });
     expect(preview.publishedAt).toBeUndefined();
-    expect(preview.notify === true).toBe(false);
+    expect(preview.notify === true).toBe(true);
 
     // Strictly opt-in: both notify: false and omitted notify leave notifications disabled
     const omittedNotifyRelease: WhatsNewRelease = {
@@ -41,7 +41,7 @@ describe("whats-new-releases", () => {
       bugFixes: [],
     };
     expect(omittedNotifyRelease.notify === true).toBe(false);
-    expect(whatsNewReleases.some((release) => release.notify === true)).toBe(false);
+    expect(whatsNewReleases.some((release) => release.notify === true)).toBe(true);
   });
 
   it("bundles standalone for Node without ?raw, VS Code, or React dependencies", async () => {

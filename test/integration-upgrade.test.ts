@@ -34,24 +34,10 @@ import {
 } from "../src/extension/mcp-clients/skill-helper";
 import {
   type ExistingInstalledIntegrationVersionReadResult,
-  installAllDetectedIntegrations,
-  installAntigravityIntegration,
-  installClaudeIntegration,
-  installClineIntegration,
-  installCodexIntegration,
-  installCopilotIntegration,
-  installCursorIntegration,
-  installWindsurfIntegration,
+  installSelectedIntegrations,
   readInstalledIntegrationVersion,
   setupBaseMcpServer,
-  uninstallAllDetectedIntegrations,
-  uninstallAntigravityIntegration,
-  uninstallClaudeIntegration,
-  uninstallClineIntegration,
-  uninstallCodexIntegration,
-  uninstallCopilotIntegration,
-  uninstallCursorIntegration,
-  uninstallWindsurfIntegration,
+  uninstallSelectedIntegrations,
   upgradeDetectedIntegrations,
   writeInstalledIntegrationVersion,
 } from "../src/extension/workspace-integration";
@@ -192,7 +178,8 @@ describe("Workspace Integration Auto-Upgrade Coordinator & Selection Policy", ()
     await fs.rm(tempRoot, { recursive: true, force: true }).catch(() => {});
   });
 
-  it("installs all 7 individual drivers with recordClientSelection=false without calling driver check() or creating installed-clients.json", async () => {
+  it("installs all 7 clients individually through installSelectedIntegrations with recordClientSelection=false without calling driver check() or creating installed-clients.json", async () => {
+    const ids = ["copilot", "cursor", "codex", "claude", "windsurf", "cline", "antigravity"] as const satisfies readonly McpClientId[];
     const checkSpies = [
       vi.spyOn(CopilotClientDriver.prototype, "check"),
       vi.spyOn(CursorClientDriver.prototype, "check"),
@@ -203,18 +190,10 @@ describe("Workspace Integration Auto-Upgrade Coordinator & Selection Policy", ()
       vi.spyOn(AntigravityClientDriver.prototype, "check"),
     ];
 
-    const individualInstallers = [
-      () => installCopilotIntegration(context),
-      () => installCursorIntegration(context),
-      () => installCodexIntegration(context),
-      () => installClaudeIntegration(context),
-      () => installWindsurfIntegration(context),
-      () => installClineIntegration(context),
-      () => installAntigravityIntegration(context),
-    ];
-
-    for (const [idx, runInstall] of individualInstallers.entries()) {
-      await runInstall();
+    for (const [idx, id] of ids.entries()) {
+      const result = await installSelectedIntegrations(context, [id]);
+      expect(result.failedClients).toEqual([]);
+      expect(result.installedClients.map((client) => client.id)).toEqual([id]);
       expect(checkSpies[idx]).not.toHaveBeenCalled();
     }
     await expect(fs.access(managedInstalledClientsPath({ userHome: tempHome }))).rejects.toThrow();
@@ -236,7 +215,8 @@ describe("Workspace Integration Auto-Upgrade Coordinator & Selection Policy", ()
     });
   });
 
-  it("installs all 7 individual drivers with recordClientSelection=true without calling driver check() and does not record client on install or state-write failure", async () => {
+  it("installs all 7 clients with recordClientSelection=true without calling driver check() and does not record a client on install or state-write failure", async () => {
+    const ids = ["copilot", "cursor", "codex", "claude", "windsurf", "cline", "antigravity"] as const satisfies readonly McpClientId[];
     const checkSpies = [
       vi.spyOn(CopilotClientDriver.prototype, "check"),
       vi.spyOn(CursorClientDriver.prototype, "check"),
@@ -247,41 +227,27 @@ describe("Workspace Integration Auto-Upgrade Coordinator & Selection Policy", ()
       vi.spyOn(AntigravityClientDriver.prototype, "check"),
     ];
 
-    const recordedInstallers: Array<() => Promise<unknown>> = [
-      () => installAntigravityIntegration(context, { recordClientSelection: true }),
-      () => installCopilotIntegration(context, { recordClientSelection: true }),
-      () => installCursorIntegration(context, { recordClientSelection: true }),
-      () => installCodexIntegration(context, { recordClientSelection: true }),
-      () => installClaudeIntegration(context, { recordClientSelection: true }),
-      () => installWindsurfIntegration(context, { recordClientSelection: true }),
-      () => installClineIntegration(context, { recordClientSelection: true }),
-    ];
-
-    for (const [idx, runInstall] of recordedInstallers.entries()) {
-      await runInstall();
-      const spyIndex = idx === 0 ? 6 : idx - 1;
-      expect(checkSpies[spyIndex]).not.toHaveBeenCalled();
+    for (const id of ids) {
+      const result = await installSelectedIntegrations(context, [id], { recordClientSelection: true });
+      expect(result.failedClients).toEqual([]);
+    }
+    for (const spy of checkSpies) {
+      expect(spy).not.toHaveBeenCalled();
     }
 
-    expect(await readInstalledClients({ userHome: tempHome })).toEqual([
-      "copilot",
-      "cursor",
-      "codex",
-      "claude",
-      "windsurf",
-      "cline",
-      "antigravity",
-    ]);
+    expect(await readInstalledClients({ userHome: tempHome })).toEqual([...ids]);
 
-    // Install throw blocks client recording and Claude skill receipt bump without calling check()
-    await uninstallClaudeIntegration({ recordClientSelection: true });
+    // Install failure blocks client recording and Claude skill receipt bump without calling check()
+    await uninstallSelectedIntegrations(context, ["claude"], { recordClientSelection: true });
     await writeInstalledIntegrationVersion({ skills: { claude: 1 }, sessionSkills: { claude: 1 } }, { userHome: tempHome });
     vi.spyOn(ClaudeClientDriver.prototype, "install").mockRejectedValueOnce(
       new Error("Claude install failed cleanly"),
     );
-    await expect(installClaudeIntegration(context, { recordClientSelection: true })).rejects.toThrow(
-      "Claude install failed cleanly",
-    );
+    const claudeFailure = await installSelectedIntegrations(context, ["claude"], { recordClientSelection: true });
+    expect(claudeFailure).toEqual({
+      installedClients: [],
+      failedClients: [{ id: "claude", name: "Claude", error: "Claude install failed cleanly" }],
+    });
     expect(checkSpies[3]).not.toHaveBeenCalled();
     expect(await readInstalledClients({ userHome: tempHome })).not.toContain("claude");
     expect(await readInstalledIntegrationVersion({ userHome: tempHome })).toMatchObject({
@@ -289,8 +255,8 @@ describe("Workspace Integration Auto-Upgrade Coordinator & Selection Policy", ()
       manifest: { skills: { claude: 1 }, sessionSkills: { claude: 1 } },
     });
 
-    // State write throw (installed-clients.json) rejects install and does NOT record client
-    await uninstallCursorIntegration({ recordClientSelection: true });
+    // State write failure (installed-clients.json) is reported as a failed client and does NOT record it
+    await uninstallSelectedIntegrations(context, ["cursor"], { recordClientSelection: true });
     const originalWriteFile = fs.writeFile.bind(fs);
     const writeFileSpy = vi.spyOn(fs, "writeFile").mockImplementation(async (targetPath, data, options) => {
       if (String(targetPath).includes("installed-clients.json")) {
@@ -298,25 +264,23 @@ describe("Workspace Integration Auto-Upgrade Coordinator & Selection Policy", ()
       }
       return originalWriteFile(targetPath, data as any, options as any);
     });
-    await expect(installCursorIntegration(context, { recordClientSelection: true })).rejects.toThrow(
-      "injected client state write failed",
-    );
+    const cursorFailure = await installSelectedIntegrations(context, ["cursor"], { recordClientSelection: true });
     writeFileSpy.mockRestore();
+    expect(cursorFailure.installedClients).toEqual([]);
+    expect(cursorFailure.failedClients).toHaveLength(1);
+    expect(cursorFailure.failedClients[0]).toMatchObject({ id: "cursor" });
+    expect(cursorFailure.failedClients[0]!.error).toContain("injected client state write failed");
     expect(checkSpies[1]).not.toHaveBeenCalled();
     expect(await readInstalledClients({ userHome: tempHome })).not.toContain("cursor");
   });
 
-  it("installAllDetectedIntegrations returns empty without base writes when nothing detected, aggregates partial failures, skips saved-only clients, and respects recordClientSelection", async () => {
-    const emptyResult = await installAllDetectedIntegrations(context, { recordClientSelection: true });
+  it("installSelectedIntegrations returns empty without base writes when nothing is selected, aggregates partial failures once, leaves unselected saved-only clients untouched, and respects recordClientSelection", async () => {
+    const emptyResult = await installSelectedIntegrations(context, [], { recordClientSelection: true });
     expect(emptyResult).toEqual({ installedClients: [], failedClients: [] });
     await expect(fs.access(managedMcpScriptPath({ userHome: tempHome }))).rejects.toThrow();
     await expect(fs.access(managedIntegrationVersionPath({ userHome: tempHome }))).rejects.toThrow();
 
-    // Only Copilot, Cursor & Codex are detected; Claude is saved-only (not detected on disk)
-    const copilotDir = path.resolve(globalStoragePath, "..", "..");
-    await fs.mkdir(copilotDir, { recursive: true });
-    await fs.mkdir(process.env.CODEX_HOME!, { recursive: true });
-    await fs.mkdir(path.join(tempHome, ".cursor"), { recursive: true });
+    // Claude is saved-only (not selected, not configured on disk)
     await addInstalledClient("claude", { userHome: tempHome });
 
     const checkSpies = [
@@ -338,9 +302,14 @@ describe("Workspace Integration Auto-Upgrade Coordinator & Selection Policy", ()
       new Error("Cursor install injected failure"),
     );
 
-    const firstResult = await installAllDetectedIntegrations(context, { recordClientSelection: true });
+    const firstResult = await installSelectedIntegrations(context, ["copilot", "cursor", "codex"], {
+      recordClientSelection: true,
+    });
     expect(firstResult).toEqual({
-      installedClients: ["GitHub Copilot (VS Code)", "Codex"],
+      installedClients: [
+        { id: "copilot", name: "GitHub Copilot (VS Code)" },
+        { id: "codex", name: "Codex" },
+      ],
       failedClients: [{ id: "cursor", name: "Cursor", error: "Cursor install injected failure" }],
     });
     for (const spy of checkSpies) {
@@ -350,60 +319,74 @@ describe("Workspace Integration Auto-Upgrade Coordinator & Selection Policy", ()
     renameSpy.mockRestore();
 
     expect(await readInstalledClients({ userHome: tempHome })).toEqual(["copilot", "codex", "claude"]);
-    // Claude was saved-only, so Install All must not have created ~/.claude.json
+    // Claude was not selected, so install must not have created ~/.claude.json
     await expect(fs.access(path.join(tempHome, ".claude.json"))).rejects.toThrow();
 
-    // Newly detect Windsurf and run programmatic Install All without flag: must install without recording Windsurf or Cursor
-    await fs.mkdir(path.join(tempHome, ".codeium", "windsurf"), { recursive: true });
-    const programmaticResult = await installAllDetectedIntegrations(context);
+    // Programmatic install without the flag installs without recording Cursor or Windsurf
+    const programmaticResult = await installSelectedIntegrations(context, ["copilot", "cursor", "codex", "windsurf"]);
     expect(programmaticResult).toEqual({
-      installedClients: ["GitHub Copilot (VS Code)", "Cursor", "Codex", "Windsurf"],
+      installedClients: [
+        { id: "copilot", name: "GitHub Copilot (VS Code)" },
+        { id: "cursor", name: "Cursor" },
+        { id: "codex", name: "Codex" },
+        { id: "windsurf", name: "Windsurf" },
+      ],
       failedClients: [],
     });
     expect(await readInstalledClients({ userHome: tempHome })).toEqual(["copilot", "codex", "claude"]);
   });
 
-  it("handles uninstall selection policies across individual, manual Uninstall All, programmatic Uninstall All, mid-way error, and cleanupBase: false", async () => {
-    await installCopilotIntegration(context, { recordClientSelection: true });
-    await installCodexIntegration(context, { recordClientSelection: true });
+  it("handles uninstallSelectedIntegrations selection policies across single, programmatic, mid-way error, cleanupBase: false, and cleanupBase: true", async () => {
+    await installSelectedIntegrations(context, ["copilot", "codex"], { recordClientSelection: true });
 
-    // Individual uninstall removes ID even when config is already absent (uninstall() returns false)
+    // Selected uninstall removes the saved ID even when config is already absent (not configured)
     await fs.rm(path.join(process.env.CODEX_HOME!, "config.toml"));
     await fs.rm(process.env.CODEX_HOME!, { recursive: true, force: true });
-    expect(await uninstallCodexIntegration({ recordClientSelection: true })).toBe(false);
+    const codexResult = await uninstallSelectedIntegrations(context, ["codex"], { recordClientSelection: true });
+    expect(codexResult).toEqual({
+      uninstalledClients: [],
+      notConfiguredClients: [{ id: "codex", name: "Codex" }],
+      failedClients: [],
+    });
     expect(await readInstalledClients({ userHome: tempHome })).toEqual(["copilot"]);
 
-    // Setup saved-only "windsurf" + absent "claude" + detected "cursor"
+    // Setup saved-only "windsurf" + "claude" and an installed "cursor" that is not saved
     await addInstalledClient("claude", { userHome: tempHome });
     await addInstalledClient("windsurf", { userHome: tempHome });
-    await installCursorIntegration(context); // detected on disk, NOT saved in installed-clients.json
+    await installSelectedIntegrations(context, ["cursor"]);
 
-    // Programmatic Uninstall All (recordClientSelection=false) with cleanupBase=false keeps saved-only entries & version receipt
+    // Programmatic uninstall (recordClientSelection=false) only touches selected clients, keeps saved entries and the receipt
     const claudeUninstallSpy = vi.spyOn(ClaudeClientDriver.prototype, "uninstall");
-    await uninstallAllDetectedIntegrations(context, { cleanupBase: false });
+    const cursorResult = await uninstallSelectedIntegrations(context, ["cursor"]);
+    expect(cursorResult.uninstalledClients).toEqual([{ id: "cursor", name: "Cursor" }]);
     expect(claudeUninstallSpy).not.toHaveBeenCalled();
     expect(await readInstalledClients({ userHome: tempHome })).toEqual(["copilot", "claude", "windsurf"]);
     expect((await readInstalledIntegrationVersion({ userHome: tempHome })).status).toBe("valid");
 
-    // Mid-way error during manual Uninstall All removes earlier IDs and preserves errored + subsequent IDs
-    await installCursorIntegration(context, { recordClientSelection: true });
+    // Mid-way error removes earlier and later saved IDs but preserves the errored ID
+    await installSelectedIntegrations(context, ["cursor"], { recordClientSelection: true });
     vi.spyOn(ClaudeClientDriver.prototype, "uninstall").mockRejectedValueOnce(new Error("claude uninstall I/O fail"));
-    await expect(
-      uninstallAllDetectedIntegrations(context, { recordClientSelection: true, cleanupBase: false }),
-    ).rejects.toThrow("claude uninstall I/O fail");
-    expect(await readInstalledClients({ userHome: tempHome })).toEqual(["claude", "windsurf"]);
+    const partialResult = await uninstallSelectedIntegrations(
+      context,
+      ["copilot", "cursor", "claude", "windsurf"],
+      { recordClientSelection: true },
+    );
+    expect(partialResult.failedClients).toEqual([
+      { id: "claude", name: "Claude", error: "claude uninstall I/O fail" },
+    ]);
+    expect(await readInstalledClients({ userHome: tempHome })).toEqual(["claude"]);
 
-    // Manual Uninstall All (recordClientSelection=true, cleanupBase=false) processes saved ∪ detected and preserves other managed assets
+    // Manual uninstall (recordClientSelection=true, no shared cleanup) preserves other managed assets
     claudeUninstallSpy.mockClear();
-    await uninstallAllDetectedIntegrations(context, { recordClientSelection: true, cleanupBase: false });
+    await uninstallSelectedIntegrations(context, ["claude"], { recordClientSelection: true });
     expect(claudeUninstallSpy).toHaveBeenCalledTimes(1);
     expect(await readInstalledClients({ userHome: tempHome })).toEqual([]);
     await expect(fs.access(managedIntegrationVersionPath({ userHome: tempHome }))).resolves.toBeUndefined();
     await expect(fs.access(managedMcpScriptPath({ userHome: tempHome }))).resolves.toBeUndefined();
 
-    // Default uninstallAllDetectedIntegrations cleans base managed directory including installed-clients.json
+    // cleanupBase: true removes the shared managed directory including installed-clients.json once no client needs it
     await addInstalledClient("codex", { userHome: tempHome });
-    await uninstallAllDetectedIntegrations(context, { recordClientSelection: true });
+    await uninstallSelectedIntegrations(context, ["codex"], { recordClientSelection: true, cleanupBase: true });
     await expect(fs.access(managedInstalledClientsPath({ userHome: tempHome }))).rejects.toThrow();
     await expect(fs.access(managedMcpScriptPath({ userHome: tempHome }))).rejects.toThrow();
   });

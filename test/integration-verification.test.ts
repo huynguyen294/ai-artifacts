@@ -31,7 +31,7 @@ describe("integration verification summary", () => {
     expect(summary).toEqual({
       severity: "information",
       message:
-        "AI Artifacts base setup verified. Agent skill: Ready. MCP runtime: Ready. No supported AI clients were detected. Use a client-specific install command if needed.",
+        "AI Artifacts base setup verified. Agent skill: Ready. MCP runtime: Ready. No supported AI clients were detected. Use AI Artifacts: Installer if needed.",
     });
   });
 
@@ -65,7 +65,7 @@ describe("integration verification summary", () => {
 
     expect(summary.severity).toBe("warning");
     expect(summary.message).toBe(
-      "AI Artifacts installation needs attention. Agent skill: Ready. MCP runtime: Outdated / Missing. Detected clients: Codex: Configuration conflict. Review the installation guide or use a client-specific install command, then verify again.",
+      "AI Artifacts installation needs attention. Agent skill: Ready. MCP runtime: Outdated / Missing. Detected clients: Codex: Configuration conflict. Review the installation guide or use AI Artifacts: Installer, then verify again.",
     );
   });
 
@@ -98,7 +98,7 @@ describe("integration verification summary", () => {
 
     expect(summary.severity).toBe("warning");
     expect(summary.message).toBe(
-      "AI Artifacts installation needs attention. Review skill: Ready. Work session skill: Outdated / Missing. MCP runtime: Ready. Detected clients: Codex: Outdated. Review the installation guide or use a client-specific install command, then verify again.",
+      "AI Artifacts installation needs attention. Review skill: Ready. Work session skill: Outdated / Missing. MCP runtime: Ready. Detected clients: Codex: Outdated. Review the installation guide or use AI Artifacts: Installer, then verify again.",
     );
   });
 });

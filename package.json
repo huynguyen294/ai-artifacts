@@ -3,7 +3,7 @@
   "displayName": "AI Artifacts - Interactive Review & Multi-Agent Work Sessions",
   "publisher": "huynguyen294",
   "description": "Interactive artifact review for AI-generated plans, Markdown specs, and proposals with inline feedback. Organize artifacts and shared instructions in Work Sessions across agents and chats. Connects via MCP to Cursor, Codex, Claude, GitHub Copilot, Cline, Windsurf, and more.",
-  "version": "1.1.4",
+  "version": "1.2.0",
   "type": "module",
   "license": "MIT",
   "icon": "media/icon.png",
@@ -66,26 +66,10 @@
     "onCommand:agentPlus.searchArtifact",
     "onCommand:agentPlus.openWhatsNew",
     "onCommand:agentPlus.installer",
-    "onCommand:agentPlus.installAllIntegrations",
-    "onCommand:agentPlus.installCopilotIntegration",
-    "onCommand:agentPlus.installCodexIntegration",
-    "onCommand:agentPlus.installCursorIntegration",
-    "onCommand:agentPlus.installClaudeIntegration",
-    "onCommand:agentPlus.installWindsurfIntegration",
-    "onCommand:agentPlus.installClineIntegration",
-    "onCommand:agentPlus.installAntigravityIntegration",
     "onCommand:agentPlus.copyMcpConfig",
     "onCommand:agentPlus.copyReviewSkill",
     "onCommand:agentPlus.verifyGlobalIntegration",
-    "onCommand:agentPlus.uninstall",
-    "onCommand:agentPlus.uninstallAllIntegrations",
-    "onCommand:agentPlus.uninstallCopilotIntegration",
-    "onCommand:agentPlus.uninstallCodexIntegration",
-    "onCommand:agentPlus.uninstallCursorIntegration",
-    "onCommand:agentPlus.uninstallClaudeIntegration",
-    "onCommand:agentPlus.uninstallWindsurfIntegration",
-    "onCommand:agentPlus.uninstallClineIntegration",
-    "onCommand:agentPlus.uninstallAntigravityIntegration"
+    "onCommand:agentPlus.uninstall"
   ],
   "main": "./dist/extension.cjs",
   "contributes": {
@@ -235,38 +219,6 @@
         "title": "AI Artifacts: Installer"
       },
       {
-        "command": "agentPlus.installAllIntegrations",
-        "title": "AI Artifacts: Install All Detected Integrations"
-      },
-      {
-        "command": "agentPlus.installCopilotIntegration",
-        "title": "AI Artifacts: Install Integration for GitHub Copilot"
-      },
-      {
-        "command": "agentPlus.installCodexIntegration",
-        "title": "AI Artifacts: Install Integration for Codex"
-      },
-      {
-        "command": "agentPlus.installCursorIntegration",
-        "title": "AI Artifacts: Install Integration for Cursor"
-      },
-      {
-        "command": "agentPlus.installClaudeIntegration",
-        "title": "AI Artifacts: Install Integration for Claude"
-      },
-      {
-        "command": "agentPlus.installWindsurfIntegration",
-        "title": "AI Artifacts: Install Integration for Windsurf"
-      },
-      {
-        "command": "agentPlus.installClineIntegration",
-        "title": "AI Artifacts: Install Integration for Cline"
-      },
-      {
-        "command": "agentPlus.installAntigravityIntegration",
-        "title": "AI Artifacts: Install Integration for Antigravity"
-      },
-      {
         "command": "agentPlus.copyMcpConfig",
         "title": "AI Artifacts: Copy MCP Configuration JSON"
       },
@@ -281,38 +233,6 @@
       {
         "command": "agentPlus.uninstall",
         "title": "AI Artifacts: Uninstall"
-      },
-      {
-        "command": "agentPlus.uninstallAllIntegrations",
-        "title": "AI Artifacts: Uninstall All Detected Integrations"
-      },
-      {
-        "command": "agentPlus.uninstallCopilotIntegration",
-        "title": "AI Artifacts: Uninstall Integration for GitHub Copilot"
-      },
-      {
-        "command": "agentPlus.uninstallCodexIntegration",
-        "title": "AI Artifacts: Uninstall Integration for Codex"
-      },
-      {
-        "command": "agentPlus.uninstallCursorIntegration",
-        "title": "AI Artifacts: Uninstall Integration for Cursor"
-      },
-      {
-        "command": "agentPlus.uninstallClaudeIntegration",
-        "title": "AI Artifacts: Uninstall Integration for Claude"
-      },
-      {
-        "command": "agentPlus.uninstallWindsurfIntegration",
-        "title": "AI Artifacts: Uninstall Integration for Windsurf"
-      },
-      {
-        "command": "agentPlus.uninstallClineIntegration",
-        "title": "AI Artifacts: Uninstall Integration for Cline"
-      },
-      {
-        "command": "agentPlus.uninstallAntigravityIntegration",
-        "title": "AI Artifacts: Uninstall Integration for Antigravity"
       }
     ],
     "viewsContainers": {

@@ -25,7 +25,7 @@ export const whatsNewReleases: readonly WhatsNewRelease[] = [
     bugFixes: [],
     icon: "layers",
     preview: true,
-    notify: false,
+    notify: true,
   },
 ];
 

@@ -3,8 +3,8 @@ import { formatArtifactKindLabel, isFixedArtifactKind } from "../shared/artifact
 import type { GlobalArtifactsRootOptions } from "../shared/artifact-files";
 import { compareIsoTimestampsAsc } from "../shared/conversation-artifact-registry";
 import { listSessionTypes } from "../shared/session-type-registry";
-import { discoverSearchableArtifacts, type SearchableArtifact } from "./artifact-search";
-import { getArtifactUiState, getSessionUiState } from "./artifact-ui-state";
+import { compareArtifactsByRecency, discoverSearchableArtifacts, type SearchableArtifact } from "./artifact-search";
+import { getSessionUiState } from "./artifact-ui-state";
 import type { ConversationArtifactService } from "./conversation-artifact-service";
 import { resolveWorkSessionSupport, type WorkSessionSupportStatus } from "./work-session-support";
 
@@ -108,17 +108,7 @@ export class RecentArtifactsTreeDataProvider implements vscode.TreeDataProvider<
         return [{ type: "empty" }];
       }
 
-      const withUiState = await Promise.all(
-        all.map(async (a) => {
-          const uiState = await getArtifactUiState(a.artifactId, this.rootOptions).catch((err) => {
-            console.warn(`[RecentArtifacts] Failed to read UI state for ${a.artifactId}:`, err);
-            return undefined;
-          });
-          return { artifact: a, uiState };
-        }),
-      );
-
-      const active = withUiState.filter(({ uiState }) => !uiState?.archivedAt);
+      const active = all.filter((a) => !a.isArchived);
 
       if (active.length === 0) {
         return [{ type: "empty" }];
@@ -126,29 +116,22 @@ export class RecentArtifactsTreeDataProvider implements vscode.TreeDataProvider<
 
       let filtered = active;
       if (this.kindFilter === "other") {
-        filtered = active.filter(({ artifact }) => !isFixedArtifactKind(artifact.kind));
+        filtered = active.filter((artifact) => !isFixedArtifactKind(artifact.kind));
       } else if (this.kindFilter) {
-        filtered = active.filter(({ artifact }) => artifact.kind === this.kindFilter);
+        filtered = active.filter((artifact) => artifact.kind === this.kindFilter);
       }
 
       if (filtered.length === 0) {
         return [{ type: "emptyFilter" }];
       }
 
-      const sorted = [...filtered].sort((a, b) => {
-        const pinA = Boolean(a.uiState?.pinned);
-        const pinB = Boolean(b.uiState?.pinned);
-        if (pinA !== pinB) return pinA ? -1 : 1;
-        const diff = compareIsoTimestampsAsc(b.artifact.updatedAt, a.artifact.updatedAt);
-        if (diff !== 0) return diff;
-        return a.artifact.artifactId.localeCompare(b.artifact.artifactId);
-      });
+      const sorted = [...filtered].sort(compareArtifactsByRecency);
 
       const sliced = sorted.slice(0, MAX_RECENT_ARTIFACTS);
-      const result: RecentTreeElement[] = sliced.map(({ artifact, uiState }) => ({
+      const result: RecentTreeElement[] = sliced.map((artifact) => ({
         type: "artifact",
         artifact,
-        isPinned: Boolean(uiState?.pinned),
+        isPinned: Boolean(artifact.isPinned),
       }));
 
       if (sorted.length > MAX_RECENT_ARTIFACTS) {
@@ -239,8 +222,8 @@ export class WorkSessionsTreeDataProvider implements vscode.TreeDataProvider<Ses
       item.description = element.status.reason ?? "Integration update required";
       item.iconPath = new vscode.ThemeIcon("warning");
       item.command = {
-        command: "agentPlus.reinstallIntegration",
-        title: "Reinstall Integration",
+        command: "agentPlus.installer",
+        title: "Open AI Artifacts Installer",
       };
       return item;
     }
