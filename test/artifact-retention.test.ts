@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promis
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import * as artifactUiState from "../src/extension/artifact-ui-state";
 import {
   DEFAULT_RETENTION_DAYS,
   drainManagedCleanupStaging,
@@ -25,6 +26,7 @@ import {
 const temporaryDirectories: string[] = [];
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   for (const dir of temporaryDirectories.splice(0)) {
     await rm(dir, { recursive: true, force: true });
   }
@@ -46,6 +48,8 @@ async function writeArtifact(
     schemaVersion?: number;
     createdAt?: string;
     updatedAt?: string;
+    archivedAt?: string;
+    pinned?: boolean;
     markdown?: string;
     mismatchedArtifactId?: string;
   } = {},
@@ -73,6 +77,12 @@ async function writeArtifact(
     path.join(artifactDir, "artifact.md"),
     options.markdown ?? "# Test artifact",
   );
+  if (options.archivedAt !== undefined || options.pinned !== undefined) {
+    await artifactUiState.patchArtifactUiState(artifactId, {
+      ...(options.archivedAt !== undefined ? { archivedAt: options.archivedAt } : {}),
+      ...(options.pinned !== undefined ? { pinned: options.pinned } : {}),
+    }, { userHome });
+  }
   return artifactDir;
 }
 
@@ -84,7 +94,7 @@ describe("normalizeRetentionDays", () => {
     expect(normalizeRetentionDays(365)).toBe(365);
   });
 
-  it("falls back to default 30 for 0, negative, non-integers, floats, and non-numbers", () => {
+  it("falls back to default 90 for 0, negative, non-integers, floats, and non-numbers", () => {
     const diagnostic = vi.fn();
     expect(normalizeRetentionDays(0, diagnostic)).toBe(DEFAULT_RETENTION_DAYS);
     expect(normalizeRetentionDays(-5, diagnostic)).toBe(DEFAULT_RETENTION_DAYS);
@@ -103,23 +113,24 @@ describe("isArtifactCandidateExpired", () => {
   const baseTime = Date.parse("2026-01-01T00:00:00.000Z");
 
   it("returns true when nowMs equals or exceeds expiresAt", () => {
-    const updatedAt = "2026-01-01T00:00:00.000Z";
+    const archivedAt = "2026-01-01T00:00:00.000Z";
     const retentionDays = 30;
     const exactExpiry = baseTime + 30 * DAY_MS;
 
-    expect(isArtifactCandidateExpired(updatedAt, retentionDays, exactExpiry)).toBe(true);
-    expect(isArtifactCandidateExpired(updatedAt, retentionDays, exactExpiry + 1000)).toBe(true);
+    expect(isArtifactCandidateExpired(archivedAt, retentionDays, exactExpiry)).toBe(true);
+    expect(isArtifactCandidateExpired(archivedAt, retentionDays, exactExpiry + 1000)).toBe(true);
   });
 
   it("returns false when nowMs is before expiresAt", () => {
-    const updatedAt = "2026-01-01T00:00:00.000Z";
+    const archivedAt = "2026-01-01T00:00:00.000Z";
     const retentionDays = 30;
     const exactExpiry = baseTime + 30 * DAY_MS;
 
-    expect(isArtifactCandidateExpired(updatedAt, retentionDays, exactExpiry - 1)).toBe(false);
+    expect(isArtifactCandidateExpired(archivedAt, retentionDays, exactExpiry - 1)).toBe(false);
   });
 
-  it("returns false for invalid updatedAt ISO strings", () => {
+  it("returns false for missing or invalid archivedAt ISO strings", () => {
+    expect(isArtifactCandidateExpired(undefined, 30, Date.now())).toBe(false);
     expect(isArtifactCandidateExpired("invalid-date", 30, Date.now())).toBe(false);
   });
 });
@@ -148,20 +159,41 @@ describe("drainManagedCleanupStaging", () => {
 describe("executeArtifactRetentionCleanup", () => {
   const DAY_MS = 24 * 60 * 60 * 1000;
 
-  it("keeps active unexpired schema-v6 artifacts and deletes expired ones", async () => {
+  it("preserves old artifacts without a UI state file or archivedAt without creating state", async () => {
+    const userHome = await makeUserHome();
+    const now = Date.parse("2026-03-01T00:00:00.000Z");
+    const legacyDir = await writeArtifact(userHome, "legacy-unarchived");
+    const pinnedDir = await writeArtifact(userHome, "pinned-unarchived", { pinned: true });
+    const pinnedStateBefore = await readFile(path.join(pinnedDir, "artifact-ui-state.json"), "utf8");
+
+    const result = await executeArtifactRetentionCleanup({
+      retentionDays: 30,
+      now,
+      rootOptions: { userHome },
+    });
+
+    expect(result.expiredCount).toBe(0);
+    expect(result.deletedCount).toBe(0);
+    await expect(readFile(path.join(legacyDir, "artifact.json"))).resolves.toBeDefined();
+    await expect(readFile(path.join(legacyDir, "artifact-ui-state.json"))).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(readFile(path.join(pinnedDir, "artifact.json"))).resolves.toBeDefined();
+    expect(await readFile(path.join(pinnedDir, "artifact-ui-state.json"), "utf8")).toBe(pinnedStateBefore);
+  });
+
+  it("keeps recently archived artifacts and deletes artifacts archived for exactly the retention period", async () => {
     const userHome = await makeUserHome();
     const now = Date.parse("2026-03-01T00:00:00.000Z");
 
-    // 10 days old relative to now -> active with 30 days retention
-    const activeUpdatedAt = new Date(now - 10 * DAY_MS).toISOString();
+    // Archived 10 days ago -> keep, even though the manifest is old
+    const recentArchivedAt = new Date(now - 10 * DAY_MS).toISOString();
     await writeArtifact(userHome, "active-artifact", {
-      updatedAt: activeUpdatedAt,
+      archivedAt: recentArchivedAt,
     });
 
-    // 40 days old relative to now -> expired with 30 days retention
-    const expiredUpdatedAt = new Date(now - 40 * DAY_MS).toISOString();
+    // Archived exactly 30 days ago -> expired with 30 days retention
+    const expiredArchivedAt = new Date(now - 30 * DAY_MS).toISOString();
     await writeArtifact(userHome, "expired-artifact", {
-      updatedAt: expiredUpdatedAt,
+      archivedAt: expiredArchivedAt,
     });
 
     const result = await executeArtifactRetentionCleanup({
@@ -188,15 +220,21 @@ describe("executeArtifactRetentionCleanup", () => {
     ).rejects.toThrow();
   });
 
-  it("uses artifact.json.updatedAt instead of connection timestamp or filesystem mtime", async () => {
+  it("uses archivedAt instead of manifest or connection timestamps, regardless of Pin", async () => {
     const userHome = await makeUserHome();
     const now = Date.parse("2026-03-01T00:00:00.000Z");
 
-    // Artifact created long ago, but updatedAt was refreshed 5 days ago (e.g. by review advance)
-    const refreshedUpdatedAt = new Date(now - 5 * DAY_MS).toISOString();
+    const recentTimestamp = new Date(now - 5 * DAY_MS).toISOString();
+    const oldTimestamp = new Date(now - 50 * DAY_MS).toISOString();
     const dir = await writeArtifact(userHome, "advanced-artifact", {
-      createdAt: new Date(now - 50 * DAY_MS).toISOString(),
-      updatedAt: refreshedUpdatedAt,
+      createdAt: oldTimestamp,
+      updatedAt: oldTimestamp,
+      archivedAt: recentTimestamp,
+    });
+    await writeArtifact(userHome, "pinned-expired-artifact", {
+      updatedAt: recentTimestamp,
+      archivedAt: oldTimestamp,
+      pinned: true,
     });
 
     // Stale connection file timestamp should not affect retention
@@ -218,14 +256,133 @@ describe("executeArtifactRetentionCleanup", () => {
       rootOptions: { userHome },
     });
 
-    expect(result.expiredCount).toBe(0);
-    expect(result.deletedCount).toBe(0);
+    expect(result.expiredCount).toBe(1);
+    expect(result.deletedCount).toBe(1);
 
     // Advanced artifact is preserved
     const collectionRoot = globalArtifactsRoot({ userHome });
     await expect(
       readFile(path.join(collectionRoot, "advanced-artifact", "artifact.json")),
     ).resolves.toBeDefined();
+    await expect(
+      readFile(path.join(collectionRoot, "pinned-expired-artifact", "artifact.json")),
+    ).rejects.toThrow();
+  });
+
+  it("honors the configured retention period after archiving", async () => {
+    const userHome = await makeUserHome();
+    const now = Date.parse("2026-03-01T00:00:00.000Z");
+    const dir = await writeArtifact(userHome, "custom-retention", {
+      archivedAt: new Date(now - 15 * DAY_MS).toISOString(),
+    });
+
+    const result = await executeArtifactRetentionCleanup({
+      retentionDays: 14,
+      now,
+      rootOptions: { userHome },
+    });
+
+    expect(result.deletedCount).toBe(1);
+    await expect(readFile(path.join(dir, "artifact.json"))).rejects.toThrow();
+  });
+
+  it("defaults to deleting artifacts only after 90 days of archiving", async () => {
+    const userHome = await makeUserHome();
+    const now = Date.parse("2026-05-01T00:00:00.000Z");
+    const recentDir = await writeArtifact(userHome, "archived-89-days", {
+      archivedAt: new Date(now - 89 * DAY_MS).toISOString(),
+    });
+    const expiredDir = await writeArtifact(userHome, "archived-90-days", {
+      archivedAt: new Date(now - 90 * DAY_MS).toISOString(),
+    });
+
+    const result = await executeArtifactRetentionCleanup({
+      now,
+      rootOptions: { userHome },
+      logDiagnostic: () => undefined,
+    });
+
+    expect(result.deletedCount).toBe(1);
+    await expect(readFile(path.join(recentDir, "artifact.json"))).resolves.toBeDefined();
+    await expect(readFile(path.join(expiredDir, "artifact.json"))).rejects.toThrow();
+  });
+
+  it.each(["restore", "rearchive"] as const)("preserves an expired candidate after %s before deletion", async (action) => {
+    const userHome = await makeUserHome();
+    const now = Date.parse("2026-03-01T00:00:00.000Z");
+    const artifactId = "changed-archive-state";
+    const dir = await writeArtifact(userHome, artifactId, {
+      archivedAt: new Date(now - 40 * DAY_MS).toISOString(),
+    });
+    const readUiState = artifactUiState.getArtifactUiState;
+    let changed = false;
+    vi.spyOn(artifactUiState, "getArtifactUiState").mockImplementation(async (id, options) => {
+      const snapshot = await readUiState(id, options);
+      if (!changed) {
+        changed = true;
+        await artifactUiState.patchArtifactUiState(id, {
+          archivedAt: action === "restore" ? null : new Date(now).toISOString(),
+        }, options);
+      }
+      return snapshot;
+    });
+
+    const result = await executeArtifactRetentionCleanup({
+      retentionDays: 30,
+      now,
+      rootOptions: { userHome },
+    });
+
+    expect(result.expiredCount).toBe(1);
+    expect(result.deletedCount).toBe(0);
+    expect(result.skippedCount).toBe(1);
+    await expect(readFile(path.join(dir, "artifact.json"))).resolves.toBeDefined();
+  });
+
+  it.each([
+    "{ invalid-json",
+    JSON.stringify({ schemaVersion: 1, pinned: false, archivedAt: "invalid-date" }),
+  ])("preserves artifacts with invalid UI state: %s", async (rawUiState) => {
+    const userHome = await makeUserHome();
+    const dir = await writeArtifact(userHome, "invalid-ui-state");
+    await writeFile(path.join(dir, "artifact-ui-state.json"), rawUiState);
+
+    const result = await executeArtifactRetentionCleanup({
+      retentionDays: 30,
+      now: Date.parse("2026-03-01T00:00:00.000Z"),
+      rootOptions: { userHome },
+    });
+
+    expect(result.deletedCount).toBe(0);
+    expect(result.skippedCount).toBe(1);
+    await expect(readFile(path.join(dir, "artifact.json"))).resolves.toBeDefined();
+    expect(await readFile(path.join(dir, "artifact-ui-state.json"), "utf8")).toBe(rawUiState);
+  });
+
+  it("skips unreadable archive state without preventing cleanup of other expired artifacts", async () => {
+    const userHome = await makeUserHome();
+    const now = Date.parse("2026-03-01T00:00:00.000Z");
+    const archivedAt = new Date(now - 40 * DAY_MS).toISOString();
+    const unreadableDir = await writeArtifact(userHome, "unreadable-ui-state", { archivedAt });
+    const expiredDir = await writeArtifact(userHome, "readable-expired", { archivedAt });
+    const readUiState = artifactUiState.getArtifactUiState;
+    vi.spyOn(artifactUiState, "getArtifactUiState").mockImplementation(async (id, options) => {
+      if (id === "unreadable-ui-state") {
+        throw Object.assign(new Error("Permission denied"), { code: "EACCES" });
+      }
+      return readUiState(id, options);
+    });
+
+    const result = await executeArtifactRetentionCleanup({
+      retentionDays: 30,
+      now,
+      rootOptions: { userHome },
+    });
+
+    expect(result.deletedCount).toBe(1);
+    expect(result.skippedCount).toBe(1);
+    await expect(readFile(path.join(unreadableDir, "artifact.json"))).resolves.toBeDefined();
+    await expect(readFile(path.join(expiredDir, "artifact.json"))).rejects.toThrow();
   });
 
   it("safely skips schema v5, malformed manifests, mismatched IDs, and symlinks without modifying them", async () => {
@@ -276,10 +433,10 @@ describe("executeArtifactRetentionCleanup", () => {
   it("handles multi-window concurrent cleanup race safely", async () => {
     const userHome = await makeUserHome();
     const now = Date.parse("2026-03-01T00:00:00.000Z");
-    const expiredUpdatedAt = new Date(now - 40 * DAY_MS).toISOString();
+    const expiredArchivedAt = new Date(now - 40 * DAY_MS).toISOString();
 
     await writeArtifact(userHome, "racing-artifact", {
-      updatedAt: expiredUpdatedAt,
+      archivedAt: expiredArchivedAt,
     });
 
     // Run two cleanups concurrently
@@ -313,8 +470,8 @@ describe("executeArtifactRetentionCleanup", () => {
     const convId = "aaaaaaaa-1111-4111-8111-111111111111";
 
     // Write 2 expired artifacts
-    await writeArtifact(userHome, "expired-art-1", { updatedAt: expiredTimestamp });
-    await writeArtifact(userHome, "expired-art-2", { updatedAt: expiredTimestamp });
+    await writeArtifact(userHome, "expired-art-1", { archivedAt: expiredTimestamp });
+    await writeArtifact(userHome, "expired-art-2", { archivedAt: expiredTimestamp });
 
     // Register both in the conversation
     await createConversationAndRegisterArtifact({
@@ -359,7 +516,7 @@ describe("executeArtifactRetentionCleanup", () => {
     const convId = "bbbbbbbb-2222-4222-8222-222222222222";
 
     // 1 expired artifact, 1 active artifact
-    await writeArtifact(userHome, "expired-member", { updatedAt: expiredTimestamp });
+    await writeArtifact(userHome, "expired-member", { archivedAt: expiredTimestamp });
     await writeArtifact(userHome, "alive-member", { updatedAt: aliveTimestamp });
 
     await createConversationAndRegisterArtifact({
@@ -407,7 +564,7 @@ describe("executeArtifactRetentionCleanup", () => {
     const conv2 = "dddddddd-4444-4444-8444-444444444444";
 
     // Artifact A is expired, Artifact B is alive
-    await writeArtifact(userHome, "shared-expired-art", { updatedAt: expiredTimestamp });
+    await writeArtifact(userHome, "shared-expired-art", { archivedAt: expiredTimestamp });
     await writeArtifact(userHome, "surviving-art", { updatedAt: aliveTimestamp });
 
     // Conv 1 only has Artifact A
@@ -461,7 +618,7 @@ describe("executeArtifactRetentionCleanup", () => {
     const now = Date.parse("2026-04-01T00:00:00.000Z");
     const expiredTimestamp = new Date(now - 45 * DAY_MS).toISOString();
 
-    await writeArtifact(userHome, "normal-expired-art", { updatedAt: expiredTimestamp });
+    await writeArtifact(userHome, "normal-expired-art", { archivedAt: expiredTimestamp });
 
     // Create conversation-registry root as a FILE instead of directory to trigger conversation cleanup error
     const registryRoot = conversationRegistryRoot({ userHome });

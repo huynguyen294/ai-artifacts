@@ -75,7 +75,7 @@ The core responsibility split is:
 | Shared contracts         | Cross-process protocol definition             | Schemas, types, filenames, and binding rules                                 |
 | Integration manager      | Installation, upgrade, and verification       | Extension-managed MCP runtime, both skills, saved client selections, version receipts, and supported-client configuration |
 
-The governing lifetime relationship is `artifact lifetime > waiter lifetime > chat-turn lifetime`. Artifact lifetime is bounded by configured retention (`agentPlus.artifactRetentionDays`); expired artifacts are permanently deleted when the extension activates. Artifact files persist across cancellation, takeover, chat completion, and MCP restart until the retention window expires. The MCP waiter registry is temporary process state, while the skill retains the exact artifact handle needed to inspect or reconnect that persistent state.
+The governing lifetime relationship is `artifact lifetime > waiter lifetime > chat-turn lifetime`. Only globally archived artifacts are subject to configured retention (`agentPlus.artifactRetentionDays`), measured from `artifact-ui-state.json.archivedAt`; expired archived artifacts are permanently deleted when the extension activates. Missing UI state or `archivedAt` preserves the artifact regardless of age. Artifact files persist across cancellation, takeover, chat completion, and MCP restart. The MCP waiter registry is temporary process state, while the skill retains the exact artifact handle needed to inspect or reconnect that persistent state.
 
 ## 1. Agent skills
 
@@ -237,6 +237,7 @@ Each artifact is a direct child of the global per-user collection:
 ├── comments.json
 ├── review-submission.json   # exists after submission
 ├── artifact-connection.json # optional schema-v1 UI-routing state
+├── artifact-ui-state.json # optional Pin/Archive state; archivedAt drives retention
 ├── .artifact-connection.lock # temporary during create/reconnect routing commit
 └── .artifact-update.lock   # temporary during a round update
 
@@ -255,6 +256,7 @@ Each artifact is a direct child of the global per-user collection:
 | `comments.json`          | Artifact Store or explicitly requested AI reviewer; MCP when opening a new round | Store comments and bind them to the current artifact hash and round                    |
 | `review-submission.json` | Artifact Store; AI reviewer for explicitly requested `revise` | Record the immutable `revise`, `approve`, or `save` decision for one round                         |
 | `artifact-connection.json` | MCP                                                      | Store only target window, connection revision, open-request ID, source, and timestamp              |
+| `artifact-ui-state.json` | Extension via user Pin/Archive/Restore actions | Optional Pin/Archive state; `archivedAt` starts retention, Restore removes it, and missing state means unarchived |
 | `.artifact-connection.lock` | MCP                                                      | Serialize connection commits without changing lifecycle state                                      |
 | `.artifact-update.lock`  | MCP                                                        | Prevent readers from observing an incomplete multi-file update                                     |
 | `conversation.json`      | Shared registry via MCP creation or Extension metadata actions | Session v2 identity, title, typeId, createdAt; MCP registration does not rewrite metadata |
@@ -298,7 +300,7 @@ The protocol is the communication medium between the independently running MCP p
   - Open grouped Installer (`agentPlus.installer`, status-free via `listInstallableClients` and shared `install-notification.ts`) and Uninstall (`agentPlus.uninstall`, statusful via `listInstallerClients`) checkbox pickers, verify integrations (`AI Artifacts: Verify All Integrations`), and retain the earlier all-detected/per-client commands (sharing `install-notification.ts` across all install entry points).
   - Copy the current MCP configuration or production skill.
 - Trigger non-blocking integration activation (`runIntegrationActivation`) at activation: read `~/.ai-artifacts/managed/integration-version.json` once before any client detection or upgrade; invite missing-receipt users once until clicked with `Run Installer` (persisting `installer.onboardingAccepted` before opening the picker, without triggering upgrades if canceled); route existing `valid` or `invalid` snapshots to `runAutomaticIntegrationUpgrade` -> `upgradeDetectedIntegrations(context, installedVersion)`, refreshing integration support views once on settlement, staying silent on empty/unchanged/healthy-update reports, and showing a single error notification naming the failed client(s), **`AI Artifacts: Installer`**, and `View Installation Guide` on failures or coordinator/version-read rejection.
-- Schedule best-effort asynchronous retention cleanup at activation: read `agentPlus.artifactRetentionDays`, enumerate validated schema-v6 candidates, and permanently delete expired artifacts via atomic rename to managed cleanup staging. Cleanup does not block activation or commands.
+- Schedule best-effort asynchronous retention cleanup at activation: read `agentPlus.artifactRetentionDays`, enumerate validated schema-v6 candidates, and permanently delete only globally archived artifacts whose `artifact-ui-state.json.archivedAt` has expired, via atomic rename to managed cleanup staging. Re-read Archive state before deletion; missing state preserves the artifact, and invalid or unreadable state is skipped. Pass the same configured retention days to archived Work Session cleanup, which uses `session-ui-state.json.archivedAt` and the shared default/normalization while preserving artifacts. Cleanup does not block activation or commands.
 - Own and dispose top-level VS Code subscriptions.
 
 **Does not own**

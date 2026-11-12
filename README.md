@@ -324,7 +324,7 @@ For related work, the Session skill reads the latest shared instructions and rel
 7. Use the in-session filter bar to search artifacts by title or filter by artifact kind across all zones. Cards display title, kind badge, a 2-line description snippet, and updatedAt timestamp.
 8. Use the More (`⋯`) menu in the Session Manager header to **Export** the session to a `.zip` archive containing `Instructions.md` and organized folders (`Working/`, `References/`, `Archived/`) with numbered Markdown files, or to **Archive** or **Delete** the session.
 
-Working occupies the main column with a responsive grid layout. References and Archived appear in the collapsible side panel (fixed 2 columns), whose visibility is remembered separately for each session. The in-session Archived zone is a layout zone within the session; it differs from global artifact archiving. Global session archives are automatically pruned after 30 days of archiving.
+Working occupies the main column with a responsive grid layout. References and Archived appear in the collapsible side panel (fixed 2 columns), whose visibility is remembered separately for each session. The in-session Archived zone is a layout zone within the session; it differs from global artifact archiving. Global session archives are automatically pruned according to the shared `agentPlus.artifactRetentionDays` setting (default 90 days), measured from `session-ui-state.json.archivedAt`.
 
 ### Shared Instructions
 
@@ -349,6 +349,7 @@ The AI agent calls the MCP `create_artifact` tool, which generates an isolated s
   comments.json
   review-submission.json  # Present after a decision is submitted
   artifact-connection.json # Optional schema-v1 target-window routing state
+  artifact-ui-state.json   # Optional Pin/Archive state; archivedAt drives retention
 
 ~/.ai-artifacts/conversation-registry/<session-id>/
   conversation.json       # Schema-v2 Work Session metadata
@@ -364,11 +365,13 @@ Work Sessions organize artifacts independently of their review lifecycles and AI
 ### Automatic retention cleanup
 
 > [!WARNING]
-> **Automatic Retention Cleanup:** AI Artifacts automatically and permanently deletes artifacts whose `artifact.json` `updatedAt` is older than the configured retention period (default **30 days**) each time the extension activates. This setting is machine-scoped (`agentPlus.artifactRetentionDays`, minimum 1 day). Artifacts are not recoverable after deletion. To preserve content long-term, use **Just save** to copy Markdown to your workspace, **Copy Markdown** to the clipboard, or manually save content outside the artifact lifecycle before the retention window expires. If the extension is uninstalled and later reinstalled, the next activation may delete artifacts that expired during the extension's absence.
+> **Automatic Retention Cleanup:** Each time the extension activates, AI Artifacts permanently deletes only globally archived artifacts whose `artifact-ui-state.json` `archivedAt` is at least the configured number of days old (default **90 days**). This setting is machine-scoped (`agentPlus.artifactRetentionDays`, minimum 1 day). Artifacts without the state file or without `archivedAt` are treated as unarchived and kept regardless of age; no migration is needed. Restore cancels automatic deletion eligibility, and archiving again starts a new retention period. Pin and `artifact.json.updatedAt` do not change this countdown; moving an artifact into a Session's Archived zone does not archive it globally. Artifacts are not recoverable after deletion. Before cleanup, restore them or save a copy with **Just save**, **Copy Markdown**, or manual export. Reinstall activation may delete archived artifacts whose retention expired during the extension's absence.
+
+The retention setting also applies to globally archived Work Sessions, using `session-ui-state.json.archivedAt`. Session cleanup removes Session data and memberships while preserving shared artifacts; each artifact remains subject to its own Archive retention.
 
 ### Behavior and security
 
-- **Safe Lifecycle:** Artifact data outlives transient MCP connections within the configured retention window. Process restarts, waiter cancellations, or new chat turns never destroy unreviewed artifacts. Expired artifacts are permanently deleted when the extension activates.
+- **Safe Lifecycle:** Artifact data outlives transient MCP connections. Process restarts, waiter cancellations, or new chat turns never destroy unreviewed artifacts. Only globally archived artifacts are automatically deleted after their configured retention period, when the extension activates.
 - **Session-Centric Artifact Ownership:** Artifacts belong to interactive review sessions in global storage, completely decoupled from repository directories.
 - **Focused-First Window Routing:** The MCP server connects to the currently focused VS Code window by default, with explicit selection tokens when window focus is ambiguous. Non-target windows ignore connection events.
 - **Transactional Updates:** Multi-round revisions are transactional; failed commits automatically roll back, including the Windows editor-lock fallback.

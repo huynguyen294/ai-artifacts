@@ -18,8 +18,9 @@ import {
   cleanupStaleConversations,
   type CleanupStaleConversationsResult,
 } from "../shared/conversation-artifact-registry";
+import { getArtifactUiState } from "./artifact-ui-state";
 
-export const DEFAULT_RETENTION_DAYS = 30;
+export const DEFAULT_RETENTION_DAYS = 90;
 export const DAY_IN_MS = 24 * 60 * 60 * 1000;
 
 export type RetentionCleanupOptions = {
@@ -46,7 +47,7 @@ function errorCode(error: unknown): string | undefined {
 
 /**
  * Validates and normalizes retention days to a positive safe integer.
- * Falls back to DEFAULT_RETENTION_DAYS (30) for invalid values (<= 0, NaN, floats, overflow).
+ * Falls back to DEFAULT_RETENTION_DAYS (90) for invalid values (<= 0, NaN, floats, overflow).
  */
 export function normalizeRetentionDays(
   rawDays: unknown,
@@ -68,20 +69,23 @@ export function normalizeRetentionDays(
 }
 
 /**
- * Checks whether an artifact manifest timestamp has expired according to retentionDays.
- * Formula: expiresAt = Date.parse(updatedAtIso) + retentionDays * DAY_IN_MS
+ * Checks whether a globally archived artifact has expired according to retentionDays.
+ * Formula: expiresAt = Date.parse(archivedAtIso) + retentionDays * DAY_IN_MS
  * Returns true if nowMs >= expiresAt.
  */
 export function isArtifactCandidateExpired(
-  updatedAtIso: string,
+  archivedAtIso: string | undefined,
   retentionDays: number,
   nowMs: number,
 ): boolean {
-  const updatedAtMs = Date.parse(updatedAtIso);
-  if (Number.isNaN(updatedAtMs)) {
+  if (!archivedAtIso) {
     return false;
   }
-  const expiresAt = updatedAtMs + retentionDays * DAY_IN_MS;
+  const archivedAtMs = Date.parse(archivedAtIso);
+  if (Number.isNaN(archivedAtMs)) {
+    return false;
+  }
+  const expiresAt = archivedAtMs + retentionDays * DAY_IN_MS;
   return nowMs >= expiresAt;
 }
 
@@ -126,7 +130,7 @@ export async function drainManagedCleanupStaging(
  * Runs artifact retention cleanup across the canonical global artifact collection:
  * 1. Drains lingering cleanup staging entries from previous runs.
  * 2. Enumerates validated schema-v6 artifacts under canonical ~/.ai-artifacts/artifacts/.
- * 3. Identifies candidates expired based on artifact.json.updatedAt.
+ * 3. Identifies archived candidates expired based on artifact-ui-state.json.archivedAt.
  * 4. Revalidates candidates and performs atomic rename to managed cleanup staging.
  * 5. Recursively deletes staged directories.
  */
@@ -222,8 +226,9 @@ export async function executeArtifactRetentionCleanup(
         continue;
       }
 
-      if (!isArtifactCandidateExpired(manifest.updatedAt, retentionDays, nowMs)) {
-        // Active / unexpired artifact: preserve untouched
+      const uiState = await getArtifactUiState(artifactId, rootOptions);
+      if (!isArtifactCandidateExpired(uiState.archivedAt, retentionDays, nowMs)) {
+        // Unarchived / unexpired artifact: preserve untouched
         continue;
       }
 
@@ -248,9 +253,10 @@ export async function executeArtifactRetentionCleanup(
       try {
         const recheckRaw = JSON.parse(await fs.readFile(manifestPath, "utf8"));
         const recheckManifest = parseArtifactManifest(recheckRaw);
+        const recheckUiState = await getArtifactUiState(artifactId, rootOptions);
         if (
           recheckManifest.artifactId !== artifactId
-          || !isArtifactCandidateExpired(recheckManifest.updatedAt, retentionDays, nowMs)
+          || !isArtifactCandidateExpired(recheckUiState.archivedAt, retentionDays, nowMs)
         ) {
           await fs.rm(claimPath, { recursive: true, force: true });
           result.skippedCount++;
@@ -292,7 +298,7 @@ export async function executeArtifactRetentionCleanup(
       }
       result.deletedCount++;
     } catch {
-      // Malformed manifest, missing files, or parse errors: skip safely without mutation
+      // Invalid manifest/UI state, unreadable files, or parse errors: skip safely without mutation
       result.skippedCount++;
     }
   }

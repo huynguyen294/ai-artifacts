@@ -14,6 +14,19 @@ Minor typos, formatting fixes, or cosmetic wording adjustments that do not chang
 
 Each entry includes the date, category, summary of changes, rationale, and affected components or files.
 
+## 2026-11-12 — Share the retention setting across artifacts and Work Sessions
+
+- **Behavior:** `agentPlus.artifactRetentionDays` now controls both globally archived artifacts and Work Sessions (default 90 days, minimum 1). Each item expires from its own `archivedAt`; deleting a Session preserves its artifacts.
+- **Components:** Activation passes the same configured value to both cleanups. Work Session retention uses the existing shared default and normalizer instead of its own day constant. Updated the setting description, README, architecture, philosophy, contributor instructions, component ownership, and unreleased release notes.
+- **Validation:** `npm.cmd run check`, full `npm.cmd test -- --maxWorkers=2` (66 files, 883 passed, 3 skipped), `npm.cmd run build`, and `git diff --check` passed. Regression tests cover non-default Session retention, invalid-setting fallback, and activation forwarding the configured value to both cleanups. Live Extension Host verification was not run.
+
+## 2026-11-12 — Delete artifacts only after global Archive retention expires
+
+- **Behavior and rationale:** Artifact retention now requires a global `archivedAt` in `artifact-ui-state.json` and expires after `agentPlus.artifactRetentionDays` (default increased from 30 to 90 days, minimum 1). `artifact.json.updatedAt` no longer determines deletion. Missing UI state or `archivedAt` means unarchived and preserves the artifact regardless of age; no migration or state backfill is needed. Invalid or unreadable state is skipped.
+- **Components:** Updated `src/extension/artifact-retention.ts` to read Archive state for eligibility and again before staging deletion. Existing Archive/Restore actions, safe staging/deletion, membership pruning, and activation scheduling remain in place. Archived Session retention in `src/extension/work-session-retention.ts` also defaults to 90 days, with synchronized tests and documentation; deleting a Session still preserves its artifacts. Restore removes eligibility; archiving again starts a new period. Pin and a Session's Archived layout zone do not change global artifact retention.
+- **Documentation:** Updated the setting description, README, architecture, philosophy, component ownership, contributor invariants, artifact skill/contract, and unreleased release notes. Schemas and package/MCP/skill versions are unchanged.
+- **Validation:** `npm.cmd run check`, full `npm.cmd test -- --maxWorkers=2` (66 files, 879 passed, 3 skipped), `npm.cmd run build`, and `git diff --check` passed. Regression coverage includes missing UI state, archive timestamps independent of manifest age and Pin, configured/default retention, Restore/re-archive before deletion, invalid/unreadable state, and membership pruning. Live Extension Host verification was not run.
+
 ## 2026-11-11 — Open local file links from Artifact Review
 
 - **Behavior and rationale:** Local file links that previously rendered without a clickable target now open in the VS Code text editor. Supported targets are absolute local paths and local `file://` URLs. Directories and missing files report errors through the existing review UI; relative paths are not resolved.

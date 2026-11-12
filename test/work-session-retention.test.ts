@@ -11,6 +11,7 @@ import {
   registerArtifactInSession,
 } from "../src/shared/conversation-artifact-registry";
 import { patchSessionUiState } from "../src/extension/artifact-ui-state";
+import { DEFAULT_RETENTION_DAYS } from "../src/extension/artifact-retention";
 import {
   DAY_IN_MS,
   executeWorkSessionArchiveCleanup,
@@ -49,16 +50,17 @@ describe("work session archive retention", () => {
     return artDir;
   }
 
-  it("calculates candidate expiration based on archivedAt + 30 days", () => {
+  it("calculates candidate expiration based on archivedAt + the default 90 days", () => {
     const archivedAt = "2026-10-01T00:00:00.000Z";
     const archivedAtMs = Date.parse(archivedAt);
 
-    expect(isSessionCandidateExpired(archivedAt, 30, archivedAtMs + 29 * DAY_IN_MS)).toBe(false);
-    expect(isSessionCandidateExpired(archivedAt, 30, archivedAtMs + 30 * DAY_IN_MS)).toBe(true);
-    expect(isSessionCandidateExpired(archivedAt, 30, archivedAtMs + 31 * DAY_IN_MS)).toBe(true);
+    expect(DEFAULT_RETENTION_DAYS).toBe(90);
+    expect(isSessionCandidateExpired(archivedAt, DEFAULT_RETENTION_DAYS, archivedAtMs + 89 * DAY_IN_MS)).toBe(false);
+    expect(isSessionCandidateExpired(archivedAt, DEFAULT_RETENTION_DAYS, archivedAtMs + 90 * DAY_IN_MS)).toBe(true);
+    expect(isSessionCandidateExpired(archivedAt, DEFAULT_RETENTION_DAYS, archivedAtMs + 91 * DAY_IN_MS)).toBe(true);
   });
 
-  it("cleans up sessions archived for 30+ days while preserving active and unarchived sessions", async () => {
+  it("cleans up sessions archived for 90+ days while preserving active and unarchived sessions", async () => {
     const artId = "art-sample";
     const artDir = await createSampleArtifact(artId);
 
@@ -77,12 +79,12 @@ describe("work session archive retention", () => {
       rootOptions,
     );
 
-    // Session 3: Archived 31 days ago -> DELETE
+    // Session 3: Archived 91 days ago -> DELETE
     const sExpiredArchive = await createSession({ title: "Expired Archive", ...rootOptions });
     await registerArtifactInSession(sExpiredArchive.sessionId, artId, rootOptions);
     await patchSessionUiState(
       sExpiredArchive.sessionId,
-      { archivedAt: new Date(now - 31 * DAY_IN_MS).toISOString() },
+      { archivedAt: new Date(now - 91 * DAY_IN_MS).toISOString() },
       rootOptions,
     );
 
@@ -107,6 +109,42 @@ describe("work session archive retention", () => {
     await expect(fs.access(artDir)).resolves.toBeUndefined();
   });
 
+  it.each([14, 120])("uses the configured %i-day retention period for archived Sessions", async (retentionDays) => {
+    const now = Date.parse("2026-11-08T00:00:00.000Z");
+    const recent = await createSession({ title: "Recent Archive", ...rootOptions });
+    const expired = await createSession({ title: "Expired Archive", ...rootOptions });
+    await patchSessionUiState(recent.sessionId, {
+      archivedAt: new Date(now - (retentionDays - 1) * DAY_IN_MS).toISOString(),
+    }, rootOptions);
+    await patchSessionUiState(expired.sessionId, {
+      archivedAt: new Date(now - retentionDays * DAY_IN_MS).toISOString(),
+    }, rootOptions);
+
+    const result = await executeWorkSessionArchiveCleanup({ rootOptions, now, retentionDays });
+
+    expect(result.deletedSessionIds).toEqual([expired.sessionId]);
+    await expect(fs.access(conversationDirectory(recent.sessionId, rootOptions))).resolves.toBeUndefined();
+    await expect(fs.access(conversationDirectory(expired.sessionId, rootOptions))).rejects.toThrow();
+  });
+
+  it("falls back to the shared default for invalid retention settings", async () => {
+    const now = Date.parse("2026-11-08T00:00:00.000Z");
+    const recent = await createSession({ title: "Recent Archive", ...rootOptions });
+    await patchSessionUiState(recent.sessionId, {
+      archivedAt: new Date(now - 89 * DAY_IN_MS).toISOString(),
+    }, rootOptions);
+
+    const result = await executeWorkSessionArchiveCleanup({
+      rootOptions,
+      now,
+      retentionDays: 0,
+      logDiagnostic: () => undefined,
+    });
+
+    expect(result.deletedCount).toBe(0);
+    await expect(fs.access(conversationDirectory(recent.sessionId, rootOptions))).resolves.toBeUndefined();
+  });
+
   it("skips sessions with malformed or unverified metadata without deleting them", async () => {
     const artId = "art-sample-2";
     await createSampleArtifact(artId);
@@ -115,7 +153,7 @@ describe("work session archive retention", () => {
     const session = await createSession({ title: "Corrupt Metadata Session", ...rootOptions });
     await patchSessionUiState(
       session.sessionId,
-      { archivedAt: new Date(now - 40 * DAY_IN_MS).toISOString() },
+      { archivedAt: new Date(now - 91 * DAY_IN_MS).toISOString() },
       rootOptions,
     );
 

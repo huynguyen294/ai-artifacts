@@ -249,17 +249,17 @@ describe("create-review-artifact skill contract", () => {
     expect(skill).toContain("Drop the stale handle mapping and inform the user that the artifact is permanently unavailable");
   });
 
-  it("documents bounded artifact retention and long-term preservation", async () => {
+  it("documents archive-only artifact retention and long-term preservation", async () => {
     const [skill, contract] = await Promise.all([
       readFile(path.join(skillDirectory, "SKILL.md"), "utf8"),
       readFile(path.join(skillDirectory, "references", "artifact-contract.md"), "utf8"),
     ]);
 
-    expect(skill).toContain("Artifact lifetime is bounded by configured retention");
+    expect(skill).toContain("Only globally archived artifacts are subject to configured retention");
     expect(contract).toContain("agentPlus.artifactRetentionDays");
-    expect(contract).toContain("bounded by configured retention");
-    expect(contract).toContain("validated expired artifacts are permanently deleted");
-    expect(contract).toContain("To preserve content beyond the retention window, the user must complete Just save, Copy Markdown, or export content manually");
+    expect(contract).toContain("artifact-ui-state.json.archivedAt");
+    expect(contract).toContain("Missing UI state or `archivedAt` means unarchived");
+    expect(contract).toContain("restore the artifact or save a copy with Just save, Copy Markdown, or manual export before cleanup");
   });
 
   it("documents artifactUrl and artifactLink as regular file links", async () => {

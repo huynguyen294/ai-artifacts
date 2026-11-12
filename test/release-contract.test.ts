@@ -307,7 +307,7 @@ describe("v1.1.4 release contract", () => {
     expect(autoOpen.description).toContain("selected target window");
     expect(autoOpen.description).not.toContain("focused window");
     expect(retentionDays.type).toBe("integer");
-    expect(retentionDays.default).toBe(30);
+    expect(retentionDays.default).toBe(90);
     expect(retentionDays.minimum).toBe(1);
     expect(retentionDays.scope).toBe("machine");
   });

@@ -2,6 +2,7 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import * as vscode from "vscode";
 import {
   CREATE_REVIEW_ARTIFACT_SKILL_VERSION,
   MCP_VERSION,
@@ -267,12 +268,39 @@ vi.mock("../src/extension/upgrade-notification", async (importOriginal) => {
 vi.mock("../src/extension/workspace-integration", () => workspaceIntegrationSpies);
 
 import { activate } from "../src/extension/extension";
+import { executeArtifactRetentionCleanup } from "../src/extension/artifact-retention";
+import { executeWorkSessionArchiveCleanup } from "../src/extension/work-session-retention";
 
 describe("Extension activation wiring & manual command recording", () => {
   afterEach(() => {
     vi.clearAllMocks();
     vi.restoreAllMocks();
     registeredCommands.clear();
+  });
+
+  it("passes the same retention setting to artifact and Work Session cleanup on activation", async () => {
+    const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "ai-artifacts-ext-retention-"));
+    try {
+      vi.spyOn(os, "homedir").mockReturnValue(tempRoot);
+      vi.spyOn(vscode.workspace, "getConfiguration").mockReturnValue({
+        get: (key: string, defaultValue?: unknown) => key === "artifactRetentionDays" ? 14 : defaultValue,
+      } as vscode.WorkspaceConfiguration);
+      const context = {
+        extensionUri: { fsPath: tempRoot },
+        globalStorageUri: { fsPath: path.join(tempRoot, "storage") },
+        globalState: { get: vi.fn(), update: vi.fn(async () => undefined) },
+        subscriptions: [] as Array<{ dispose: () => void }>,
+      } as any;
+
+      await activate(context);
+
+      expect(executeArtifactRetentionCleanup).toHaveBeenCalledWith({ retentionDays: 14 });
+      await vi.waitFor(() => {
+        expect(executeWorkSessionArchiveCleanup).toHaveBeenCalledWith({ retentionDays: 14 });
+      });
+    } finally {
+      await fs.rm(tempRoot, { recursive: true, force: true }).catch(() => {});
+    }
   });
 
   it("triggers activation controller non-blockingly regardless of legacy notification globalState and wires onboarding/upgrade callbacks", async () => {

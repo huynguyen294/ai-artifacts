@@ -110,7 +110,7 @@ Except for explicit non-retryable errors such as `ARTIFACT_CONNECTION_INVALID`, 
 
 ## Lifecycle rules
 
-- Artifact lifetime is longer than waiter lifetime, which is longer than an individual chat-turn lifetime. Artifact lifetime is bounded by configured retention; an exact handle may become permanently missing.
+- Artifact lifetime is longer than waiter lifetime, which is longer than an individual chat-turn lifetime. Only globally archived artifacts are subject to configured retention; unarchived artifacts are kept. An exact handle may become permanently missing after deletion.
 - Cancellation, chat-turn completion, or MCP restart detaches a waiter but never deletes or finishes an artifact.
 - One independent user request owns one artifact directory and artifact ID. Only one live waiter may own it at a time.
 - Advancing replaces the same `artifact.md` only when Markdown is supplied, increments the round, resets handled comments, and removes the old submission. It does not create revision history.
