@@ -736,7 +736,8 @@ describe("Client Drivers", () => {
         },
       },
     });
-    expect(await fs.stat(path.join(emptyDriver.skillDirectory, "references", "artifact-contract.md"))).toBeDefined();
+    expect(await fs.stat(path.join(emptyDriver.skillDirectory, "references", "storage-protocol.md"))).toBeDefined();
+    expect(await fs.stat(path.join(emptyDriver.skillDirectory, "references", "recovery.md"))).toBeDefined();
     expect(await fs.stat(path.join(emptyDriver.skillDirectory, "references", "ai-feedback.md"))).toBeDefined();
     expect(await fs.stat(path.join(emptyDriver.skillDirectory, "agents", "openai.yaml"))).toBeDefined();
     expect(await fs.stat(path.join(emptyDriver.sessionSkillDirectory, "SKILL.md"))).toBeDefined();
@@ -873,7 +874,7 @@ describe("Client Drivers", () => {
 
     await driver.install(scriptPath);
     await fs.writeFile(
-      path.join(driver.skillDirectory, "references", "artifact-contract.md"),
+      path.join(driver.skillDirectory, "references", "storage-protocol.md"),
       "# Outdated reference\n",
       "utf8",
     );
@@ -1424,7 +1425,8 @@ describe("Client Driver Upgrade", () => {
       ].join("\n"),
       "utf8",
     );
-    await fs.writeFile(path.join(reviewSource, "references", "artifact-contract.md"), "# Contract v2", "utf8");
+    await fs.writeFile(path.join(reviewSource, "references", "storage-protocol.md"), "# Contract v2", "utf8");
+    await fs.writeFile(path.join(reviewSource, "references", "recovery.md"), "# Recovery v2", "utf8");
     await fs.writeFile(path.join(reviewSource, "references", "ai-feedback.md"), "# Feedback v2", "utf8");
     await fs.writeFile(path.join(reviewSource, "agents", "openai.yaml"), "prompt: review", "utf8");
     await fs.mkdir(path.join(sessionSource, "agents"), { recursive: true });
@@ -1549,7 +1551,8 @@ describe("Client Driver Upgrade", () => {
       ].join("\n"),
       "utf8",
     );
-    await fs.writeFile(path.join(reviewSource, "references", "artifact-contract.md"), "# Contract v2", "utf8");
+    await fs.writeFile(path.join(reviewSource, "references", "storage-protocol.md"), "# Contract v2", "utf8");
+    await fs.writeFile(path.join(reviewSource, "references", "recovery.md"), "# Recovery v2", "utf8");
     await fs.writeFile(path.join(reviewSource, "references", "ai-feedback.md"), "# Feedback v2", "utf8");
     await fs.writeFile(path.join(reviewSource, "agents", "openai.yaml"), "prompt: review", "utf8");
     await fs.mkdir(path.join(sessionSource, "agents"), { recursive: true });

@@ -14,7 +14,8 @@ export const OFFICIAL_SKILL_DESCRIPTIONS: readonly string[] = [
 
 export const REVIEW_SKILL_ASSETS = [
   "SKILL.md",
-  path.join("references", "artifact-contract.md"),
+  path.join("references", "storage-protocol.md"),
+  path.join("references", "recovery.md"),
   path.join("references", "ai-feedback.md"),
   path.join("agents", "openai.yaml"),
 ];

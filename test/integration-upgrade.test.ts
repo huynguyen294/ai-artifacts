@@ -126,7 +126,8 @@ async function createSourceTree(sourceRoot: string, versionTag = "v2"): Promise<
     buildReviewSkillMarkdown(`# Core Review ${versionTag}`),
     "utf8",
   );
-  await fs.writeFile(path.join(reviewDir, "references", "artifact-contract.md"), `# Contract ${versionTag}\n`, "utf8");
+  await fs.writeFile(path.join(reviewDir, "references", "storage-protocol.md"), `# Contract ${versionTag}\n`, "utf8");
+  await fs.writeFile(path.join(reviewDir, "references", "recovery.md"), `# Recovery ${versionTag}\n`, "utf8");
   await fs.writeFile(path.join(reviewDir, "references", "ai-feedback.md"), `# Feedback ${versionTag}\n`, "utf8");
   await fs.writeFile(path.join(reviewDir, "agents", "openai.yaml"), `prompt: review-${versionTag}\n`, "utf8");
   await fs.writeFile(path.join(sessionDir, "SKILL.md"), `# Work Session ${versionTag}\n`, "utf8");

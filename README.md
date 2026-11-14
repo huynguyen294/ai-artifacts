@@ -146,7 +146,7 @@ After an install command succeeds for one or more clients, choose **Reload Windo
 <details>
 <summary>Runtime version and expected tools</summary>
 
-The current source bundles numeric MCP version 12, review skill version 4, and work session skill version 1 (with `SKILL_VERSION = 4` bridge constant). The MCP catalog contains exactly six tools: `resolve_artifact_window`, `create_artifact`, `wait_for_artifact_review`, `inspect_artifact_review`, `advance_and_wait_for_artifact`, and `join_session`. Clients using an older tool catalog require reloading/upgrading (or running **AI Artifacts: Installer** and selecting the affected client) followed by a client restart and fresh chat to expose the current tools.
+The current source bundles numeric MCP version 12 (`MCP_VERSION = 12`), review skill version 4, and work session skill version 1 (with `SKILL_VERSION = 4` bridge constant). The MCP catalog contains exactly six tools: `resolve_artifact_window`, `create_artifact`, `wait_for_artifact_review`, `inspect_artifact`, `update_artifact`, and `join_session`. The standardized API replaces the old inspect/update names without aliases. Create/update default to `wait: true`; inspect defaults to `wait: false`, and public wait remains available for wait-only/resume. These development changes do not bump release asset counters; clients need the matching runtime and skills installed together, followed by a client restart and fresh chat.
 
 Extension 1.2.0 bundles MCP version 12 for Work Sessions. The current runtime supports schema-v2 Sessions and explicit migration from legacy v1 conversations. Session instructions are read from `instructions.md`; existing v2 metadata may still contain an optional inline `instructions` string, which is accepted but not used as the instructions source. New metadata writes omit that field. Updating a test runtime bundle still requires reinstalling the changed runtime even when its numeric version remains 12.
 
@@ -232,7 +232,7 @@ Run **`AI Artifacts: Verify All Integrations`** from the Command Palette (`Ctrl+
 
 If the verify command reports `missing` (or you prefer manual setup), check directly in your Agent's **Customization / Settings** view:
 
-- **MCP Server:** Confirm `ai_artifacts` is enabled with tools like `create_artifact` and `inspect_artifact_review`. If missing, run **`AI Artifacts: Copy MCP Configuration JSON`** (or **`AI Artifacts: Copy Codex MCP Configuration TOML`** for Codex `~/.codex/config.toml`) from the Command Palette and paste the snippet into your agent's MCP settings (these snippets reference `~/.ai-artifacts/managed/runtime/ai-artifacts-review-mcp.mjs`, deployed by **`AI Artifacts: Installer`**).
+- **MCP Server:** Confirm `ai_artifacts` is enabled with tools like `create_artifact` and `inspect_artifact`. If missing, run **`AI Artifacts: Copy MCP Configuration JSON`** (or **`AI Artifacts: Copy Codex MCP Configuration TOML`** for Codex `~/.codex/config.toml`) from the Command Palette and paste the snippet into your agent's MCP settings (these snippets reference `~/.ai-artifacts/managed/runtime/ai-artifacts-review-mcp.mjs`, deployed by **`AI Artifacts: Installer`**).
 - **Skills:** Confirm `create-review-artifact` is available (type `$create-review-artifact` in chat or check active skills). If missing, run **`AI Artifacts: Copy create-review-artifact Skill Markdown`** to copy the skill instructions directly to your clipboard, configure your agent to load skills from `~/.agents/skills/` (or `~/.gemini/config/skills/` in Antigravity), or copy `~/.agents/skills/create-review-artifact/` into your agent/workspace skills directory. If Antigravity defaults to its built-in workflow on untagged artifact prompts, see [Optional: Antigravity global rule](#optional-antigravity-global-rule).
 
 > [!NOTE]
@@ -245,7 +245,7 @@ If the verify command reports `missing` (or you prefer manual setup), check dire
 
 - **MCP tools are unavailable:** Run **AI Artifacts: Installer**, select the affected AI client, and confirm with **OK**, **Run**, or **Enter**. Restart your AI extension/editor and start a fresh chat (a chat that was already open cannot load tools installed afterward). Also verify that `node` is available in `PATH`.
 - **`WINDOW_NOT_FOUND` / `WINDOW_SELECTION_REQUIRED`:** Ensure VS Code is running. When multiple windows exist and focus/affinity is ambiguous, select the matching window candidate and retry with the single-use selection token (`targetMode: "explicit-window"`).
-- **Window selection expired or closed:** Retry creation or inspection without the expired token to refresh live window candidates. After creation, keep the exact artifact handle and retry `inspect_artifact_review` with reconnect intent.
+- **Window selection expired or closed:** Retry creation or inspection without the expired token to refresh live window candidates. After creation, keep the exact artifact handle and retry `inspect_artifact` with reconnect intent.
 - **A round token expired or the MCP restarted:** The existing content remains intact. Ask the AI agent to inspect the exact artifact path again to obtain a fresh token and reconnect.
 - **A configuration conflict is reported:** Check the affected client config file (for Codex `config.toml` unexpected keys or misplaced lines, see [Codex TOML unexpected keys or missing section header](#codex-toml-unexpected-keys-or-missing-section-header)), then run **AI Artifacts: Installer** again and select the affected client.
 
@@ -460,7 +460,7 @@ code --install-extension releases/ai-artifacts-1.2.0.vsix
 - [Architecture](docs/ARCHITECTURE.md) — system boundaries, ownership, workspace registry, and filesystem safety.
 - [Components and responsibilities](docs/COMPONENTS.md) — detailed component and ownership map.
 - [Project instructions](docs/INSTRUCTION.md) — contributor invariants, workflow, and validation requirements.
-- [Artifact contract](skills/create-review-artifact/references/artifact-contract.md) — exact skill and MCP lifecycle contract.
+- [Artifact skill](skills/create-review-artifact/SKILL.md) — self-contained tool, feedback, and lifecycle instructions; read [recovery](skills/create-review-artifact/references/recovery.md) when a lifecycle tool reports an error, and [storage protocol](skills/create-review-artifact/references/storage-protocol.md) when investigating persisted schemas or raw window-resolution data.
 - [Changelog](CHANGELOG.md) — release history.
 - [Documentation change logs](docs/CHANGE_LOGS.md) — meaningful documentation and architecture decisions.
 - [MIT License](LICENSE) — project license.

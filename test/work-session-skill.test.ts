@@ -66,18 +66,16 @@ describe("work-session skill contract", () => {
     expect(skill).toContain("Preserve retained artifact review handles separately");
   });
 
-  it("selects noWait only for direct updates in the active Session and delegates lifecycle handling", async () => {
+  it("delegates wait-mode selection and preserves Session context after commits", async () => {
     const skill = await readFile(path.join(skillDirectory, "SKILL.md"), "utf8");
-    const selection = skill.split("\n").find((line) => line.includes("default to `noWait: true`"));
+    const selection = skill.split("\n").find((line) => line.includes("[Tool contract](../create-review-artifact/SKILL.md#tool-contract)"));
     expect(selection).toBeDefined();
-    expect(selection).toContain("explicit chat request to update an existing artifact");
-    expect(selection).toContain("as part of the active Session");
-    expect(selection).toContain("`artifactConversationId: activeSessionId`");
-    expect(selection).toContain("unless the user asks to wait for review");
-    expect(selection).toContain("standalone requests and review-feedback processing retain their existing wait behavior");
+    expect(selection).toContain("applying any explicit user/Instructions wait-mode request");
+    expect(skill).not.toContain("noWait");
     expect(skill).toContain("Use [create-review-artifact](../create-review-artifact/SKILL.md)");
     expect(skill).toContain("retain the active Session context and record the new artifact round separately");
-    expect(skill).toContain("Creation still waits for review");
+    expect(skill).toContain("Join has no wait option and always returns an inspection snapshot");
+    expect(skill).toContain("Public inspect may return saved feedback immediately even with `wait: true`");
   });
 
   it("documents instructions and ordered catalog zones", async () => {

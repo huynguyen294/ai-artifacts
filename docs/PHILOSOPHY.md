@@ -16,7 +16,7 @@ To preserve archived content beyond its retention window, restore the artifact o
 
 ## Two ways to interact with the same artifact
 
-The default flow provides an intuitive, in-editor review experience:
+The default flow provides an in-editor review experience through `create_artifact(wait: true)`, followed by `update_artifact(wait: true)` for ordinary revisions. The tools wait internally; public wait remains for wait-only/resume, while inspection defaults to returning immediately:
 
 ```mermaid
 flowchart LR
@@ -36,9 +36,9 @@ The chat escape flow allows the user to save comments and say "read the review" 
 - Both answers and edits if feedback is mixed.
 - Clarifies in chat without consuming the round if feedback is ambiguous.
 
-After processing, the AI starts the next round and attaches a new waiter. If feedback consisted solely of questions, the round advances while preserving the exact bytes and SHA of `artifact.md`. If no comments or submissions were saved, the AI reattaches to the current round without advancing, unless the user explicitly requested an artifact edit directly in chat (`intent: "explicit-chat-update"`), in which case the AI updates the Markdown and advances to the next round.
+After processing, the AI starts the next round through update with internal wait. Question-only feedback preserves the exact Markdown bytes/SHA. If an inspection workflow needs to continue waiting on an empty round, inspect with `wait: true` combines those operations without advancing. Saved feedback/submission still returns immediately; pure inspection/reconnect and explicit chat-update token acquisition return without waiting. A saved submission is historical state, not a fresh execution directive.
 
-For an explicit chat update to an existing artifact as part of the active Work Session, the Session skill defaults to committing without waiting, unless the user asks to wait for review. The artifact still advances its round and consumes its exact-state token; `waited: false` confirms a commit rather than a review decision. The AI records the new round and continues the authorized work, obtaining a fresh token for any later update. An existing waiter stays attached without takeover; its next validated submission supplies the current round, comments, and matching token. The expected round is an attachment precondition, not a restriction for the lifetime of the waiter. Creation always waits for review, including within a Session, while standalone updates and saved-feedback processing retain their existing wait behavior. User-requested checklist/progress content may be updated in an existing Session artifact under this narrow exception; it does not trigger automatic artifact creation or add task-manager UI.
+For an explicit artifact update, use `wait: false` only when the user or specific Instructions/workflow asks to commit without waiting. An active Session alone does not select this mode. Update needs its exact handle/round/token, not a Session UUID. It advances the round and consumes the token normally; `waited: false` confirms a commit without review feedback. Record its round and continue authorized work, obtaining a fresh token for a later update. Existing waiters stay attached without takeover and can receive the later validated round. Ordinary creation/review and saved-feedback processing retain their waiting flow. User-requested checklist/progress content remains allowed in an existing Session artifact without automatically creating artifacts or adding task-manager UI.
 
 ## Meaning of review decisions
 

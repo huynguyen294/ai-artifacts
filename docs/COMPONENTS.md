@@ -83,7 +83,8 @@ The governing lifetime relationship is `artifact lifetime > waiter lifetime > ch
 **Source**
 
 - [`skills/create-review-artifact/SKILL.md`](../skills/create-review-artifact/SKILL.md)
-- [`skills/create-review-artifact/references/artifact-contract.md`](../skills/create-review-artifact/references/artifact-contract.md)
+- [`skills/create-review-artifact/references/storage-protocol.md`](../skills/create-review-artifact/references/storage-protocol.md)
+- [`skills/create-review-artifact/references/recovery.md`](../skills/create-review-artifact/references/recovery.md)
 - [`skills/work-session/SKILL.md`](../skills/work-session/SKILL.md)
 
 **Responsibilities**
@@ -94,16 +95,16 @@ The governing lifetime relationship is `artifact lifetime > waiter lifetime > ch
 - By default, call `create_artifact` directly; the MCP server automatically targets the currently focused live VS Code window (or sole live window).
 - When multiple windows exist and focus is ambiguous, handle `WINDOW_SELECTION_REQUIRED` and retry with `connection: { targetMode: "explicit-window", selectionToken }`.
 - Call `resolve_artifact_window` when proactive window discovery or candidate inspection is needed before creation.
-- Call `create_artifact` with a chosen fixed or open `kind` (defaulting to plan kinds when applicable), retain exact review handles, any returned Session context, and connection metadata, then call `wait_for_artifact_review` for the default flow.
+- Call `create_artifact` with a chosen kind, complete Markdown and `wait: true`; retain its returned handle/Session/connection and process its review result without a second wait.
 - Interpret the returned decision.
 - Apply one feedback policy to submitted `revise` and chat-inspected comments: answer questions visibly, update Markdown only for requested changes, and advance unchanged Markdown for question-only rounds.
 - For explicitly requested AI-authored feedback, write the AI's own comments and optionally a `revise` submission using the artifact skill's reference, without taking over or starting a waiter.
 - For chat escape, inspect the exact interrupted handle with takeover before applying that shared policy.
 - For an explicit chat update on an empty round, inspect the exact handle with `intent: "explicit-chat-update"`, replace the Markdown, and advance without requiring a UI comment or Review submission.
-- For direct Session updates, delegate wait-mode selection to the Work Session skill and interpret `waited: false` as a commit confirmation; record its round and continue authorized work without treating absent comments as missing review feedback. Creation always waits, while standalone updates and review-feedback processing keep their existing flow.
-- Reattach the same round when inspection has no feedback and is not an explicit chat update; ask for a path instead of guessing when the exact handle is ambiguous.
+- For update, select `wait: false` only on explicit user or workflow direction; active Session membership alone is insufficient. Treat `waited: false` as a committed round, preserve existing waiters and continue authorized work without fetching absent feedback. Update has no Session UUID argument/output.
+- Use `inspect_artifact(wait: true)` to inspect and wait on an empty round without advancing. Read-only/reconnect inspection uses `wait: false`; ambiguous exact handles require clarification.
 - Use the intent decision table before reconnect/inspection/chat update and never takeover when the intent or exact handle is ambiguous.
-- Reconnect only through `inspect_artifact_review` on the exact handle. Ambiguous window reconnect retries inspect with the selected `connection.selectionToken`.
+- Reconnect only through `inspect_artifact` on the exact handle. Ambiguous window reconnect retries inspect with the selected `connection.selectionToken`.
 - Follow structured lifecycle recovery metadata and retain exact handles. On `CONVERSATION_NOT_FOUND`, `CONVERSATION_REGISTRY_INVALID`, or `CONVERSATION_MIGRATION_REQUIRED`, retain active context and follow Session recovery. Never silently clear an ID, create a replacement Session, retry standalone, or replay an uncertain update.
 - For `approve` on `plan` or `implementation-plan`, obey `execute-approved-plan` immediately; for other fixed or open kinds, acknowledge `approved` and conclude review without automatic implementation.
 - For `save`, ask for a destination and copy the Markdown without performing the proposed work.
@@ -140,8 +141,8 @@ The skills must never directly create or edit artifact lifecycle files, includin
   - `resolve_artifact_window`
   - `create_artifact`
   - `wait_for_artifact_review`
-  - `inspect_artifact_review`
-  - `advance_and_wait_for_artifact`
+  - `inspect_artifact`
+  - `update_artifact`
   - `join_session`
 - Validate tool arguments, artifact kind, title, and Markdown size.
 - Group fresh window candidates and issue short-lived, single-use window selection tokens.
@@ -551,39 +552,39 @@ This layer is the protocol source of truth. A contract change must be propagated
 
 ### Default submission flow
 
-1. The skill writes one complete Markdown document and calls `create_artifact` with a suitable `kind` (fixed set or open kind), title, and markdown. By default, it omits connection parameters and the server routes directly to the currently focused VS Code window (or sole live window).
+1. The skill writes complete Markdown and calls `create_artifact` with a suitable kind, title, markdown and `wait: true`. Default routing targets the focused or sole live window.
 2. If multiple windows exist and none or multiple are focused, `create_artifact` returns `WINDOW_SELECTION_REQUIRED` with candidates and opaque tokens. The skill selects the best candidate or prompts the user, then retries with `connection: { targetMode: "explicit-window", selectionToken }`.
-3. The MCP creates the initial schema-v6 files plus schema-v1 connection state under `~/.ai-artifacts/artifacts/<artifactId>/`, and returns the exact global handle plus a regular file link.
-4. The skill calls `wait_for_artifact_review` with the exact handle. The MCP reserves waiter ownership.
+3. The MCP creates the schema-v6 files and connection state under the global artifact directory, then reserves waiter ownership within the same create request.
+4. The MCP waits for review inside create; the skill starts no second waiter. Public wait is reserved for wait-only/resume.
 5. Every extension window observes the connection event, but only the matching `windowInstanceId` validates and opens the custom editor when enabled. The target may be unfocused; non-target windows remain silent. Provider, store, webview, and Markdown pipeline render and persist review comments as before.
 6. The user submits Review (`revise`), Proceed (`approve`), or Just save (`save`); the store creates `review-submission.json` exactly once.
-7. The waiting MCP validates and returns the submission metadata and the full comments document, including each comment's body and anchor. Submitted Review includes a round token and `nextAction.type: "process-review-feedback"`; this response contract is the same for initial and advanced waits, independently of client/model.
-8. For Review, the skill reads `comments.comments` directly and classifies feedback exactly as it does for chat escape: answer questions visibly, supply replacement Markdown only when changes are requested, then call `advance_and_wait_for_artifact`. Question-only Review omits Markdown; feedback needing clarification is answered before consuming the token. Inspect remains available for explicit chat feedback and recovery.
+7. The waiting MCP validates and returns the exact handle/link, submission metadata and full comments document, including each comment's body and anchor. Submitted Review includes a round token and `nextAction.type: "process-review-feedback"`; this response contract is shared by waiting create/inspect/update and public wait, independently of client/model.
+8. For Review, the skill reads `comments.comments` directly and classifies feedback exactly as it does for chat escape: answer questions visibly, supply replacement Markdown only when changes are requested, then call `update_artifact`. Question-only Review omits Markdown; feedback needing clarification is answered before consuming the token. Inspect remains available for explicit chat feedback and recovery.
 9. Proceed and Just save end the round without automatically advancing. For `plan`/`implementation-plan`, Proceed returns `execute-approved-plan` for immediate in-scope execution. Other kinds return `approved` for acknowledgment and conclusion without automatic implementation. Just save returns no `nextAction`; the skill asks for a destination and copies Markdown without executing proposed work. The artifact remains persistent and reconnectable.
 
 ### Chat escape flow
 
 1. The user saves comments and sends an instruction such as “read the review” while the waiter is active.
-2. The prior tool wait is cancelled. The skill calls `inspect_artifact_review` with the exact retained handle and `takeover: true`.
+2. The prior tool wait is cancelled. To read feedback and continue the review workflow, the skill calls `inspect_artifact` with the exact retained handle, `takeover: true` and `wait: true`. A read-only feedback request instead uses `wait: false`.
 3. The MCP aborts and drains any old waiter, validates persistent state, and returns comments plus a state-bound round token even if no submission exists.
 4. The skill applies the same classification and response policy used by Review submissions; only the feedback transport/token source differs.
-5. The skill calls `advance_and_wait_for_artifact`; omitting Markdown preserves its bytes/SHA for a question-only round.
+5. The skill calls `update_artifact`; omitting Markdown preserves its bytes/SHA for a question-only round.
 6. The MCP advances, resets handled comments/submission, and waits on the new round. If the new wait is cancelled, the committed round remains valid but detached.
-7. If inspection finds no feedback, the skill reattaches `wait_for_artifact_review` to the same round instead of advancing.
+7. If inspection finds no feedback, the `wait: true` call waits internally on the same round instead of advancing or starting a separate wait.
 
 ### Explicit chat update flow
 
 1. The user explicitly requests a concrete edit to an exact artifact in chat while its current round has no saved comments or submission.
-2. The skill calls `inspect_artifact_review` with the exact handle, `takeover: true`, the current `expectedReviewRound`, and `intent: "explicit-chat-update"`.
-3. The MCP validates the expected round before detaching a waiter, revalidates after takeover, confirms the round is still empty, and returns a state-bound `chat-update` token.
-4. The skill supplies complete replacement Markdown to `advance_and_wait_for_artifact`.
-5. The MCP rejects missing or unchanged Markdown, otherwise commits the next round transactionally and attaches a new waiter.
+2. The skill calls `inspect_artifact` with `wait: false`, the exact handle/current expected round and `intent: "explicit-chat-update"`. Use takeover only when intentionally replacing a waiter for a waiting update; preserve it for `wait: false` update.
+3. The MCP validates the expected round and empty state, revalidating after takeover when requested, and returns a state-bound chat-update token.
+4. The skill supplies complete changed Markdown to `update_artifact` with the requested wait mode.
+5. The MCP rejects missing or unchanged Markdown, otherwise commits transactionally and waits by default. `wait: false` returns a commit result while preserving an existing waiter.
 6. A pure reconnect never uses this intent and remains on the same round.
 
 ### Reconnect rules
 
 - Reconnect uses an exact artifact handle from the conversation or a path supplied by the user. No component selects the newest workspace artifact.
-- `inspect_artifact_review` with reconnect intent validates the exact global handle and resolves a live window: sole live window, validated advisory artifact-window affinity, then unique focused window, or an explicit selection token. Artifact identity has no workspace ownership. Ambiguity returns candidates for retrying the same inspect intent with a chosen token.
+- `inspect_artifact` with reconnect intent validates the exact global handle and resolves a live window: sole live window, validated advisory artifact-window affinity, then unique focused window, or an explicit selection token. Artifact identity has no workspace ownership. Ambiguity returns candidates for retrying the same inspect intent with a chosen token.
 - A successful reconnect increments `connectionRevision`, creates a new `openRequestId`, and may rebind another live window without changing Markdown, comments, submission, review round, or round tokens.
 - Wait and advance preserve connection state and never rebind.
 - MCP restart loses waiter/token memory, not artifact state. Inspection can issue a fresh token.
