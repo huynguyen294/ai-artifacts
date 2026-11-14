@@ -2,6 +2,10 @@ import type {
   IntegrationVersionManifest,
   InstalledSkillVersions,
 } from "../shared/contracts";
+import {
+  CODEX_TROUBLESHOOTING_GUIDE_URL,
+  CODEX_UNEXPECTED_KEY_CONFLICT,
+} from "./mcp-config";
 import type {
   IntegrationUpgradeClientReport,
   IntegrationUpgradeReport,
@@ -10,6 +14,7 @@ import type {
 export const VIEW_INSTALLATION_GUIDE_ACTION = "View Installation Guide";
 export const INSTALLATION_GUIDE_URL =
   "https://github.com/huynguyen294/ai-artifacts#getting-started";
+export { CODEX_TROUBLESHOOTING_GUIDE_URL };
 
 export type IntegrationSkillTarget = keyof InstalledSkillVersions;
 export type StaleIntegrationAsset =
@@ -36,7 +41,7 @@ export interface AutomaticIntegrationUpgradeDeps {
     message: string,
     ...actions: string[]
   ) => MaybePromise<string | undefined>;
-  openInstallationGuide: () => MaybePromise<unknown>;
+  openInstallationGuide: (url?: string) => MaybePromise<unknown>;
   reportDiagnostic: (message: string, error: unknown) => void;
 }
 
@@ -99,9 +104,16 @@ function formatClientFailureItem(client: IntegrationUpgradeClientReport): string
   return `${client.name}: ${detail}`;
 }
 
+function resolveGuideUrl(failedClients: readonly IntegrationUpgradeClientReport[]): string {
+  return failedClients.some((client) => client.errorCode === CODEX_UNEXPECTED_KEY_CONFLICT)
+    ? CODEX_TROUBLESHOOTING_GUIDE_URL
+    : INSTALLATION_GUIDE_URL;
+}
+
 async function notifyErrorWithGuideAction(
   deps: AutomaticIntegrationUpgradeDeps,
   message: string,
+  guideUrl = INSTALLATION_GUIDE_URL,
 ): Promise<void> {
   let selectedAction: string | undefined;
   try {
@@ -116,7 +128,7 @@ async function notifyErrorWithGuideAction(
   }
 
   try {
-    await deps.openInstallationGuide();
+    await deps.openInstallationGuide(guideUrl);
   } catch (guideError) {
     reportDiagnosticSafely(deps, "Could not open installation guide.", guideError);
   }
@@ -171,5 +183,6 @@ export async function runAutomaticIntegrationUpgrade(
   await notifyErrorWithGuideAction(
     deps,
     `AI Artifacts automatic upgrade failed for one or more clients. ${items} Run "AI Artifacts: Installer" from the Command Palette and select the failed client(s), or view the installation guide.`,
+    resolveGuideUrl(failedClients),
   );
 }

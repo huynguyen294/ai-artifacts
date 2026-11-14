@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   CODEX_ARTIFACTS_MCP_TIMEOUT_SECONDS,
+  CODEX_UNEXPECTED_KEY_CONFLICT,
+  CodexUnexpectedKeyConflictError,
   hasManagedCodexArtifactsMcp,
+  inspectCodexArtifactsMcp,
   needsCodexArtifactsMcpUpgrade,
-  patchCodexArtifactsMcpForUpgrade,
   removeCodexArtifactsMcp,
   upsertCodexArtifactsMcp,
 } from "../src/extension/mcp-config";
@@ -54,16 +56,80 @@ describe("Codex Artifacts MCP config", () => {
     expect(migrated).toContain('model = "gpt-test"');
   });
 
-  it("refuses to overwrite an unmanaged server with the same name", () => {
-    expect(() => upsertCodexArtifactsMcp(
-      '[mcp_servers.ai_artifacts]\ncommand = "custom"\n',
-      "/tmp/review-wait-mcp.mjs",
-    )).toThrow("outside the managed");
+  it("replaces markerless whitelisted servers and scattered tables into one canonical managed block", () => {
+    const scriptPath = "C:/Users/Admin/.ai-artifacts/managed/runtime/ai-artifacts-review-mcp.mjs";
+    const markerlessScattered = [
+      'model = "gpt-5.6-sol"',
+      "",
+      "[mcp_servers.ai_artifacts]",
+      'command = "node"',
+      "args = [",
+      '  "C:\\\\Users\\\\Admin\\\\.ai-artifacts\\\\managed\\\\runtime\\\\ai-artifacts-review-mcp.mjs",',
+      "]",
+      "tool_timeout_sec = 3600",
+      'default_tools_approval_mode = "approve"',
+      "",
+      "[mcp_servers.ai_artifacts.tools.resolve_artifact_window]",
+      'approval_mode = "approve"',
+      "",
+      "# keep comment for downstream section",
+      "[mcp_servers.other]",
+      'command = "other"',
+      "",
+      "[mcp_servers.ai_artifacts.tools.create_artifact]",
+      'approval_mode = "approve"',
+      "",
+      "[mcp_servers.ai_artifacts.tools.wait_for_artifact_review]",
+      'approval_mode = "approve"',
+      "",
+      "[mcp_servers.ai_artifacts.tools.inspect_artifact_review]",
+      'approval_mode = "approve"',
+      "",
+      "[mcp_servers.ai_artifacts.tools.advance_and_wait_for_artifact]",
+      'approval_mode = "approve"',
+      "",
+      "[mcp_servers.ai_artifacts.tools.join_session]",
+      'approval_mode = "approve"',
+    ].join("\r\n");
 
-    expect(() => upsertCodexArtifactsMcp(
-      '[mcp_servers.codex_artifacts]\ncommand = "custom"\n',
-      "/tmp/review-wait-mcp.mjs",
-    )).toThrow("outside the managed");
+    expect(inspectCodexArtifactsMcp(markerlessScattered)).toEqual({
+      hasArtifactsTables: true,
+      hasUnexpectedEntries: false,
+      unexpectedEntries: [],
+      configuredArgsList: [["C:\\Users\\Admin\\.ai-artifacts\\managed\\runtime\\ai-artifacts-review-mcp.mjs"]],
+    });
+    expect(hasManagedCodexArtifactsMcp(markerlessScattered, scriptPath)).toBe(true);
+
+    const removed = removeCodexArtifactsMcp(markerlessScattered);
+    expect(removed).not.toContain("[mcp_servers.ai_artifacts");
+    expect(removed).toContain("# keep comment for downstream section\r\n[mcp_servers.other]\r\ncommand = \"other\"");
+    expect(removed.replaceAll("\r\n", "")).not.toContain("\n");
+
+    const customWhitelisted = [
+      "[mcp_servers.ai_artifacts]",
+      'command = "custom"',
+      'args = ["/custom/path.mjs"]',
+      "tool_timeout_sec = 180",
+      'default_tools_approval_mode = "never"',
+      "",
+      "[mcp_servers.ai_artifacts.tools.create_artifact]",
+      'approval_mode = "never"',
+    ].join("\n");
+    expect(hasManagedCodexArtifactsMcp(customWhitelisted, "/tmp/review-wait-mcp.mjs")).toBe(false);
+
+    const replaced = upsertCodexArtifactsMcp(customWhitelisted, "/tmp/review-wait-mcp.mjs");
+    expect(replaced).toContain('command = "node"');
+    expect(replaced).toContain('args = ["/tmp/review-wait-mcp.mjs"]');
+    expect(replaced).toContain(`tool_timeout_sec = ${CODEX_ARTIFACTS_MCP_TIMEOUT_SECONDS}`);
+    expect(replaced).toContain('default_tools_approval_mode = "approve"');
+    expect(replaced).toContain('[mcp_servers.ai_artifacts.tools.create_artifact]\napproval_mode = "approve"');
+    expect(hasManagedCodexArtifactsMcp(replaced, "/tmp/review-wait-mcp.mjs")).toBe(true);
+
+    const duplicated = `${replaced}\n\n[mcp_servers.ai_artifacts]\ncommand = "node"\n`;
+    expect(hasManagedCodexArtifactsMcp(duplicated, "/tmp/review-wait-mcp.mjs")).toBe(false);
+    const deduped = upsertCodexArtifactsMcp(duplicated, "/tmp/review-wait-mcp.mjs");
+    expect(deduped.match(/\[mcp_servers\.ai_artifacts\]/g)).toHaveLength(1);
+    expect(hasManagedCodexArtifactsMcp(deduped, "/tmp/review-wait-mcp.mjs")).toBe(true);
   });
 
   it("handles displaced closing marker caused by TOML formatters and preserves intervening tables", () => {
@@ -133,111 +199,82 @@ describe("Codex Artifacts MCP config", () => {
     expect(needsCodexArtifactsMcpUpgrade(11, 11)).toBe(false);
   });
 
-  it("patches missing join_session into a 5-tool managed block while preserving overrides, non-standard settings, and CRLF", () => {
+  it("fails closed with CodexUnexpectedKeyConflictError on unexpected keys or sub-tables", () => {
     const scriptPath = "C:/Users/Admin/.ai-artifacts/managed/runtime/ai-artifacts-review-mcp.mjs";
-    const fiveToolConfig = [
+    const unexpectedMainKey = [
       'model = "gpt-5.6-sol"',
       "",
-      "# >>> AI Artifacts review MCP >>>",
-      "[mcp_servers.ai_artifacts]",
-      'command = "node"',
-      'args = ["C:/Users/Admin/.ai-artifacts/managed/runtime/ai-artifacts-review-mcp.mjs"]',
-      "tool_timeout_sec = 3600",
-      'default_tools_approval_mode = "approve"',
-      'custom_flag = "keep-me"',
-      "",
-      "[mcp_servers.ai_artifacts.tools.resolve_artifact_window]",
-      'approval_mode = "approve"',
-      "",
-      "[mcp_servers.ai_artifacts.tools.create_artifact]",
-      'approval_mode = "never"',
-      "",
-      "[mcp_servers.ai_artifacts.tools.wait_for_artifact_review]",
-      'approval_mode = "approve"',
-      "",
-      "[mcp_servers.ai_artifacts.tools.inspect_artifact_review]",
-      'approval_mode = "approve"',
-      "",
-      "[mcp_servers.ai_artifacts.tools.advance_and_wait_for_artifact]",
-      'approval_mode = "approve"',
-      "# <<< AI Artifacts review MCP <<<",
-      "",
-      "[mcp_servers.other]",
-      'command = "other"',
-      "",
-    ].join("\r\n");
-
-    const patched = patchCodexArtifactsMcpForUpgrade(fiveToolConfig);
-    expect(patched).not.toBe(fiveToolConfig);
-    expect(patched).toContain("\r\n");
-    expect(patched.replaceAll("\r\n", "")).not.toContain("\n");
-    expect(patched).toContain('custom_flag = "keep-me"');
-    expect(patched).toContain("[mcp_servers.ai_artifacts.tools.create_artifact]\r\napproval_mode = \"never\"");
-    expect(patched).toContain("[mcp_servers.ai_artifacts.tools.join_session]\r\napproval_mode = \"approve\"\r\n# <<< AI Artifacts review MCP <<<");
-    expect(patched).toContain("[mcp_servers.other]");
-    expect(hasManagedCodexArtifactsMcp(patched, scriptPath)).toBe(true);
-
-    // Preserves custom args and timeout without rewriting the managed block
-    const customSettingsFiveTool = fiveToolConfig
-      .replace("tool_timeout_sec = 3600", "tool_timeout_sec = 180")
-      .replace(
-        'args = ["C:/Users/Admin/.ai-artifacts/managed/runtime/ai-artifacts-review-mcp.mjs"]',
-        'args = ["D:/custom/other-runtime.mjs"]',
-      );
-    const patchedCustom = patchCodexArtifactsMcpForUpgrade(customSettingsFiveTool);
-    expect(patchedCustom).toContain("tool_timeout_sec = 180");
-    expect(patchedCustom).toContain('args = ["D:/custom/other-runtime.mjs"]');
-    expect(patchedCustom).toContain("[mcp_servers.ai_artifacts.tools.join_session]");
-
-    // Calling again on already 6-tool config is an exact no-op
-    expect(patchCodexArtifactsMcpForUpgrade(patched)).toBe(patched);
-  });
-
-  it("handles displaced closing marker when patching join_session and leaves existing join_session or missing block untouched", () => {
-    const scriptPath = "C:/Users/Admin/.ai-artifacts/managed/runtime/ai-artifacts-review-mcp.mjs";
-    const displacedFiveTool = [
-      "# >>> AI Artifacts review MCP >>>",
       "[mcp_servers.ai_artifacts]",
       'command = "node"',
       `args = ["${scriptPath}"]`,
       "tool_timeout_sec = 3600",
       'default_tools_approval_mode = "approve"',
-      "",
-      "[mcp_servers.ai_artifacts.tools.resolve_artifact_window]",
-      'approval_mode = "approve"',
+      'followUpQueueMode = "steer"',
+    ].join("\n");
+
+    const inspectedKey = inspectCodexArtifactsMcp(unexpectedMainKey);
+    expect(inspectedKey.hasArtifactsTables).toBe(true);
+    expect(inspectedKey.hasUnexpectedEntries).toBe(true);
+    expect(inspectedKey.unexpectedEntries).toEqual([
+      { table: "mcp_servers.ai_artifacts", key: "followUpQueueMode" },
+    ]);
+    expect(hasManagedCodexArtifactsMcp(unexpectedMainKey, scriptPath)).toBe(false);
+
+    for (const run of [
+      () => upsertCodexArtifactsMcp(unexpectedMainKey, scriptPath),
+      () => removeCodexArtifactsMcp(unexpectedMainKey),
+    ]) {
+      try {
+        run();
+        expect.unreachable("Expected CodexUnexpectedKeyConflictError");
+      } catch (err) {
+        expect(err).toBeInstanceOf(CodexUnexpectedKeyConflictError);
+        expect((err as CodexUnexpectedKeyConflictError).code).toBe(CODEX_UNEXPECTED_KEY_CONFLICT);
+        expect((err as Error).message).toContain("followUpQueueMode");
+      }
+    }
+
+    const unexpectedSubtableAndToolKey = [
+      "[mcp_servers.ai_artifacts]",
+      'command = "node"',
+      `args = ["${scriptPath}"]`,
       "",
       "[mcp_servers.ai_artifacts.tools.create_artifact]",
       'approval_mode = "approve"',
+      'custom_tool_opt = true',
       "",
-      "[mcp_servers.ai_artifacts.tools.wait_for_artifact_review]",
-      'approval_mode = "approve"',
+      "[mcp_servers.ai_artifacts.env]",
+      'FOO = "bar"',
       "",
-      "[mcp_servers.ai_artifacts.tools.inspect_artifact_review]",
-      'approval_mode = "approve"',
-      "",
-      "[mcp_servers.ai_artifacts.tools.advance_and_wait_for_artifact]",
-      'approval_mode = "approve"',
-      "",
-      "[mcp_servers.node_repl]",
-      'command = "node_repl.exe"',
-      "# <<< AI Artifacts review MCP <<<",
-      "",
+      "[mcp_servers.codex_artifacts.extra]",
+      'flag = 1',
     ].join("\n");
 
-    const patchedDisplaced = patchCodexArtifactsMcpForUpgrade(displacedFiveTool);
-    expect(hasManagedCodexArtifactsMcp(patchedDisplaced, scriptPath)).toBe(true);
-    expect(patchedDisplaced.indexOf("[mcp_servers.ai_artifacts.tools.join_session]")).toBeLessThan(
-      patchedDisplaced.indexOf("[mcp_servers.node_repl]"),
+    const inspectedSub = inspectCodexArtifactsMcp(unexpectedSubtableAndToolKey);
+    expect(inspectedSub.hasUnexpectedEntries).toBe(true);
+    expect(inspectedSub.unexpectedEntries).toEqual([
+      { table: "mcp_servers.ai_artifacts.tools.create_artifact", key: "custom_tool_opt" },
+      { table: "mcp_servers.ai_artifacts.env" },
+      { table: "mcp_servers.ai_artifacts.env", key: "FOO" },
+      { table: "mcp_servers.codex_artifacts.extra" },
+      { table: "mcp_servers.codex_artifacts.extra", key: "flag" },
+    ]);
+    try {
+      upsertCodexArtifactsMcp(unexpectedSubtableAndToolKey, scriptPath);
+      expect.unreachable("Expected CodexUnexpectedKeyConflictError");
+    } catch (err) {
+      expect(err).toBeInstanceOf(CodexUnexpectedKeyConflictError);
+      expect((err as Error).message).toContain(
+        "custom_tool_opt in [mcp_servers.ai_artifacts.tools.create_artifact], [mcp_servers.ai_artifacts.env], FOO in [mcp_servers.ai_artifacts.env], +2 more",
+      );
+      expect((err as Error).message).not.toContain("[mcp_servers.ai_artifacts.env] in [mcp_servers.ai_artifacts.env]");
+    }
+    expect(() => removeCodexArtifactsMcp(unexpectedSubtableAndToolKey)).toThrow(
+      CodexUnexpectedKeyConflictError,
     );
-    expect(patchedDisplaced).toContain("[mcp_servers.node_repl]\ncommand = \"node_repl.exe\"");
 
-    const customJoinSession = patchedDisplaced.replace(
-      '[mcp_servers.ai_artifacts.tools.join_session]\napproval_mode = "approve"',
-      '[mcp_servers.ai_artifacts.tools.join_session]\napproval_mode = "prompt"',
+    expect(() => upsertCodexArtifactsMcp("[mcp_servers.ai_artifacts.env]\n", scriptPath)).toThrow(
+      "([mcp_servers.ai_artifacts.env])",
     );
-    expect(patchCodexArtifactsMcpForUpgrade(customJoinSession)).toBe(customJoinSession);
-
-    const unmanaged = '[mcp_servers.ai_artifacts]\ncommand = "node"\nargs = ["/tmp/server.mjs"]\n';
-    expect(patchCodexArtifactsMcpForUpgrade(unmanaged)).toBe(unmanaged);
   });
 });

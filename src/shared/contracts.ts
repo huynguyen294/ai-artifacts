@@ -50,6 +50,7 @@ export const integrationVersionManifestSchema = z
   .object({
     schemaVersion: z.literal(INTEGRATION_VERSION_SCHEMA_VERSION),
     mcpVersion: z.number().int().positive().optional(),
+    codexMcpVersion: z.number().int().nonnegative().optional(),
     skills: installedSkillVersionsSchema,
     sessionSkills: installedSkillVersionsSchema.optional(),
     updatedAt: z.string().datetime(),

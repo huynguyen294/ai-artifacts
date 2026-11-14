@@ -50,6 +50,7 @@ import { migrateConversationToSession } from "../shared/conversation-artifact-re
 import { ensureSafeGlobalArtifactsRoot } from "../shared/artifact-validation";
 import {
   checkAllIntegrations,
+  getCodexMcpConfigSnippet,
   getMcpConfigSnippet,
   getReviewSkillMarkdown,
   installSelectedIntegrations,
@@ -139,6 +140,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     showErrorMessage: (message, ...actions) =>
       vscode.window.showErrorMessage(message, ...actions),
     reloadWindow: () => vscode.commands.executeCommand("workbench.action.reloadWindow"),
+    openInstallationGuide: (url) => vscode.env.openExternal(vscode.Uri.parse(url)),
     reportDiagnostic: (message, error) => {
       console.error(`AI Artifacts installer: ${message}`, error);
     },
@@ -476,6 +478,19 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       }
     }),
 
+    // Copy Codex MCP Configuration TOML
+    vscode.commands.registerCommand("agentPlus.copyCodexMcpConfig", async () => {
+      try {
+        const snippet = getCodexMcpConfigSnippet(context);
+        await vscode.env.clipboard.writeText(snippet);
+        void vscode.window.showInformationMessage(
+          "AI Artifacts Codex MCP TOML configuration copied to clipboard! Paste it into ~/.codex/config.toml.",
+        );
+      } catch (error) {
+        void vscode.window.showErrorMessage(error instanceof Error ? error.message : String(error));
+      }
+    }),
+
     // 8. Copy create-review-artifact Skill Markdown
     vscode.commands.registerCommand("agentPlus.copyReviewSkill", async () => {
       try {
@@ -551,8 +566,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         refreshIntegrationSupport: refreshViewsAndService,
         showErrorMessage: (message, ...actions) =>
           vscode.window.showErrorMessage(message, ...actions),
-        openInstallationGuide: () =>
-          vscode.env.openExternal(vscode.Uri.parse(INSTALLATION_GUIDE_URL)),
+        openInstallationGuide: (url) =>
+          vscode.env.openExternal(vscode.Uri.parse(url ?? INSTALLATION_GUIDE_URL)),
         reportDiagnostic: (message, error) => {
           console.error(`AI Artifacts automatic integration upgrade: ${message}`, error);
         },

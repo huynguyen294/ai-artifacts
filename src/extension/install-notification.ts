@@ -1,4 +1,11 @@
+import {
+  CODEX_TROUBLESHOOTING_GUIDE_URL,
+  CODEX_UNEXPECTED_KEY_CONFLICT,
+} from "./mcp-config";
+
 export const RELOAD_WINDOW_ACTION = "Reload Window";
+export const VIEW_INSTALLATION_GUIDE_ACTION = "View Installation Guide";
+export { CODEX_TROUBLESHOOTING_GUIDE_URL };
 
 const DEFAULT_EMPTY_INSTALL_MESSAGE = "AI Artifacts Installer: No AI clients were installed.";
 
@@ -6,7 +13,7 @@ type MaybePromise<T> = T | PromiseLike<T>;
 
 export type InstallationNotificationResult = {
   installedClients: readonly string[];
-  failedClients: readonly { name: string; error: string }[];
+  failedClients: readonly { name: string; error: string; errorCode?: string }[];
 };
 
 export interface InstallationNotificationDeps {
@@ -23,6 +30,7 @@ export interface InstallationNotificationDeps {
     ...actions: string[]
   ) => MaybePromise<string | undefined>;
   reloadWindow: () => MaybePromise<unknown>;
+  openInstallationGuide?: (url: string) => MaybePromise<unknown>;
   reportDiagnostic: (message: string, error: unknown) => void;
 }
 
@@ -52,19 +60,48 @@ function formatFailedClients(
     .join("; ");
 }
 
+function hasCodexUnexpectedKeyConflict(
+  failedClients: readonly { errorCode?: string }[],
+): boolean {
+  return failedClients.some((client) => client.errorCode === CODEX_UNEXPECTED_KEY_CONFLICT);
+}
+
+async function openCodexTroubleshootingGuideSafely(
+  deps: InstallationNotificationDeps,
+): Promise<void> {
+  if (!deps.openInstallationGuide) {
+    return;
+  }
+  try {
+    await deps.openInstallationGuide(CODEX_TROUBLESHOOTING_GUIDE_URL);
+  } catch (guideError) {
+    reportDiagnosticSafely(deps, "Could not open installation guide.", guideError);
+  }
+}
+
 async function showReloadPromptAndHandleAction(
   deps: InstallationNotificationDeps,
   severity: "information" | "warning",
   message: string,
+  includeCodexGuideAction = false,
 ): Promise<void> {
+  const actions = includeCodexGuideAction
+    ? [RELOAD_WINDOW_ACTION, VIEW_INSTALLATION_GUIDE_ACTION]
+    : [RELOAD_WINDOW_ACTION];
+
   let selectedAction: string | undefined;
   try {
     selectedAction =
       severity === "warning"
-        ? await deps.showWarningMessage(message, RELOAD_WINDOW_ACTION)
-        : await deps.showInformationMessage(message, RELOAD_WINDOW_ACTION);
+        ? await deps.showWarningMessage(message, ...actions)
+        : await deps.showInformationMessage(message, ...actions);
   } catch (uiError) {
     reportDiagnosticSafely(deps, "Could not show installation result notification.", uiError);
+    return;
+  }
+
+  if (selectedAction === VIEW_INSTALLATION_GUIDE_ACTION) {
+    await openCodexTroubleshootingGuideSafely(deps);
     return;
   }
 
@@ -85,6 +122,7 @@ export async function notifyInstallationResult(
   emptyMessage = DEFAULT_EMPTY_INSTALL_MESSAGE,
 ): Promise<void> {
   const { installedClients, failedClients } = result;
+  const includeCodexGuide = hasCodexUnexpectedKeyConflict(failedClients);
 
   if (installedClients.length > 0 && failedClients.length === 0) {
     const names = installedClients.join(", ");
@@ -103,16 +141,26 @@ export async function notifyInstallationResult(
       deps,
       "warning",
       `AI Artifacts installed for ${names}. Failed for: ${failedSummary}. Reload this window to apply successful installations. For AI clients running outside this window, restart the client and start a new chat.`,
+      includeCodexGuide,
     );
     return;
   }
 
   if (failedClients.length > 0) {
     const failedSummary = formatFailedClients(failedClients);
+    const message = `AI Artifacts installation failed: ${failedSummary}`;
+    let selectedAction: string | undefined;
     try {
-      await deps.showErrorMessage(`AI Artifacts installation failed: ${failedSummary}`);
+      selectedAction = includeCodexGuide
+        ? await deps.showErrorMessage(message, VIEW_INSTALLATION_GUIDE_ACTION)
+        : await deps.showErrorMessage(message);
     } catch (uiError) {
       reportDiagnosticSafely(deps, "Could not show installation failure notification.", uiError);
+      return;
+    }
+
+    if (selectedAction === VIEW_INSTALLATION_GUIDE_ACTION) {
+      await openCodexTroubleshootingGuideSafely(deps);
     }
     return;
   }
@@ -135,4 +183,3 @@ export async function notifyInstallationError(
     reportDiagnosticSafely(deps, "Could not show installation error notification.", uiError);
   }
 }
-
