@@ -5,9 +5,10 @@ import path from "node:path";
 import type { IntegrationCheck } from "../global-integration-status";
 import type { ClientUpgradeContext, ClientUpgradeResult, McpClientDriver } from "./index";
 import {
+  CodexUnexpectedKeyConflictError,
   hasManagedCodexArtifactsMcp,
+  inspectCodexArtifactsMcp,
   needsCodexArtifactsMcpUpgrade,
-  patchCodexArtifactsMcpForUpgrade,
   removeCodexArtifactsMcp,
   upsertCodexArtifactsMcp,
 } from "../mcp-config";
@@ -21,13 +22,6 @@ import {
 export function getCodexHome(): string {
   const configured = process.env.CODEX_HOME?.trim();
   return configured ? path.resolve(configured) : path.join(os.homedir(), ".codex");
-}
-
-function configurationConflict(config: string): string | undefined {
-  const withoutManaged = removeCodexArtifactsMcp(config);
-  return /^\s*\[mcp_servers\.(?:ai_artifacts|codex_artifacts)\]\s*$/m.test(withoutManaged)
-    ? "config.toml defines mcp_servers.ai_artifacts outside the extension-managed block."
-    : undefined;
 }
 
 export class CodexClientDriver implements McpClientDriver {
@@ -45,8 +39,13 @@ export class CodexClientDriver implements McpClientDriver {
   async check(mcpScriptPath: string): Promise<IntegrationCheck> {
     try {
       const content = await fs.readFile(this.configPath, "utf8");
-      const conflict = configurationConflict(content);
-      if (conflict) return { status: "configuration-conflict", detail: conflict };
+      const inspection = inspectCodexArtifactsMcp(content);
+      if (inspection.unexpectedEntries.length > 0) {
+        return {
+          status: "configuration-conflict",
+          detail: new CodexUnexpectedKeyConflictError(inspection.unexpectedEntries).message,
+        };
+      }
       const configured = hasManagedCodexArtifactsMcp(content, mcpScriptPath);
       return configured ? { status: "ready" } : { status: "missing" };
     } catch (error: any) {
@@ -62,10 +61,6 @@ export class CodexClientDriver implements McpClientDriver {
       content = await fs.readFile(this.configPath, "utf8");
     } catch (error: any) {
       if (error?.code !== "ENOENT") throw error;
-    }
-    const conflict = configurationConflict(content);
-    if (conflict) {
-      throw new Error(conflict);
     }
     const updated = upsertCodexArtifactsMcp(content, mcpScriptPath);
     await writeTextFileAtomic(this.configPath, updated);
@@ -88,7 +83,18 @@ export class CodexClientDriver implements McpClientDriver {
       throw error;
     }
 
-    const candidate = patchCodexArtifactsMcpForUpgrade(content);
+    const inspection = inspectCodexArtifactsMcp(content);
+    if (inspection.unexpectedEntries.length > 0) {
+      throw new CodexUnexpectedKeyConflictError(inspection.unexpectedEntries);
+    }
+    if (!inspection.hasArtifactsTables) {
+      return { status: "unchanged" };
+    }
+    if (hasManagedCodexArtifactsMcp(content, context.mcpScriptPath)) {
+      return { status: "unchanged" };
+    }
+
+    const candidate = upsertCodexArtifactsMcp(content, context.mcpScriptPath);
     if (candidate === content) {
       return { status: "unchanged" };
     }

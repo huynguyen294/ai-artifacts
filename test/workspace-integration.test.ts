@@ -6,7 +6,11 @@ import path from "node:path";
 import { createInterface } from "node:readline";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ArtifactStore } from "../src/extension/artifact-store";
-import { hasManagedCodexArtifactsMcp, upsertCodexArtifactsMcp } from "../src/extension/mcp-config";
+import {
+  CODEX_UNEXPECTED_KEY_CONFLICT,
+  hasManagedCodexArtifactsMcp,
+  upsertCodexArtifactsMcp,
+} from "../src/extension/mcp-config";
 import {
   globalArtifactsRoot,
   managedInstalledClientsPath,
@@ -42,6 +46,7 @@ vi.mock("vscode", () => ({
 import {
   baseScriptIsCurrent,
   checkAllIntegrations,
+  getCodexMcpConfigSnippet,
   installSelectedIntegrations,
   listInstallableClients,
   listInstallerClients,
@@ -51,9 +56,11 @@ import {
   getReviewSkillMarkdown,
   setupBaseMcpServer,
   uninstallSelectedIntegrations,
+  upgradeDetectedIntegrations,
   writeInstalledIntegrationVersion,
   type BaseIntegrationPaths,
 } from "../src/extension/workspace-integration";
+import { resolveWorkSessionSupport } from "../src/extension/work-session-support";
 
 const ALL_CLIENT_IDS = ["copilot", "cursor", "codex", "claude", "windsurf", "cline", "antigravity"] as const;
 
@@ -1214,7 +1221,7 @@ describe("Workspace Integration Asset Verifiers", () => {
       // Conflict in Codex should fail Codex without blocking Cursor or Antigravity
       await fs.writeFile(
         codexConfig,
-        '[mcp_servers.ai_artifacts]\ncommand = "node"\nargs = ["/custom/server.mjs"]\n',
+        '[mcp_servers.ai_artifacts]\ncommand = "node"\nargs = ["/custom/server.mjs"]\nfollowUpQueueMode = "steer"\n',
         "utf8",
       );
       await fs.writeFile(cursorConfig, JSON.stringify({ mcpServers: {} }, null, 2), "utf8");
@@ -1223,6 +1230,10 @@ describe("Workspace Integration Asset Verifiers", () => {
         extensionUri: { fsPath: repositoryRoot },
         globalStorageUri: { fsPath: globalStoragePath },
       } as any;
+
+      const codexSnippet = getCodexMcpConfigSnippet(context);
+      expect(codexSnippet).toContain("[mcp_servers.ai_artifacts]");
+      expect(hasManagedCodexArtifactsMcp(codexSnippet, managedMcpScriptPath({ userHome: targetDir }))).toBe(true);
 
       const initialList = await listInstallerClients(context);
       const codexInitial = initialList.clients.find((c) => c.id === "codex");
@@ -1255,7 +1266,11 @@ describe("Workspace Integration Asset Verifiers", () => {
         { id: "antigravity", name: "Antigravity" },
       ]);
       expect(installResult.failedClients).toHaveLength(1);
-      expect(installResult.failedClients[0]!.id).toBe("codex");
+      expect(installResult.failedClients[0]).toMatchObject({
+        id: "codex",
+        name: "Codex",
+        errorCode: CODEX_UNEXPECTED_KEY_CONFLICT,
+      });
       await expect(fs.access(antigravityConfig)).resolves.toBeUndefined();
 
       const updatedList = await listInstallerClients(context);
@@ -1518,7 +1533,7 @@ describe("Workspace Integration Asset Verifiers", () => {
       });
       await expect(fs.access(runtimePath)).rejects.toThrow();
 
-      // 7. Selected Codex with unmanaged [mcp_servers.ai_artifacts] entry left on disk keeps base
+      // 7a. Selected Codex with markerless whitelisted [mcp_servers.ai_artifacts] entry uninstalls cleanly and cleans base
       await setupBaseMcpServer(context, { userHome: targetDir });
       await fs.mkdir(codexHome, { recursive: true });
       await fs.writeFile(
@@ -1526,11 +1541,30 @@ describe("Workspace Integration Asset Verifiers", () => {
         `[mcp_servers.ai_artifacts]\ncommand = "node"\nargs = ${JSON.stringify([runtimePath])}\n`,
         "utf8",
       );
-      const unmanagedCodexResult = await uninstallSelectedIntegrations(context, ["codex"], {
+      const markerlessCodexResult = await uninstallSelectedIntegrations(context, ["codex"], {
         recordClientSelection: true,
         cleanupBase: true,
       });
-      expect(unmanagedCodexResult.notConfiguredClients).toEqual([{ id: "codex", name: "Codex" }]);
+      expect(markerlessCodexResult.uninstalledClients).toEqual([{ id: "codex", name: "Codex" }]);
+      await expect(fs.access(runtimePath)).rejects.toThrow();
+
+      // 7b. Selected Codex with unexpected key left on disk fails closed and keeps base
+      await setupBaseMcpServer(context, { userHome: targetDir });
+      await fs.writeFile(
+        path.join(codexHome, "config.toml"),
+        `[mcp_servers.ai_artifacts]\ncommand = "node"\nargs = ${JSON.stringify([runtimePath])}\nfollowUpQueueMode = "steer"\n`,
+        "utf8",
+      );
+      const conflictCodexResult = await uninstallSelectedIntegrations(context, ["codex"], {
+        recordClientSelection: true,
+        cleanupBase: true,
+      });
+      expect(conflictCodexResult.failedClients).toHaveLength(1);
+      expect(conflictCodexResult.failedClients[0]).toMatchObject({
+        id: "codex",
+        name: "Codex",
+      });
+      expect(conflictCodexResult.failedClients[0]!.error).toContain("followUpQueueMode");
       await expect(fs.access(runtimePath)).resolves.toBeUndefined();
     } finally {
       if (originalCodexHome === undefined) {
@@ -1823,6 +1857,219 @@ describe("Workspace Integration Asset Verifiers", () => {
     await expect(fs.readFile(cursorConfig, "utf8")).resolves.toBe("[]");
     for (const spy of checkSpies) {
       expect(spy).not.toHaveBeenCalled();
+    }
+  });
+
+  it("preserves pending codexMcpVersion when installer updates sibling clients from v11 without inventing it on fresh installs", async () => {
+    const repositoryRoot = path.resolve(import.meta.dirname, "..");
+    vi.spyOn(os, "homedir").mockReturnValue(targetDir);
+    const originalCodexHome = process.env.CODEX_HOME;
+    const codexHome = path.join(targetDir, ".codex");
+    process.env.CODEX_HOME = codexHome;
+
+    try {
+      const globalStoragePath = path.join(
+        targetDir,
+        "Code",
+        "User",
+        "globalStorage",
+        "huynguyen294.ai-artifacts",
+      );
+      const context = {
+        extensionUri: { fsPath: repositoryRoot },
+        globalStorageUri: { fsPath: globalStoragePath },
+      } as any;
+
+      // 1. Fresh install of Claude alone omits codexMcpVersion
+      await installClientsOrThrow(context, ["claude"], { recordClientSelection: true });
+      const freshReceipt = await readInstalledIntegrationVersion({ userHome: targetDir });
+      expect(freshReceipt.status).toBe("valid");
+      if (freshReceipt.status === "valid") {
+        expect(freshReceipt.manifest.mcpVersion).toBe(MCP_VERSION);
+        expect(freshReceipt.manifest.codexMcpVersion).toBeUndefined();
+      }
+
+      // 2. Prior v11 receipt with existing v11 Codex config + user installs only Claude
+      const runtimePath = managedMcpScriptPath({ userHome: targetDir });
+      const codexConfigPath = path.join(codexHome, "config.toml");
+      await fs.mkdir(codexHome, { recursive: true });
+      await fs.writeFile(
+        codexConfigPath,
+        [
+          "[mcp_servers.ai_artifacts]",
+          'command = "node"',
+          `args = [${JSON.stringify(runtimePath)}]`,
+          "tool_timeout_sec = 3600",
+          "",
+        ].join("\n"),
+        "utf8",
+      );
+      await writeInstalledIntegrationVersion(
+        {
+          mcpVersion: 11,
+          skills: { agents: CREATE_REVIEW_ARTIFACT_SKILL_VERSION, claude: CREATE_REVIEW_ARTIFACT_SKILL_VERSION },
+          sessionSkills: { agents: WORK_SESSION_SKILL_VERSION, claude: WORK_SESSION_SKILL_VERSION },
+        },
+        { userHome: targetDir },
+      );
+
+      await installClientsOrThrow(context, ["claude"], { recordClientSelection: true });
+      expect(await readInstalledIntegrationVersion({ userHome: targetDir })).toMatchObject({
+        status: "valid",
+        manifest: {
+          mcpVersion: MCP_VERSION,
+          codexMcpVersion: 11,
+        },
+      });
+
+      const snapshot = await readInstalledIntegrationVersion({ userHome: targetDir });
+      expect(snapshot.status).toBe("valid");
+      if (snapshot.status === "valid") {
+        const upgradeReport = await upgradeDetectedIntegrations(context, snapshot);
+        expect(upgradeReport.clients.find((client) => client.id === "codex")?.status).toBe("updated");
+        expect(await readInstalledIntegrationVersion({ userHome: targetDir })).toMatchObject({
+          status: "valid",
+          manifest: {
+            mcpVersion: MCP_VERSION,
+            codexMcpVersion: MCP_VERSION,
+          },
+        });
+      }
+    } finally {
+      if (originalCodexHome === undefined) {
+        delete process.env.CODEX_HOME;
+      } else {
+        process.env.CODEX_HOME = originalCodexHome;
+      }
+    }
+  });
+
+  it("records pending codexMcpVersion on Codex install failure without blocking sibling installs or Session Manager, and clears it on Codex uninstall", async () => {
+    const repositoryRoot = path.resolve(import.meta.dirname, "..");
+    vi.spyOn(os, "homedir").mockReturnValue(targetDir);
+    const originalCodexHome = process.env.CODEX_HOME;
+    const codexHome = path.join(targetDir, ".codex");
+    process.env.CODEX_HOME = codexHome;
+
+    try {
+      const globalStoragePath = path.join(
+        targetDir,
+        "Code",
+        "User",
+        "globalStorage",
+        "huynguyen294.ai-artifacts",
+      );
+      const context = {
+        extensionUri: { fsPath: repositoryRoot },
+        globalStorageUri: { fsPath: globalStoragePath },
+      } as any;
+      const runtimePath = managedMcpScriptPath({ userHome: targetDir });
+      const codexConfigPath = path.join(codexHome, "config.toml");
+
+      // Uninstalling Codex when receipt is missing must not create integration-version.json
+      await fs.mkdir(codexHome, { recursive: true });
+      await uninstallSelectedIntegrations(context, ["codex"], { cleanupBase: false });
+      await expect(readInstalledIntegrationVersion({ userHome: targetDir })).resolves.toEqual({ status: "missing" });
+
+      // Install [codex, claude] when Codex config has an unexpected custom key
+      const conflictToml = [
+        "[mcp_servers.ai_artifacts]",
+        'command = "node"',
+        `args = [${JSON.stringify(runtimePath)}]`,
+        'followUpQueueMode = "steer"',
+        "",
+      ].join("\n");
+      await fs.writeFile(codexConfigPath, conflictToml, "utf8");
+
+      const installResult = await installSelectedIntegrations(context, ["codex", "claude"], {
+        recordClientSelection: true,
+      });
+      expect(installResult.installedClients).toEqual([{ id: "claude", name: "Claude" }]);
+      expect(installResult.failedClients).toHaveLength(1);
+      expect(installResult.failedClients[0]).toMatchObject({
+        id: "codex",
+        errorCode: CODEX_UNEXPECTED_KEY_CONFLICT,
+      });
+
+      expect(await readInstalledIntegrationVersion({ userHome: targetDir })).toMatchObject({
+        status: "valid",
+        manifest: {
+          mcpVersion: MCP_VERSION,
+          codexMcpVersion: 0,
+        },
+      });
+      await expect(resolveWorkSessionSupport({ userHome: targetDir })).resolves.toMatchObject({
+        supported: true,
+        installedMcpVersion: MCP_VERSION,
+        requiredMcpVersion: MCP_VERSION,
+      });
+
+      // Next activation continues detecting & reporting the unresolved Codex conflict
+      const snapshotWhileConflicted = await readInstalledIntegrationVersion({ userHome: targetDir });
+      expect(snapshotWhileConflicted.status).toBe("valid");
+      if (snapshotWhileConflicted.status === "valid") {
+        const retryReport = await upgradeDetectedIntegrations(context, snapshotWhileConflicted);
+        expect(retryReport.updatedAssets).toEqual([]);
+        expect(retryReport.clients.find((client) => client.id === "codex")).toMatchObject({
+          id: "codex",
+          status: "failed",
+          errorCode: CODEX_UNEXPECTED_KEY_CONFLICT,
+        });
+      }
+
+      // Uninstall also fails closed while the unexpected custom key remains in config.toml
+      const blockedUninstallResult = await uninstallSelectedIntegrations(context, ["codex"], {
+        recordClientSelection: true,
+        cleanupBase: true,
+      });
+      expect(blockedUninstallResult.uninstalledClients).toEqual([]);
+      expect(blockedUninstallResult.failedClients).toHaveLength(1);
+      expect(blockedUninstallResult.failedClients[0]?.id).toBe("codex");
+      expect(await readInstalledIntegrationVersion({ userHome: targetDir })).toMatchObject({
+        status: "valid",
+        manifest: {
+          mcpVersion: MCP_VERSION,
+          codexMcpVersion: 0,
+        },
+      });
+
+      // Removing the unexpected custom key lets Codex uninstall succeed, clears pending codexMcpVersion,
+      // and keeps Claude + Session Manager working
+      await fs.writeFile(
+        codexConfigPath,
+        conflictToml.replace('followUpQueueMode = "steer"\n', ""),
+        "utf8",
+      );
+      const uninstallResult = await uninstallSelectedIntegrations(context, ["codex"], {
+        recordClientSelection: true,
+        cleanupBase: true,
+      });
+      expect(uninstallResult.uninstalledClients).toEqual([{ id: "codex", name: "Codex" }]);
+      expect(uninstallResult.failedClients).toEqual([]);
+
+      const afterUninstallReceipt = await readInstalledIntegrationVersion({ userHome: targetDir });
+      expect(afterUninstallReceipt.status).toBe("valid");
+      if (afterUninstallReceipt.status === "valid") {
+        expect(afterUninstallReceipt.manifest.mcpVersion).toBe(MCP_VERSION);
+        expect(afterUninstallReceipt.manifest.codexMcpVersion).toBeUndefined();
+      }
+      await expect(resolveWorkSessionSupport({ userHome: targetDir })).resolves.toMatchObject({
+        supported: true,
+        installedMcpVersion: MCP_VERSION,
+        requiredMcpVersion: MCP_VERSION,
+      });
+
+      if (afterUninstallReceipt.status === "valid") {
+        const cleanReport = await upgradeDetectedIntegrations(context, afterUninstallReceipt);
+        expect(cleanReport.updatedAssets).toEqual([]);
+        expect(cleanReport.clients.find((client) => client.id === "codex")?.status).toBe("unchanged");
+      }
+    } finally {
+      if (originalCodexHome === undefined) {
+        delete process.env.CODEX_HOME;
+      } else {
+        process.env.CODEX_HOME = originalCodexHome;
+      }
     }
   });
 });

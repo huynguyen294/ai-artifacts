@@ -103,7 +103,11 @@ When AI Artifacts activates for the first time without an existing `~/.ai-artifa
 For custom setup:
 
 - Run **`AI Artifacts: Copy MCP Configuration JSON`** to copy the ready-to-use JSON configuration snippet directly to your clipboard to paste into any MCP-compatible editor.
+- Run **`AI Artifacts: Copy Codex MCP Configuration TOML`** to copy the canonical `[mcp_servers.ai_artifacts]` TOML block to your clipboard to paste into `~/.codex/config.toml`.
 - Run **`AI Artifacts: Copy create-review-artifact Skill Markdown`** to copy the full agent review skill instructions directly to your clipboard to paste into custom agent prompts, system instructions, or skill files.
+
+> [!NOTE]
+> Both MCP copy snippets point to the managed runtime server at `~/.ai-artifacts/managed/runtime/ai-artifacts-review-mcp.mjs`, which is created after running **`AI Artifacts: Installer`** at least once.
 
 <details>
 <summary>Installed runtime and skill locations</summary>
@@ -228,7 +232,7 @@ Run **`AI Artifacts: Verify All Integrations`** from the Command Palette (`Ctrl+
 
 If the verify command reports `missing` (or you prefer manual setup), check directly in your Agent's **Customization / Settings** view:
 
-- **MCP Server:** Confirm `ai_artifacts` is enabled with tools like `create_artifact` and `inspect_artifact_review`. If missing, run **`AI Artifacts: Copy MCP Configuration JSON`** from the Command Palette and paste the snippet into your agent's MCP settings.
+- **MCP Server:** Confirm `ai_artifacts` is enabled with tools like `create_artifact` and `inspect_artifact_review`. If missing, run **`AI Artifacts: Copy MCP Configuration JSON`** (or **`AI Artifacts: Copy Codex MCP Configuration TOML`** for Codex `~/.codex/config.toml`) from the Command Palette and paste the snippet into your agent's MCP settings (these snippets reference `~/.ai-artifacts/managed/runtime/ai-artifacts-review-mcp.mjs`, deployed by **`AI Artifacts: Installer`**).
 - **Skills:** Confirm `create-review-artifact` is available (type `$create-review-artifact` in chat or check active skills). If missing, run **`AI Artifacts: Copy create-review-artifact Skill Markdown`** to copy the skill instructions directly to your clipboard, configure your agent to load skills from `~/.agents/skills/` (or `~/.gemini/config/skills/` in Antigravity), or copy `~/.agents/skills/create-review-artifact/` into your agent/workspace skills directory. If Antigravity defaults to its built-in workflow on untagged artifact prompts, see [Optional: Antigravity global rule](#optional-antigravity-global-rule).
 
 > [!NOTE]
@@ -243,7 +247,20 @@ If the verify command reports `missing` (or you prefer manual setup), check dire
 - **`WINDOW_NOT_FOUND` / `WINDOW_SELECTION_REQUIRED`:** Ensure VS Code is running. When multiple windows exist and focus/affinity is ambiguous, select the matching window candidate and retry with the single-use selection token (`targetMode: "explicit-window"`).
 - **Window selection expired or closed:** Retry creation or inspection without the expired token to refresh live window candidates. After creation, keep the exact artifact handle and retry `inspect_artifact_review` with reconnect intent.
 - **A round token expired or the MCP restarted:** The existing content remains intact. Ask the AI agent to inspect the exact artifact path again to obtain a fresh token and reconnect.
-- **A configuration conflict is reported:** Remove or rename the unmanaged `[mcp_servers.ai_artifacts]` entry in your configuration file, then run **AI Artifacts: Installer** again and select the affected client.
+- **A configuration conflict is reported:** Check the affected client config file (for Codex `config.toml` unexpected keys or misplaced lines, see [Codex TOML unexpected keys or missing section header](#codex-toml-unexpected-keys-or-missing-section-header)), then run **AI Artifacts: Installer** again and select the affected client.
+
+#### Codex TOML unexpected keys or missing section header
+
+To avoid erasing user configuration when managing `[mcp_servers.ai_artifacts]` in `~/.codex/config.toml` (including files whose `# >>> AI Artifacts review MCP >>>` comments were stripped by formatters), AI Artifacts only replaces tables that stay within the managed key schema (`command`, `args`, `tool_timeout_sec`, `default_tools_approval_mode`, and `.tools.<tool>.approval_mode`). When it encounters any unexpected key or sub-table under `[mcp_servers.ai_artifacts*]` or legacy `[mcp_servers.codex_artifacts*]`, automatic upgrade, install, and uninstall fail closed (`CODEX_UNEXPECTED_KEY_CONFLICT`) and leave `config.toml` untouched—while shared MCP runtime, skills, and other clients continue upgrading normally.
+
+Common causes and how to fix:
+
+1. **Missing section header (or stray root-level Codex key placed below `[mcp_servers.ai_artifacts]`):** If a TOML section header below `[mcp_servers.ai_artifacts]` was deleted or a key like `followUpQueueMode` appears underneath `[mcp_servers.ai_artifacts]`, restore the intended `[section]` header above that key (or move top-level Codex settings above the first `[...]` table).
+2. **Custom keys added inside `[mcp_servers.ai_artifacts]` or sub-tables (such as `env`):**
+   - Back up / copy your custom keys out of `[mcp_servers.ai_artifacts]` temporarily.
+   - Remove the unexpected keys or sub-tables from `~/.codex/config.toml` (or replace the whole `ai_artifacts` section cleanly using **`AI Artifacts: Copy Codex MCP Configuration TOML`**).
+   - Run **`AI Artifacts: Installer`** (selecting Codex) or reload VS Code so the automatic upgrade completes and updates the version receipt.
+   - Re-add any needed custom keys afterward if required. Note that whitelisted managed fields (`tool_timeout_sec`, tool `approval_mode`, `args`) reset to canonical defaults when AI Artifacts replaces the block.
 
 ## Features & Usage
 
@@ -401,7 +418,7 @@ The retention setting also applies to globally archived Work Sessions, using `se
 - Version 1.1.0 supports only schema v6 stored under `~/.ai-artifacts/artifacts/`.
 - The current integration uses numeric `MCP_VERSION = 12`, `CREATE_REVIEW_ARTIFACT_SKILL_VERSION = 4` (`SKILL_VERSION = 4`), and `WORK_SESSION_SKILL_VERSION = 1`. These are independent monotonic asset versions, not SemVer and not the extension package version.
 - Successful manual client installation merges the client selection into `~/.ai-artifacts/managed/installed-clients.json`; successful manual uninstall removes only the selected client IDs from that list. Installed MCP runtime, shared `.agents` skills (`skills` and `sessionSkills`), Claude, and Antigravity skill versions are tracked independently in `~/.ai-artifacts/managed/integration-version.json`. An absent or mismatched receipt entry is stale.
-- On extension activation, AI Artifacts reads `~/.ai-artifacts/managed/integration-version.json` once. When the version file is absent, it skips client detection and automatic upgrade and offers **Run Installer** once until clicked (re-offering on later activations if dismissed while still absent). When an existing valid or invalid receipt file is present, AI Artifacts runs an asynchronous automatic upgrade across the merged `saved ∪ detected` client set: it deploys stale shared assets once, commits receipts as steps complete, reconciles required client definitions (such as adding `join_session` to Codex's managed config), and updates stale Claude/Antigravity skills while keeping current files, customizations, and Antigravity rules/permissions untouched. Healthy updates, unchanged clients, and runs with no target clients stay silent.
+- On extension activation, AI Artifacts reads `~/.ai-artifacts/managed/integration-version.json` once. When the version file is absent, it skips client detection and automatic upgrade and offers **Run Installer** once until clicked (re-offering on later activations if dismissed while still absent). When an existing valid or invalid receipt file is present, AI Artifacts runs an asynchronous automatic upgrade across the merged `saved ∪ detected` client set: it deploys stale shared assets once, commits receipts as steps complete, reconciles required client definitions (such as replacing outdated managed Codex `ai_artifacts` tables into the canonical six-tool block—even if `# >>>` markers were removed—while failing closed without modifying `config.toml` if unexpected custom keys exist), and updates stale Claude/Antigravity skills while keeping current files, customizations, and Antigravity rules/permissions untouched. When Codex migration fails, AI Artifacts tracks Codex readiness separately (`codexMcpVersion`) so shared MCP upgrades, sibling clients, and Work Sessions stay unblocked while subsequent activations keep retrying and notifying for Codex until resolved or Codex is uninstalled. Healthy updates, unchanged clients, and runs with no target clients stay silent.
 - Automatic upgrade never auto-installs unconfigured clients or overwrites damaged skills when receipts are current. Use **AI Artifacts: Verify All Integrations** to inspect on-disk `Ready` status, and run **AI Artifacts: Installer** to add or repair clients. If reading the receipt file or running an automatic upgrade hits an error, VS Code shows a single error notification naming the failed client(s) (when applicable) and **AI Artifacts: Installer**, with a **View Installation Guide** action.
 - Schema v3/v4/v5 and workspace-local `.ai-artifacts` or `.codex-artifacts` lifecycles are not opened, advanced, or migrated by v1.1.x. Existing files remain untouched on disk.
 - This is a hard compatibility cutoff. A rollback to a 0.9.x extension also requires reinstalling the matching older runtime and skill; do not use a 0.9.x runtime with v1.1.x artifacts.

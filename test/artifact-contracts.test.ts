@@ -208,6 +208,7 @@ describe("integration version receipt schema v1 contract", () => {
     const completeReceiptWithSession = {
       schemaVersion: INTEGRATION_VERSION_SCHEMA_VERSION,
       mcpVersion: MCP_VERSION,
+      codexMcpVersion: MCP_VERSION,
       skills: {
         agents: CREATE_REVIEW_ARTIFACT_SKILL_VERSION,
         claude: CREATE_REVIEW_ARTIFACT_SKILL_VERSION,
@@ -219,6 +220,17 @@ describe("integration version receipt schema v1 contract", () => {
       updatedAt: timestamp,
     };
     expect(integrationVersionManifestSchema.parse(completeReceiptWithSession)).toEqual(completeReceiptWithSession);
+
+    const zeroCodexPendingReceipt = {
+      schemaVersion: INTEGRATION_VERSION_SCHEMA_VERSION,
+      mcpVersion: MCP_VERSION,
+      codexMcpVersion: 0,
+      skills: {
+        agents: CREATE_REVIEW_ARTIFACT_SKILL_VERSION,
+      },
+      updatedAt: timestamp,
+    };
+    expect(integrationVersionManifestSchema.parse(zeroCodexPendingReceipt)).toEqual(zeroCodexPendingReceipt);
 
     const legacyReceiptWithoutSession = {
       schemaVersion: INTEGRATION_VERSION_SCHEMA_VERSION,
@@ -254,6 +266,9 @@ describe("integration version receipt schema v1 contract", () => {
     { field: "mcpVersion", value: -1 },
     { field: "mcpVersion", value: 1.5 },
     { field: "mcpVersion", value: "10" },
+    { field: "codexMcpVersion", value: -1 },
+    { field: "codexMcpVersion", value: 1.5 },
+    { field: "codexMcpVersion", value: "12" },
     { field: "agents", value: 0 },
     { field: "agents", value: -1 },
     { field: "agents", value: 1.5 },
@@ -274,6 +289,8 @@ describe("integration version receipt schema v1 contract", () => {
     } as Record<string, unknown>;
     if (field === "mcpVersion") {
       receipt.mcpVersion = value;
+    } else if (field === "codexMcpVersion") {
+      receipt.codexMcpVersion = value;
     } else {
       receipt.skills = {
         ...(receipt.skills as Record<string, unknown>),
