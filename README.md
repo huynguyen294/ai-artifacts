@@ -21,6 +21,7 @@
   - [Multi-Agent Work Sessions](#multi-agent-work-sessions)
   - [Organize Session Artifacts](#organize-session-artifacts)
   - [Shared Instructions](#shared-instructions)
+  - [What's New & Tips](#whats-new--tips)
 - [Storage, behavior and security](#storage-behavior-and-security)
 - [Compatibility and upgrades](#compatibility-and-upgrades)
 - [Uninstalling and cleanup](#uninstalling-and-cleanup)
@@ -52,6 +53,8 @@
 **Continue the same work across agents and chats**
 
 Keep related artifacts and shared instructions in one Work Session, then connect another agent to continue.
+
+![Connect two agents to a Work Session and continue from shared progress and instructions](media/whats-new/multi-agent-session-context.gif)
 
 ## Requirements & compatibility
 
@@ -141,9 +144,13 @@ After an install command succeeds for one or more clients, choose **Reload Windo
 
 The current source bundles numeric MCP version 12, review skill version 4, and work session skill version 1 (with `SKILL_VERSION = 4` bridge constant). The MCP catalog contains exactly six tools: `resolve_artifact_window`, `create_artifact`, `wait_for_artifact_review`, `inspect_artifact_review`, `advance_and_wait_for_artifact`, and `join_session`. Clients using an older tool catalog require reloading/upgrading (or running **AI Artifacts: Installer** and selecting the affected client) followed by a client restart and fresh chat to expose the current tools.
 
-MCP version 12 is reserved for the unreleased Work Session feature and remains its release version across implementation stages. The current runtime supports schema-v2 Sessions and explicit migration from legacy v1 conversations. Session instructions are read from `instructions.md`; existing v2 metadata may still contain an optional inline `instructions` string, which is accepted but not used as the instructions source. New metadata writes omit that field. Updating a test runtime bundle still requires reinstalling the changed runtime even when its numeric version remains 12.
+Extension 1.2.0 bundles MCP version 12 for Work Sessions. The current runtime supports schema-v2 Sessions and explicit migration from legacy v1 conversations. Session instructions are read from `instructions.md`; existing v2 metadata may still contain an optional inline `instructions` string, which is accepted but not used as the instructions source. New metadata writes omit that field. Updating a test runtime bundle still requires reinstalling the changed runtime even when its numeric version remains 12.
 
 </details>
+
+### 4. Explore What's New & Tips
+
+Run **`AI Artifacts: What's New`** from the Command Palette to explore the latest features with illustrated guides. Switch to **Tips** to learn how to start a Work Session, write shared instructions, and connect another agent.
 
 ### Optional: Antigravity global rule
 
@@ -284,7 +291,7 @@ For a direct update to an existing artifact as part of the chat's active Work Se
 ### Search & Reconnect Artifacts
 
 1. Run **AI Artifacts: Search Artifact** from the Command Palette.
-2. Search by title and select an artifact to open it.
+2. Search by title and select an artifact to open it. Results use the same order as **Recent Artifacts**: pinned first, then most recently updated, with artifact ID as the tie-breaker. Search also includes archived artifacts; filtering preserves this order before the 1,000-result limit.
 3. Click **Inspect artifact** in the review editor to copy the prompt for that exact artifact.
 4. Paste the prompt into your AI chat to reconnect.
 
@@ -335,6 +342,16 @@ Session Instructions hold rules, workflows, and other guidance for agents workin
 - Closing or reloading the manager before clicking Save discards unsaved text. Changes saved to `instructions.md` outside the manager are reflected in the open Instructions field.
 
 The `work-session` skill applies the latest instructions to related requests and uses the artifact catalog to find supporting plans, references, or other documents. Instructions are stored in `instructions.md` inside the session directory; the file is separate from session metadata and artifact review state.
+
+### What's New & Tips
+
+Run **`AI Artifacts: What's New`** (`agentPlus.openWhatsNew`) from the Command Palette at any time to open or reveal the **What's New & Tips** view. This viewer is standalone and separate from Artifact Review editors, Work Sessions, and integration setup; manually opening or reading it never alters upgrade-notification history.
+
+- **Two views:** Switch between **What's New** (curated release highlights) and **Tips** (direct usage guides) using the top tabs.
+- **Release cards & full articles:** Each card shows its version label (plus an optional release date and `Preview content` badge when in preview), title, short description, **Features** and optional **Bug fixes** lists collapsed by default, and **View more details →** to open the full Markdown article with **← All updates** navigation. Release highlights are curated and distinct from the exhaustive [Changelog](CHANGELOG.md).
+- **Rich content & safety:** Both release articles and **Tips** render sanitized Markdown with local PNG/GIF illustrations under `media/whats-new/` and external HTTP/HTTPS/mailto links only (video and YouTube embeds are not included). Version `1.2.0` introduces Work Sessions and multi-agent workflows, with practical guidance on the **Tips** tab.
+- **Upgrade-only notifications:** Fresh installs without notification history or a pre-existing integration receipt silently record their current version, without a welcome/Tips popup or separate Tips command. Existing users with `~/.ai-artifacts/managed/integration-version.json` (`valid` or `invalid`) before activation can receive the exact current opt-in release announcement on their first tracked activation. Later notifications require a higher stable `X.Y.Z` version whose exact entry sets `notify: true`. The non-modal Info notification offers **View what's new**, opening that release article.
+- **Notification history:** VS Code manages one `context.globalState` key, `whatsNew.highestObservedVersion`. The extension awaits `globalState.update` before displaying Info; normal reloads, dismissals, downgrades, and returns to already-observed versions stay silent. Silent/skipped versions are recorded without catch-up notifications. Notification state uses no custom files, filesystem locks, or storage-URI scheme checks. Simultaneous windows may both notify because cross-window deduplication is not provided. Onboarding and integration deployment remain separate; initial classification shares only their pre-install/upgrade receipt snapshot.
 
 ## Storage, behavior and security
 
@@ -417,7 +434,7 @@ Press `F5` to launch an Extension Development Host. Package and install locally:
 
 ```powershell
 npm run package
-code --install-extension releases/ai-artifacts-1.1.4.vsix
+code --install-extension releases/ai-artifacts-1.2.0.vsix
 ```
 
 ## Documentation

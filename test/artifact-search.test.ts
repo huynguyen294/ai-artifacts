@@ -12,6 +12,7 @@ import {
   type SearchableArtifact,
 } from "../src/extension/artifact-search";
 import { globalArtifactsRoot } from "../src/shared/artifact-files";
+import { patchArtifactUiState } from "../src/extension/artifact-ui-state";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -515,6 +516,25 @@ describe("discoverSearchableArtifacts", () => {
     expect(artifact.updatedAt).toBe("2026-06-15T14:30:00.000Z");
     expect(artifact.artifactDirectory).toBeTruthy();
     expect(artifact.artifactPath).toContain("artifact.md");
+    expect(artifact.isPinned).toBe(false);
+    expect(artifact.isArchived).toBe(false);
+  });
+
+  it("includes pin and archive state for search ordering without excluding archived artifacts", async () => {
+    const userHome = await makeUserHome();
+    await writeArtifact(userHome, "pinned-archived", { title: "Pinned archived" });
+    await patchArtifactUiState("pinned-archived", {
+      pinned: true,
+      archivedAt: "2026-11-12T00:00:00.000Z",
+    }, { userHome });
+
+    const result = await discoverSearchableArtifacts({ userHome });
+    expect(result.artifacts).toHaveLength(1);
+    expect(result.artifacts[0]).toMatchObject({
+      artifactId: "pinned-archived",
+      isPinned: true,
+      isArchived: true,
+    });
   });
 
   it("does not expose reviewSessionId in SearchableArtifact", async () => {

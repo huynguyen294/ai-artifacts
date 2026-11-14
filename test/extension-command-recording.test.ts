@@ -15,7 +15,12 @@ import {
 } from "../src/extension/integration-activation";
 import type { AutomaticIntegrationUpgradeDeps } from "../src/extension/upgrade-notification";
 import { INSTALLATION_GUIDE_URL } from "../src/extension/upgrade-notification";
-import type { ExistingInstalledIntegrationVersionReadResult } from "../src/extension/workspace-integration";
+import type { WhatsNewNotificationDeps } from "../src/extension/whats-new-notification";
+import { whatsNewReleases } from "../src/shared/whats-new-releases";
+import type {
+  ExistingInstalledIntegrationVersionReadResult,
+  InstalledIntegrationVersionReadResult,
+} from "../src/extension/workspace-integration";
 
 const {
   registeredCommands,
@@ -29,6 +34,8 @@ const {
   mockClipboardWriteText,
   mockRunIntegrationActivation,
   mockRunAutomaticIntegrationUpgrade,
+  mockRunWhatsNewNotification,
+  mockRecordWhatsNewVersion,
   sidebarSpies,
   conversationServiceSpies,
   workspaceIntegrationSpies,
@@ -55,6 +62,17 @@ const {
     mockRunAutomaticIntegrationUpgrade: vi.fn(
       async (_deps: AutomaticIntegrationUpgradeDeps): Promise<void> => undefined,
     ),
+    mockRunWhatsNewNotification: vi.fn(
+      async (_deps: WhatsNewNotificationDeps): Promise<void> => undefined,
+    ),
+    mockRecordWhatsNewVersion: vi.fn(
+      async (
+        _state: unknown,
+        _currentVersion: string,
+        _notifyEnabled: boolean,
+        _existingIntegration: boolean,
+      ): Promise<boolean> => false,
+    ),
     sidebarSpies: {
       recentRefresh: vi.fn(),
       sessionsRefresh: vi.fn(),
@@ -63,17 +81,6 @@ const {
       notifyChanged: vi.fn(),
     },
     workspaceIntegrationSpies: {
-      installAllDetectedIntegrations: vi.fn(async () => ({
-        installedClients: ["Codex"],
-        failedClients: [] as Array<{ id: string; name: string; error: string }>,
-      })),
-      installCopilotIntegration: vi.fn(async () => ({ userConfigPath: "/tmp/mcp.json" })),
-      installCodexIntegration: vi.fn(async () => undefined),
-      installCursorIntegration: vi.fn(async () => undefined),
-      installClaudeIntegration: vi.fn(async () => undefined),
-      installWindsurfIntegration: vi.fn(async () => undefined),
-      installClineIntegration: vi.fn(async () => undefined),
-      installAntigravityIntegration: vi.fn(async () => undefined),
       installSelectedIntegrations: vi.fn(async () => ({
         installedClients: [{ id: "codex" as const, name: "Codex" }],
         failedClients: [],
@@ -104,14 +111,6 @@ const {
           },
         ],
       })),
-      uninstallAllDetectedIntegrations: vi.fn(async () => ({ uninstalledClients: ["Codex"] })),
-      uninstallCopilotIntegration: vi.fn(async () => true),
-      uninstallCodexIntegration: vi.fn(async () => true),
-      uninstallCursorIntegration: vi.fn(async () => true),
-      uninstallClaudeIntegration: vi.fn(async () => true),
-      uninstallWindsurfIntegration: vi.fn(async () => true),
-      uninstallClineIntegration: vi.fn(async () => true),
-      uninstallAntigravityIntegration: vi.fn(async () => true),
       uninstallSelectedIntegrations: vi.fn(async () => ({
         uninstalledClients: [{ id: "codex" as const, name: "Codex" }],
         notConfiguredClients: [],
@@ -125,7 +124,7 @@ const {
       })),
       getMcpConfigSnippet: vi.fn(() => "{}"),
       getReviewSkillMarkdown: vi.fn(async () => "# Review"),
-      readInstalledIntegrationVersion: vi.fn(async () => ({ status: "missing" as const })),
+      readInstalledIntegrationVersion: vi.fn(async (): Promise<InstalledIntegrationVersionReadResult> => ({ status: "missing" })),
       upgradeDetectedIntegrations: vi.fn(async () => ({
         clientIds: ["codex" as const],
         skillTargets: ["agents" as const],
@@ -136,6 +135,7 @@ const {
     whatsNewSpies: {
       constructorSpy: vi.fn(),
       show: vi.fn(),
+      showVersion: vi.fn(),
       dispose: vi.fn(),
     },
   };
@@ -205,6 +205,7 @@ vi.mock("../src/extension/whats-new-panel", () => ({
       whatsNewSpies.constructorSpy(extensionUri);
     }
     show = whatsNewSpies.show;
+    showVersion = whatsNewSpies.showVersion;
     dispose = whatsNewSpies.dispose;
   },
 }));
@@ -265,6 +266,16 @@ vi.mock("../src/extension/upgrade-notification", async (importOriginal) => {
     runAutomaticIntegrationUpgrade: mockRunAutomaticIntegrationUpgrade,
   };
 });
+vi.mock("../src/extension/whats-new-notification", async (importOriginal) => {
+  const original = await importOriginal<typeof import("../src/extension/whats-new-notification")>();
+  return {
+    ...original,
+    runWhatsNewNotification: mockRunWhatsNewNotification,
+  };
+});
+vi.mock("../src/extension/whats-new-notification-state", () => ({
+  recordWhatsNewVersion: mockRecordWhatsNewVersion,
+}));
 vi.mock("../src/extension/workspace-integration", () => workspaceIntegrationSpies);
 
 import { activate } from "../src/extension/extension";
@@ -398,7 +409,7 @@ describe("Extension activation wiring & manual command recording", () => {
         validSnapshot,
       );
       expect(report.clientIds).toEqual(["codex"]);
-      expect(workspaceIntegrationSpies.installAllDetectedIntegrations).not.toHaveBeenCalled();
+      expect(workspaceIntegrationSpies.installSelectedIntegrations).not.toHaveBeenCalled();
 
       capturedUpgradeDeps.refreshIntegrationSupport();
       expect(sidebarSpies.sessionsRefresh).toHaveBeenCalledTimes(1);
@@ -425,7 +436,7 @@ describe("Extension activation wiring & manual command recording", () => {
     }
   });
 
-  it("passes recordClientSelection: true on all manual commands, unifies single/batch install notifications with Reload Window, keeps aliases single, and keeps Verify/Uninstall independent", async () => {
+  it("registers only grouped Installer/Uninstall integration commands, passes recordClientSelection: true, and keeps Verify/Copy independent", async () => {
     const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "ai-artifacts-ext-cmd-"));
     try {
       vi.spyOn(os, "homedir").mockReturnValue(tempRoot);
@@ -438,107 +449,22 @@ describe("Extension activation wiring & manual command recording", () => {
 
       await activate(context);
 
-      // Context-bearing Install All command
-      await registeredCommands.get("agentPlus.installAllIntegrations")!();
-      expect(workspaceIntegrationSpies.installAllDetectedIntegrations).toHaveBeenCalledWith(context, {
-        recordClientSelection: true,
-      });
-      expect(workspaceIntegrationSpies.checkAllIntegrations).not.toHaveBeenCalled();
-      expect(mockShowInformationMessage).toHaveBeenCalledWith(
-        "AI Artifacts installed for Codex. Reload this window to apply changes. For AI clients running outside this window, restart the client and start a new chat.",
-        RELOAD_WINDOW_ACTION,
-      );
-
-      // All 7 individual install commands use unified notifier (Info + Reload on success, Error with client name on reject)
-      const installWithContextCommands: Array<[string, keyof typeof workspaceIntegrationSpies, string]> = [
-        ["agentPlus.installCopilotIntegration", "installCopilotIntegration", "GitHub Copilot (VS Code)"],
-        ["agentPlus.installCodexIntegration", "installCodexIntegration", "Codex"],
-        ["agentPlus.installCursorIntegration", "installCursorIntegration", "Cursor"],
-        ["agentPlus.installClaudeIntegration", "installClaudeIntegration", "Claude"],
-        ["agentPlus.installWindsurfIntegration", "installWindsurfIntegration", "Windsurf"],
-        ["agentPlus.installClineIntegration", "installClineIntegration", "Cline"],
-        ["agentPlus.installAntigravityIntegration", "installAntigravityIntegration", "Antigravity"],
+      const removedLegacyCommands = [
+        "agentPlus.reinstallIntegration",
+        "agentPlus.installWorkspaceIntegration",
+        ...["All", "Copilot", "Codex", "Cursor", "Claude", "Windsurf", "Cline", "Antigravity"].flatMap((client) => [
+          `agentPlus.install${client}Integration${client === "All" ? "s" : ""}`,
+          `agentPlus.uninstall${client}Integration${client === "All" ? "s" : ""}`,
+        ]),
       ];
-      for (const [cmdId, spyKey, clientName] of installWithContextCommands) {
-        mockShowInformationMessage.mockClear();
-        mockShowErrorMessage.mockClear();
-        sidebarSpies.sessionsRefresh.mockClear();
-        sidebarSpies.recentRefresh.mockClear();
-        conversationServiceSpies.notifyChanged.mockClear();
-
-        await registeredCommands.get(cmdId)!();
-        expect(workspaceIntegrationSpies[spyKey]).toHaveBeenCalledWith(context, {
-          recordClientSelection: true,
-        });
-        expect(mockShowInformationMessage).toHaveBeenCalledWith(
-          `AI Artifacts installed for ${clientName}. Reload this window to apply changes. For AI clients running outside this window, restart the client and start a new chat.`,
-          RELOAD_WINDOW_ACTION,
-        );
-        expect(sidebarSpies.sessionsRefresh).toHaveBeenCalledTimes(1);
-        expect(sidebarSpies.recentRefresh).toHaveBeenCalledTimes(1);
-        expect(conversationServiceSpies.notifyChanged).toHaveBeenCalledWith([{ kind: "support" }]);
-
-        // Single command reject reports 1 Error with client name and no Reload
-        mockShowInformationMessage.mockClear();
-        (workspaceIntegrationSpies[spyKey] as any).mockRejectedValueOnce(new Error(`${clientName} boom`));
-        await registeredCommands.get(cmdId)!();
-        expect(mockShowInformationMessage).not.toHaveBeenCalled();
-        expect(mockShowErrorMessage).toHaveBeenCalledWith(
-          `AI Artifacts installation failed: ${clientName} (${clientName} boom)`,
-        );
+      for (const commandId of removedLegacyCommands) {
+        expect(registeredCommands.has(commandId)).toBe(false);
       }
-
-      // Clicking Reload Window executes workbench.action.reloadWindow
-      mockExecuteCommand.mockClear();
-      mockShowInformationMessage.mockResolvedValueOnce(RELOAD_WINDOW_ACTION);
-      await registeredCommands.get("agentPlus.installCodexIntegration")!();
-      expect(mockExecuteCommand).toHaveBeenCalledWith("workbench.action.reloadWindow");
-
-      // Context-bearing & non-context uninstall commands
-      await registeredCommands.get("agentPlus.uninstallAllIntegrations")!();
-      expect(workspaceIntegrationSpies.uninstallAllDetectedIntegrations).toHaveBeenCalledWith(context, {
-        recordClientSelection: true,
-      });
-
-      await registeredCommands.get("agentPlus.uninstallCopilotIntegration")!();
-      expect(workspaceIntegrationSpies.uninstallCopilotIntegration).toHaveBeenCalledWith(context, {
-        recordClientSelection: true,
-      });
-      await registeredCommands.get("agentPlus.uninstallClineIntegration")!();
-      expect(workspaceIntegrationSpies.uninstallClineIntegration).toHaveBeenCalledWith(context, {
-        recordClientSelection: true,
-      });
-
-      const uninstallNoContextCommands: Array<[string, keyof typeof workspaceIntegrationSpies]> = [
-        ["agentPlus.uninstallCodexIntegration", "uninstallCodexIntegration"],
-        ["agentPlus.uninstallCursorIntegration", "uninstallCursorIntegration"],
-        ["agentPlus.uninstallClaudeIntegration", "uninstallClaudeIntegration"],
-        ["agentPlus.uninstallWindsurfIntegration", "uninstallWindsurfIntegration"],
-        ["agentPlus.uninstallAntigravityIntegration", "uninstallAntigravityIntegration"],
-      ];
-      for (const [cmdId, spyKey] of uninstallNoContextCommands) {
-        await registeredCommands.get(cmdId)!();
-        expect(workspaceIntegrationSpies[spyKey]).toHaveBeenCalledWith({
-          recordClientSelection: true,
-        });
-      }
-
-      // Aliases delegate through agentPlus.installAllIntegrations once without duplicate popups
-      workspaceIntegrationSpies.installAllDetectedIntegrations.mockClear();
-      mockShowInformationMessage.mockClear();
-      await registeredCommands.get("agentPlus.reinstallIntegration")!();
-      await registeredCommands.get("agentPlus.installWorkspaceIntegration")!();
-      expect(workspaceIntegrationSpies.installAllDetectedIntegrations).toHaveBeenCalledTimes(2);
-      expect(mockShowInformationMessage).toHaveBeenCalledTimes(2);
-      expect(workspaceIntegrationSpies.installAllDetectedIntegrations).toHaveBeenNthCalledWith(1, context, {
-        recordClientSelection: true,
-      });
-      expect(workspaceIntegrationSpies.installAllDetectedIntegrations).toHaveBeenNthCalledWith(2, context, {
-        recordClientSelection: true,
-      });
+      expect(registeredCommands.has("agentPlus.installer")).toBe(true);
+      expect(registeredCommands.has("agentPlus.uninstall")).toBe(true);
 
       // Verify / Copy commands work independently and never trigger install recording
-      workspaceIntegrationSpies.installAllDetectedIntegrations.mockClear();
+      workspaceIntegrationSpies.installSelectedIntegrations.mockClear();
       workspaceIntegrationSpies.checkAllIntegrations.mockClear();
       mockShowInformationMessage.mockClear();
       await registeredCommands.get("agentPlus.verifyGlobalIntegration")!();
@@ -546,7 +472,7 @@ describe("Extension activation wiring & manual command recording", () => {
       expect(mockShowInformationMessage).toHaveBeenCalledTimes(1);
       await registeredCommands.get("agentPlus.copyMcpConfig")!();
       await registeredCommands.get("agentPlus.copyReviewSkill")!();
-      expect(workspaceIntegrationSpies.installAllDetectedIntegrations).not.toHaveBeenCalled();
+      expect(workspaceIntegrationSpies.installSelectedIntegrations).not.toHaveBeenCalled();
 
       // Interactive Installer command wires recordClientSelection: true, refreshes views, and supports Reload Window
       const acceptListeners: Array<() => void> = [];
@@ -661,139 +587,6 @@ describe("Extension activation wiring & manual command recording", () => {
     }
   });
 
-  it("reports Install All outcomes with Reload Window, isolates refresh errors, and avoids post-verification", async () => {
-    const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "ai-artifacts-ext-install-all-"));
-    try {
-      vi.spyOn(os, "homedir").mockReturnValue(tempRoot);
-      const context = {
-        extensionUri: { fsPath: tempRoot },
-        globalStorageUri: { fsPath: path.join(tempRoot, "storage") },
-        globalState: { get: vi.fn(), update: vi.fn(async () => undefined) },
-        subscriptions: [] as Array<{ dispose: () => void }>,
-      } as any;
-
-      await activate(context);
-
-      const resetCommandSpies = (): void => {
-        workspaceIntegrationSpies.installAllDetectedIntegrations.mockClear();
-        workspaceIntegrationSpies.checkAllIntegrations.mockClear();
-        mockShowInformationMessage.mockClear();
-        mockShowWarningMessage.mockClear();
-        mockShowErrorMessage.mockClear();
-        mockExecuteCommand.mockClear();
-        sidebarSpies.sessionsRefresh.mockClear();
-        sidebarSpies.recentRefresh.mockClear();
-        conversationServiceSpies.notifyChanged.mockClear();
-      };
-
-      // 1. Success only
-      resetCommandSpies();
-      workspaceIntegrationSpies.installAllDetectedIntegrations.mockResolvedValueOnce({
-        installedClients: ["Codex", "Cursor"],
-        failedClients: [],
-      });
-      mockShowInformationMessage.mockResolvedValueOnce(RELOAD_WINDOW_ACTION);
-      await registeredCommands.get("agentPlus.installAllIntegrations")!();
-      expect(workspaceIntegrationSpies.checkAllIntegrations).not.toHaveBeenCalled();
-      expect(mockShowInformationMessage).toHaveBeenCalledWith(
-        "AI Artifacts installed for Codex, Cursor. Reload this window to apply changes. For AI clients running outside this window, restart the client and start a new chat.",
-        RELOAD_WINDOW_ACTION,
-      );
-      expect(mockExecuteCommand).toHaveBeenCalledWith("workbench.action.reloadWindow");
-      expect(mockShowWarningMessage).not.toHaveBeenCalled();
-      expect(mockShowErrorMessage).not.toHaveBeenCalled();
-      expect(sidebarSpies.sessionsRefresh).toHaveBeenCalledTimes(1);
-      expect(sidebarSpies.recentRefresh).toHaveBeenCalledTimes(1);
-      expect(conversationServiceSpies.notifyChanged).toHaveBeenCalledWith([{ kind: "support" }]);
-
-      // 2. Partial (success + failures)
-      resetCommandSpies();
-      workspaceIntegrationSpies.installAllDetectedIntegrations.mockResolvedValueOnce({
-        installedClients: ["Codex"],
-        failedClients: [{ id: "cursor", name: "Cursor", error: "EACCES permission denied" }],
-      });
-      await registeredCommands.get("agentPlus.installAllIntegrations")!();
-      expect(workspaceIntegrationSpies.checkAllIntegrations).not.toHaveBeenCalled();
-      expect(mockShowWarningMessage).toHaveBeenCalledWith(
-        "AI Artifacts installed for Codex. Failed for: Cursor (EACCES permission denied). Reload this window to apply successful installations. For AI clients running outside this window, restart the client and start a new chat.",
-        RELOAD_WINDOW_ACTION,
-      );
-      expect(mockShowInformationMessage).not.toHaveBeenCalled();
-      expect(mockShowErrorMessage).not.toHaveBeenCalled();
-      expect(mockExecuteCommand).not.toHaveBeenCalled();
-      expect(sidebarSpies.sessionsRefresh).toHaveBeenCalledTimes(1);
-      expect(sidebarSpies.recentRefresh).toHaveBeenCalledTimes(1);
-      expect(conversationServiceSpies.notifyChanged).toHaveBeenCalledTimes(1);
-
-      // 3. All failed (no success + failures)
-      resetCommandSpies();
-      workspaceIntegrationSpies.installAllDetectedIntegrations.mockResolvedValueOnce({
-        installedClients: [],
-        failedClients: [{ id: "codex", name: "Codex", error: "unmanaged conflict" }],
-      });
-      await registeredCommands.get("agentPlus.installAllIntegrations")!();
-      expect(workspaceIntegrationSpies.checkAllIntegrations).not.toHaveBeenCalled();
-      expect(mockShowErrorMessage).toHaveBeenCalledWith(
-        "AI Artifacts installation failed: Codex (unmanaged conflict)",
-      );
-      expect(mockShowInformationMessage).not.toHaveBeenCalled();
-      expect(mockShowWarningMessage).not.toHaveBeenCalled();
-      expect(sidebarSpies.sessionsRefresh).not.toHaveBeenCalled();
-      expect(sidebarSpies.recentRefresh).not.toHaveBeenCalled();
-      expect(conversationServiceSpies.notifyChanged).not.toHaveBeenCalled();
-
-      // 4. Empty (neither detected success nor failures)
-      resetCommandSpies();
-      workspaceIntegrationSpies.installAllDetectedIntegrations.mockResolvedValueOnce({
-        installedClients: [],
-        failedClients: [],
-      });
-      await registeredCommands.get("agentPlus.installAllIntegrations")!();
-      expect(workspaceIntegrationSpies.checkAllIntegrations).not.toHaveBeenCalled();
-      expect(mockShowInformationMessage).toHaveBeenCalledWith(
-        "AI Artifacts: No supported AI clients were detected for installation.",
-      );
-      expect(mockShowWarningMessage).not.toHaveBeenCalled();
-      expect(mockShowErrorMessage).not.toHaveBeenCalled();
-      expect(sidebarSpies.sessionsRefresh).not.toHaveBeenCalled();
-      expect(sidebarSpies.recentRefresh).not.toHaveBeenCalled();
-      expect(conversationServiceSpies.notifyChanged).not.toHaveBeenCalled();
-
-      // 5. Reject due to shared setup exception
-      resetCommandSpies();
-      workspaceIntegrationSpies.installAllDetectedIntegrations.mockRejectedValueOnce(
-        new Error("packaged runtime missing"),
-      );
-      await registeredCommands.get("agentPlus.installAllIntegrations")!();
-      expect(workspaceIntegrationSpies.checkAllIntegrations).not.toHaveBeenCalled();
-      expect(mockShowErrorMessage).toHaveBeenCalledWith(
-        "AI Artifacts installation could not complete: packaged runtime missing",
-      );
-      expect(mockShowInformationMessage).not.toHaveBeenCalled();
-      expect(mockShowWarningMessage).not.toHaveBeenCalled();
-      expect(sidebarSpies.sessionsRefresh).not.toHaveBeenCalled();
-      expect(sidebarSpies.recentRefresh).not.toHaveBeenCalled();
-      expect(conversationServiceSpies.notifyChanged).not.toHaveBeenCalled();
-
-      // 6. Refresh view error does not convert a successful Install All into a failure popup
-      resetCommandSpies();
-      const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-      workspaceIntegrationSpies.installAllDetectedIntegrations.mockResolvedValueOnce({
-        installedClients: ["Codex"],
-        failedClients: [],
-      });
-      sidebarSpies.recentRefresh.mockImplementationOnce(() => {
-        throw new Error("tree refresh failed");
-      });
-      await registeredCommands.get("agentPlus.installAllIntegrations")!();
-      expect(mockShowInformationMessage).toHaveBeenCalledTimes(1);
-      expect(mockShowErrorMessage).not.toHaveBeenCalled();
-      expect(consoleErrorSpy).toHaveBeenCalled();
-    } finally {
-      await fs.rm(tempRoot, { recursive: true, force: true }).catch(() => {});
-    }
-  });
-
   it("registers agentPlus.openWhatsNew without opening panel on activation and calls controller.show on command execution", async () => {
     const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "ai-artifacts-ext-whats-new-"));
     try {
@@ -819,7 +612,7 @@ describe("Extension activation wiring & manual command recording", () => {
 
       registeredCommands.get("agentPlus.openWhatsNew")!();
       expect(whatsNewSpies.show).toHaveBeenCalledTimes(1);
-      expect(workspaceIntegrationSpies.installAllDetectedIntegrations).not.toHaveBeenCalled();
+      expect(workspaceIntegrationSpies.installSelectedIntegrations).not.toHaveBeenCalled();
       expect(workspaceIntegrationSpies.checkAllIntegrations).not.toHaveBeenCalled();
 
       whatsNewSpies.show.mockImplementationOnce(() => {
@@ -827,6 +620,184 @@ describe("Extension activation wiring & manual command recording", () => {
       });
       registeredCommands.get("agentPlus.openWhatsNew")!();
       expect(mockShowErrorMessage).toHaveBeenCalledWith("Failed to open What's New: panel failure");
+    } finally {
+      await fs.rm(tempRoot, { recursive: true, force: true }).catch(() => {});
+    }
+  });
+
+  it.each<InstalledIntegrationVersionReadResult>([
+    { status: "missing" },
+    { status: "invalid", error: new Error("legacy receipt") },
+    {
+      status: "valid",
+      manifest: {
+        schemaVersion: 1,
+        mcpVersion: MCP_VERSION - 1,
+        skills: { agents: CREATE_REVIEW_ARTIFACT_SKILL_VERSION },
+        updatedAt: "2026-11-11T00:00:00.000Z",
+      },
+    },
+  ])("uses the same pre-upgrade $status receipt snapshot for notification bootstrap", async (snapshot) => {
+    const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "ai-artifacts-ext-wn-snapshot-"));
+    try {
+      vi.spyOn(os, "homedir").mockReturnValue(tempRoot);
+      workspaceIntegrationSpies.readInstalledIntegrationVersion.mockResolvedValueOnce(snapshot);
+      const context = {
+        extensionUri: { fsPath: tempRoot },
+        globalStorageUri: { scheme: "file", fsPath: path.join(tempRoot, "storage") },
+        globalState: { get: vi.fn(), update: vi.fn(async () => undefined) },
+        subscriptions: [] as Array<{ dispose: () => void }>,
+      } as any;
+      await activate(context);
+
+      const activationDeps = mockRunIntegrationActivation.mock.calls[0]![0];
+      expect(await activationDeps.getInstalledIntegrationVersion()).toBe(snapshot);
+      if (snapshot.status !== "missing") {
+        // Upgrade runs before notification; it must not cause another receipt read.
+        await activationDeps.runUpgrade(snapshot);
+      }
+      const notificationDeps = mockRunWhatsNewNotification.mock.calls[0]![0];
+      await notificationDeps.recordVersion("1.2.0", true);
+      expect(await activationDeps.getInstalledIntegrationVersion()).toBe(snapshot);
+      expect(workspaceIntegrationSpies.readInstalledIntegrationVersion).toHaveBeenCalledTimes(1);
+      expect(mockRecordWhatsNewVersion).toHaveBeenCalledWith(
+        context.globalState,
+        "1.2.0",
+        true,
+        snapshot.status !== "missing",
+      );
+    } finally {
+      await fs.rm(tempRoot, { recursive: true, force: true }).catch(() => {});
+    }
+  });
+
+  it("keeps notification state usable when the shared integration snapshot cannot be read", async () => {
+    const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "ai-artifacts-ext-wn-read-error-"));
+    try {
+      vi.spyOn(os, "homedir").mockReturnValue(tempRoot);
+      const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      const readError = new Error("receipt read failed");
+      workspaceIntegrationSpies.readInstalledIntegrationVersion.mockRejectedValueOnce(readError);
+      const context = {
+        extensionUri: { fsPath: tempRoot },
+        globalStorageUri: { scheme: "file", fsPath: path.join(tempRoot, "storage") },
+        globalState: { get: vi.fn(), update: vi.fn(async () => undefined) },
+        subscriptions: [] as Array<{ dispose: () => void }>,
+      } as any;
+      await activate(context);
+      const activationDeps = mockRunIntegrationActivation.mock.calls[0]![0];
+      await expect(activationDeps.getInstalledIntegrationVersion()).rejects.toBe(readError);
+      const notificationDeps = mockRunWhatsNewNotification.mock.calls[0]![0];
+      await expect(notificationDeps.recordVersion("1.2.0", true)).resolves.toBe(false);
+      expect(workspaceIntegrationSpies.readInstalledIntegrationVersion).toHaveBeenCalledTimes(1);
+      expect(mockRecordWhatsNewVersion).toHaveBeenCalledWith(
+        context.globalState, "1.2.0", true, false,
+      );
+      expect(consoleErrorSpy).toHaveBeenCalledWith(
+        "AI Artifacts What's New notification: Could not determine whether integration was previously installed.",
+        readError,
+      );
+    } finally {
+      await fs.rm(tempRoot, { recursive: true, force: true }).catch(() => {});
+    }
+  });
+
+  it("wires What's New notification non-blockingly and independently of integration activation", async () => {
+    const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "ai-artifacts-ext-wn-wiring-"));
+    try {
+      vi.spyOn(os, "homedir").mockReturnValue(tempRoot);
+
+      let releaseActivation!: () => void;
+      const pendingActivation = new Promise<void>((resolve) => {
+        releaseActivation = resolve;
+      });
+      mockRunIntegrationActivation.mockReturnValueOnce(pendingActivation);
+
+      let releaseWhatsNew!: () => void;
+      const pendingWhatsNew = new Promise<void>((resolve) => {
+        releaseWhatsNew = resolve;
+      });
+      mockRunWhatsNewNotification.mockReturnValueOnce(pendingWhatsNew);
+
+      const storagePath = path.join(tempRoot, "storage");
+      const context = {
+        extension: { packageJSON: { version: "1.2.0" } },
+        extensionUri: { fsPath: tempRoot },
+        globalStorageUri: { scheme: "file", fsPath: storagePath },
+        globalState: { get: vi.fn(), update: vi.fn(async () => undefined) },
+        subscriptions: [] as Array<{ dispose: () => void }>,
+      } as any;
+
+      // activate(context) resolves cleanly even while both notification controllers remain pending
+      await activate(context);
+
+      expect(mockRunIntegrationActivation).toHaveBeenCalledTimes(1);
+      expect(mockRunWhatsNewNotification).toHaveBeenCalledTimes(1);
+      expect(registeredCommands.has("agentPlus.openWhatsNew")).toBe(true);
+      expect(registeredCommands.has("agentPlus.installer")).toBe(true);
+      expect(whatsNewSpies.show).not.toHaveBeenCalled();
+      expect(whatsNewSpies.showVersion).not.toHaveBeenCalled();
+
+      const capturedDeps = mockRunWhatsNewNotification.mock.calls[0]![0];
+      expect(capturedDeps.getCurrentVersion()).toBe("1.2.0");
+      expect(capturedDeps.releases).toBe(whatsNewReleases);
+
+      mockRecordWhatsNewVersion.mockResolvedValueOnce(true);
+      await expect(capturedDeps.recordVersion("1.2.0", true)).resolves.toBe(true);
+      expect(mockRecordWhatsNewVersion).toHaveBeenCalledTimes(1);
+      expect(mockRecordWhatsNewVersion).toHaveBeenCalledWith(
+        context.globalState,
+        "1.2.0",
+        true,
+        false,
+      );
+
+      await capturedDeps.showInformationMessage(
+        "AI Artifacts 1.2.0: Work Sessions",
+        "View what's new",
+      );
+      expect(mockShowInformationMessage).toHaveBeenCalledWith(
+        "AI Artifacts 1.2.0: Work Sessions",
+        "View what's new",
+      );
+
+      await capturedDeps.openVersion("1.2.0");
+      expect(whatsNewSpies.showVersion).toHaveBeenCalledTimes(1);
+      expect(whatsNewSpies.showVersion).toHaveBeenCalledWith("1.2.0");
+      expect(whatsNewSpies.show).not.toHaveBeenCalled();
+
+      const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      const wnErr = new Error("notification boom");
+      capturedDeps.reportDiagnostic("ui check", wnErr);
+      expect(consoleErrorSpy).toHaveBeenCalledWith(
+        "AI Artifacts What's New notification: ui check",
+        wnErr,
+      );
+
+      releaseWhatsNew();
+      await pendingWhatsNew;
+      releaseActivation();
+      await pendingActivation;
+
+      // vscode-userdata storage must use globalState normally, without URI checks.
+      vi.clearAllMocks();
+      registeredCommands.clear();
+      const virtualContext = {
+        extensionUri: { fsPath: tempRoot },
+        globalStorageUri: { scheme: "vscode-userdata", fsPath: storagePath },
+        globalState: { get: vi.fn(), update: vi.fn(async () => undefined) },
+        subscriptions: [] as Array<{ dispose: () => void }>,
+      } as any;
+
+      await activate(virtualContext);
+      const virtualDeps = mockRunWhatsNewNotification.mock.calls[0]![0];
+      expect(virtualDeps.getCurrentVersion()).toBeUndefined();
+      mockRecordWhatsNewVersion.mockResolvedValueOnce(true);
+      await expect(virtualDeps.recordVersion("1.2.0", true)).resolves.toBe(true);
+      expect(mockRecordWhatsNewVersion).toHaveBeenCalledWith(
+        virtualContext.globalState, "1.2.0", true, false,
+      );
+      expect(consoleErrorSpy).not.toHaveBeenCalled();
     } finally {
       await fs.rm(tempRoot, { recursive: true, force: true }).catch(() => {});
     }

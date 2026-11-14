@@ -55,6 +55,15 @@ The AI must use the exact `artifactDirectory` returned when creating the artifac
 
 This safety invariant takes precedence over convenience: binding to the wrong artifact could attach comments, document content, and execution authorization to the wrong conversation.
 
+## Curated feature announcements (What's New & Tips)
+
+AI Artifacts treats release announcements (**What's New & Tips**) separately from the exhaustive release changelog and from MCP/skill integration management:
+
+- **Curated over exhaustive:** **What's New** presents high-level feature highlights and preview/release guides rather than every implementation detail in `CHANGELOG.md`; **Tips** focuses on practical workflows without turning the extension into an intrusive onboarding wizard.
+- **Upgrade-only, silent for new users:** Fresh installs without notification history or a pre-existing integration receipt stay silent; there is no welcome/Tips popup or standalone Tips command. An existing `valid` or `invalid` integration receipt captured before activation install/upgrade identifies a legacy integration user who may receive the exact current opt-in announcement on first tracked activation. The integration receipt does not reveal the previous extension SemVer.
+- **Exact-version opt-in, no catch-up:** After bootstrap, notifications require a higher stable `X.Y.Z` runtime version with an exact shared release entry setting `notify: true`. Release `1.2.0` opts in to announce Work Sessions and multi-agent support. Intermediate skipped versions are never backfilled, and reloads, downgrades, dismissals, UI errors, or manual views via **AI Artifacts: What's New** never re-arm or replay a popup.
+- **VS Code-managed notification history:** Store the highest observed version with `context.globalState.get/update` and await persistence before showing Info. Normal reloads and downgrades do not replay announcements. Simultaneously activating windows can both notify; there is no cross-window atomic claim or custom filesystem state. Bootstrap alone consumes the shared pre-mutation integration receipt snapshot; a new user subsequently running Installer is not reclassified.
+
 ## Product intent
 
 AI Artifacts provides a dedicated review layer for AI-generated Markdown. It enables users to read, annotate, and drive the feedback loop without turning the extension into a task manager or a second chat interface. Conversational interaction belongs in AI chat; the webview provides document review and Work Session organization: shared Instructions, artifact zones, and navigation across agents and chats.
@@ -63,7 +72,7 @@ The artifact skill triggers only when the user explicitly requests creating or u
 
 ## Current implementation status
 
-The current implementation uses artifact schema v6, connection schema v1, Work Session registry schema v2 with legacy v1 migration, numeric MCP version 12, and numeric skill version 4 (`CREATE_REVIEW_ARTIFACT_SKILL_VERSION = 4`, `WORK_SESSION_SKILL_VERSION = 1`, `SKILL_VERSION = 4`). MCP 12 is reserved for the unreleased Work Session feature; its implementation stages do not each require a numeric MCP bump. Every lifecycle is stored beneath the per-user `~/.ai-artifacts/artifacts/` collection. `artifact.json` remains the source of truth for artifact identity without repository path ownership; optional `artifact-connection.json` records only the current UI-routing request. Schemas v3/v4/v5 and workspace-local artifact directories are outside the live protocol and are not migrated.
+The current implementation uses artifact schema v6, connection schema v1, Work Session registry schema v2 with legacy v1 migration, numeric MCP version 12, and numeric skill version 4 (`CREATE_REVIEW_ARTIFACT_SKILL_VERSION = 4`, `WORK_SESSION_SKILL_VERSION = 1`, `SKILL_VERSION = 4`). Extension 1.2.0 bundles MCP 12 for Work Sessions. Every lifecycle is stored beneath the per-user `~/.ai-artifacts/artifacts/` collection. `artifact.json` remains the source of truth for artifact identity without repository path ownership; optional `artifact-connection.json` records only the current UI-routing request. Schemas v3/v4/v5 and workspace-local artifact directories are outside the live protocol and are not migrated.
 
 Session instructions use `instructions.md` as their only effective source. Existing schema-v2 metadata may retain an optional inline `instructions` string without invalidating the Session. Readers accept but do not use that string as fallback, and new metadata writes omit it. Listing or opening a Session does not migrate or rewrite its stored instructions.
 

@@ -4,6 +4,7 @@ import { validateArtifactReviewTarget } from "./artifact-review-open";
 import { ARTIFACT_MARKDOWN_FILE, type GlobalArtifactsRootOptions } from "../shared/artifact-files";
 import { ensureSafeGlobalArtifactsRoot } from "../shared/artifact-validation";
 import { getArtifactUiState } from "./artifact-ui-state";
+import { compareIsoTimestampsAsc } from "../shared/conversation-artifact-registry";
 
 export const MAX_QUICK_PICK_ITEMS = 1000;
 export const DISCOVERY_CONCURRENCY = 16;
@@ -19,6 +20,7 @@ export type SearchableArtifact = {
   updatedAt: string;
   reviewRound: number;
   isArchived?: boolean;
+  isPinned?: boolean;
 };
 
 export type ArtifactDiscoveryResult = {
@@ -34,6 +36,16 @@ export type ArtifactFilterResult = {
 
 import { normalizeArtifactTitleSearch } from "../shared/artifact-title-search";
 export { normalizeArtifactTitleSearch };
+
+/** Shared display order for Search Artifact and the Recent Artifacts sidebar. */
+export function compareArtifactsByRecency(a: SearchableArtifact, b: SearchableArtifact): number {
+  const pinA = Boolean(a.isPinned);
+  const pinB = Boolean(b.isPinned);
+  if (pinA !== pinB) return pinA ? -1 : 1;
+  const diff = compareIsoTimestampsAsc(b.updatedAt, a.updatedAt);
+  if (diff !== 0) return diff;
+  return a.artifactId.localeCompare(b.artifactId);
+}
 
 /**
  * Enumerates and validates all schema-v6 artifacts in the canonical global
@@ -85,6 +97,7 @@ export async function discoverSearchableArtifacts(
           updatedAt: target.manifest.updatedAt,
           reviewRound: target.manifest.reviewRound,
           isArchived: Boolean(uiState?.archivedAt),
+          isPinned: Boolean(uiState?.pinned),
         });
       } catch {
         skippedCount++;

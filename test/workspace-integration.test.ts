@@ -40,16 +40,9 @@ vi.mock("vscode", () => ({
 }));
 
 import {
-  baseAssetsAreCurrent,
   baseScriptIsCurrent,
   checkAllIntegrations,
-  getDetectedSkillTargets,
-  installAllDetectedIntegrations,
-  installAntigravityIntegration,
-  installClaudeIntegration,
-  installCursorIntegration,
   installSelectedIntegrations,
-  installWindsurfIntegration,
   listInstallableClients,
   listInstallerClients,
   readInstalledIntegrationVersion,
@@ -57,12 +50,32 @@ import {
   skillAssetsAreCurrent,
   getReviewSkillMarkdown,
   setupBaseMcpServer,
-  uninstallAllDetectedIntegrations,
-  uninstallAntigravityIntegration,
   uninstallSelectedIntegrations,
   writeInstalledIntegrationVersion,
   type BaseIntegrationPaths,
 } from "../src/extension/workspace-integration";
+
+const ALL_CLIENT_IDS = ["copilot", "cursor", "codex", "claude", "windsurf", "cline", "antigravity"] as const;
+
+async function baseAssetsAreCurrent(paths: BaseIntegrationPaths): Promise<boolean> {
+  const [skillCurrent, sessionSkillCurrent, scriptCurrent] = await Promise.all([
+    skillAssetsAreCurrent(paths),
+    sessionSkillAssetsAreCurrent(paths),
+    baseScriptIsCurrent(paths),
+  ]);
+  return skillCurrent && sessionSkillCurrent && scriptCurrent;
+}
+
+async function installClientsOrThrow(
+  context: Parameters<typeof installSelectedIntegrations>[0],
+  clientIds: Parameters<typeof installSelectedIntegrations>[1],
+  options?: Parameters<typeof installSelectedIntegrations>[2],
+): Promise<Awaited<ReturnType<typeof installSelectedIntegrations>>> {
+  const result = await installSelectedIntegrations(context, clientIds, options);
+  const failure = result.failedClients[0];
+  if (failure) throw new Error(failure.error);
+  return result;
+}
 import {
   AntigravityClientDriver,
   ClaudeClientDriver,
@@ -746,7 +759,7 @@ describe("Workspace Integration Asset Verifiers", () => {
     await fs.mkdir(claudeSkillDirectory, { recursive: true });
     await fs.writeFile(path.join(claudeSkillDirectory, "SKILL.md"), malformedClaudeSkill, "utf8");
 
-    await expect(installClaudeIntegration(context)).rejects.toThrow("run the installer command again");
+    await expect(installClientsOrThrow(context, ["claude"])).rejects.toThrow("run the installer command again");
     const partial = await readInstalledIntegrationVersion({ userHome: targetDir });
     expect(partial).toMatchObject({
       status: "valid",
@@ -761,7 +774,7 @@ describe("Workspace Integration Asset Verifiers", () => {
     );
 
     await fs.rm(claudeSkillDirectory, { recursive: true, force: true });
-    await installClaudeIntegration(context);
+    await installClientsOrThrow(context, ["claude"]);
     expect(await readInstalledIntegrationVersion({ userHome: targetDir })).toMatchObject({
       status: "valid",
       manifest: {
@@ -793,7 +806,7 @@ describe("Workspace Integration Asset Verifiers", () => {
     await fs.mkdir(antigravitySkillDir, { recursive: true });
     await fs.writeFile(path.join(antigravitySkillDir, "SKILL.md"), malformedAntigravitySkill, "utf8");
 
-    await expect(installAntigravityIntegration(context)).rejects.toThrow("run the installer command again");
+    await expect(installClientsOrThrow(context, ["antigravity"])).rejects.toThrow("run the installer command again");
     const partial = await readInstalledIntegrationVersion({ userHome: targetDir });
     expect(partial).toMatchObject({
       status: "valid",
@@ -812,7 +825,7 @@ describe("Workspace Integration Asset Verifiers", () => {
     vi.spyOn(AntigravityClientDriver.prototype, "install").mockRejectedValueOnce(
       new Error("injected install failure"),
     );
-    await expect(installAntigravityIntegration(context)).rejects.toThrow("injected install failure");
+    await expect(installClientsOrThrow(context, ["antigravity"])).rejects.toThrow("injected install failure");
     expect(checkSpy).not.toHaveBeenCalled();
     const afterInstallFailure = await readInstalledIntegrationVersion({ userHome: targetDir });
     expect(afterInstallFailure).toMatchObject({
@@ -824,7 +837,7 @@ describe("Workspace Integration Asset Verifiers", () => {
       },
     });
 
-    await installAntigravityIntegration(context);
+    await installClientsOrThrow(context, ["antigravity"]);
     expect(checkSpy).not.toHaveBeenCalled();
     expect(await readInstalledIntegrationVersion({ userHome: targetDir })).toMatchObject({
       status: "valid",
@@ -840,8 +853,12 @@ describe("Workspace Integration Asset Verifiers", () => {
         },
       },
     });
-    expect(await uninstallAntigravityIntegration()).toBe(true);
-    expect(await uninstallAntigravityIntegration()).toBe(false);
+    expect((await uninstallSelectedIntegrations(undefined, ["antigravity"])).uninstalledClients).toEqual([
+      { id: "antigravity", name: "Antigravity" },
+    ]);
+    expect((await uninstallSelectedIntegrations(undefined, ["antigravity"])).notConfiguredClients).toEqual([
+      { id: "antigravity", name: "Antigravity" },
+    ]);
   });
 
   it("reinstalls all detected clients from current assets and uninstalls without touching artifacts or unrelated config", async () => {
@@ -947,8 +964,9 @@ describe("Workspace Integration Asset Verifiers", () => {
         globalStorageUri: { fsPath: globalStoragePath },
       } as any;
 
-      const firstInstall = await installAllDetectedIntegrations(context);
-      expect(firstInstall.installedClients).toEqual([
+      const firstInstall = await installSelectedIntegrations(context, ALL_CLIENT_IDS);
+      const firstInstallNames = firstInstall.installedClients.map((client) => client.name);
+      expect(firstInstallNames).toEqual([
         "GitHub Copilot (VS Code)",
         "Cursor",
         "Codex",
@@ -1040,7 +1058,7 @@ describe("Workspace Integration Asset Verifiers", () => {
         "outdated",
       ]);
 
-      await installAllDetectedIntegrations(context);
+      await installSelectedIntegrations(context, ALL_CLIENT_IDS);
       expect(await baseAssetsAreCurrent(installedPaths)).toBe(true);
       await expect(fs.access(path.join(installedPaths.targetSkill, "obsolete-instruction.md"))).rejects.toThrow();
       report = await checkAllIntegrations(context);
@@ -1093,8 +1111,9 @@ describe("Workspace Integration Asset Verifiers", () => {
         .update(await fs.readFile(retainedArtifact))
         .digest("hex");
 
-      const uninstall = await uninstallAllDetectedIntegrations(context);
-      expect(uninstall.uninstalledClients).toEqual(firstInstall.installedClients);
+      const uninstall = await uninstallSelectedIntegrations(context, ALL_CLIENT_IDS, { cleanupBase: true });
+      expect(uninstall.failedClients).toEqual([]);
+      expect(uninstall.uninstalledClients.map((client) => client.name)).toEqual(firstInstallNames);
       await expect(fs.access(installedPaths.targetDirectory)).rejects.toThrow();
       await expect(fs.access(managedIntegrationVersionPath({ userHome: targetDir }))).rejects.toThrow();
       await expect(fs.access(installedPaths.targetSkill)).rejects.toThrow();
@@ -1120,7 +1139,9 @@ describe("Workspace Integration Asset Verifiers", () => {
       await expect(fs.readFile(retainedArtifact, "utf8")).resolves.toBe("# Retain me\n");
 
       // Idempotent double uninstall
-      await expect(uninstallAllDetectedIntegrations(context)).resolves.not.toThrow();
+      await expect(
+        uninstallSelectedIntegrations(context, ALL_CLIENT_IDS, { cleanupBase: true }),
+      ).resolves.toMatchObject({ uninstalledClients: [], failedClients: [] });
 
       const cursorAfterUninstall = JSON.parse(await fs.readFile(cursorConfig, "utf8"));
       const claudeAfterUninstall = JSON.parse(await fs.readFile(claudeConfig, "utf8"));
@@ -1164,30 +1185,6 @@ describe("Workspace Integration Asset Verifiers", () => {
         process.env.CODEX_HOME = originalCodexHome;
       }
     }
-  });
-
-  it("detects skill targets in fixed order across Agents, Claude, and Antigravity without reading receipts or skill-only directories", async () => {
-    vi.spyOn(os, "homedir").mockReturnValue(targetDir);
-    await fs.mkdir(targetDir, { recursive: true });
-    expect(getDetectedSkillTargets()).toEqual(["agents"]);
-
-    await fs.mkdir(path.join(targetDir, ".gemini", "config", "skills", "create-review-artifact"), {
-      recursive: true,
-    });
-    await fs.mkdir(path.join(targetDir, ".gemini", "config", "rules"), { recursive: true });
-    expect(getDetectedSkillTargets()).toEqual(["agents"]);
-
-    const antigravityConfigPath = path.join(targetDir, ".gemini", "config", "mcp_config.json");
-    await fs.writeFile(antigravityConfigPath, "{}\n", "utf8");
-    expect(getDetectedSkillTargets()).toEqual(["agents", "antigravity"]);
-
-    await fs.rm(antigravityConfigPath);
-    const antigravityDir = path.join(targetDir, ".gemini", "antigravity");
-    await fs.mkdir(antigravityDir, { recursive: true });
-    expect(getDetectedSkillTargets()).toEqual(["agents", "antigravity"]);
-
-    await fs.mkdir(path.join(targetDir, ".claude"), { recursive: true });
-    expect(getDetectedSkillTargets()).toEqual(["agents", "claude", "antigravity"]);
   });
 
   it("installSelectedIntegrations installs only selected clients, records them, isolates failures, and surfaces status in listInstallerClients", async () => {
@@ -1422,8 +1419,8 @@ describe("Workspace Integration Asset Verifiers", () => {
       const sharedReviewSkillPath = path.join(targetDir, ".agents", "skills", "create-review-artifact", "SKILL.md");
 
       // 1. Partial uninstall (Cursor + Windsurf installed -> uninstall Cursor only) keeps base & Windsurf intact
-      await installCursorIntegration(context, { recordClientSelection: true });
-      await installWindsurfIntegration(context, { recordClientSelection: true });
+      await installClientsOrThrow(context, ["cursor"], { recordClientSelection: true });
+      await installClientsOrThrow(context, ["windsurf"], { recordClientSelection: true });
 
       const step1 = await uninstallSelectedIntegrations(context, ["cursor"], {
         recordClientSelection: true,
@@ -1448,8 +1445,8 @@ describe("Workspace Integration Asset Verifiers", () => {
       await expect(fs.access(clientsManifestPath)).rejects.toThrow();
 
       // 3. Failure on one selected client retains base assets for the failed client
-      await installCursorIntegration(context, { recordClientSelection: true });
-      await installWindsurfIntegration(context, { recordClientSelection: true });
+      await installClientsOrThrow(context, ["cursor"], { recordClientSelection: true });
+      await installClientsOrThrow(context, ["windsurf"], { recordClientSelection: true });
       vi.spyOn(WindsurfClientDriver.prototype, "uninstall").mockRejectedValueOnce(new Error("windsurf locked"));
 
       const failedBatch = await uninstallSelectedIntegrations(context, ["cursor", "windsurf"], {
@@ -1471,7 +1468,7 @@ describe("Workspace Integration Asset Verifiers", () => {
       await expect(fs.access(runtimePath)).rejects.toThrow();
 
       // 4. Unselected client with corrupt JSON (indeterminate) keeps base assets even though Cursor succeeds
-      await installCursorIntegration(context, { recordClientSelection: true });
+      await installClientsOrThrow(context, ["cursor"], { recordClientSelection: true });
       const windsurfConfig = path.join(targetDir, ".codeium", "windsurf", "mcp_config.json");
       await fs.mkdir(path.dirname(windsurfConfig), { recursive: true });
       await fs.writeFile(windsurfConfig, "{ invalid json", "utf8");
@@ -1485,8 +1482,8 @@ describe("Workspace Integration Asset Verifiers", () => {
       await fs.rm(windsurfConfig);
 
       // 5. Unselected Claude client missing SKILL.md (driver.check() === "missing") but still pointing MCP to runtime keeps base
-      await installCursorIntegration(context, { recordClientSelection: true });
-      await installClaudeIntegration(context, { recordClientSelection: true });
+      await installClientsOrThrow(context, ["cursor"], { recordClientSelection: true });
+      await installClientsOrThrow(context, ["claude"], { recordClientSelection: true });
       await fs.rm(path.join(targetDir, ".claude", "skills", "create-review-artifact", "SKILL.md"));
 
       const withPartialClaude = await uninstallSelectedIntegrations(context, ["cursor"], {
@@ -1503,8 +1500,8 @@ describe("Workspace Integration Asset Verifiers", () => {
       await expect(fs.access(runtimePath)).rejects.toThrow();
 
       // 6. Unselected client using an absolute Node executable path (e.g. process.execPath) still references runtime -> keep base
-      await installCursorIntegration(context, { recordClientSelection: true });
-      await installWindsurfIntegration(context, { recordClientSelection: true });
+      await installClientsOrThrow(context, ["cursor"], { recordClientSelection: true });
+      await installClientsOrThrow(context, ["windsurf"], { recordClientSelection: true });
       const windsurfAbsoluteCmdCfg = JSON.parse(await fs.readFile(windsurfConfig, "utf8"));
       windsurfAbsoluteCmdCfg.mcpServers.ai_artifacts.command = process.execPath;
       await fs.writeFile(windsurfConfig, `${JSON.stringify(windsurfAbsoluteCmdCfg, null, 2)}\n`, "utf8");

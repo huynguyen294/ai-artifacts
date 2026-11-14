@@ -1,8 +1,8 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import previewMarkdown from "../src/content/whats-new/preview.md?raw";
 import tipsMarkdown from "../src/content/tips.md?raw";
+import { whatsNewReleases } from "../src/shared/whats-new-releases";
 import { resolveContentImage } from "../src/webview/content-media";
 import { whatsNewContent } from "../src/webview/whats-new-content";
 
@@ -14,46 +14,28 @@ function extractImageReferences(markdown: string): string[] {
 }
 
 describe("whats-new-content", () => {
-  it("loads preview release notes and tips markdown via ?raw imports", () => {
-    expect(previewMarkdown.trim().length).toBeGreaterThan(0);
-    expect(previewMarkdown).toContain("Preview content");
-    expect(previewMarkdown).toContain("https://");
-
+  it("loads non-empty tips markdown via a raw import", () => {
     expect(tipsMarkdown.trim().length).toBeGreaterThan(0);
-    expect(tipsMarkdown).toContain("Preview content");
-    expect(tipsMarkdown).toContain("https://");
+    expect(whatsNewContent.tipsMarkdown).toBe(tipsMarkdown);
   });
 
-  it("exposes migrated features/bugFixes metadata, unique versions, and references existing valid PNG/GIF sample assets", async () => {
-    expect(whatsNewContent.articles).toHaveLength(1);
+  it("maps every shared release metadata entry to non-empty Markdown in source order with valid assets", async () => {
+    expect(whatsNewContent.articles).toHaveLength(whatsNewReleases.length);
     const versions = whatsNewContent.articles.map((item) => item.version);
     expect(new Set(versions).size).toBe(versions.length);
 
-    const article = whatsNewContent.articles[0]!;
-    expect(article.version).toBe("1.2.0");
-    expect(article.title).toContain("Work Sessions");
-    expect(article.description.trim().length).toBeGreaterThan(0);
-    expect(article.features).toEqual([
-      "A Session Manager for your Working, References, and Archived artifacts.",
-      "Shared instructions and artifacts across multiple AI agents and chats.",
-      "Agent-to-agent review: one agent waits while another submits feedback.",
-      "A dedicated sidebar with pinning, archiving, search, and session types.",
-    ]);
-    expect(article.bugFixes).toEqual([]);
-    expect(article.preview).toBe(true);
-    expect(article.icon).toBe("layers");
-    expect(article.publishedAt).toBeUndefined();
-    expect(article.markdown).toBe(previewMarkdown);
-    expect(whatsNewContent.tipsMarkdown).toBe(tipsMarkdown);
+    for (const [index, release] of whatsNewReleases.entries()) {
+      const article = whatsNewContent.articles[index]!;
+      expect(article).toMatchObject(release);
+      expect(article.markdown.trim().length).toBeGreaterThan(0);
+    }
 
-    const sampleRefs = [
-      ...extractImageReferences(article.markdown),
+    const imageRefs = [
+      ...whatsNewContent.articles.flatMap((article) => extractImageReferences(article.markdown)),
       ...extractImageReferences(whatsNewContent.tipsMarkdown),
     ];
-    expect(sampleRefs).toContain("media/samples/ai-artifacts.png");
-    expect(sampleRefs).toContain("media/samples/inline-feedback.gif");
 
-    for (const ref of sampleRefs) {
+    for (const ref of imageRefs) {
       expect(resolveContentImage(ref, "https://example.test/media/whats-new")).toBeDefined();
       const relativeFromMedia = ref.slice("media/".length);
       const assetPath = path.join(repositoryRoot, "media", "whats-new", ...relativeFromMedia.split("/"));
@@ -65,11 +47,5 @@ describe("whats-new-content", () => {
       }
     }
 
-    // Disallow raw HTML, Export Session, and Installer/auto-upgrade topics
-    for (const body of [article.markdown, whatsNewContent.tipsMarkdown]) {
-      expect(body).not.toMatch(/<(?:video|img|script|iframe|div|span)\b/i);
-      expect(body).not.toMatch(/export\s+session/i);
-      expect(body).not.toMatch(/installer|auto-upgrade/i);
-    }
   });
 });

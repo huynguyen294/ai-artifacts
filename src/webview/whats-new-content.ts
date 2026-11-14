@@ -1,16 +1,9 @@
 import previewMarkdown from "../content/whats-new/preview.md?raw";
 import tipsMarkdown from "../content/tips.md?raw";
+import { whatsNewReleases, type WhatsNewRelease } from "../shared/whats-new-releases";
 
-export type WhatsNewArticle = {
-  version: string;
-  title: string;
-  description: string;
-  features: readonly string[];
-  bugFixes: readonly string[];
+export type WhatsNewArticle = WhatsNewRelease & {
   markdown: string;
-  publishedAt?: string;
-  icon?: "layers" | "sparkles";
-  preview?: boolean;
 };
 
 export type WhatsNewContent = {
@@ -18,25 +11,15 @@ export type WhatsNewContent = {
   tipsMarkdown: string;
 };
 
+const releaseMarkdownByVersion: Readonly<Record<string, string>> = {
+  "1.2.0": previewMarkdown,
+};
+
 export const whatsNewContent: WhatsNewContent = {
-  articles: [
-    {
-      version: "1.2.0",
-      title: "Work Sessions are here — with multi-agent support",
-      description:
-        "You can now manage your session’s artifacts and shared instructions in one place, and continue the work across AI agents and chats.",
-      features: [
-        "A Session Manager for your Working, References, and Archived artifacts.",
-        "Shared instructions and artifacts across multiple AI agents and chats.",
-        "Agent-to-agent review: one agent waits while another submits feedback.",
-        "A dedicated sidebar with pinning, archiving, search, and session types.",
-      ],
-      bugFixes: [],
-      markdown: previewMarkdown,
-      icon: "layers",
-      preview: true,
-    },
-  ],
+  articles: whatsNewReleases.map((release) => ({
+    ...release,
+    markdown: releaseMarkdownByVersion[release.version] ?? "",
+  })),
   tipsMarkdown,
 };
 

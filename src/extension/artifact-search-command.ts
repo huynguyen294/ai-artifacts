@@ -1,5 +1,5 @@
 import type { ArtifactDiscoveryResult, SearchableArtifact } from "./artifact-search";
-import { filterSearchableArtifacts, MAX_QUICK_PICK_ITEMS } from "./artifact-search";
+import { compareArtifactsByRecency, filterSearchableArtifacts, MAX_QUICK_PICK_ITEMS } from "./artifact-search";
 import { formatArtifactKindLabel, isFixedArtifactKind } from "../shared/artifact-kinds";
 
 export interface ArtifactQuickPickItem {
@@ -147,7 +147,7 @@ export async function runArtifactSearchCommand(
       artifacts = artifacts.filter((a) => a.kind === options.kindFilter);
     }
 
-    cachedArtifacts = artifacts;
+    cachedArtifacts = [...artifacts].sort(compareArtifactsByRecency);
     quickPick.busy = false;
     updateQuickPickState(quickPick, cachedArtifacts, quickPick.value, options?.kindFilter);
   } catch (err) {
