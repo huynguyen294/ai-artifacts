@@ -166,9 +166,31 @@ export async function readInstalledIntegrationVersion(
   }
 }
 
+/** Resolves Codex MCP version with fallback to shared `mcpVersion` for legacy receipts. */
+export function resolveCodexMcpVersion(manifest: IntegrationVersionManifest | undefined): number {
+  return manifest?.codexMcpVersion ?? manifest?.mcpVersion ?? 0;
+}
+
+function resolvePreservedLegacyCodexMcpVersion(
+  current: InstalledIntegrationVersionReadResult,
+): number | undefined {
+  if (current.status !== "valid") {
+    return undefined;
+  }
+  if (
+    current.manifest.codexMcpVersion === undefined &&
+    current.manifest.mcpVersion !== undefined &&
+    current.manifest.mcpVersion < MCP_VERSION
+  ) {
+    return current.manifest.mcpVersion;
+  }
+  return undefined;
+}
+
 export async function writeInstalledIntegrationVersion(
   patch: {
     mcpVersion?: number;
+    codexMcpVersion?: number | null;
     skills?: Partial<InstalledSkillVersions>;
     sessionSkills?: Partial<InstalledSkillVersions>;
   },
@@ -176,6 +198,12 @@ export async function writeInstalledIntegrationVersion(
 ): Promise<IntegrationVersionManifest> {
   const current = await readInstalledIntegrationVersion(options);
   const currentManifest = current.status === "valid" ? current.manifest : undefined;
+  const resolvedCodexMcpVersion =
+    patch.codexMcpVersion === null
+      ? undefined
+      : patch.codexMcpVersion !== undefined
+        ? patch.codexMcpVersion
+        : currentManifest?.codexMcpVersion;
   const nextManifest = integrationVersionManifestSchema.parse({
     schemaVersion: INTEGRATION_VERSION_SCHEMA_VERSION,
     ...(patch.mcpVersion !== undefined
@@ -183,6 +211,7 @@ export async function writeInstalledIntegrationVersion(
       : currentManifest?.mcpVersion !== undefined
         ? { mcpVersion: currentManifest.mcpVersion }
         : {}),
+    ...(resolvedCodexMcpVersion !== undefined ? { codexMcpVersion: resolvedCodexMcpVersion } : {}),
     skills: {
       ...(currentManifest?.skills ?? {}),
       ...(patch.skills ?? {}),
@@ -236,7 +265,7 @@ async function syncSharedIntegrationAssets(
   paths: BaseIntegrationPaths,
   selection: SharedAssetSyncSelection,
   userHome: string,
-  options?: { skipPreflight?: boolean; deferMcpReceipt?: boolean },
+  options?: { skipPreflight?: boolean; deferMcpReceipt?: boolean; codexMcpVersion?: number },
 ): Promise<StaleIntegrationAsset[]> {
   const { syncMcp, syncReviewSkill, syncSessionSkill } = selection;
   if (!syncMcp && !syncReviewSkill && !syncSessionSkill) {
@@ -265,6 +294,7 @@ async function syncSharedIntegrationAssets(
 
   const receiptPatch: {
     mcpVersion?: number;
+    codexMcpVersion?: number;
     skills?: Partial<InstalledSkillVersions>;
     sessionSkills?: Partial<InstalledSkillVersions>;
   } = {};
@@ -273,6 +303,9 @@ async function syncSharedIntegrationAssets(
   if (syncMcp) {
     if (!options?.deferMcpReceipt) {
       receiptPatch.mcpVersion = MCP_VERSION;
+      if (options?.codexMcpVersion !== undefined) {
+        receiptPatch.codexMcpVersion = options.codexMcpVersion;
+      }
     }
     syncedAssets.push("mcp");
   }
@@ -297,7 +330,10 @@ async function syncSharedIntegrationAssets(
 
 export async function setupBaseMcpServer(
   context: vscode.ExtensionContext,
-  options?: { userHome?: string },
+  options?: {
+    userHome?: string;
+    previousVersion?: InstalledIntegrationVersionReadResult;
+  },
 ): Promise<{ paths: BaseIntegrationPaths }> {
   const userHome = options?.userHome ?? os.homedir();
   const paths = getBaseIntegrationPaths(context, { userHome });
@@ -307,7 +343,14 @@ export async function setupBaseMcpServer(
     syncSessionSkill: true,
   };
 
-  await syncSharedIntegrationAssets(paths, fullSelection, userHome);
+  const previousVersion =
+    options?.previousVersion ?? (await readInstalledIntegrationVersion({ userHome }));
+  const preservedCodexMcpVersion = resolvePreservedLegacyCodexMcpVersion(previousVersion);
+  await syncSharedIntegrationAssets(paths, fullSelection, userHome, {
+    ...(preservedCodexMcpVersion !== undefined
+      ? { codexMcpVersion: preservedCodexMcpVersion }
+      : {}),
+  });
   await ensureManagedDirectory(paths.workspacesDirectory);
 
   // Clean up legacy runtime, skill, and obsolete config files if present.
@@ -364,7 +407,12 @@ async function installClientAndRecordState(
   },
 ): Promise<void> {
   await driver.install(targetMcpScript);
-  if (driver.id === "claude") {
+  if (driver.id === "codex") {
+    await writeInstalledIntegrationVersion(
+      { codexMcpVersion: MCP_VERSION },
+      { userHome: options.userHome },
+    );
+  } else if (driver.id === "claude") {
     await writeInstalledIntegrationVersion(
       {
         skills: { claude: CREATE_REVIEW_ARTIFACT_SKILL_VERSION },
@@ -418,7 +466,15 @@ export async function installSelectedIntegrations(
     return { installedClients: [], failedClients: [] };
   }
 
-  const { paths } = await setupBaseMcpServer(context, { userHome });
+  const preInstallVersion = await readInstalledIntegrationVersion({ userHome });
+  const previousCodexMcpVersion =
+    preInstallVersion.status === "valid"
+      ? resolveCodexMcpVersion(preInstallVersion.manifest)
+      : 0;
+  const { paths } = await setupBaseMcpServer(context, {
+    userHome,
+    previousVersion: preInstallVersion,
+  });
   const copilotConfigPath = getCopilotConfigPath(context);
   const clineConfigPath = getClineConfigPath(context);
   const drivers = getAllClientDrivers(
@@ -440,6 +496,13 @@ export async function installSelectedIntegrations(
       });
       installedClients.push({ id: driver.id, name: driver.name });
     } catch (error) {
+      if (driver.id === "codex" && previousCodexMcpVersion < MCP_VERSION) {
+        // Record pending Codex version even after base setup bumps shared mcpVersion.
+        await writeInstalledIntegrationVersion(
+          { codexMcpVersion: previousCodexMcpVersion },
+          { userHome },
+        ).catch(() => {});
+      }
       const errorCode = getIntegrationErrorCode(error);
       failedClients.push({
         id: driver.id,
@@ -685,13 +748,18 @@ export async function uninstallSelectedIntegrations(
     }
   }
 
-  if (
+  const willCleanupBase =
     cleanupBase &&
     !globalIndeterminate &&
     failedClients.length === 0 &&
-    remainingClientsNeedingBase.size === 0
-  ) {
+    remainingClientsNeedingBase.size === 0;
+  if (willCleanupBase) {
     await cleanupBaseMcpServer({ userHome });
+  } else if (
+    uninstalledClients.some((client) => client.id === "codex") ||
+    notConfiguredClients.some((client) => client.id === "codex")
+  ) {
+    await clearPendingCodexMcpVersion(userHome);
   }
 
   return {
@@ -699,6 +767,23 @@ export async function uninstallSelectedIntegrations(
     notConfiguredClients,
     failedClients,
   };
+}
+
+async function clearPendingCodexMcpVersion(userHome: string): Promise<void> {
+  const currentVersion = await readInstalledIntegrationVersion({ userHome });
+  if (currentVersion.status !== "valid" || currentVersion.manifest.codexMcpVersion === undefined) {
+    return;
+  }
+  if (currentVersion.manifest.codexMcpVersion >= MCP_VERSION) {
+    return;
+  }
+  await writeInstalledIntegrationVersion(
+    {
+      codexMcpVersion:
+        (currentVersion.manifest.mcpVersion ?? 0) >= MCP_VERSION ? null : MCP_VERSION,
+    },
+    { userHome },
+  );
 }
 
 export type ExistingInstalledIntegrationVersionReadResult = Exclude<
@@ -757,6 +842,7 @@ export async function upgradeDetectedIntegrations(
 
   const manifest = installedVersion.status === "valid" ? installedVersion.manifest : undefined;
   const previousMcpVersion = manifest?.mcpVersion ?? 0;
+  const previousCodexMcpVersion = resolveCodexMcpVersion(manifest);
   const staleAssets = computeStaleIntegrationAssets(
     {
       mcpVersion: MCP_VERSION,
@@ -769,7 +855,7 @@ export async function upgradeDetectedIntegrations(
   const staleSet = new Set<StaleIntegrationAsset>(staleAssets);
   const syncMcp = staleSet.has("mcp");
   const codexNeedsMigration =
-    clientIdSet.has("codex") && needsCodexArtifactsMcpUpgrade(previousMcpVersion, MCP_VERSION);
+    clientIdSet.has("codex") && needsCodexArtifactsMcpUpgrade(previousCodexMcpVersion, MCP_VERSION);
 
   const updatedAssets: StaleIntegrationAsset[] = await syncSharedIntegrationAssets(
     paths,
@@ -801,7 +887,7 @@ export async function upgradeDetectedIntegrations(
     try {
       const upgradeResult = await driver.upgrade({
         mcpScriptPath: paths.targetMcpScript,
-        previousMcpVersion,
+        previousMcpVersion: driver.id === "codex" ? previousCodexMcpVersion : previousMcpVersion,
         targetMcpVersion: MCP_VERSION,
         updateReviewSkill,
         updateSessionSkill,
@@ -852,10 +938,23 @@ export async function upgradeDetectedIntegrations(
     }
   }
 
-  if (syncMcp && !codexDefinitionMigrationFailed) {
+  const receiptPatch: { mcpVersion?: number; codexMcpVersion?: number } = {};
+  if (syncMcp) {
+    receiptPatch.mcpVersion = MCP_VERSION;
+  }
+  if (codexNeedsMigration) {
+    const nextCodexMcpVersion = codexDefinitionMigrationFailed
+      ? previousCodexMcpVersion
+      : MCP_VERSION;
+    if (syncMcp || manifest?.codexMcpVersion !== nextCodexMcpVersion) {
+      receiptPatch.codexMcpVersion = nextCodexMcpVersion;
+    }
+  }
+
+  if (receiptPatch.mcpVersion !== undefined || receiptPatch.codexMcpVersion !== undefined) {
     await ensureManagedDirectory(aiArtifactsRoot({ userHome }));
     await ensureManagedDirectory(paths.targetDirectory);
-    await writeInstalledIntegrationVersion({ mcpVersion: MCP_VERSION }, { userHome });
+    await writeInstalledIntegrationVersion(receiptPatch, { userHome });
   }
 
   return {

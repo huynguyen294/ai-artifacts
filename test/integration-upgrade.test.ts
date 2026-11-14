@@ -42,6 +42,7 @@ import {
   upgradeDetectedIntegrations,
   writeInstalledIntegrationVersion,
 } from "../src/extension/workspace-integration";
+import { resolveWorkSessionSupport } from "../src/extension/work-session-support";
 import {
   managedInstalledClientsPath,
   managedIntegrationVersionPath,
@@ -61,6 +62,7 @@ function sha256(content: Buffer | string): string {
 async function writeRawReceipt(
   receipt: {
     mcpVersion?: number;
+    codexMcpVersion?: number;
     skills: Record<string, number>;
     sessionSkills?: Record<string, number>;
   },
@@ -960,8 +962,8 @@ describe("Workspace Integration Auto-Upgrade Coordinator & Selection Policy", ()
       tempHome,
     );
 
-    // First run: shared MCP copies ("mcp" in updatedAssets) but mcpVersion stays 11 because Codex failed during migration;
-    // Antigravity upgrades & commits its skill receipts without touching config/rules.
+    // First run: shared MCP copies ("mcp" in updatedAssets) and commits shared mcpVersion=12 while keeping
+    // codexMcpVersion=11 pending because Codex failed during migration; Antigravity upgrades & commits its skill receipts.
     vi.spyOn(CodexClientDriver.prototype, "upgrade").mockRejectedValueOnce(new Error("transient config write failure"));
 
     const firstSnapshot = await readExistingSnapshot(tempHome);
@@ -978,7 +980,8 @@ describe("Workspace Integration Auto-Upgrade Coordinator & Selection Policy", ()
     expect(await readInstalledIntegrationVersion({ userHome: tempHome })).toMatchObject({
       status: "valid",
       manifest: {
-        mcpVersion: 11,
+        mcpVersion: MCP_VERSION,
+        codexMcpVersion: 11,
         skills: {
           agents: CREATE_REVIEW_ARTIFACT_SKILL_VERSION,
           antigravity: CREATE_REVIEW_ARTIFACT_SKILL_VERSION,
@@ -989,27 +992,35 @@ describe("Workspace Integration Auto-Upgrade Coordinator & Selection Policy", ()
         },
       },
     });
+    await expect(resolveWorkSessionSupport({ userHome: tempHome })).resolves.toMatchObject({
+      supported: true,
+      installedMcpVersion: MCP_VERSION,
+      requiredMcpVersion: MCP_VERSION,
+    });
     await expect(fs.readFile(agDriver.configPath, "utf8")).resolves.toBe(agConfigBefore);
     await expect(fs.readFile(geminiRules, "utf8")).resolves.toBe("# My GEMINI\n");
     await expect(fs.readFile(globalRule, "utf8")).resolves.toBe("# My Policy\n");
     await expect(fs.access(path.join(tempHome, ".gemini", "config", "ai-artifacts-review-mcp.mjs"))).rejects.toThrow();
 
-    // Second run: mcpVersion stayed 11 so shared MCP syncs & Codex sees previousMcpVersion=11 -> patches join_session & commits MCP_VERSION
+    // Second run: shared MCP is already 12 (updatedAssets: []), while Codex sees codexMcpVersion=11 -> patches join_session & commits codexMcpVersion=12
     const retrySnapshot = await readExistingSnapshot(tempHome);
     const retryReport = await upgradeDetectedIntegrations(context, retrySnapshot);
-    expect(retryReport.updatedAssets).toEqual(["mcp"]);
+    expect(retryReport.updatedAssets).toEqual([]);
     expect(retryReport.clients).toEqual([
       { id: "codex", name: "Codex", status: "updated" },
       { id: "antigravity", name: "Antigravity", status: "unchanged" },
     ]);
     expect(await readInstalledIntegrationVersion({ userHome: tempHome })).toMatchObject({
       status: "valid",
-      manifest: { mcpVersion: MCP_VERSION },
+      manifest: {
+        mcpVersion: MCP_VERSION,
+        codexMcpVersion: MCP_VERSION,
+      },
     });
     const codexPatched = await fs.readFile(codexConfigPath, "utf8");
     expect(codexPatched).toContain("[mcp_servers.ai_artifacts.tools.join_session]");
 
-    // Third run: receipt is now at MCP_VERSION (12), so Codex & Antigravity neither read receipt/config nor rewrite files
+    // Third run: both mcpVersion and codexMcpVersion are now at 12, so Codex & Antigravity neither read receipt/config nor rewrite files
     const beforeThird = codexPatched;
     const thirdSnapshot = await readExistingSnapshot(tempHome);
     const originalReadFile = fs.readFile.bind(fs);
@@ -1115,7 +1126,7 @@ describe("Workspace Integration Auto-Upgrade Coordinator & Selection Policy", ()
       manifest: { mcpVersion: MCP_VERSION },
     });
 
-    // 2. Unexpected key fails closed with CODEX_UNEXPECTED_KEY_CONFLICT and defers mcpVersion while sibling Antigravity skills still upgrade
+    // 2. Unexpected key fails closed with CODEX_UNEXPECTED_KEY_CONFLICT and keeps codexMcpVersion=11 while committing shared mcpVersion=12 & upgrading Antigravity
     const conflictToml = [
       "[mcp_servers.ai_artifacts]",
       'command = "node"',
@@ -1157,7 +1168,8 @@ describe("Workspace Integration Auto-Upgrade Coordinator & Selection Policy", ()
     expect(await readInstalledIntegrationVersion({ userHome: tempHome })).toMatchObject({
       status: "valid",
       manifest: {
-        mcpVersion: 11,
+        mcpVersion: MCP_VERSION,
+        codexMcpVersion: 11,
         skills: {
           agents: CREATE_REVIEW_ARTIFACT_SKILL_VERSION,
           antigravity: CREATE_REVIEW_ARTIFACT_SKILL_VERSION,
@@ -1168,8 +1180,13 @@ describe("Workspace Integration Auto-Upgrade Coordinator & Selection Policy", ()
         },
       },
     });
+    await expect(resolveWorkSessionSupport({ userHome: tempHome })).resolves.toMatchObject({
+      supported: true,
+      installedMcpVersion: MCP_VERSION,
+      requiredMcpVersion: MCP_VERSION,
+    });
 
-    // 3. Removing the unexpected key lets the next automatic upgrade succeed and commit MCP_VERSION
+    // 3. Removing the unexpected key lets the next automatic upgrade succeed and commit codexMcpVersion=MCP_VERSION without re-copying MCP
     await fs.writeFile(
       codexConfigPath,
       conflictToml.replace('followUpQueueMode = "steer"\n', ""),
@@ -1177,13 +1194,119 @@ describe("Workspace Integration Auto-Upgrade Coordinator & Selection Policy", ()
     );
     const resolvedSnapshot = await readExistingSnapshot(tempHome);
     const resolvedReport = await upgradeDetectedIntegrations(context, resolvedSnapshot);
+    expect(resolvedReport.updatedAssets).toEqual([]);
     expect(resolvedReport.clients).toEqual([
       { id: "codex", name: "Codex", status: "updated" },
       { id: "antigravity", name: "Antigravity", status: "unchanged" },
     ]);
     expect(await readInstalledIntegrationVersion({ userHome: tempHome })).toMatchObject({
       status: "valid",
-      manifest: { mcpVersion: MCP_VERSION },
+      manifest: {
+        mcpVersion: MCP_VERSION,
+        codexMcpVersion: MCP_VERSION,
+      },
+    });
+  });
+
+  it("treats pre-existing v12 receipts without codexMcpVersion as current for Codex with zero config I/O", async () => {
+    await fs.mkdir(process.env.CODEX_HOME!, { recursive: true });
+    await setupBaseMcpServer(context, { userHome: tempHome });
+    const codexDriver = new CodexClientDriver();
+    await codexDriver.install(managedMcpScriptPath({ userHome: tempHome }));
+    await writeRawReceipt(
+      {
+        mcpVersion: MCP_VERSION,
+        skills: { agents: CREATE_REVIEW_ARTIFACT_SKILL_VERSION },
+        sessionSkills: { agents: WORK_SESSION_SKILL_VERSION },
+      },
+      tempHome,
+    );
+
+    const originalReadFile = fs.readFile.bind(fs);
+    const readPaths: string[] = [];
+    vi.spyOn(fs, "readFile").mockImplementation((async (filePath: any, options: any) => {
+      readPaths.push(path.resolve(filePath.toString()));
+      return originalReadFile(filePath, options);
+    }) as any);
+
+    const snapshot = await readExistingSnapshot(tempHome);
+    const report = await upgradeDetectedIntegrations(context, snapshot);
+    expect(report.updatedAssets).toEqual([]);
+    expect(report.clients).toEqual([{ id: "codex", name: "Codex", status: "unchanged" }]);
+    expect(readPaths).not.toContain(path.resolve(codexDriver.configPath));
+  });
+
+  it("persists codexMcpVersion=0 when Codex fails migration on an invalid receipt and retries without re-copying MCP", async () => {
+    await fs.mkdir(process.env.CODEX_HOME!, { recursive: true });
+    const targetMcp = managedMcpScriptPath({ userHome: tempHome });
+    const codexConfigPath = path.join(process.env.CODEX_HOME!, "config.toml");
+    const conflictToml = [
+      "[mcp_servers.ai_artifacts]",
+      'command = "node"',
+      `args = [${JSON.stringify(targetMcp)}]`,
+      'followUpQueueMode = "steer"',
+      "",
+    ].join("\n");
+    await fs.writeFile(codexConfigPath, conflictToml, "utf8");
+
+    const receiptPath = managedIntegrationVersionPath({ userHome: tempHome });
+    await fs.mkdir(path.dirname(receiptPath), { recursive: true });
+    await fs.writeFile(receiptPath, "{ invalid json", "utf8");
+
+    const invalidSnapshot = await readExistingSnapshot(tempHome);
+    const firstReport = await upgradeDetectedIntegrations(context, invalidSnapshot);
+    expect(firstReport.updatedAssets).toEqual(["mcp", "skill:agents", "session-skill:agents"]);
+    expect(firstReport.clients).toHaveLength(1);
+    expect(firstReport.clients[0]).toMatchObject({
+      id: "codex",
+      status: "failed",
+      errorCode: CODEX_UNEXPECTED_KEY_CONFLICT,
+    });
+    expect(await readInstalledIntegrationVersion({ userHome: tempHome })).toMatchObject({
+      status: "valid",
+      manifest: {
+        mcpVersion: MCP_VERSION,
+        codexMcpVersion: 0,
+      },
+    });
+    await expect(resolveWorkSessionSupport({ userHome: tempHome })).resolves.toMatchObject({
+      supported: true,
+      installedMcpVersion: MCP_VERSION,
+      requiredMcpVersion: MCP_VERSION,
+    });
+
+    // Second run while still conflicted must skip redundant receipt rewrites
+    const renameWhileConflictedSpy = vi.spyOn(fs, "rename");
+    const secondConflictedReport = await upgradeDetectedIntegrations(
+      context,
+      await readExistingSnapshot(tempHome),
+    );
+    expect(secondConflictedReport.updatedAssets).toEqual([]);
+    expect(secondConflictedReport.clients[0]).toMatchObject({
+      id: "codex",
+      status: "failed",
+      errorCode: CODEX_UNEXPECTED_KEY_CONFLICT,
+    });
+    expect(renameWhileConflictedSpy).not.toHaveBeenCalled();
+
+    // Clearing the conflict lets the next startup upgrade Codex and advance codexMcpVersion=12
+    await fs.writeFile(
+      codexConfigPath,
+      conflictToml.replace('followUpQueueMode = "steer"\n', ""),
+      "utf8",
+    );
+    const resolvedReport = await upgradeDetectedIntegrations(
+      context,
+      await readExistingSnapshot(tempHome),
+    );
+    expect(resolvedReport.updatedAssets).toEqual([]);
+    expect(resolvedReport.clients).toEqual([{ id: "codex", name: "Codex", status: "updated" }]);
+    expect(await readInstalledIntegrationVersion({ userHome: tempHome })).toMatchObject({
+      status: "valid",
+      manifest: {
+        mcpVersion: MCP_VERSION,
+        codexMcpVersion: MCP_VERSION,
+      },
     });
   });
 });
