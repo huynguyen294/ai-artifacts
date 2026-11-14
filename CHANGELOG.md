@@ -4,7 +4,19 @@ All notable changes to the **AI Artifacts** (`agent-plus`) project will be docum
 
 Release history has been standardized and tracked starting from version **0.2.6**. Package builds prior to this version are not considered part of the official changelog.
 
-## [1.2.0] - 2026-11-14
+## [2.0.0] - Unreleased
+
+Version 1.2.0 was not released; its planned changes are included in 2.0.0.
+
+### MCP Improvements (Breaking Changes)
+
+- Renamed `inspect_artifact_review` to `inspect_artifact` and `advance_and_wait_for_artifact` to `update_artifact`, without compatibility aliases. The catalog retains six tools, including `wait_for_artifact_review` for wait-only and resume workflows.
+- Added optional `wait` to create and inspect, sharing the existing wait mechanism. Create and update default to `wait: true`; inspect defaults to `wait: false`. A completed waiting call returns its review result directly, removing the extra create/inspect → wait call.
+- Replaced update's `noWait` option with positive `wait` and removed `artifactConversationId` from update inputs and results. Updates retain exact-handle, expected-round, one-time token and transactional commit checks. Non-waiting updates preserve existing waiters.
+- Inspect returns saved comments, submissions or an explicit chat-update token immediately even with `wait: true`; it does not advance the round. If create/inspect completes before waiting fails, recovery retains the completed operation's handle and avoids duplicate commits.
+- Updated Codex tool definitions and existing-configuration migration to use the new names. Reinstall the matching MCP runtime and skills through **AI Artifacts: Installer**, restart the affected AI client, and start a fresh chat.
+- Aligned artifact and Work Session skills with the new API while preserving feedback, question-only, approval/save, routing and token safeguards. Non-waiting updates require a specific user or workflow request; active Session membership alone does not choose the wait mode.
+- Kept common guidance in `SKILL.md`, with conditional references for AI feedback, error recovery and storage protocol details. Retention guidance remains in product documentation.
 
 ### Artifact Search Ordering
 
@@ -12,7 +24,7 @@ Release history has been standardized and tracked starting from version **0.2.6*
 
 ### What's New & Tips and Upgrade Announcements
 
-- Added **`AI Artifacts: What's New`** (`agentPlus.openWhatsNew`) and a standalone **What's New & Tips** Webview panel (`WhatsNewPanelController`, `WhatsNewApp`) with top-level **What's New** and **Tips** tabs, curated release cards (version label, optional date and `Preview content` badge, title, description, collapsed **Features** / **Bug fixes** lists, and **View more details →**), full article views with **← All updates** navigation, content-mode Markdown rendering (`MarkdownRenderer` `mode="content"`, external HTTP/HTTPS/mailto links only), and packaged PNG/GIF media support (`media/whats-new/`, no video/YouTube embeds). Release `1.2.0` ships the Work Sessions article with multi-agent demonstration GIFs and practical Work Session Tips, without a preview badge; upgrade announcements remain enabled (`notify: true`).
+- Added **`AI Artifacts: What's New`** (`agentPlus.openWhatsNew`) and a standalone **What's New & Tips** Webview panel (`WhatsNewPanelController`, `WhatsNewApp`) with top-level **What's New** and **Tips** tabs, curated release cards (version label, optional date and `Preview content` badge, title, description, collapsed **Features** / **Bug fixes** lists, and **View more details →**), full article views with **← All updates** navigation, content-mode Markdown rendering (`MarkdownRenderer` `mode="content"`, external HTTP/HTTPS/mailto links only), and packaged PNG/GIF media support (`media/whats-new/`, no video/YouTube embeds). Release `2.0.0` ships the Work Sessions article with multi-agent demonstration GIFs and practical Work Session Tips, without a preview badge; upgrade announcements remain enabled (`notify: true`).
 - Added shared pure-Node release metadata (`src/shared/whats-new-releases.ts`), strict host/webview What's New messaging (`src/shared/whats-new-protocol.ts`) with ready/visible flush gating and ACK clearing (`showVersion(version)`), and a client navigation adapter (`src/webview/whats-new-navigation.ts`).
 - Added upgrade-only What's New notifications (`src/extension/whats-new-notification.ts`, `src/extension/whats-new-notification-state.ts`) using VS Code `globalState.get/update` with `whatsNew.highestObservedVersion`. Fresh installs initialize silently; a pre-existing `valid` or `invalid` integration receipt permits the exact opt-in announcement on first tracked activation. Later announcements require higher stable `X.Y.Z` versions with `notify: true`. Version persistence completes before UI; normal reloads, dismissals, downgrades, and skipped versions do not trigger catch-up/replay. **View what's new** opens the target article. Custom filesystem notification state and cross-window deduplication were removed, fixing the `vscode-userdata` storage-scheme rejection; simultaneous windows may both notify.
 
@@ -32,7 +44,7 @@ Release history has been standardized and tracked starting from version **0.2.6*
 - A chat keeps one active Session at a time; multiple agents and chats can share the same Session. New artifacts default to the active Session unless explicitly requested as standalone.
 - Added Session context refresh guidance: read current instructions and known artifact files directly, and refresh the catalog when discovering new artifacts or requesting the latest Session contents.
 - Allowed user-requested instruction edits and artifact organization through the exact Session Markdown and layout files, while preserving membership and managed artifact lifecycle boundaries.
-- Added non-waiting updates for existing Session artifacts through `advance_and_wait_for_artifact` with `noWait: true`. Explicit chat updates can commit and continue without starting another wait; creation and review-feedback processing retain their waiting flow.
+- Added non-waiting artifact updates through `update_artifact` with `wait: false`, when explicitly requested by the user or workflow. Direct chat updates work for both standalone and Session artifacts; creation and ordinary review-feedback processing retain their waiting flow.
 
 ### Artifact and Session Management
 
@@ -58,8 +70,8 @@ Release history has been standardized and tracked starting from version **0.2.6*
 - Added Antigravity client support: installs `~/.gemini/config/mcp_config.json` (`timeoutSeconds: 3600`) and manages both `create-review-artifact` and `work-session` under `~/.gemini/config/skills/` via the grouped Installer/Uninstall pickers, automatic activation upgrades, independent `antigravity` receipts, and extension uninstall cleanup, without modifying user-managed Antigravity rules or permissions.
 - Added single-read activation branching (`src/extension/integration-activation.ts`) and automatic activation upgrades across merged saved and detected AI clients (`~/.ai-artifacts/managed/installed-clients.json`) without suppressing notifications by legacy `globalState` fingerprints:
   - When `~/.ai-artifacts/managed/integration-version.json` is missing on activation, client detection and automatic upgrade are skipped and first-time users receive a single **Run Installer** onboarding invitation until clicked (`installer.onboardingAccepted`, persisted before opening the picker; dismissed prompts re-invite later while still missing, and the flag alone never triggers upgrades).
-  - When `integration-version.json` exists (`valid` or `invalid`), that exact snapshot passes directly to `upgradeDetectedIntegrations(context, installedVersion)`. Stale shared runtime/`.agents` skills, stale client skills (Claude, Antigravity), and required MCP definition updates (including selectively patching Codex's `[mcp_servers.ai_artifacts.tools.join_session]` entry) upgrade silently, empty-target and unchanged runs stay silent without freshness warnings or `setup-required` popups, and failures display a single error notification naming the failed client(s), **AI Artifacts: Installer**, and **View Installation Guide**.
-- Version **1.2.0** bundles numeric MCP version **12**, `create-review-artifact` skill version **4**, and the first `work-session` skill version **1**. Artifact storage remains schema v6; package and lock metadata use `1.2.0`.
+  - When `integration-version.json` exists (`valid` or `invalid`), that exact snapshot passes directly to `upgradeDetectedIntegrations(context, installedVersion)`. Stale shared runtime/`.agents` skills, stale client skills (Claude, Antigravity), and required MCP definition updates (including migrating Codex's standardized tool definitions) upgrade silently, empty-target and unchanged runs stay silent without freshness warnings or `setup-required` popups, and failures display a single error notification naming the failed client(s), **AI Artifacts: Installer**, and **View Installation Guide**.
+- Version **2.0.0** bundles numeric MCP version **12**, `create-review-artifact` skill version **4**, and the first `work-session` skill version **1**. Artifact storage remains schema v6; package and lock metadata use `2.0.0`.
 - Added independent per-target installation receipts for both skills (`~/.ai-artifacts/managed/integration-version.json`). Review skill customization remains supported; the Session skill uses the official bundled content.
 - Manual install commands remain the explicit path for initial setup and configuration recovery. Whenever an automatic upgrade or manual install updates runtime assets, definitions, or skills on disk, reload the window or restart the affected AI client and start a fresh chat to load the updated MCP and skills. Uninstall removes managed skills and clears saved client selections while preserving user artifacts, Sessions, and user-managed rules.
 - Updated product branding and README guidance (including optional user-managed Antigravity global rule and MCP permission guidance) for interactive review and multi-agent Work Sessions.
@@ -71,10 +83,10 @@ Release history has been standardized and tracked starting from version **0.2.6*
 
 ### Preserve Active Waiters During Non-waiting Updates
 
-- `advance_and_wait_for_artifact` with `noWait: true` can commit while an existing waiter remains attached. Waiting advances and duplicate waits still reject another waiter in the same MCP process.
-- Both waiting tools validate the current submitted round and issue Review tokens from that result, allowing an original wait request to receive feedback after non-waiting round advances. `expectedReviewRound` remains an attachment precondition.
+- `update_artifact` with `wait: false` can commit while an existing waiter remains attached. Waiting updates and duplicate waits still reject another waiter in the same MCP process.
+- All waiting lifecycle paths validate the current submitted round and issue Review tokens from that result, allowing an original wait request to receive feedback after non-waiting round advances. `expectedReviewRound` remains an attachment precondition.
 - Waiters use the existing update lock to stay pending while lifecycle files are replaced, and still terminate when their artifact directory is deleted.
-- Updated `create-review-artifact` and its contract to preserve waiters during `noWait` updates and use the submitted round and token. Kept the existing Work Session wait-mode selection unchanged.
+- Updated both skills to preserve waiters during non-waiting updates and use the submitted round and token. Wait-mode selection follows explicit user/workflow direction rather than active Session membership.
 - Synchronized lifecycle documentation without changing schemas, version counters, or takeover behavior.
 
 ## [1.1.4] - 2026-11-04

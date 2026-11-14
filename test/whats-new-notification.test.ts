@@ -6,7 +6,7 @@ import {
   VIEW_WHATS_NEW_ACTION,
   type WhatsNewNotificationDeps,
 } from "../src/extension/whats-new-notification";
-import type { WhatsNewRelease } from "../src/shared/whats-new-releases";
+import { whatsNewReleases, type WhatsNewRelease } from "../src/shared/whats-new-releases";
 
 const repositoryRoot = path.resolve(import.meta.dirname, "..");
 
@@ -82,6 +82,21 @@ describe("whats-new notification controller", () => {
     });
     await runWhatsNewNotification(otherActionDeps);
     expect(otherActionDeps.openVersion).not.toHaveBeenCalled();
+  });
+
+  it("uses notification copy for the v2 release without repeating its branded article headline", async () => {
+    const release = whatsNewReleases[0]!;
+    const deps = makeDeps({
+      getCurrentVersion: vi.fn(() => release.version),
+      releases: whatsNewReleases,
+    });
+
+    await runWhatsNewNotification(deps);
+
+    expect(deps.showInformationMessage).toHaveBeenCalledWith(
+      `AI Artifacts ${release.version}: Work Sessions for multi-agent work`,
+      VIEW_WHATS_NEW_ACTION,
+    );
   });
 
   it("always observes runtime version with notifyEnabled=false for missing, false, omitted, or mismatched releases without catch-up", async () => {

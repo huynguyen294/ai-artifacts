@@ -14,6 +14,19 @@ Minor typos, formatting fixes, or cosmetic wording adjustments that do not chang
 
 Each entry includes the date, category, summary of changes, rationale, and affected components or files.
 
+## 2026-11-15 - Avoid repeated version wording in What's New notifications
+
+- **Notification copy:** Added optional `notificationTitle` to release metadata, falling back to the article title. Version 2.0.0 uses “Work Sessions for multi-agent work” after the existing product/version prefix; the article and card retain their launch headline. Notification eligibility, history and navigation are unchanged. Added coverage using the real v2 metadata alongside the existing fallback test.
+
+## 2026-11-15 - Clarify recovery after create cancellation without a handle
+
+- **Artifact skill:** Guide the user to Inspect the still-open artifact, or reopen it through AI Artifacts (library icon) → Recent Artifacts first, then paste the copied Inspect prompt into chat. Preserve exact-handle recovery and the prohibition on duplicate creation. Runtime and version counters are unchanged.
+
+## 2026-11-14 - Prepare release 2.0.0, replacing the unreleased 1.2.0
+
+- **Release metadata:** Updated package and root lock versions to `2.0.0`; retained numeric MCP `12`, artifact skill `4`, and Work Session skill `1` because the planned `1.2.0` was never released. The 2.0.0 changelog includes all planned 1.2.0 changes plus the breaking MCP improvements and skill alignment; historical released entries remain unchanged. The entry stays Unreleased while the build is tested.
+- **What's New and documentation:** Replaced the 1.2.0 article entry with 2.0.0, titled “AI Artifacts v2 is out — Work Sessions for multi-agent work”. Work Sessions remain the feature focus; MCP workflow and upgrade guidance appear under Improvements. Renamed the article source to `2.0.0.md`, kept its existing media and `notify: true`, and aligned current README/architecture/instruction/component/philosophy version references and release-contract checks. Notification behavior and integration counters are unchanged.
+
 ## 2026-11-14 - Align skills and product docs with standardized MCP tools (Phase 3)
 
 - **Behavior:** Updated artifact and Work Session skills for `inspect_artifact`, `update_artifact` and positive `wait` defaults (create/update true, inspect false). Create and inspect can wait internally; no redundant wait follows a completed waiting call. Update has no Session UUID input/output, and non-waiting mode requires explicit user/workflow direction rather than active Session membership.

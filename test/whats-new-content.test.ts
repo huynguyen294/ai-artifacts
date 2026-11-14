@@ -23,6 +23,8 @@ describe("whats-new-content", () => {
     expect(whatsNewContent.articles).toHaveLength(whatsNewReleases.length);
     const versions = whatsNewContent.articles.map((item) => item.version);
     expect(new Set(versions).size).toBe(versions.length);
+    const { version } = JSON.parse(await readFile(path.join(repositoryRoot, "package.json"), "utf8"));
+    expect(versions).toContain(version);
 
     for (const [index, release] of whatsNewReleases.entries()) {
       const article = whatsNewContent.articles[index]!;

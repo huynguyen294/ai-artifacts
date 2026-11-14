@@ -3,7 +3,7 @@
   "displayName": "AI Artifacts - Interactive Review & Multi-Agent Work Sessions",
   "publisher": "huynguyen294",
   "description": "Interactive artifact review for AI-generated plans, Markdown specs, and proposals with inline feedback. Organize artifacts and shared instructions in Work Sessions across agents and chats. Connects via MCP to Cursor, Codex, Claude, GitHub Copilot, Cline, Windsurf, and more.",
-  "version": "1.2.0",
+  "version": "2.0.0",
   "type": "module",
   "license": "MIT",
   "icon": "media/icon.png",
