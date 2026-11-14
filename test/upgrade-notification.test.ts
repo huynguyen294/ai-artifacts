@@ -1,11 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  CODEX_TROUBLESHOOTING_GUIDE_URL,
   computeStaleIntegrationAssets,
   INSTALLATION_GUIDE_URL,
   runAutomaticIntegrationUpgrade,
   VIEW_INSTALLATION_GUIDE_ACTION,
   type AutomaticIntegrationUpgradeDeps,
 } from "../src/extension/upgrade-notification";
+import { CODEX_UNEXPECTED_KEY_CONFLICT } from "../src/extension/mcp-config";
 import type { IntegrationUpgradeReport } from "../src/extension/workspace-integration";
 import type {
   IntegrationVersionManifest,
@@ -188,15 +190,41 @@ describe("automatic integration upgrade controller", () => {
       clients: [{ id: "codex", name: "Codex", status: "failed", detail: "EACCES writing config" }],
     });
 
-    // Clicking View Installation Guide opens external guide
+    // Clicking View Installation Guide on non-conflict failure opens getting-started guide
     const openDeps = makeDeps({
       upgradeIntegrations: vi.fn(async () => failedReport()),
       showErrorMessage: vi.fn(async () => VIEW_INSTALLATION_GUIDE_ACTION),
     });
     await runAutomaticIntegrationUpgrade(openDeps);
     expect(openDeps.openInstallationGuide).toHaveBeenCalledTimes(1);
+    expect(openDeps.openInstallationGuide).toHaveBeenCalledWith(INSTALLATION_GUIDE_URL);
     expect(INSTALLATION_GUIDE_URL).toBe(
       "https://github.com/huynguyen294/ai-artifacts#getting-started",
+    );
+
+    // Clicking View Installation Guide on CODEX_UNEXPECTED_KEY_CONFLICT routes directly to Codex TOML troubleshooting section
+    const conflictOpenDeps = makeDeps({
+      upgradeIntegrations: vi.fn(async (): Promise<IntegrationUpgradeReport> => ({
+        clientIds: ["codex", "cursor"],
+        skillTargets: ["agents"],
+        updatedAssets: ["mcp"],
+        clients: [
+          {
+            id: "codex",
+            name: "Codex",
+            status: "failed",
+            detail: "Unexpected key followUpQueueMode",
+            errorCode: CODEX_UNEXPECTED_KEY_CONFLICT,
+          },
+          { id: "cursor", name: "Cursor", status: "updated" },
+        ],
+      })),
+      showErrorMessage: vi.fn(async () => VIEW_INSTALLATION_GUIDE_ACTION),
+    });
+    await runAutomaticIntegrationUpgrade(conflictOpenDeps);
+    expect(conflictOpenDeps.openInstallationGuide).toHaveBeenCalledWith(CODEX_TROUBLESHOOTING_GUIDE_URL);
+    expect(CODEX_TROUBLESHOOTING_GUIDE_URL).toBe(
+      "https://github.com/huynguyen294/ai-artifacts#codex-toml-unexpected-keys-or-missing-section-header",
     );
 
     // Dismissing does not open guide

@@ -1,10 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  CODEX_TROUBLESHOOTING_GUIDE_URL,
   notifyInstallationError,
   notifyInstallationResult,
   RELOAD_WINDOW_ACTION,
+  VIEW_INSTALLATION_GUIDE_ACTION,
   type InstallationNotificationDeps,
 } from "../src/extension/install-notification";
+import { CODEX_UNEXPECTED_KEY_CONFLICT } from "../src/extension/mcp-config";
 
 function makeDeps(
   overrides: Partial<InstallationNotificationDeps> = {},
@@ -14,6 +17,7 @@ function makeDeps(
     showWarningMessage: vi.fn(async () => undefined),
     showErrorMessage: vi.fn(async () => undefined),
     reloadWindow: vi.fn(async () => undefined),
+    openInstallationGuide: vi.fn(async () => undefined),
     reportDiagnostic: vi.fn(),
     ...overrides,
   };
@@ -196,6 +200,86 @@ describe("install notification helper", () => {
       }),
     });
     await expect(notifyInstallationError(diagFailDeps, new Error("root failure"))).resolves.toBeUndefined();
+  });
+
+  it("offers View Installation Guide alongside Reload Window for Codex unexpected-key conflicts and opens troubleshooting anchor directly", async () => {
+    // 1. Partial failure with CODEX_UNEXPECTED_KEY_CONFLICT includes both actions on warning prompt
+    const partialGuideDeps = makeDeps({
+      showWarningMessage: vi.fn(async () => VIEW_INSTALLATION_GUIDE_ACTION),
+    });
+    await notifyInstallationResult(partialGuideDeps, {
+      installedClients: ["Cursor"],
+      failedClients: [
+        {
+          name: "Codex",
+          error: "Codex config contains unexpected key followUpQueueMode",
+          errorCode: CODEX_UNEXPECTED_KEY_CONFLICT,
+        },
+      ],
+    });
+    expect(partialGuideDeps.showWarningMessage).toHaveBeenCalledWith(
+      "AI Artifacts installed for Cursor. Failed for: Codex (Codex config contains unexpected key followUpQueueMode). Reload this window to apply successful installations. For AI clients running outside this window, restart the client and start a new chat.",
+      RELOAD_WINDOW_ACTION,
+      VIEW_INSTALLATION_GUIDE_ACTION,
+    );
+    expect(partialGuideDeps.openInstallationGuide).toHaveBeenCalledWith(CODEX_TROUBLESHOOTING_GUIDE_URL);
+    expect(partialGuideDeps.reloadWindow).not.toHaveBeenCalled();
+
+    // Clicking Reload Window still reloads without opening guide
+    const partialReloadDeps = makeDeps({
+      showWarningMessage: vi.fn(async () => RELOAD_WINDOW_ACTION),
+    });
+    await notifyInstallationResult(partialReloadDeps, {
+      installedClients: ["Cursor"],
+      failedClients: [
+        {
+          name: "Codex",
+          error: "unexpected key",
+          errorCode: CODEX_UNEXPECTED_KEY_CONFLICT,
+        },
+      ],
+    });
+    expect(partialReloadDeps.reloadWindow).toHaveBeenCalledTimes(1);
+    expect(partialReloadDeps.openInstallationGuide).not.toHaveBeenCalled();
+
+    // 2. Full failure with CODEX_UNEXPECTED_KEY_CONFLICT offers View Installation Guide on error prompt
+    const fullConflictDeps = makeDeps({
+      showErrorMessage: vi.fn(async () => VIEW_INSTALLATION_GUIDE_ACTION),
+    });
+    await notifyInstallationResult(fullConflictDeps, {
+      installedClients: [],
+      failedClients: [
+        {
+          name: "Codex",
+          error: "unexpected key",
+          errorCode: CODEX_UNEXPECTED_KEY_CONFLICT,
+        },
+      ],
+    });
+    expect(fullConflictDeps.showErrorMessage).toHaveBeenCalledWith(
+      "AI Artifacts installation failed: Codex (unexpected key)",
+      VIEW_INSTALLATION_GUIDE_ACTION,
+    );
+    expect(fullConflictDeps.openInstallationGuide).toHaveBeenCalledWith(CODEX_TROUBLESHOOTING_GUIDE_URL);
+
+    // 3. openInstallationGuide failure is contained cleanly
+    const guideErr = new Error("openExternal failed");
+    const guideFailDeps = makeDeps({
+      showErrorMessage: vi.fn(async () => VIEW_INSTALLATION_GUIDE_ACTION),
+      openInstallationGuide: vi.fn(async () => {
+        throw guideErr;
+      }),
+    });
+    await expect(
+      notifyInstallationResult(guideFailDeps, {
+        installedClients: [],
+        failedClients: [{ name: "Codex", error: "unexpected key", errorCode: CODEX_UNEXPECTED_KEY_CONFLICT }],
+      }),
+    ).resolves.toBeUndefined();
+    expect(guideFailDeps.reportDiagnostic).toHaveBeenCalledWith(
+      "Could not open installation guide.",
+      guideErr,
+    );
   });
 });
 

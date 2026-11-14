@@ -8,7 +8,12 @@ import {
   MCP_VERSION,
   WORK_SESSION_SKILL_VERSION,
 } from "../src/shared/contracts";
-import { RELOAD_WINDOW_ACTION } from "../src/extension/install-notification";
+import {
+  CODEX_TROUBLESHOOTING_GUIDE_URL,
+  RELOAD_WINDOW_ACTION,
+  VIEW_INSTALLATION_GUIDE_ACTION,
+} from "../src/extension/install-notification";
+import { CODEX_UNEXPECTED_KEY_CONFLICT } from "../src/extension/mcp-config";
 import {
   INSTALLER_ONBOARDING_ACCEPTED_KEY,
   type IntegrationActivationDeps,
@@ -20,6 +25,7 @@ import { whatsNewReleases } from "../src/shared/whats-new-releases";
 import type {
   ExistingInstalledIntegrationVersionReadResult,
   InstalledIntegrationVersionReadResult,
+  SelectedIntegrationsInstallResult,
 } from "../src/extension/workspace-integration";
 
 const {
@@ -81,8 +87,8 @@ const {
       notifyChanged: vi.fn(),
     },
     workspaceIntegrationSpies: {
-      installSelectedIntegrations: vi.fn(async () => ({
-        installedClients: [{ id: "codex" as const, name: "Codex" }],
+      installSelectedIntegrations: vi.fn(async (): Promise<SelectedIntegrationsInstallResult> => ({
+        installedClients: [{ id: "codex", name: "Codex" }],
         failedClients: [],
       })),
       listInstallableClients: vi.fn(async () => ({
@@ -123,6 +129,7 @@ const {
         clients: [],
       })),
       getMcpConfigSnippet: vi.fn(() => "{}"),
+      getCodexMcpConfigSnippet: vi.fn(() => '[mcp_servers.ai_artifacts]\ncommand = "node"\n'),
       getReviewSkillMarkdown: vi.fn(async () => "# Review"),
       readInstalledIntegrationVersion: vi.fn(async (): Promise<InstalledIntegrationVersionReadResult> => ({ status: "missing" })),
       upgradeDetectedIntegrations: vi.fn(async () => ({
@@ -421,6 +428,8 @@ describe("Extension activation wiring & manual command recording", () => {
 
       await capturedUpgradeDeps.openInstallationGuide();
       expect(mockOpenExternal).toHaveBeenCalledWith({ value: INSTALLATION_GUIDE_URL });
+      await capturedUpgradeDeps.openInstallationGuide(CODEX_TROUBLESHOOTING_GUIDE_URL);
+      expect(mockOpenExternal).toHaveBeenCalledWith({ value: CODEX_TROUBLESHOOTING_GUIDE_URL });
 
       const upgradeErr = new Error("diag detail");
       capturedUpgradeDeps.reportDiagnostic("failed check", upgradeErr);
@@ -470,7 +479,16 @@ describe("Extension activation wiring & manual command recording", () => {
       await registeredCommands.get("agentPlus.verifyGlobalIntegration")!();
       expect(workspaceIntegrationSpies.checkAllIntegrations).toHaveBeenCalledWith(context);
       expect(mockShowInformationMessage).toHaveBeenCalledTimes(1);
+      expect(registeredCommands.has("agentPlus.copyCodexMcpConfig")).toBe(true);
       await registeredCommands.get("agentPlus.copyMcpConfig")!();
+      mockClipboardWriteText.mockClear();
+      mockShowInformationMessage.mockClear();
+      await registeredCommands.get("agentPlus.copyCodexMcpConfig")!();
+      expect(workspaceIntegrationSpies.getCodexMcpConfigSnippet).toHaveBeenCalledWith(context);
+      expect(mockClipboardWriteText).toHaveBeenCalledWith('[mcp_servers.ai_artifacts]\ncommand = "node"\n');
+      expect(mockShowInformationMessage).toHaveBeenCalledWith(
+        "AI Artifacts Codex MCP TOML configuration copied to clipboard! Paste it into ~/.codex/config.toml.",
+      );
       await registeredCommands.get("agentPlus.copyReviewSkill")!();
       expect(workspaceIntegrationSpies.installSelectedIntegrations).not.toHaveBeenCalled();
 
@@ -532,6 +550,56 @@ describe("Extension activation wiring & manual command recording", () => {
         RELOAD_WINDOW_ACTION,
       );
       expect(mockExecuteCommand).toHaveBeenCalledWith("workbench.action.reloadWindow");
+
+      // Installer routes View Installation Guide directly to Codex TOML troubleshooting URL on conflict
+      mockOpenExternal.mockClear();
+      workspaceIntegrationSpies.installSelectedIntegrations.mockResolvedValueOnce({
+        installedClients: [{ id: "cursor", name: "Cursor" }],
+        failedClients: [
+          {
+            id: "codex",
+            name: "Codex",
+            error: "Unexpected key followUpQueueMode",
+            errorCode: CODEX_UNEXPECTED_KEY_CONFLICT,
+          },
+        ],
+      });
+      const conflictAcceptListeners: Array<() => void> = [];
+      const conflictHideListeners: Array<() => void> = [];
+      const conflictQp = {
+        title: "",
+        placeholder: "",
+        canSelectMany: false,
+        matchOnDescription: false,
+        matchOnDetail: false,
+        busy: false,
+        buttons: [] as unknown[],
+        items: [] as Array<{ clientId: string }>,
+        selectedItems: [] as Array<{ clientId: string }>,
+        onDidAccept: (fn: () => void) => {
+          conflictAcceptListeners.push(fn);
+          return { dispose: () => {} };
+        },
+        onDidTriggerButton: () => ({ dispose: () => {} }),
+        onDidHide: (fn: () => void) => {
+          conflictHideListeners.push(fn);
+          return { dispose: () => {} };
+        },
+        show: vi.fn(),
+        hide: vi.fn(() => {
+          for (const fn of conflictHideListeners) fn();
+        }),
+        dispose: vi.fn(),
+      };
+      mockCreateQuickPick.mockReturnValueOnce(conflictQp);
+      mockShowWarningMessage.mockResolvedValueOnce(VIEW_INSTALLATION_GUIDE_ACTION);
+      const conflictInstallPromise = registeredCommands.get("agentPlus.installer")!();
+      await vi.waitFor(() => {
+        expect(conflictQp.busy).toBe(false);
+      });
+      for (const fn of conflictAcceptListeners) fn();
+      await conflictInstallPromise;
+      expect(mockOpenExternal).toHaveBeenCalledWith({ value: CODEX_TROUBLESHOOTING_GUIDE_URL });
 
       // Interactive Uninstall command wires recordClientSelection: true and refreshes views
       const uninstallAcceptListeners: Array<() => void> = [];

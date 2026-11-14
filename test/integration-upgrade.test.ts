@@ -27,6 +27,7 @@ import {
   WindsurfClientDriver,
 } from "../src/extension/mcp-clients/index";
 import { upsertJsonMcpServer, writeJsonConfig } from "../src/extension/mcp-clients/json-mcp-helper";
+import { CODEX_UNEXPECTED_KEY_CONFLICT } from "../src/extension/mcp-config";
 import {
   OFFICIAL_SKILL_DESCRIPTIONS,
   USER_CUSTOM_RULES_BEGIN,
@@ -844,6 +845,7 @@ describe("Workspace Integration Auto-Upgrade Coordinator & Selection Policy", ()
         name: "Antigravity",
         status: "failed",
         detail: "receipt write I/O failed",
+        errorCode: "EIO",
       },
     ]);
     vi.restoreAllMocks();
@@ -1060,5 +1062,128 @@ describe("Workspace Integration Auto-Upgrade Coordinator & Selection Policy", ()
       },
     });
     await expect(fs.access(managedInstalledClientsPath({ userHome: tempHome }))).rejects.toThrow();
+  });
+
+  it("replaces markerless whitelisted Codex configs cleanly and fails closed with errorCode on unexpected keys while upgrading sibling clients", async () => {
+    await fs.mkdir(process.env.CODEX_HOME!, { recursive: true });
+    await fs.mkdir(path.join(tempHome, ".gemini", "antigravity"), { recursive: true });
+    const targetMcp = managedMcpScriptPath({ userHome: tempHome });
+    await setupBaseMcpServer(context, { userHome: tempHome });
+
+    const codexConfigPath = path.join(process.env.CODEX_HOME!, "config.toml");
+
+    // 1. Markerless 5-tool whitelisted override replaces cleanly into canonical 6-tool managed block
+    await fs.writeFile(
+      codexConfigPath,
+      [
+        "[mcp_servers.ai_artifacts]",
+        'command = "node"',
+        `args = [${JSON.stringify(targetMcp)}]`,
+        "tool_timeout_sec = 180",
+        'default_tools_approval_mode = "approve"',
+        "",
+        "[mcp_servers.ai_artifacts.tools.resolve_artifact_window]",
+        'approval_mode = "approve"',
+        "",
+        "[mcp_servers.ai_artifacts.tools.create_artifact]",
+        'approval_mode = "never"',
+      ].join("\n"),
+      "utf8",
+    );
+    await writeRawReceipt(
+      {
+        mcpVersion: 11,
+        skills: { agents: CREATE_REVIEW_ARTIFACT_SKILL_VERSION, antigravity: CREATE_REVIEW_ARTIFACT_SKILL_VERSION },
+        sessionSkills: { agents: WORK_SESSION_SKILL_VERSION, antigravity: WORK_SESSION_SKILL_VERSION },
+      },
+      tempHome,
+    );
+
+    const markerlessSnapshot = await readExistingSnapshot(tempHome);
+    const markerlessReport = await upgradeDetectedIntegrations(context, markerlessSnapshot);
+    expect(markerlessReport.clients).toEqual([
+      { id: "codex", name: "Codex", status: "updated" },
+      { id: "antigravity", name: "Antigravity", status: "unchanged" },
+    ]);
+    const replacedCodex = await fs.readFile(codexConfigPath, "utf8");
+    expect(replacedCodex).toContain("# >>> AI Artifacts review MCP >>>");
+    expect(replacedCodex).toContain("tool_timeout_sec = 3600");
+    expect(replacedCodex).toContain('[mcp_servers.ai_artifacts.tools.create_artifact]\napproval_mode = "approve"');
+    expect(replacedCodex).toContain('[mcp_servers.ai_artifacts.tools.join_session]\napproval_mode = "approve"');
+    expect(await readInstalledIntegrationVersion({ userHome: tempHome })).toMatchObject({
+      status: "valid",
+      manifest: { mcpVersion: MCP_VERSION },
+    });
+
+    // 2. Unexpected key fails closed with CODEX_UNEXPECTED_KEY_CONFLICT and defers mcpVersion while sibling Antigravity skills still upgrade
+    const conflictToml = [
+      "[mcp_servers.ai_artifacts]",
+      'command = "node"',
+      `args = [${JSON.stringify(targetMcp)}]`,
+      'followUpQueueMode = "steer"',
+      "",
+    ].join("\n");
+    await fs.writeFile(codexConfigPath, conflictToml, "utf8");
+    await writeRawReceipt(
+      {
+        mcpVersion: 11,
+        skills: { agents: CREATE_REVIEW_ARTIFACT_SKILL_VERSION, antigravity: 1 },
+        sessionSkills: { agents: WORK_SESSION_SKILL_VERSION },
+      },
+      tempHome,
+    );
+
+    const conflictSnapshot = await readExistingSnapshot(tempHome);
+    const conflictReport = await upgradeDetectedIntegrations(context, conflictSnapshot);
+    expect(conflictReport.updatedAssets).toEqual([
+      "mcp",
+      "skill:antigravity",
+      "session-skill:antigravity",
+    ]);
+    expect(conflictReport.clients).toHaveLength(2);
+    expect(conflictReport.clients[0]).toMatchObject({
+      id: "codex",
+      name: "Codex",
+      status: "failed",
+      errorCode: CODEX_UNEXPECTED_KEY_CONFLICT,
+    });
+    expect(conflictReport.clients[0]!.detail).toContain("followUpQueueMode");
+    expect(conflictReport.clients[1]).toEqual({
+      id: "antigravity",
+      name: "Antigravity",
+      status: "updated",
+    });
+    await expect(fs.readFile(codexConfigPath, "utf8")).resolves.toBe(conflictToml);
+    expect(await readInstalledIntegrationVersion({ userHome: tempHome })).toMatchObject({
+      status: "valid",
+      manifest: {
+        mcpVersion: 11,
+        skills: {
+          agents: CREATE_REVIEW_ARTIFACT_SKILL_VERSION,
+          antigravity: CREATE_REVIEW_ARTIFACT_SKILL_VERSION,
+        },
+        sessionSkills: {
+          agents: WORK_SESSION_SKILL_VERSION,
+          antigravity: WORK_SESSION_SKILL_VERSION,
+        },
+      },
+    });
+
+    // 3. Removing the unexpected key lets the next automatic upgrade succeed and commit MCP_VERSION
+    await fs.writeFile(
+      codexConfigPath,
+      conflictToml.replace('followUpQueueMode = "steer"\n', ""),
+      "utf8",
+    );
+    const resolvedSnapshot = await readExistingSnapshot(tempHome);
+    const resolvedReport = await upgradeDetectedIntegrations(context, resolvedSnapshot);
+    expect(resolvedReport.clients).toEqual([
+      { id: "codex", name: "Codex", status: "updated" },
+      { id: "antigravity", name: "Antigravity", status: "unchanged" },
+    ]);
+    expect(await readInstalledIntegrationVersion({ userHome: tempHome })).toMatchObject({
+      status: "valid",
+      manifest: { mcpVersion: MCP_VERSION },
+    });
   });
 });

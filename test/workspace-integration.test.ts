@@ -6,7 +6,11 @@ import path from "node:path";
 import { createInterface } from "node:readline";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ArtifactStore } from "../src/extension/artifact-store";
-import { hasManagedCodexArtifactsMcp, upsertCodexArtifactsMcp } from "../src/extension/mcp-config";
+import {
+  CODEX_UNEXPECTED_KEY_CONFLICT,
+  hasManagedCodexArtifactsMcp,
+  upsertCodexArtifactsMcp,
+} from "../src/extension/mcp-config";
 import {
   globalArtifactsRoot,
   managedInstalledClientsPath,
@@ -42,6 +46,7 @@ vi.mock("vscode", () => ({
 import {
   baseScriptIsCurrent,
   checkAllIntegrations,
+  getCodexMcpConfigSnippet,
   installSelectedIntegrations,
   listInstallableClients,
   listInstallerClients,
@@ -1214,7 +1219,7 @@ describe("Workspace Integration Asset Verifiers", () => {
       // Conflict in Codex should fail Codex without blocking Cursor or Antigravity
       await fs.writeFile(
         codexConfig,
-        '[mcp_servers.ai_artifacts]\ncommand = "node"\nargs = ["/custom/server.mjs"]\n',
+        '[mcp_servers.ai_artifacts]\ncommand = "node"\nargs = ["/custom/server.mjs"]\nfollowUpQueueMode = "steer"\n',
         "utf8",
       );
       await fs.writeFile(cursorConfig, JSON.stringify({ mcpServers: {} }, null, 2), "utf8");
@@ -1223,6 +1228,10 @@ describe("Workspace Integration Asset Verifiers", () => {
         extensionUri: { fsPath: repositoryRoot },
         globalStorageUri: { fsPath: globalStoragePath },
       } as any;
+
+      const codexSnippet = getCodexMcpConfigSnippet(context);
+      expect(codexSnippet).toContain("[mcp_servers.ai_artifacts]");
+      expect(hasManagedCodexArtifactsMcp(codexSnippet, managedMcpScriptPath({ userHome: targetDir }))).toBe(true);
 
       const initialList = await listInstallerClients(context);
       const codexInitial = initialList.clients.find((c) => c.id === "codex");
@@ -1255,7 +1264,11 @@ describe("Workspace Integration Asset Verifiers", () => {
         { id: "antigravity", name: "Antigravity" },
       ]);
       expect(installResult.failedClients).toHaveLength(1);
-      expect(installResult.failedClients[0]!.id).toBe("codex");
+      expect(installResult.failedClients[0]).toMatchObject({
+        id: "codex",
+        name: "Codex",
+        errorCode: CODEX_UNEXPECTED_KEY_CONFLICT,
+      });
       await expect(fs.access(antigravityConfig)).resolves.toBeUndefined();
 
       const updatedList = await listInstallerClients(context);
@@ -1518,7 +1531,7 @@ describe("Workspace Integration Asset Verifiers", () => {
       });
       await expect(fs.access(runtimePath)).rejects.toThrow();
 
-      // 7. Selected Codex with unmanaged [mcp_servers.ai_artifacts] entry left on disk keeps base
+      // 7a. Selected Codex with markerless whitelisted [mcp_servers.ai_artifacts] entry uninstalls cleanly and cleans base
       await setupBaseMcpServer(context, { userHome: targetDir });
       await fs.mkdir(codexHome, { recursive: true });
       await fs.writeFile(
@@ -1526,11 +1539,30 @@ describe("Workspace Integration Asset Verifiers", () => {
         `[mcp_servers.ai_artifacts]\ncommand = "node"\nargs = ${JSON.stringify([runtimePath])}\n`,
         "utf8",
       );
-      const unmanagedCodexResult = await uninstallSelectedIntegrations(context, ["codex"], {
+      const markerlessCodexResult = await uninstallSelectedIntegrations(context, ["codex"], {
         recordClientSelection: true,
         cleanupBase: true,
       });
-      expect(unmanagedCodexResult.notConfiguredClients).toEqual([{ id: "codex", name: "Codex" }]);
+      expect(markerlessCodexResult.uninstalledClients).toEqual([{ id: "codex", name: "Codex" }]);
+      await expect(fs.access(runtimePath)).rejects.toThrow();
+
+      // 7b. Selected Codex with unexpected key left on disk fails closed and keeps base
+      await setupBaseMcpServer(context, { userHome: targetDir });
+      await fs.writeFile(
+        path.join(codexHome, "config.toml"),
+        `[mcp_servers.ai_artifacts]\ncommand = "node"\nargs = ${JSON.stringify([runtimePath])}\nfollowUpQueueMode = "steer"\n`,
+        "utf8",
+      );
+      const conflictCodexResult = await uninstallSelectedIntegrations(context, ["codex"], {
+        recordClientSelection: true,
+        cleanupBase: true,
+      });
+      expect(conflictCodexResult.failedClients).toHaveLength(1);
+      expect(conflictCodexResult.failedClients[0]).toMatchObject({
+        id: "codex",
+        name: "Codex",
+      });
+      expect(conflictCodexResult.failedClients[0]!.error).toContain("followUpQueueMode");
       await expect(fs.access(runtimePath)).resolves.toBeUndefined();
     } finally {
       if (originalCodexHome === undefined) {

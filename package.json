@@ -67,6 +67,7 @@
     "onCommand:agentPlus.openWhatsNew",
     "onCommand:agentPlus.installer",
     "onCommand:agentPlus.copyMcpConfig",
+    "onCommand:agentPlus.copyCodexMcpConfig",
     "onCommand:agentPlus.copyReviewSkill",
     "onCommand:agentPlus.verifyGlobalIntegration",
     "onCommand:agentPlus.uninstall"
@@ -221,6 +222,10 @@
       {
         "command": "agentPlus.copyMcpConfig",
         "title": "AI Artifacts: Copy MCP Configuration JSON"
+      },
+      {
+        "command": "agentPlus.copyCodexMcpConfig",
+        "title": "AI Artifacts: Copy Codex MCP Configuration TOML"
       },
       {
         "command": "agentPlus.copyReviewSkill",

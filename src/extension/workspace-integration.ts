@@ -17,8 +17,11 @@ import {
   writeTextFileAtomic,
 } from "./mcp-clients/json-mcp-helper";
 import {
+  getIntegrationErrorCode,
   hasManagedCodexArtifactsMcp,
+  inspectCodexArtifactsMcp,
   needsCodexArtifactsMcpUpgrade,
+  upsertCodexArtifactsMcp,
 } from "./mcp-config";
 import { cleanupBaseMcpServer } from "./mcp-clients/base-cleanup";
 import {
@@ -330,6 +333,13 @@ export function getMcpConfigSnippet(context: vscode.ExtensionContext): string {
   return JSON.stringify(snippet, null, 2);
 }
 
+/** Generate the canonical managed Codex TOML configuration snippet for clipboard copy. */
+export function getCodexMcpConfigSnippet(context: vscode.ExtensionContext): string {
+  const paths = getBaseIntegrationPaths(context);
+  const normalizedPath = paths.targetMcpScript.replaceAll("\\", "/");
+  return upsertCodexArtifactsMcp("", normalizedPath).trimEnd();
+}
+
 export async function getReviewSkillMarkdown(context: vscode.ExtensionContext): Promise<string> {
   const paths = getBaseIntegrationPaths(context);
   const skillFile = path.join(paths.sourceSkill, "SKILL.md");
@@ -392,7 +402,7 @@ async function uninstallClient(
 
 export type SelectedIntegrationsInstallResult = {
   installedClients: Array<{ id: McpClientId; name: string }>;
-  failedClients: Array<{ id: McpClientId; name: string; error: string }>;
+  failedClients: Array<{ id: McpClientId; name: string; error: string; errorCode?: string }>;
 };
 
 export async function installSelectedIntegrations(
@@ -420,7 +430,7 @@ export async function installSelectedIntegrations(
   const selectedDrivers = drivers.filter((driver) => selectedIds.has(driver.id));
 
   const installedClients: Array<{ id: McpClientId; name: string }> = [];
-  const failedClients: Array<{ id: McpClientId; name: string; error: string }> = [];
+  const failedClients: Array<{ id: McpClientId; name: string; error: string; errorCode?: string }> = [];
 
   for (const driver of selectedDrivers) {
     try {
@@ -430,10 +440,12 @@ export async function installSelectedIntegrations(
       });
       installedClients.push({ id: driver.id, name: driver.name });
     } catch (error) {
+      const errorCode = getIntegrationErrorCode(error);
       failedClients.push({
         id: driver.id,
         name: driver.name,
         error: error instanceof Error ? error.message : String(error),
+        ...(errorCode ? { errorCode } : {}),
       });
     }
   }
@@ -498,20 +510,15 @@ function codexConfigUsesManagedRuntime(
   ) {
     return true;
   }
-  const hasArtifactsTable = /^\s*\[mcp_servers\.(?:ai_artifacts|codex_artifacts)(?:\.|\s*\])/m.test(
-    content,
-  );
-  if (!hasArtifactsTable) return false;
+  const inspection = inspectCodexArtifactsMcp(content);
+  if (!inspection.hasArtifactsTables) return false;
 
   const normalizedTargets = [
     normalizePathForComparison(targetMcpScript),
     normalizePathForComparison(legacyMcpScript),
   ];
-  const argsMatches = content.matchAll(
-    /^\s*args\s*=\s*\[\s*(?:"([^"]+)"|'([^']+)')(?:\s*,|\s*\])/gm,
-  );
-  for (const match of argsMatches) {
-    const scriptArg = match[1] ?? match[2] ?? "";
+  for (const args of inspection.configuredArgsList) {
+    const scriptArg = args[0];
     if (scriptArg && normalizedTargets.includes(normalizePathForComparison(scriptArg))) {
       return true;
     }
@@ -704,6 +711,7 @@ export type IntegrationUpgradeClientReport = {
   name: string;
   status: "unchanged" | "updated" | "failed";
   detail?: string;
+  errorCode?: string;
 };
 
 export type IntegrationUpgradeReport = {
@@ -833,11 +841,13 @@ export async function upgradeDetectedIntegrations(
       if (driver.id === "codex" && codexNeedsMigration) {
         codexDefinitionMigrationFailed = true;
       }
+      const errorCode = getIntegrationErrorCode(error);
       clients.push({
         id: driver.id,
         name: driver.name,
         status: "failed",
         detail: error instanceof Error ? error.message : String(error),
+        ...(errorCode ? { errorCode } : {}),
       });
     }
   }

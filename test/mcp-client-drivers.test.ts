@@ -21,6 +21,10 @@ import { CodexClientDriver } from "../src/extension/mcp-clients/codex-client";
 import { CopilotClientDriver } from "../src/extension/mcp-clients/copilot-client";
 import { ClineClientDriver, getClineSettingsPath } from "../src/extension/mcp-clients/cline-client";
 import { cleanupBaseMcpServer } from "../src/extension/mcp-clients/base-cleanup";
+import {
+  CODEX_UNEXPECTED_KEY_CONFLICT,
+  CodexUnexpectedKeyConflictError,
+} from "../src/extension/mcp-config";
 import { runUninstall } from "../src/extension/uninstall-entry";
 import { OFFICIAL_SKILL_DESCRIPTIONS, USER_CUSTOM_RULES_END } from "../src/extension/mcp-clients/skill-helper";
 
@@ -332,6 +336,30 @@ describe("Client Drivers", () => {
 
       // Verify legacy hook script was deleted
       expect(await fs.stat(legacyScriptFile).catch(() => null)).toBeNull();
+
+      // Markerless whitelisted entry is replaced cleanly into a canonical block
+      await fs.writeFile(
+        codexDriver.configPath,
+        '[mcp_servers.ai_artifacts]\ncommand = "custom"\ntool_timeout_sec = 180\n',
+        "utf8",
+      );
+      expect((await codexDriver.check(scriptPath)).status).toBe("missing");
+      await codexDriver.install(scriptPath);
+      expect((await codexDriver.check(scriptPath)).status).toBe("ready");
+
+      // Unexpected key fails closed across check/install/uninstall
+      await fs.writeFile(
+        codexDriver.configPath,
+        '[mcp_servers.ai_artifacts]\ncommand = "node"\nfollowUpQueueMode = "steer"\n',
+        "utf8",
+      );
+      const conflictCheck = await codexDriver.check(scriptPath);
+      expect(conflictCheck.status).toBe("configuration-conflict");
+      expect(conflictCheck.detail).toContain("followUpQueueMode");
+      await expect(codexDriver.install(scriptPath)).rejects.toSatisfy(
+        (err: unknown) => err instanceof CodexUnexpectedKeyConflictError && err.code === CODEX_UNEXPECTED_KEY_CONFLICT,
+      );
+      await expect(codexDriver.uninstall()).rejects.toThrow(CodexUnexpectedKeyConflictError);
     } finally {
       if (originalCodexHome === undefined) {
         delete process.env.CODEX_HOME;
@@ -561,6 +589,15 @@ describe("Client Drivers", () => {
       await fs.writeFile(codexDriver.configPath, displacedConfig, "utf8");
       const checkResult = await codexDriver.check(scriptPath);
       expect(checkResult.status).toBe("ready");
+
+      // Markerless 6-tool config with scattered sub-tables is also recognized as ready and uninstalls cleanly
+      const markerlessConfig = displacedConfig
+        .replace("# >>> AI Artifacts review MCP >>>\n", "")
+        .replace("\n# <<< AI Artifacts review MCP <<<", "");
+      await fs.writeFile(codexDriver.configPath, markerlessConfig, "utf8");
+      expect((await codexDriver.check(scriptPath)).status).toBe("ready");
+      expect(await codexDriver.uninstall()).toBe(true);
+      expect((await codexDriver.check(scriptPath)).status).toBe("missing");
     } finally {
       if (originalCodexHome === undefined) {
         delete process.env.CODEX_HOME;
@@ -1115,7 +1152,7 @@ describe("Client Driver Upgrade", () => {
     }
   });
 
-  it("Codex driver gates patching at MCP 12, handles ENOENT/I/O/unmanaged configs, preserves overrides and custom block fields, and ignores legacy hooks", async () => {
+  it("Codex driver gates replacement at MCP 12, handles ENOENT/I/O/unconfigured/unexpected-key configs, resets whitelisted overrides, and ignores legacy hooks", async () => {
     const originalCodexHome = process.env.CODEX_HOME;
     const codexHome = path.join(tempHome, ".codex");
     process.env.CODEX_HOME = codexHome;
@@ -1141,6 +1178,18 @@ describe("Client Driver Upgrade", () => {
         },
       });
       await fs.writeFile(legacyHooksPath, legacyHookContent, "utf8");
+
+      // Unconfigured config.toml without ai_artifacts tables stays unchanged without writing
+      await fs.writeFile(codexDriver.configPath, 'model = "gpt-test"\n\n[mcp_servers.other]\ncommand = "other"\n', "utf8");
+      const unconfiguredWriteSpy = vi.spyOn(fs, "writeFile");
+      expect(await codexDriver.upgrade({
+        mcpScriptPath: scriptPath,
+        previousMcpVersion: 11,
+        targetMcpVersion: 12,
+        updateReviewSkill: false,
+        updateSessionSkill: false,
+      })).toEqual({ status: "unchanged" });
+      expect(unconfiguredWriteSpy).not.toHaveBeenCalled();
 
       const fiveTool = [
         'model = "gpt-test"',
@@ -1199,7 +1248,7 @@ describe("Client Driver Upgrade", () => {
         updateSessionSkill: false,
       })).rejects.toThrow("EACCES permission denied");
 
-      // Crossing 11 -> 12 patches 5-tool block while leaving legacy hooks untouched
+      // Crossing 11 -> 12 replaces outdated 5-tool block with canonical 6-tool managed defaults and leaves legacy hooks untouched
       const firstUpgrade = await codexDriver.upgrade({
         mcpScriptPath: scriptPath,
         previousMcpVersion: 11,
@@ -1210,14 +1259,30 @@ describe("Client Driver Upgrade", () => {
       expect(firstUpgrade).toEqual({ status: "updated" });
       expect((await codexDriver.check(scriptPath)).status).toBe("ready");
 
-      const patchedContent = await fs.readFile(codexDriver.configPath, "utf8");
-      expect(patchedContent).toContain("[mcp_servers.ai_artifacts.tools.create_artifact]\napproval_mode = \"never\"");
-      expect(patchedContent).toContain("[mcp_servers.ai_artifacts.tools.join_session]\napproval_mode = \"approve\"");
+      const upgradedContent = await fs.readFile(codexDriver.configPath, "utf8");
+      expect(upgradedContent).toContain('[mcp_servers.ai_artifacts.tools.create_artifact]\napproval_mode = "approve"');
+      expect(upgradedContent).toContain('[mcp_servers.ai_artifacts.tools.join_session]\napproval_mode = "approve"');
       await expect(fs.readFile(legacyHooksPath, "utf8")).resolves.toBe(legacyHookContent);
 
-      // Re-running on ready 6-tool config even across 10 -> 13 is unchanged with no write
+      // Re-running on ready 6-tool config (with or without markers) across 10 -> 13 is unchanged with no write
       const writeSpy = vi.spyOn(fs, "writeFile");
       const renameSpy = vi.spyOn(fs, "rename");
+      expect(await codexDriver.upgrade({
+        mcpScriptPath: scriptPath,
+        previousMcpVersion: 10,
+        targetMcpVersion: 13,
+        updateReviewSkill: false,
+        updateSessionSkill: false,
+      })).toEqual({ status: "unchanged" });
+      await fs.writeFile(
+        codexDriver.configPath,
+        upgradedContent
+          .replace("# >>> AI Artifacts review MCP >>>\n", "")
+          .replace("\n# <<< AI Artifacts review MCP <<<", ""),
+        "utf8",
+      );
+      writeSpy.mockClear();
+      renameSpy.mockClear();
       expect(await codexDriver.upgrade({
         mcpScriptPath: scriptPath,
         previousMcpVersion: 10,
@@ -1228,37 +1293,51 @@ describe("Client Driver Upgrade", () => {
       expect(writeSpy).not.toHaveBeenCalled();
       expect(renameSpy).not.toHaveBeenCalled();
 
-      // Managed 5-tool block with custom timeout/args still receives pure patch without rewriting timeout/args
-      const customFiveTool = fiveTool.replace("tool_timeout_sec = 3600", "tool_timeout_sec = 180");
-      await fs.writeFile(codexDriver.configPath, customFiveTool, "utf8");
-      const customUpgradeRes = await codexDriver.upgrade({
+      // Markerless / legacy / custom whitelisted overrides (timeout, args) are replaced cleanly with canonical defaults
+      const markerlessOverride = fiveTool
+        .replace("# >>> AI Artifacts review MCP >>>\n", "")
+        .replace("\n# <<< AI Artifacts review MCP <<<", "")
+        .replace("[mcp_servers.ai_artifacts]", "[mcp_servers.codex_artifacts]")
+        .replace("tool_timeout_sec = 3600", "tool_timeout_sec = 180")
+        .replace(`args = ["${scriptPath}"]`, 'args = ["D:/other.mjs"]');
+      await fs.writeFile(codexDriver.configPath, markerlessOverride, "utf8");
+      const overrideUpgrade = await codexDriver.upgrade({
         mcpScriptPath: scriptPath,
         previousMcpVersion: 10,
         targetMcpVersion: 13,
         updateReviewSkill: false,
         updateSessionSkill: false,
       });
-      expect(customUpgradeRes).toEqual({ status: "updated" });
-      const customAfter = await fs.readFile(codexDriver.configPath, "utf8");
-      expect(customAfter).toContain("tool_timeout_sec = 180");
-      expect(customAfter).toContain("[mcp_servers.ai_artifacts.tools.join_session]");
+      expect(overrideUpgrade).toEqual({ status: "updated" });
+      const overrideAfter = await fs.readFile(codexDriver.configPath, "utf8");
+      expect(overrideAfter).toContain("tool_timeout_sec = 3600");
+      expect(overrideAfter).toContain(`args = ["${scriptPath}"]`);
+      expect(overrideAfter).not.toContain("[mcp_servers.codex_artifacts]");
+      expect(overrideAfter).toContain("[mcp_servers.ai_artifacts.tools.join_session]");
 
-      // Unmanaged entry returns unchanged without throwing conflict or overwriting
-      const conflictConfig = '[mcp_servers.ai_artifacts]\ncommand = "node"\nargs = ["/other.mjs"]\n';
-      await fs.writeFile(codexDriver.configPath, conflictConfig, "utf8");
+      // Unexpected key in config.toml fails closed by throwing CodexUnexpectedKeyConflictError without writing
+      const unexpectedConfig = [
+        "[mcp_servers.ai_artifacts]",
+        'command = "node"',
+        `args = ["${scriptPath}"]`,
+        'followUpQueueMode = "steer"',
+        "",
+      ].join("\n");
+      await fs.writeFile(codexDriver.configPath, unexpectedConfig, "utf8");
       writeSpy.mockClear();
       renameSpy.mockClear();
-      const unmanagedRes = await codexDriver.upgrade({
+      await expect(codexDriver.upgrade({
         mcpScriptPath: scriptPath,
         previousMcpVersion: 11,
         targetMcpVersion: 12,
         updateReviewSkill: false,
         updateSessionSkill: false,
-      });
-      expect(unmanagedRes).toEqual({ status: "unchanged" });
+      })).rejects.toSatisfy(
+        (err: unknown) => err instanceof CodexUnexpectedKeyConflictError && err.code === CODEX_UNEXPECTED_KEY_CONFLICT,
+      );
       expect(writeSpy).not.toHaveBeenCalled();
       expect(renameSpy).not.toHaveBeenCalled();
-      await expect(fs.readFile(codexDriver.configPath, "utf8")).resolves.toBe(conflictConfig);
+      await expect(fs.readFile(codexDriver.configPath, "utf8")).resolves.toBe(unexpectedConfig);
     } finally {
       if (originalCodexHome === undefined) {
         delete process.env.CODEX_HOME;
