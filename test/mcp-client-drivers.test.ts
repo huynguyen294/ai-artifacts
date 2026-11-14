@@ -569,10 +569,10 @@ describe("Client Drivers", () => {
         "[mcp_servers.ai_artifacts.tools.wait_for_artifact_review]",
         'approval_mode = "approve"',
         "",
-        "[mcp_servers.ai_artifacts.tools.inspect_artifact_review]",
+        "[mcp_servers.ai_artifacts.tools.inspect_artifact]",
         'approval_mode = "approve"',
         "",
-        "[mcp_servers.ai_artifacts.tools.advance_and_wait_for_artifact]",
+        "[mcp_servers.ai_artifacts.tools.update_artifact]",
         'approval_mode = "approve"',
         "",
         "[mcp_servers.ai_artifacts.tools.join_session]",
@@ -1220,7 +1220,7 @@ describe("Client Driver Upgrade", () => {
       ].join("\n");
       await fs.writeFile(codexDriver.configPath, fiveTool, "utf8");
 
-      // Version gate 12 -> 12 and 12 -> 13 never even read config.toml
+      // Version gate 12 -> 12 and 13 -> 12 never even read config.toml
       const readSpy = vi.spyOn(fs, "readFile");
       expect(await codexDriver.upgrade({
         mcpScriptPath: scriptPath,
@@ -1231,8 +1231,8 @@ describe("Client Driver Upgrade", () => {
       })).toEqual({ status: "unchanged" });
       expect(await codexDriver.upgrade({
         mcpScriptPath: scriptPath,
-        previousMcpVersion: 12,
-        targetMcpVersion: 13,
+        previousMcpVersion: 13,
+        targetMcpVersion: 12,
         updateReviewSkill: false,
         updateSessionSkill: false,
       })).toEqual({ status: "unchanged" });
@@ -1248,6 +1248,57 @@ describe("Client Driver Upgrade", () => {
         updateSessionSkill: false,
       })).rejects.toThrow("EACCES permission denied");
 
+      // Version gate >= 12 (12 -> 13) upgrades a 6-tool config with legacy names + join_session while preserving unrelated entries
+      const legacySixTool = [
+        'model = "gpt-test"',
+        "",
+        "# >>> AI Artifacts review MCP >>>",
+        "[mcp_servers.ai_artifacts]",
+        'command = "node"',
+        `args = ["${scriptPath}"]`,
+        "tool_timeout_sec = 3600",
+        'default_tools_approval_mode = "approve"',
+        "",
+        "[mcp_servers.ai_artifacts.tools.resolve_artifact_window]",
+        'approval_mode = "approve"',
+        "",
+        "[mcp_servers.ai_artifacts.tools.create_artifact]",
+        'approval_mode = "approve"',
+        "",
+        "[mcp_servers.ai_artifacts.tools.wait_for_artifact_review]",
+        'approval_mode = "approve"',
+        "",
+        "[mcp_servers.ai_artifacts.tools.inspect_artifact_review]",
+        'approval_mode = "approve"',
+        "",
+        "[mcp_servers.ai_artifacts.tools.advance_and_wait_for_artifact]",
+        'approval_mode = "approve"',
+        "",
+        "[mcp_servers.ai_artifacts.tools.join_session]",
+        'approval_mode = "approve"',
+        "# <<< AI Artifacts review MCP <<<",
+        "",
+      ].join("\n");
+      await fs.writeFile(codexDriver.configPath, legacySixTool, "utf8");
+      const sixToolUpgrade = await codexDriver.upgrade({
+        mcpScriptPath: scriptPath,
+        previousMcpVersion: 12,
+        targetMcpVersion: 13,
+        updateReviewSkill: false,
+        updateSessionSkill: false,
+      });
+      expect(sixToolUpgrade).toEqual({ status: "updated" });
+      expect((await codexDriver.check(scriptPath)).status).toBe("ready");
+      const sixToolUpgradedContent = await fs.readFile(codexDriver.configPath, "utf8");
+      expect(sixToolUpgradedContent).toContain('model = "gpt-test"');
+      expect(sixToolUpgradedContent).toContain("[mcp_servers.ai_artifacts.tools.inspect_artifact]");
+      expect(sixToolUpgradedContent).toContain("[mcp_servers.ai_artifacts.tools.update_artifact]");
+      expect(sixToolUpgradedContent).toContain("[mcp_servers.ai_artifacts.tools.join_session]");
+      expect(sixToolUpgradedContent).not.toContain("inspect_artifact_review");
+      expect(sixToolUpgradedContent).not.toContain("advance_and_wait_for_artifact");
+
+      await fs.writeFile(codexDriver.configPath, fiveTool, "utf8");
+
       // Crossing 11 -> 12 replaces outdated 5-tool block with canonical 6-tool managed defaults and leaves legacy hooks untouched
       const firstUpgrade = await codexDriver.upgrade({
         mcpScriptPath: scriptPath,
@@ -1261,7 +1312,11 @@ describe("Client Driver Upgrade", () => {
 
       const upgradedContent = await fs.readFile(codexDriver.configPath, "utf8");
       expect(upgradedContent).toContain('[mcp_servers.ai_artifacts.tools.create_artifact]\napproval_mode = "approve"');
+      expect(upgradedContent).toContain('[mcp_servers.ai_artifacts.tools.inspect_artifact]\napproval_mode = "approve"');
+      expect(upgradedContent).toContain('[mcp_servers.ai_artifacts.tools.update_artifact]\napproval_mode = "approve"');
       expect(upgradedContent).toContain('[mcp_servers.ai_artifacts.tools.join_session]\napproval_mode = "approve"');
+      expect(upgradedContent).not.toContain("inspect_artifact_review");
+      expect(upgradedContent).not.toContain("advance_and_wait_for_artifact");
       await expect(fs.readFile(legacyHooksPath, "utf8")).resolves.toBe(legacyHookContent);
 
       // Re-running on ready 6-tool config (with or without markers) across 10 -> 13 is unchanged with no write

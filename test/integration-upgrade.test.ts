@@ -1018,7 +1018,11 @@ describe("Workspace Integration Auto-Upgrade Coordinator & Selection Policy", ()
       },
     });
     const codexPatched = await fs.readFile(codexConfigPath, "utf8");
+    expect(codexPatched).toContain("[mcp_servers.ai_artifacts.tools.inspect_artifact]");
+    expect(codexPatched).toContain("[mcp_servers.ai_artifacts.tools.update_artifact]");
     expect(codexPatched).toContain("[mcp_servers.ai_artifacts.tools.join_session]");
+    expect(codexPatched).not.toContain("[mcp_servers.ai_artifacts.tools.inspect_artifact_review]");
+    expect(codexPatched).not.toContain("[mcp_servers.ai_artifacts.tools.advance_and_wait_for_artifact]");
 
     // Third run: both mcpVersion and codexMcpVersion are now at 12, so Codex & Antigravity neither read receipt/config nor rewrite files
     const beforeThird = codexPatched;

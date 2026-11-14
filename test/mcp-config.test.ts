@@ -24,8 +24,11 @@ describe("Codex Artifacts MCP config", () => {
     expect(second).toContain("[mcp_servers.ai_artifacts.tools.resolve_artifact_window]");
     expect(second).toContain("[mcp_servers.ai_artifacts.tools.create_artifact]");
     expect(second).toContain("[mcp_servers.ai_artifacts.tools.wait_for_artifact_review]");
-    expect(second).toContain("[mcp_servers.ai_artifacts.tools.inspect_artifact_review]");
-    expect(second).toContain("[mcp_servers.ai_artifacts.tools.advance_and_wait_for_artifact]");
+    expect(second).toContain("[mcp_servers.ai_artifacts.tools.inspect_artifact]");
+    expect(second).toContain("[mcp_servers.ai_artifacts.tools.update_artifact]");
+    expect(second).toContain("[mcp_servers.ai_artifacts.tools.join_session]");
+    expect(second).not.toContain("inspect_artifact_review");
+    expect(second).not.toContain("advance_and_wait_for_artifact");
     expect(second).not.toContain("create_and_wait_for_artifact");
     expect(second).not.toContain("update_and_wait_for_artifact");
     expect(hasManagedCodexArtifactsMcp(second, "D:\\Codex Artifacts\\review-wait-mcp.mjs")).toBe(true);
@@ -82,10 +85,10 @@ describe("Codex Artifacts MCP config", () => {
       "[mcp_servers.ai_artifacts.tools.wait_for_artifact_review]",
       'approval_mode = "approve"',
       "",
-      "[mcp_servers.ai_artifacts.tools.inspect_artifact_review]",
+      "[mcp_servers.ai_artifacts.tools.inspect_artifact]",
       'approval_mode = "approve"',
       "",
-      "[mcp_servers.ai_artifacts.tools.advance_and_wait_for_artifact]",
+      "[mcp_servers.ai_artifacts.tools.update_artifact]",
       'approval_mode = "approve"',
       "",
       "[mcp_servers.ai_artifacts.tools.join_session]",
@@ -152,10 +155,10 @@ describe("Codex Artifacts MCP config", () => {
       "[mcp_servers.ai_artifacts.tools.wait_for_artifact_review]",
       'approval_mode = "approve"',
       "",
-      "[mcp_servers.ai_artifacts.tools.inspect_artifact_review]",
+      "[mcp_servers.ai_artifacts.tools.inspect_artifact]",
       'approval_mode = "approve"',
       "",
-      "[mcp_servers.ai_artifacts.tools.advance_and_wait_for_artifact]",
+      "[mcp_servers.ai_artifacts.tools.update_artifact]",
       'approval_mode = "approve"',
       "",
       "[mcp_servers.ai_artifacts.tools.join_session]",
@@ -190,13 +193,60 @@ describe("Codex Artifacts MCP config", () => {
     expect(hasManagedCodexArtifactsMcp(updated, "D:/new/path/ai-artifacts-review-mcp.mjs")).toBe(true);
   });
 
-  it("checks the Codex MCP version upgrade gate around MCP 12", () => {
+  it("checks the Codex MCP version upgrade gate for any higher target version", () => {
     expect(needsCodexArtifactsMcpUpgrade(0, 12)).toBe(true);
     expect(needsCodexArtifactsMcpUpgrade(11, 12)).toBe(true);
     expect(needsCodexArtifactsMcpUpgrade(10, 13)).toBe(true);
+    expect(needsCodexArtifactsMcpUpgrade(12, 13)).toBe(true);
     expect(needsCodexArtifactsMcpUpgrade(12, 12)).toBe(false);
-    expect(needsCodexArtifactsMcpUpgrade(12, 13)).toBe(false);
+    expect(needsCodexArtifactsMcpUpgrade(13, 12)).toBe(false);
     expect(needsCodexArtifactsMcpUpgrade(11, 11)).toBe(false);
+  });
+
+  it("treats legacy-named 6-tool config as stale and migrates it canonically while preserving unrelated sections", () => {
+    const scriptPath = "C:/Users/Admin/.ai-artifacts/managed/runtime/ai-artifacts-review-mcp.mjs";
+    const legacyNamedSixTool = [
+      'model = "gpt-5.6-sol"',
+      "",
+      "[mcp_servers.ai_artifacts]",
+      'command = "node"',
+      `args = ["${scriptPath}"]`,
+      "tool_timeout_sec = 3600",
+      'default_tools_approval_mode = "approve"',
+      "",
+      "[mcp_servers.ai_artifacts.tools.resolve_artifact_window]",
+      'approval_mode = "approve"',
+      "",
+      "[mcp_servers.ai_artifacts.tools.create_artifact]",
+      'approval_mode = "approve"',
+      "",
+      "[mcp_servers.ai_artifacts.tools.wait_for_artifact_review]",
+      'approval_mode = "approve"',
+      "",
+      "[mcp_servers.ai_artifacts.tools.inspect_artifact_review]",
+      'approval_mode = "approve"',
+      "",
+      "[mcp_servers.ai_artifacts.tools.advance_and_wait_for_artifact]",
+      'approval_mode = "approve"',
+      "",
+      "[mcp_servers.ai_artifacts.tools.join_session]",
+      'approval_mode = "approve"',
+      "",
+      "[mcp_servers.other]",
+      'command = "other"',
+    ].join("\n");
+
+    expect(hasManagedCodexArtifactsMcp(legacyNamedSixTool, scriptPath)).toBe(false);
+    const migrated = upsertCodexArtifactsMcp(legacyNamedSixTool, scriptPath);
+    expect(migrated).toContain("[mcp_servers.ai_artifacts.tools.inspect_artifact]");
+    expect(migrated).toContain("[mcp_servers.ai_artifacts.tools.update_artifact]");
+    expect(migrated).toContain("[mcp_servers.ai_artifacts.tools.join_session]");
+    expect(migrated).not.toContain("inspect_artifact_review");
+    expect(migrated).not.toContain("advance_and_wait_for_artifact");
+    expect(migrated).toContain('model = "gpt-5.6-sol"');
+    expect(migrated).toContain('[mcp_servers.other]\ncommand = "other"');
+    expect(hasManagedCodexArtifactsMcp(migrated, scriptPath)).toBe(true);
+    expect(upsertCodexArtifactsMcp(migrated, scriptPath)).toBe(migrated);
   });
 
   it("fails closed with CodexUnexpectedKeyConflictError on unexpected keys or sub-tables", () => {
