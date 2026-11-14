@@ -1,42 +1,181 @@
 # Work Sessions are here — with multi-agent support
 
-> **Preview content:** Sample release notes for upcoming **1.2.0 (Unreleased)** capabilities. This is preview material for renderer and media review, not a published release.
-
 You can now manage your session’s artifacts and shared instructions in one place, and continue the work across AI agents and chats.
 
-## Highlights in this preview
+## Manage all your session’s artifacts in one place — see your work at a glance
 
-- **Session Manager:** Organize artifacts across **Working**, **References**, and **Archived** zones in one view.
-- **Shared session context:** Connect multiple AI agents and chats to the same Work Session using shared `instructions.md` and categorized artifacts.
-- **Agent-to-agent review:** Let one agent wait on an artifact while another posts review feedback and submits a Review decision.
-- **Dedicated sidebar:** Pin, archive, filter, and search sessions and recent artifacts from the **AI Artifacts** Activity Bar view.
+![Session Manager with Working artifacts, shared Instructions, References, and Archived](media/samples/session-manager.png "Organize artifacts and shared instructions in one Work Session")
 
-## Getting started
+Use **Working** for active artifacts, **References** for supporting material, and **Archived** for finished work. Add existing artifacts to a session and filter its working list when you need to find something quickly.
 
-1. Open the **AI Artifacts** view from the Activity Bar and create or select a Work Session.
-2. Click **Connect** to copy a join prompt for another AI chat or agent.
-3. Learn more about the project at the [AI Artifacts GitHub repository](https://github.com/huynguyen294/ai-artifacts).
+## Multi-agent work — shared context across agents and chats
 
-## Image rendering preview
+Your AI agents and chats can now work together in the same Work Session, using shared documents and guidance to build on each other’s work.
 
-The assets below are temporary Phase 2 renderer samples copied from existing repository assets (`media/icon.png` and `media/select-comment.gif`), not final release illustrations.
+Use **Instructions** to define their roles, the workflow to follow, and when to hand work over or wait for feedback. This gives connected agents a common way of working together.
 
-### Static image (PNG)
+Keep the session’s goals, decisions, and progress in shared documents so new agents can understand what’s finished, what’s in progress, and where to continue.
 
-![AI Artifacts sample icon](media/samples/ai-artifacts.png "Preview content: static PNG sample")
+To bring another agent into that shared context, click **Connect** in the Session Manager or Sessions sidebar. Copy the join prompt and paste it into the other AI chat to join the same Work Session.
 
-### Animated illustration (GIF)
+The session below, **Sample Workflows**, is being used to develop reusable AI workflows. The coding workflow is finished and archived, while **Content Development Workflow** is still in progress. Two new agents join, read the shared context, and explain the progress and next steps.
 
-![Inline feedback interaction sample](media/samples/inline-feedback.gif "Preview content: animated GIF sample")
+![Two agents join the same Work Session and report its progress and next steps](media/multi-agent-session-context.gif "Help new agents get up to speed with shared context")
 
-### Formatting check
+<!--
+KỊCH BẢN QUAY — SAMPLE WORKFLOWS
 
-| Element | Phase 2 status |
-| --- | --- |
-| Packaged PNG / GIF (`media/...`) | Supported in content mode |
-| External HTTPS links | Opens outside VS Code via `openExternal` |
+Mục tiêu: dùng một phiên làm việc đang diễn ra để cho thấy agent mới có thể
+nắm tiến độ từ tài liệu chung, nhận vai trò và phối hợp theo Instructions.
+Ghi chú này phục vụ biên soạn, không phải nội dung xuất bản.
 
-```text
-Example join flow:
-Session "Changelog / What's New" -> Copy Connect Prompt -> Paste into another AI agent chat
-```
+Bố trí trong bài:
+
+- Đặt lời dẫn ngắn trên mỗi GIF để người đọc biết điều cần quan sát.
+- Phần Multi-agent work dùng GIF 1: vào phiên, hiểu progress và nhận vai trò.
+- Phần agent-to-agent review bên dưới dùng GIF 2 và GIF 3 để tiếp tục câu chuyện.
+- Quay một mạch nếu thuận tiện, sau đó cắt thành ba GIF; bỏ các đoạn chờ dài.
+  Video đầy đủ có thể giữ lời thuyết minh; GIF dùng lời dẫn và chữ chú thích ngắn.
+
+Chuẩn bị trước khi quay:
+
+- Dùng session Sample Workflows, ID c6a8ddce-d52b-4051-973a-2d6db6661e3e.
+- Session Manager: Content Development Workflow và visual ở Working;
+  Session Context ở References; coding workflow và visual ở Archived.
+- Progress trong Context phải phản ánh mốc leader đã chốt: phần coding workflow
+  đã hoàn thành và đưa vào Archived; hiện tập trung hoàn thiện content workflow,
+  việc tiếp theo là review bản hiện có. Đây là tiến độ của bộ workflow,
+  không phải một dự án phần mềm đã được triển khai xong.
+- Session Instructions đã quy định vai trò, bàn giao qua Review, refresh artifact
+  nguồn trước khi tạo bản đánh giá, và dừng để leader quyết định việc sửa.
+- Chuẩn bị hai chat mới đặt cạnh nhau: Supporter và Reviewer.
+
+Lời giới thiệu cho bản quay đầy đủ:
+“Đây là Sample Workflows, phiên tôi đang dùng để xây dựng các workflow làm việc
+với AI agents. Phần workflow phát triển phần mềm đã hoàn thành và được đưa vào
+Archived. Hiện tôi đang tiếp tục hoàn thiện Content Development Workflow —
+workflow dành cho những session xây dựng và phát triển nội dung.
+
+Phiên này đã có Instructions quy định cách phối hợp, cùng Session Context
+ghi lại mục tiêu, tài liệu chung và tiến độ. Tôi sẽ cho hai agent mới tham gia,
+hỏi chúng phiên đang ở đâu và cần làm gì tiếp theo, rồi giao việc theo workflow.”
+
+GIF 1 — Hai agent mới vào phiên và nắm được công việc
+
+Lời dẫn dự kiến trên GIF:
+“Bring new agents into the same session. Shared context helps them understand
+what’s finished, what’s in progress, and where to continue.”
+
+Các cảnh cần có:
+
+1. Mở Session Manager, chỉ nhanh Working, References và Archived.
+   Mở Instructions và Session Context để người xem thấy nơi lưu cách phối hợp
+   và tiến độ; không cuộn đọc toàn bộ tài liệu.
+2. Click Connect, copy join prompt và dán vào hai chat mới.
+3. Hỏi cả hai: “Đọc Session Context và Instructions. Tóm tắt tiến độ hiện tại:
+   phần nào đã hoàn thành, đang tập trung vào đâu và việc tiếp theo là gì?”
+4. Giữ một nhịp ở câu trả lời: coding workflow ở Archived;
+   content workflow đang ở Working, chuẩn bị review để tiếp tục hoàn thiện.
+   Có thể cho hai agent đọc và tóm tắt context cùng lúc.
+5. Giao vai trò bằng hai lời nhắc dưới đây. Hiển thị cả hai chat để thấy
+   chúng cùng tham gia một phiên, làm theo cùng Instructions.
+
+Prompt cho Supporter:
+“Bạn là Supporter. Theo Session Instructions, chờ review submission trên
+artifact Content Development Workflow. Khi nhận được, ghi nhận nguyên văn
+kết quả, refresh artifact nguồn, rồi tạo Review - Content Development Workflow
+để đánh giá từng finding. Báo tôi và dừng trước khi áp dụng chỉnh sửa.”
+
+Prompt cho Reviewer:
+“Bạn là Reviewer. Review artifact Content Development Workflow theo mục tiêu,
+đối tượng sử dụng và yêu cầu trong Session Context. Gửi mỗi finding thành một
+general comment trên đúng artifact đó, Submit Review rồi dừng; không sửa nội dung.”
+
+Điểm chốt của GIF: các agent nắm được công việc mà không cần chép lại lịch sử chat.
+Trong giai đoạn review, Supporter chờ còn Reviewer thực hiện review;
+không mô tả đây là hai agent đồng thời chỉnh sửa nội dung.
+-->
+
+## Your work continues across agents with agent-to-agent review
+
+Build workflows where one agent reviews the work and another continues from its feedback, without copying comments between chats.
+
+In the same **Sample Workflows** session, one agent acts as the **Supporter**, waiting for feedback on the content workflow. Another acts as the **Reviewer**, checking the document and posting its findings as artifact comments. When the Reviewer submits **Review**, the Supporter receives the feedback and continues according to the session’s Instructions.
+
+![The Reviewer submits artifact comments and the waiting Supporter receives the feedback](media/agent-review-handoff.gif "Hand review feedback from one agent to another through the artifact")
+
+The Supporter then creates a **Review - Content Development Workflow** artifact in the same session. It keeps the Reviewer’s findings alongside its own assessment, so you can compare the feedback with the recommended next steps.
+
+![The Supporter creates a review artifact in the Work Session and assesses the Reviewer’s findings](media/agent-review-assessment.gif "Read the original findings and the Supporter’s assessment together")
+
+What happens after a submission follows your workflow. Here, the Supporter reports back and waits for your decision before applying changes.
+
+<!--
+TIẾP KỊCH BẢN SAMPLE WORKFLOWS — BÀN GIAO REVIEW
+
+GIF 2 — Reviewer gửi comments và Submit Review
+
+Lời dẫn dự kiến trên GIF:
+“One agent reviews the work while another waits for the submission.
+Feedback is handed over through the artifact.”
+
+Các cảnh cần có:
+1. Nhắc lại hai vai trò bằng nhãn ngắn: Supporter / Reviewer.
+   Supporter đã chờ trên Content Development Workflow trước khi Reviewer submit.
+2. Người quay mở artifact Content Development Workflow để quan sát comments.
+   Người dùng xem trong giao diện; chỉ Supporter là agent chờ submission.
+3. Cho thấy nhận xét thực tế của Reviewer xuất hiện trên artifact,
+   dừng đủ lâu để đọc được một nhận xét tiêu biểu.
+4. Ghi lại lúc Reviewer Submit Review và Supporter nhận kết quả trong chat.
+   Không thay hành động submit của Reviewer bằng thao tác bấm của người quay.
+
+Điểm chốt của GIF: kết quả được chuyển sang Supporter mà người dùng
+không phải copy feedback giữa hai chat. Dùng findings thực tế;
+không tạo lỗi hoặc nhận xét giả chỉ để có cảnh quay.
+
+GIF 3 — Supporter tiếp tục công việc và mở bản đánh giá mới
+
+Lời dẫn dự kiến trên GIF:
+“The waiting agent receives the review and continues with an assessment
+for you to decide what happens next.”
+
+Các cảnh cần có:
+1. Nối tiếp ngay sau submission: Supporter nhận và ghi nhận nguyên văn kết quả.
+2. Cho thấy artifact nguồn được refresh theo Instructions: nội dung giữ nguyên,
+   comments và submission đã xử lý được làm sạch. Thêm chú thích ngắn nếu cần
+   để người xem hiểu đây là bước chuyển vòng sau khi đã nhận kết quả.
+3. Quay lúc Supporter tạo và giao diện mở artifact mới
+   Review - Content Development Workflow, thay vì yêu cầu người quay tạo thủ công.
+4. Trong Session Manager, cho thấy bản Review mới nằm trong Working
+   cùng tài liệu đang được xử lý. Người quay click mở và xem nội dung.
+5. Dừng ở một finding được giữ nguyên văn và phần Assessment riêng của Supporter:
+   tính hợp lý, sự cần thiết, phạm vi sửa, rủi ro và khuyến nghị.
+6. Kết thúc ở báo cáo gửi leader: Supporter đã đánh giá và dừng,
+   người dùng quyết định những nội dung sẽ sửa.
+
+Điểm chốt của GIF: Instructions quyết định cách agent tiếp tục sau review;
+kết quả mới được tập trung trong cùng Work Session để người dùng xem và quyết định.
+
+Lời kết cho bản quay đầy đủ:
+“Hai agent mới cùng vào một phiên, đọc tài liệu chung và làm theo workflow
+đã được thống nhất. Reviewer gửi kết quả, Supporter nhận và đánh giá,
+còn tôi xem bản tổng hợp để quyết định việc chỉnh sửa tiếp theo.”
+
+Biên tập cuối:
+- Giữ lại nhịp trước và sau Submit Review để thấy rõ quan hệ bàn giao.
+- Cắt thời gian agent suy nghĩ dài, không cắt mất bước refresh trước khi tạo Review.
+- Phần Multi-agent work giới thiệu việc vào phiên; phần này thể hiện việc tiếp tục
+  công việc qua review. Không lặp nguyên cả đoạn giới thiệu ở hai vị trí.
+- Ba GIF đã được dựng từ quy trình thực tế và chèn vào bài: vào phiên và đọc
+  progress, bàn giao review, rồi mở bản đánh giá mới.
+-->
+
+## Find your sessions and artifacts from the sidebar — keep your work within reach
+
+Jump back to a plan, review, or Work Session without searching through old AI conversations. As chats grow and artifact links get buried, it’s easy to forget where an artifact was created or how to find it again. The AI Artifacts sidebar brings your recent artifacts and sessions together, making it easy to return to the right work when switching tasks.
+
+Open the **AI Artifacts** view from the Activity Bar to reach recent artifacts and Work Sessions. Pin active sessions and important artifacts for quick access. As your work grows, use search and session types to find what you need, and archive finished sessions to keep ongoing work easy to see.
+
+![AI Artifacts sidebar showing pinned recent artifacts and Work Sessions with session types](media/samples/library.png "Quick access to recent artifacts and Work Sessions")
+
+Learn more at the [AI Artifacts GitHub repository](https://github.com/huynguyen294/ai-artifacts).

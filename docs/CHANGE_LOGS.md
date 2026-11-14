@@ -14,6 +14,12 @@ Minor typos, formatting fixes, or cosmetic wording adjustments that do not chang
 
 Each entry includes the date, category, summary of changes, rationale, and affected components or files.
 
+## 2026-11-14 - Prepare 1.2.0 release content and README walkthrough
+
+- **Release content:** Promoted the 1.2.0 What's New entry from preview to a dated release while retaining `notify: true`. Published content covers Work Sessions, multi-agent context, sidebar discovery, and agent-to-agent review; Tips explains starting and organizing a Work Session.
+- **README:** Added the two-agent Connect/progress GIF to How It Works and the **AI Artifacts: What's New** command beside setup guidance. Updated the VSIX example and removed stale preview/unreleased descriptions from current release documentation.
+- **Scope:** Package and lock metadata already use 1.2.0. Notification behavior, MCP/skill versions, and lifecycle contracts are unchanged; no publishing or tagging is performed.
+
 ## 2026-11-12 - Use standard VS Code globalState for release announcements
 
 - **Behavior and rationale:** Replaced custom notification filesystem state and cross-window exclusive claims with `context.globalState.get/update`. The previous file-only URI guard rejected the real `vscode-userdata` storage URI and skipped announcements before creating any state. Notification tracking now needs no storage path or URI scheme check.

@@ -13,6 +13,22 @@ vi.mock("../src/webview/vscode-api", () => ({
   },
 }));
 
+// UI behavior uses fixed fixtures so authored release notes and Tips can change freely.
+vi.mock("../src/webview/whats-new-content", () => ({
+  whatsNewContent: {
+    articles: [{
+      version: "1.2.0",
+      title: "Fixture release title",
+      description: "Fixture release description.",
+      features: ["Fixture feature one", "Fixture feature two"],
+      bugFixes: [],
+      preview: true,
+      markdown: '# Fixture article heading\n\nFixture article body.\n\n[Docs](https://example.test/docs)\n\n![Screenshot](media/fixtures/article.png)\n\n![Animation](media/fixtures/article.gif)',
+    }],
+    tipsMarkdown: '# Fixture Tips heading\n\nFixture Tips body.\n\n![Tip](media/fixtures/tip.gif)',
+  },
+}));
+
 import { WhatsNewApp } from "../src/webview/WhatsNewApp";
 import { WhatsNewDocument } from "../src/webview/WhatsNewDocument";
 import { whatsNewContent, type WhatsNewContent } from "../src/webview/whats-new-content";
@@ -45,7 +61,7 @@ describe("WhatsNewApp and WhatsNewDocument", () => {
     expect(html).toContain(previewArticle.title);
     expect(html).toContain(previewArticle.description);
     expect(html).toContain("Features");
-    expect(html).toContain("(4)");
+    expect(html).toContain("(2)");
     for (const feature of previewArticle.features) {
       expect(html).toContain(feature);
     }
@@ -55,12 +71,12 @@ describe("WhatsNewApp and WhatsNewDocument", () => {
 
     // List screen must not mount full Markdown body, article images, or back button
     expect(html).not.toContain("whats-new-document");
-    expect(html).not.toContain("Highlights in this preview");
+    expect(html).not.toContain("Fixture article body.");
     expect(html).not.toContain("<img");
     expect(html).not.toContain("← All updates");
   });
 
-  it("renders the selected article view with back button, release metadata, and Phase 2 media", () => {
+  it("renders the selected article view with back button, release metadata, and media", () => {
     const html = renderToStaticMarkup(
       <WhatsNewApp initialView={{ kind: "article", version: "1.2.0" }} mediaBaseUri={mediaBaseUri} />,
     );
@@ -71,10 +87,11 @@ describe("WhatsNewApp and WhatsNewDocument", () => {
     expect(html).toContain("v1.2.0");
     expect(html).toContain("Preview content");
     expect(html).toContain("artifact-document whats-new-document");
-    expect(html).toContain("Highlights in this preview");
-    expect(html).toContain('href="https://github.com/huynguyen294/ai-artifacts"');
-    expect(html).toContain(`src="${mediaBaseUri}/samples/ai-artifacts.png"`);
-    expect(html).toContain(`src="${mediaBaseUri}/samples/inline-feedback.gif"`);
+    expect(html).toContain("<h1>Fixture article heading</h1>");
+    expect(html).toContain("Fixture article body.");
+    expect(html).toContain('href="https://example.test/docs"');
+    expect(html).toContain(`src="${mediaBaseUri}/fixtures/article.png"`);
+    expect(html).toContain(`src="${mediaBaseUri}/fixtures/article.gif"`);
 
     expect(html).not.toContain("View more details");
     expect(html).not.toContain("Proceed");
@@ -87,8 +104,8 @@ describe("WhatsNewApp and WhatsNewDocument", () => {
   it("falls back to media placeholders in article view when mediaBaseUri is omitted", () => {
     const html = renderToStaticMarkup(<WhatsNewApp initialView={{ kind: "article", version: "1.2.0" }} />);
 
-    expect(html).toContain("Highlights in this preview");
-    expect(html).toContain('href="https://github.com/huynguyen294/ai-artifacts"');
+    expect(html).toContain("Fixture article body.");
+    expect(html).toContain('href="https://example.test/docs"');
     expect(html).not.toContain("<img");
     expect(html).toContain("whats-new-image-placeholder");
   });
@@ -101,10 +118,10 @@ describe("WhatsNewApp and WhatsNewDocument", () => {
 
     expect(html).toContain('class="whats-new-tab-btn" aria-pressed="false">What&#x27;s New</button>');
     expect(html).toContain('class="whats-new-tab-btn is-active" aria-pressed="true">Tips</button>');
-    expect(html).toContain("AI Artifacts Tips");
-    expect(html).toContain("Keep shared guidance in Session Instructions");
+    expect(html).toContain("<h1>Fixture Tips heading</h1>");
+    expect(html).toContain("Fixture Tips body.");
     expect(html).toContain("artifact-document whats-new-document");
-    expect(html).toContain(`src="${mediaBaseUri}/samples/inline-feedback.gif"`);
+    expect(html).toContain(`src="${mediaBaseUri}/fixtures/tip.gif"`);
 
     expect(html).not.toContain(previewArticle.description);
     expect(html).not.toContain("View more details");

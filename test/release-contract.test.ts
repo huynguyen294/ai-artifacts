@@ -298,7 +298,9 @@ describe("v1.2.0 release contract", () => {
     expect(changelog).toContain("## [1.0.1] - 2026-09-21");
     expect(changelog).toContain("## [1.0.0] - 2026-09-20");
     expect(changelog).toContain("MCP server 9.0.0");
-    expect(changelog.match(/^## \[[^\]]+\] - \d{4}-\d{2}-\d{2}$/m)?.[0]).toBe("## [1.1.4] - 2026-11-04");
+    const { version } = JSON.parse(await read("package.json"));
+    const latestRelease = changelog.match(/^## \[([^\]]+)\] - \d{4}-\d{2}-\d{2}$/m);
+    expect(latestRelease?.[1]).toBe(version);
     expect(changelog).toContain("MCP server 10.0.0");
     expect(documentationChanges).toContain("Skill Customization & Independent Integration Asset Versioning");
     expect(documentationChanges).toContain("Automatic artifact retention cleanup and bounded lifetime model");
