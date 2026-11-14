@@ -14,6 +14,12 @@ Minor typos, formatting fixes, or cosmetic wording adjustments that do not chang
 
 Each entry includes the date, category, summary of changes, rationale, and affected components or files.
 
+## 2026-11-14 - Enforce in-memory Session Instructions check in work-session skill
+
+- **Behavior and rationale:** Updated `skills/work-session/SKILL.md` so agents keep Session `Instructions` in active chat memory from the initial Join (updating them automatically when Session-bearing tool calls return fresh `session.instructions`) rather than re-reading `instructionsPath` on every turn, and only re-read `instructionsPath` or refresh with Join-only when the user asks to reload updated Instructions or cached Instructions are missing.
+- **Mandatory pre-task compliance:** Added an explicit in-memory check before any related request or new task (including immediately upon joining when a role is assigned) requiring the agent to identify its assigned role and workflow step, complete required role/session onboarding not yet done in the chat (reading `Session Context`, reading project rules `AGENTS.md`/`RULES.md`/`INSTRUCTION.md`, and loading referenced skills), and follow the prescribed execution and handoff rules. Clarified under `## Instructions and layout editing` that Session Instructions are mandatory rules for related tasks while Session entry alone does not implicitly create a review artifact, modify project code, or grant approval.
+- **Scope and validation:** Updated `skills/work-session/SKILL.md` (and synchronized local installed skill copies); package, MCP, and skill version counters remain unchanged per release versioning policy. Verified with `npx.cmd vitest run test/work-session-skill.test.ts` (7 passed) and `audit_skill.py` (PASS, 0 warnings).
+
 ## 2026-11-14 - Separate codexMcpVersion from shared mcpVersion in integration receipt
 
 - **Behavior & rationale:** Added optional non-negative integer `codexMcpVersion` (`>= 0`) to schema-v1 `integrationVersionManifestSchema` in `src/shared/contracts.ts`, decoupling Codex TOML tool-definition migration tracking from the shared MCP server receipt (`mcpVersion`) without splitting `ai-artifacts-review-mcp.mjs` into separate per-client server scripts. Previously, failing Codex upgrades (such as `CODEX_UNEXPECTED_KEY_CONFLICT`) blocked committing `mcpVersion: MCP_VERSION`, which locked Work Session / Session Manager UI features and caused redundant runtime re-syncs even after shared assets updated.
