@@ -154,6 +154,7 @@ async function createArtifact(
     title: "Test Artifact",
     kind: "spec",
     markdown: "# Title\n\nContent for testing.\n",
+    wait: false,
     ...overrides,
   });
   return result.structuredContent;
@@ -232,9 +233,9 @@ describe("join_session MCP tool & proceed directives", () => {
       "resolve_artifact_window",
       "create_artifact",
       "wait_for_artifact_review",
-      "inspect_artifact_review",
+      "inspect_artifact",
       "join_session",
-      "advance_and_wait_for_artifact",
+      "update_artifact",
     ]);
 
     const joinTool = toolsResponse.tools.find((t: any) => t.name === "join_session");
@@ -455,7 +456,7 @@ describe("join_session MCP tool & proceed directives", () => {
     );
   });
 
-  it("create_artifact and inspect_artifact_review return session: SessionContext matching active session ID, or session: null when standalone", async () => {
+  it("create_artifact and inspect_artifact return session: SessionContext matching active session ID, or session: null when standalone", async () => {
     const fixture = await workspaceFixture();
     const client = startClient(fixture.registry);
     await initialize(client);
@@ -465,6 +466,7 @@ describe("join_session MCP tool & proceed directives", () => {
       title: "Standalone Contract Artifact",
       kind: "spec",
       markdown: "# Standalone Contract\n\nVerifying wire result.\n",
+      wait: false,
     });
 
     expect(standaloneCreated.isError).toBeFalsy();
@@ -472,7 +474,7 @@ describe("join_session MCP tool & proceed directives", () => {
     expect(standaloneCreated.structuredContent.artifactConversationId).toBeUndefined();
     expect(standaloneCreated.structuredContent.conversationName).toBeUndefined();
 
-    const standaloneInspected = await callTool(client, "inspect_artifact_review", {
+    const standaloneInspected = await callTool(client, "inspect_artifact", {
       artifactDirectory: standaloneCreated.structuredContent.artifactDirectory,
     });
 
@@ -487,6 +489,7 @@ describe("join_session MCP tool & proceed directives", () => {
       kind: "spec",
       markdown: "# Contract\n\nVerifying wire result.\n",
       conversationName: "Contract Session Thread",
+      wait: false,
     });
 
     expect(sessionCreated.isError).toBeFalsy();
@@ -494,7 +497,7 @@ describe("join_session MCP tool & proceed directives", () => {
     expect(sessionCreated.structuredContent.session.sessionId).toBe(sessionCreated.structuredContent.artifactConversationId);
     expect(sessionCreated.structuredContent.session.catalog.working[0].artifactId).toBe(sessionCreated.structuredContent.artifactId);
 
-    const sessionInspected = await callTool(client, "inspect_artifact_review", {
+    const sessionInspected = await callTool(client, "inspect_artifact", {
       artifactDirectory: sessionCreated.structuredContent.artifactDirectory,
       artifactConversationId: sessionCreated.structuredContent.artifactConversationId,
     });
@@ -514,12 +517,13 @@ describe("join_session MCP tool & proceed directives", () => {
       title: "Standalone Artifact Without Session",
       kind: "idea",
       markdown: "# Idea 1\n\nNo active session.\n",
+      wait: false,
     });
     expect(art1.isError).toBeFalsy();
     expect(art1.structuredContent.session).toBeNull();
     expect(art1.structuredContent.artifactConversationId).toBeUndefined();
 
-    const inspectArt1 = await callTool(client, "inspect_artifact_review", {
+    const inspectArt1 = await callTool(client, "inspect_artifact", {
       artifactDirectory: art1.structuredContent.artifactDirectory,
     });
     expect(inspectArt1.isError).toBeFalsy();
@@ -545,6 +549,7 @@ describe("join_session MCP tool & proceed directives", () => {
       kind: "plan",
       markdown: "# Plan in Session S\n",
       artifactConversationId: sessionS.sessionId,
+      wait: false,
     });
     expect(art2.isError).toBeFalsy();
     expect(art2.structuredContent.session).toBeDefined();
@@ -558,13 +563,14 @@ describe("join_session MCP tool & proceed directives", () => {
       title: "Explicit Standalone Artifact While In S",
       kind: "spec",
       markdown: "# Standalone Spec\n",
+      wait: false,
     });
     expect(art3.isError).toBeFalsy();
     expect(art3.structuredContent.session).toBeNull();
     expect(art3.structuredContent.artifactConversationId).toBeUndefined();
 
     // Inspect art3 as standalone
-    const inspectArt3 = await callTool(client, "inspect_artifact_review", {
+    const inspectArt3 = await callTool(client, "inspect_artifact", {
       artifactDirectory: art3.structuredContent.artifactDirectory,
     });
     expect(inspectArt3.isError).toBeFalsy();
@@ -579,7 +585,7 @@ describe("join_session MCP tool & proceed directives", () => {
     expect(refreshS.structuredContent.session.catalog.working[0].artifactId).toBe(art2.structuredContent.artifactId);
   });
 
-  it("inspect_artifact_review and join_session do not replay execution directive from past approved snapshot", async () => {
+  it("inspect_artifact and join_session do not replay execution directive from past approved snapshot", async () => {
     const fixture = await workspaceFixture();
     const client = startClient(fixture.registry);
     await initialize(client);
@@ -593,7 +599,7 @@ describe("join_session MCP tool & proceed directives", () => {
     await submitDecision(created.artifactDirectory, "approve", ["Plan is good"]);
 
     // Inspect
-    const inspected = await callTool(client, "inspect_artifact_review", {
+    const inspected = await callTool(client, "inspect_artifact", {
       artifactDirectory: created.artifactDirectory,
     });
     expect(inspected.isError).toBeFalsy();
@@ -675,12 +681,13 @@ describe("join_session MCP tool & proceed directives", () => {
       title: "Standalone Immune To Corrupted Types",
       kind: "spec",
       markdown: "# Standalone Spec\n",
+      wait: false,
     });
     expect(standaloneResult.isError).toBeFalsy();
     expect(standaloneResult.structuredContent.session).toBeNull();
 
     // 1b. Standalone inspect also does NOT touch session-types.json, so it succeeds and returns session: null
-    const standaloneInspect = await callTool(client, "inspect_artifact_review", {
+    const standaloneInspect = await callTool(client, "inspect_artifact", {
       artifactDirectory: standaloneResult.structuredContent.artifactDirectory,
     });
     expect(standaloneInspect.isError).toBeFalsy();
@@ -692,6 +699,7 @@ describe("join_session MCP tool & proceed directives", () => {
       kind: "spec",
       markdown: "# Spec\n",
       conversationName: "Will Rollback Thread",
+      wait: false,
     });
 
     expect(sessionResult.isError).toBe(true);
@@ -702,7 +710,7 @@ describe("join_session MCP tool & proceed directives", () => {
     expect(convEntries).toEqual([]);
   });
 
-  it("advance_and_wait_for_artifact returns approved nextAction when round 2 is approved on non-plan kind", async () => {
+  it("update_artifact returns approved nextAction when round 2 is approved on non-plan kind", async () => {
     const fixture = await workspaceFixture();
     const client = startClient(fixture.registry);
     await initialize(client);
@@ -714,7 +722,7 @@ describe("join_session MCP tool & proceed directives", () => {
     });
 
     // Request chat update to get a round token
-    const inspectResult = await callTool(client, "inspect_artifact_review", {
+    const inspectResult = await callTool(client, "inspect_artifact", {
       artifactDirectory: created.artifactDirectory,
       takeover: true,
       expectedReviewRound: 1,
@@ -726,7 +734,7 @@ describe("join_session MCP tool & proceed directives", () => {
 
     // Advance and wait
     const advanceTracked = client.requestTracked("tools/call", {
-      name: "advance_and_wait_for_artifact",
+      name: "update_artifact",
       arguments: {
         artifactDirectory: created.artifactDirectory,
         expectedReviewRound: 1,

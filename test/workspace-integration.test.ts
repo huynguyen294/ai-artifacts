@@ -649,9 +649,9 @@ describe("Workspace Integration Asset Verifiers", () => {
       "resolve_artifact_window",
       "create_artifact",
       "wait_for_artifact_review",
-      "inspect_artifact_review",
+      "inspect_artifact",
       "join_session",
-      "advance_and_wait_for_artifact",
+      "update_artifact",
     ]);
 
     const installedSkill = await fs.readFile(path.join(installedPaths.targetSkill, "SKILL.md"), "utf8");
@@ -684,6 +684,7 @@ describe("Workspace Integration Asset Verifiers", () => {
         title: "Installed lifecycle",
         kind: "implementation-plan",
         markdown,
+        wait: false,
       },
     });
     expect(createResult.isError, createResult.content?.[0]?.text).not.toBe(true);
@@ -713,7 +714,7 @@ describe("Workspace Integration Asset Verifiers", () => {
     expect(loaded.markdown).toBe(markdown);
 
     const reconnectResult = await client.request("tools/call", {
-      name: "inspect_artifact_review",
+      name: "inspect_artifact",
       arguments: {
         artifactDirectory: created.artifactDirectory,
         expectedReviewRound: 1,

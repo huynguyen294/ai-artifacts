@@ -48,6 +48,11 @@ import {
   type CreateArtifactReviewResult,
   type InspectArtifactReviewResult,
   type JoinSessionResult,
+  type ReviewSubmission,
+  type SessionArtifactHandleResult,
+  type SessionArtifactInspectionResult,
+  type StandaloneArtifactHandleResult,
+  type StandaloneArtifactInspectionResult,
 } from "../shared/contracts";
 import {
   ARTIFACT_MARKDOWN_FILE,
@@ -91,9 +96,9 @@ const SERVER_VERSION = String(MCP_VERSION);
 const RESOLVE_WINDOW_TOOL_NAME = "resolve_artifact_window";
 const CREATE_TOOL_NAME = "create_artifact";
 const WAIT_TOOL_NAME = "wait_for_artifact_review";
-const INSPECT_TOOL_NAME = "inspect_artifact_review";
+const INSPECT_TOOL_NAME = "inspect_artifact";
 const JOIN_SESSION_TOOL_NAME = "join_session";
-const ADVANCE_AND_WAIT_TOOL_NAME = "advance_and_wait_for_artifact";
+const UPDATE_TOOL_NAME = "update_artifact";
 const ROUND_TOKEN_TTL_MS = 60 * 60 * 1000;
 const MAX_MARKDOWN_BYTES = 2 * 1024 * 1024;
 const LIFECYCLE_JSON_READ_ATTEMPTS = 21;
@@ -188,7 +193,7 @@ type ArtifactRecoveryMetadata = {
   expectedNextTool?:
     | typeof INSPECT_TOOL_NAME
     | typeof WAIT_TOOL_NAME
-    | typeof ADVANCE_AND_WAIT_TOOL_NAME
+    | typeof UPDATE_TOOL_NAME
     | typeof RESOLVE_WINDOW_TOOL_NAME
     | typeof CREATE_TOOL_NAME
     | typeof JOIN_SESSION_TOOL_NAME;
@@ -384,7 +389,7 @@ function reviewDecisionAction(kind: string, decision: ReviewDecision): ReviewWai
     return {
       type: "process-review-feedback",
       instruction:
-        "Process every comment in comments.comments. Answer all questions visibly in chat and include artifactLink before starting the next wait. For requested changes, supply complete replacement markdown; for question-only feedback, omit markdown to preserve the artifact bytes and SHA. If feedback needs clarification, ask the user and do not consume the round token or advance until clarified. Otherwise call advance_and_wait_for_artifact immediately in this same turn using the retained exact artifactDirectory, the returned reviewRound as expectedReviewRound, and the returned roundToken, then continue waiting for the next review. Never directly edit managed lifecycle files, including artifact.md, and never put conversational answers into the artifact Markdown.",
+        `Process every comment in comments.comments. Answer all questions visibly in chat and include artifactLink before starting the next wait. For requested changes, supply complete replacement markdown; for question-only feedback, omit markdown to preserve the artifact bytes and SHA. If feedback needs clarification, ask the user and do not consume the round token or advance until clarified. Otherwise call ${UPDATE_TOOL_NAME} immediately in this same turn using the retained exact artifactDirectory, the returned reviewRound as expectedReviewRound, and the returned roundToken, then continue waiting for the next review. Never directly edit managed lifecycle files, including artifact.md, and never put conversational answers into the artifact Markdown.`,
     };
   }
   if (decision !== "approve") return undefined;
@@ -551,10 +556,20 @@ function parseOptionalConversationArguments(args: JsonObject | undefined): Optio
   };
 }
 
+function parseOptionalWaitArgument(args: JsonObject | undefined, defaultValue: boolean): boolean {
+  const rawWait = args?.wait;
+  if (rawWait === undefined) return defaultValue;
+  if (typeof rawWait !== "boolean") {
+    throw new Error("INVALID_ARTIFACT_INPUT: wait must be a boolean.");
+  }
+  return rawWait;
+}
+
 type CreateArtifactInput = OptionalConversationInput & {
   title: string;
   kind: string;
   markdown: string;
+  wait: boolean;
   connection?: ExplicitWindowConnectionInput;
 };
 
@@ -564,6 +579,7 @@ function parseCreateArguments(args: JsonObject | undefined): CreateArtifactInput
       "title",
       "kind",
       "markdown",
+      "wait",
       "connection",
       "artifactConversationId",
       "conversationName",
@@ -593,6 +609,8 @@ function parseCreateArguments(args: JsonObject | undefined): CreateArtifactInput
     throw new Error(`INVALID_ARTIFACT_INPUT: markdown exceeds ${MAX_MARKDOWN_BYTES} bytes.`);
   }
 
+  const wait = parseOptionalWaitArgument(args, true);
+
   let connection: ExplicitWindowConnectionInput | undefined;
   if (connectionRaw !== undefined) {
     const parsed = explicitWindowConnectionInputSchema.safeParse(connectionRaw);
@@ -610,6 +628,7 @@ function parseCreateArguments(args: JsonObject | undefined): CreateArtifactInput
     title: title.trim(),
     kind,
     markdown,
+    wait,
     ...(connection ? { connection } : {}),
     ...conversationArgs,
   };
@@ -803,13 +822,12 @@ async function preflightConversationVersion(
   }
 }
 
-async function createArtifact(args: JsonObject | undefined): Promise<{
+async function createArtifact(input: CreateArtifactInput): Promise<{
   context: ArtifactContext;
   connection: ArtifactConnection;
   conversation: WorkSession | undefined;
   session: SessionContext | null;
 }> {
-  const input = parseCreateArguments(args);
   if (input.artifactConversationId) {
     try {
       await preflightConversationVersion(input.artifactConversationId, globalRootOptions());
@@ -902,7 +920,14 @@ async function loadArtifactContext(rawDirectory: unknown): Promise<ArtifactConte
   };
 }
 
-async function readValidatedSubmissionOnce(context: ArtifactContext): Promise<ReviewWaitResult | undefined> {
+type WaitSubmissionSnapshot = {
+  result: ReviewWaitResult;
+  manifest: ArtifactManifest;
+  markdown: string;
+  submission: ReviewSubmission;
+};
+
+async function readValidatedSubmissionOnce(context: ArtifactContext): Promise<WaitSubmissionSnapshot | undefined> {
   const submissionRaw = await readOptionalManagedFile(context.artifactDirectory, context.submissionPath);
   if (submissionRaw === undefined) return undefined;
   const [currentMarkdown, currentCommentsRaw, currentManifestRaw] = await Promise.all([
@@ -941,29 +966,34 @@ async function readValidatedSubmissionOnce(context: ArtifactContext): Promise<Re
   }
   const nextAction = reviewDecisionAction(effectiveKind, submission.decision);
   return {
-    schemaVersion: ARTIFACT_SCHEMA_VERSION,
-    artifactId: context.artifactId,
-    kind: effectiveKind,
-    title: effectiveTitle,
-    reviewSessionId: context.reviewSessionId,
-    reviewRound: currentManifest.reviewRound,
-    artifactSha256: currentArtifactSha256,
-    commentsSha256: currentCommentsSha256,
-    comments: currentComments,
-    decision: submission.decision,
-    submittedAt: submission.submittedAt,
-    artifactPath: context.artifactPath,
-    commentsPath: context.commentsPath,
-    submissionSha256: sha256(submissionRaw),
-    ...(nextAction === undefined ? {} : { nextAction }),
+    result: {
+      schemaVersion: ARTIFACT_SCHEMA_VERSION,
+      artifactId: context.artifactId,
+      kind: effectiveKind,
+      title: effectiveTitle,
+      reviewSessionId: context.reviewSessionId,
+      reviewRound: currentManifest.reviewRound,
+      artifactSha256: currentArtifactSha256,
+      commentsSha256: currentCommentsSha256,
+      comments: currentComments,
+      decision: submission.decision,
+      submittedAt: submission.submittedAt,
+      artifactPath: context.artifactPath,
+      commentsPath: context.commentsPath,
+      submissionSha256: sha256(submissionRaw),
+      ...(nextAction === undefined ? {} : { nextAction }),
+    },
+    manifest: currentManifest,
+    markdown: currentMarkdown,
+    submission,
   };
 }
 
-async function readValidatedSubmission(context: ArtifactContext): Promise<ReviewWaitResult | undefined> {
+async function readValidatedSubmission(context: ArtifactContext): Promise<WaitSubmissionSnapshot | undefined> {
   return retryTransientLifecycleJson(() => readValidatedSubmissionOnce(context));
 }
 
-async function readWaitSubmission(context: ArtifactContext): Promise<ReviewWaitResult | undefined> {
+async function readWaitSubmission(context: ArtifactContext): Promise<WaitSubmissionSnapshot | undefined> {
   const lockPath = path.join(context.artifactDirectory, ARTIFACT_UPDATE_LOCK_FILE);
   try {
     await ensureSafeGlobalArtifactDirectory(context.artifactId, context.artifactDirectory, globalRootOptions());
@@ -1097,7 +1127,7 @@ async function waitForSubmission(
   controller: AbortController,
   takeover = false,
   reservedWaiter?: ActiveArtifactWaiter,
-): Promise<ReviewWaitResult> {
+): Promise<WaitSubmissionSnapshot> {
   const key = samePathKey(context.artifactDirectory);
   if (takeover) await detachActiveArtifactWaiter(context.artifactDirectory);
   const waiter =
@@ -1115,7 +1145,7 @@ async function waitForSubmission(
     return await new Promise((resolve, reject) => {
       let settled = false;
       let checking = false;
-      const finish = (error?: unknown, value?: ReviewWaitResult): void => {
+      const finish = (error?: unknown, value?: WaitSubmissionSnapshot): void => {
         if (settled) return;
         settled = true;
         watcher.close();
@@ -1589,11 +1619,52 @@ async function handleResolveWindowTool(id: unknown, args: JsonObject | undefined
   }
 }
 
+function postLifecycleStepToolError(
+  error: unknown,
+  preservedPayload: JsonObject,
+  entryTool: typeof INSPECT_TOOL_NAME,
+): JsonObject {
+  const recoveryErrorObj = asLifecycleRecoveryError(error, {
+    isCreate: false,
+    entryTool,
+    hasArtifactHandle: true,
+  });
+  const message =
+    recoveryErrorObj instanceof Error ? recoveryErrorObj.message : String(recoveryErrorObj);
+  if (recoveryErrorObj instanceof ArtifactRecoveryError) {
+    return {
+      content: [{ type: "text", text: message }],
+      structuredContent: {
+        ...preservedPayload,
+        message,
+        ...recoveryErrorObj.recovery,
+      },
+      isError: true,
+    };
+  }
+  return {
+    content: [{ type: "text", text: message }],
+    structuredContent: {
+      ...preservedPayload,
+      message,
+      retryable: true,
+      expectedNextTool: entryTool,
+      reuseRoundToken: false,
+      useSameArtifactHandle: true,
+    },
+    isError: true,
+  };
+}
+
 async function handleCreateTool(id: unknown, args: JsonObject | undefined): Promise<void> {
+  const controller = new AbortController();
+  pending.set(requestKey(id), controller);
+  let createdResult: StandaloneArtifactHandleResult | SessionArtifactHandleResult | undefined;
   try {
-    const { context, connection, conversation, session } = await createArtifact(args);
+    const input = parseCreateArguments(args);
+    const { context, connection, conversation, session } = await createArtifact(input);
     const baseHandle = artifactHandle(context, connection, conversation);
-    const result: CreateArtifactReviewResult =
+    createdResult =
       session !== null && conversation !== undefined
         ? {
             ...baseHandle,
@@ -1605,8 +1676,23 @@ async function handleCreateTool(id: unknown, args: JsonObject | undefined): Prom
             ...baseHandle,
             session: null,
           };
+
+    if (!input.wait) {
+      respond(id, toolResult(createdResult));
+      return;
+    }
+
+    const waitOutcome = await waitForSubmission(context, requestKey(id), controller);
+    const result: CreateArtifactReviewResult = {
+      ...createdResult,
+      ...grantSubmittedRound(context, waitOutcome.result),
+    };
     respond(id, toolResult(result));
   } catch (error) {
+    if (createdResult !== undefined) {
+      respond(id, postLifecycleStepToolError(error, createdResult, INSPECT_TOOL_NAME));
+      return;
+    }
     respond(
       id,
       toolError(
@@ -1617,6 +1703,8 @@ async function handleCreateTool(id: unknown, args: JsonObject | undefined): Prom
         }),
       ),
     );
+  } finally {
+    pending.delete(requestKey(id));
   }
 }
 
@@ -1631,19 +1719,19 @@ const INSPECT_ALLOWED_KEYS: ReadonlySet<string> = new Set([
   "artifactDirectory",
   "expectedReviewRound",
   "takeover",
+  "wait",
   "intent",
   "connection",
   "artifactConversationId",
   "conversationName",
 ]);
 
-const ADVANCE_ALLOWED_KEYS: ReadonlySet<string> = new Set([
+const UPDATE_ALLOWED_KEYS: ReadonlySet<string> = new Set([
   "artifactDirectory",
   "expectedReviewRound",
   "roundToken",
   "markdown",
-  "artifactConversationId",
-  "noWait",
+  "wait",
 ]);
 
 const JOIN_ALLOWED_KEYS: ReadonlySet<string> = new Set([
@@ -1682,12 +1770,12 @@ async function handleWaitTool(id: unknown, args: JsonObject | undefined): Promis
     if (context.reviewRound !== expectedReviewRound) {
       throw roundMismatchError(context.reviewRound, expectedReviewRound);
     }
-    const result = await waitForSubmission(context, requestKey(id), controller, false, reservedWaiter);
+    const waitOutcome = await waitForSubmission(context, requestKey(id), controller, false, reservedWaiter);
     reservedWaiter = undefined;
     respond(
       id,
       toolResult({
-        ...grantSubmittedRound(context, result),
+        ...grantSubmittedRound(context, waitOutcome.result),
         ...(artifactConversationId ? { artifactConversationId } : {}),
       }),
     );
@@ -1914,12 +2002,16 @@ async function executeInspectCore(input: InspectCoreInput): Promise<InspectCoreR
 }
 
 async function handleInspectTool(id: unknown, args: JsonObject | undefined): Promise<void> {
+  const controller = new AbortController();
+  pending.set(requestKey(id), controller);
+  let inspectionResult: StandaloneArtifactInspectionResult | SessionArtifactInspectionResult | undefined;
   try {
     assertAllowedToolKeys(INSPECT_TOOL_NAME, args, INSPECT_ALLOWED_KEYS);
     const artifactDirectory = args?.artifactDirectory;
     if (typeof artifactDirectory !== "string" || !path.isAbsolute(artifactDirectory)) {
       throw new Error("artifactDirectory must be an absolute path.");
     }
+    const wait = parseOptionalWaitArgument(args, false);
     const intent = args?.intent;
     if (intent !== undefined && intent !== "explicit-chat-update" && intent !== "reconnect") {
       throw new Error(`Invalid intent: ${String(intent)}.`);
@@ -1975,7 +2067,7 @@ async function handleInspectTool(id: unknown, args: JsonObject | undefined): Pro
       roundTokenSource === "chat-inspection" || roundTokenSource === "chat-update"
         ? roundTokenSource
         : undefined;
-    const result: InspectArtifactReviewResult =
+    inspectionResult =
       sessionContext !== null && session !== undefined
         ? {
             ...baseHandle,
@@ -2003,9 +2095,29 @@ async function handleInspectTool(id: unknown, args: JsonObject | undefined): Pro
             ...(validRoundTokenSource !== undefined ? { roundTokenSource: validRoundTokenSource } : {}),
             session: null,
           };
+
+    if (!wait || roundToken !== undefined) {
+      respond(id, toolResult(inspectionResult));
+      return;
+    }
+
+    const waitOutcome = await waitForSubmission(context, requestKey(id), controller);
+    const result: InspectArtifactReviewResult = {
+      ...inspectionResult,
+      ...grantSubmittedRound(context, waitOutcome.result),
+      manifest: waitOutcome.manifest,
+      markdown: waitOutcome.markdown,
+      submission: waitOutcome.submission,
+    };
     respond(id, toolResult(result));
   } catch (error) {
+    if (inspectionResult !== undefined) {
+      respond(id, postLifecycleStepToolError(error, inspectionResult, INSPECT_TOOL_NAME));
+      return;
+    }
     respond(id, toolError(asLifecycleRecoveryError(error, { entryTool: INSPECT_TOOL_NAME, hasArtifactHandle: true })));
+  } finally {
+    pending.delete(requestKey(id));
   }
 }
 
@@ -2130,7 +2242,7 @@ async function handleJoinSessionTool(id: unknown, args: JsonObject | undefined):
   }
 }
 
-async function handleAdvanceAndWaitTool(id: unknown, args: JsonObject | undefined): Promise<void> {
+async function handleUpdateTool(id: unknown, args: JsonObject | undefined): Promise<void> {
   const controller = new AbortController();
   pending.set(requestKey(id), controller);
   let claimedToken: string | undefined;
@@ -2138,16 +2250,10 @@ async function handleAdvanceAndWaitTool(id: unknown, args: JsonObject | undefine
   let noWait = false;
   try {
     pruneRoundGrants();
-    assertAllowedToolKeys(ADVANCE_AND_WAIT_TOOL_NAME, args, ADVANCE_ALLOWED_KEYS);
+    assertAllowedToolKeys(UPDATE_TOOL_NAME, args, UPDATE_ALLOWED_KEYS);
     const expectedReviewRound = parseExpectedReviewRound(args);
-    const artifactConversationId = parseOptionalEchoConversationId(args);
-    if (args?.noWait !== undefined && typeof args.noWait !== "boolean") {
-      throw new Error("INVALID_ARTIFACT_INPUT: noWait must be a boolean.");
-    }
-    noWait = args?.noWait === true;
-    if (noWait && artifactConversationId === undefined) {
-      throw new Error("INVALID_ARTIFACT_INPUT: noWait requires artifactConversationId from the active Work Session.");
-    }
+    const wait = parseOptionalWaitArgument(args, true);
+    noWait = !wait;
     const roundToken = args?.roundToken;
     const markdown = args?.markdown;
     if (typeof roundToken !== "string" || !roundToken) throw new Error("roundToken is required.");
@@ -2244,7 +2350,7 @@ async function handleAdvanceAndWaitTool(id: unknown, args: JsonObject | undefine
       roundGrants.delete(roundToken);
       throw recoveryError(
         "ARTIFACT_ALREADY_WAITING",
-        "another live waiter exists; use noWait for a non-waiting Session update, or intentionally detach it before starting another wait.",
+        "another live waiter exists; use wait=false for a non-waiting update, or intentionally detach it before starting another wait.",
         {
           retryable: true,
           reuseRoundToken: false,
@@ -2258,7 +2364,7 @@ async function handleAdvanceAndWaitTool(id: unknown, args: JsonObject | undefine
         "artifact review advance was cancelled before commit; the current token remains valid.",
         {
           retryable: true,
-          expectedNextTool: ADVANCE_AND_WAIT_TOOL_NAME,
+          expectedNextTool: UPDATE_TOOL_NAME,
           reuseRoundToken: true,
           currentReviewRound: context.reviewRound,
         },
@@ -2276,7 +2382,7 @@ async function handleAdvanceAndWaitTool(id: unknown, args: JsonObject | undefine
           `the round commit failed and the original state was restored: ${detail}`,
           {
             retryable: true,
-            expectedNextTool: ADVANCE_AND_WAIT_TOOL_NAME,
+            expectedNextTool: UPDATE_TOOL_NAME,
             reuseRoundToken: true,
             currentReviewRound: context.reviewRound,
           },
@@ -2315,20 +2421,16 @@ async function handleAdvanceAndWaitTool(id: unknown, args: JsonObject | undefine
         artifactSha256: committed.artifactSha256,
         kind: committed.manifest.kind,
         title: committed.manifest.title,
-        artifactConversationId,
         waited: false,
       }));
       return;
     }
 
     const updatedContext = await loadArtifactContext(context.artifactDirectory);
-    const result = await waitForSubmission(updatedContext, requestKey(id), controller);
+    const waitOutcome = await waitForSubmission(updatedContext, requestKey(id), controller);
     respond(
       id,
-      toolResult({
-        ...grantSubmittedRound(updatedContext, result),
-        ...(artifactConversationId ? { artifactConversationId } : {}),
-      }),
+      toolResult(grantSubmittedRound(updatedContext, waitOutcome.result)),
     );
   } catch (error) {
     if (committedReviewRound !== undefined) {
@@ -2370,26 +2472,26 @@ async function handleRequest(message: JsonObject): Promise<void> {
         "By default, create_artifact routes to the currently focused VS Code window (or the sole live window) without prior resolution.",
         "When multiple windows exist and none or multiple are focused, create_artifact returns WINDOW_SELECTION_REQUIRED with candidates and single-use selection tokens.",
         "To query windows or inspect active candidates, call resolve_artifact_window.",
-        "Pass connection: { targetMode: 'explicit-window', selectionToken } when targeting a specific candidate, or connection: { targetMode: 'artifact-window', windowInstanceId } to inspect_artifact_review (intent=reconnect) as an advisory affinity hint.",
-        "Create returns the exact artifactDirectory, reviewRound, and committed connection metadata; retain them and call wait_for_artifact_review. A non-null Work Session context is returned only when a Session is selected or explicitly created.",
+        "Pass connection: { targetMode: 'explicit-window', selectionToken } when targeting a specific candidate, or connection: { targetMode: 'artifact-window', windowInstanceId } to inspect_artifact (intent=reconnect) as an advisory affinity hint.",
+        "By default (wait=true), create_artifact returns the exact artifactDirectory, reviewRound, committed connection metadata, nullable Work Session context, and waits for the review result. Pass wait=false only when the handle is needed immediately without waiting. A non-null Work Session context is returned only when a Session is selected or explicitly created.",
         "Create and inspect without artifactConversationId or conversationName are standalone and return session: null without creating or registering a Work Session. While a chat has an active Session, pass its ID unless the user explicitly requests standalone; a name without an ID explicitly creates a new Session.",
         "Use the work-session skill to join or refresh an exact Session with join_session and sessionId; supply artifactId only when the request also calls for artifact inspection and registration in that Session.",
-        "A cancelled waiter never ends or deletes the artifact. expectedReviewRound is checked when attaching; an attached waiter can receive a later round after noWait updates, with the result and token bound to that submitted round.",
-        "Both wait_for_artifact_review and the waiting mode of advance_and_wait_for_artifact return the complete validated comments document for every submitted decision; read feedback from comments.comments. A revise result also returns nextAction.type=process-review-feedback and a one-time roundToken so feedback can be processed without an additional inspection just to fetch comments.",
-        "For explicit direct updates to existing artifacts in the active Work Session, follow the work-session skill's wait-mode selection. advance_and_wait_for_artifact accepts noWait=true only with artifactConversationId: it commits the new round and returns waited=false without attaching a waiter, preserving any existing waiter. Do not take over an existing waiter just to perform this non-waiting update. Record the returned round and continue authorized work; absent decision/comments are expected for this commit result, so do not fetch feedback or start a wait merely because they are absent. Creation, standalone requests, and review-feedback processing keep their existing wait behavior.",
-        "Treat comments returned by a Review submission and comments read through inspect_artifact_review with the same policy: answer questions visibly in chat before calling advance_and_wait_for_artifact, update Markdown only for requested changes, omit markdown for question-only feedback, and ask for clarification without consuming the token when needed.",
+        "A cancelled waiter never ends or deletes the artifact. expectedReviewRound is checked when attaching; an attached waiter can receive a later round after non-waiting (wait=false) updates, with the result and token bound to that submitted round.",
+        "wait_for_artifact_review, waiting create_artifact (wait=true), waiting inspect_artifact (wait=true), and waiting update_artifact (wait=true) all return the complete validated comments document for every submitted decision; read feedback from comments.comments. A revise result also returns nextAction.type=process-review-feedback and a one-time roundToken so feedback can be processed without an additional inspection just to fetch comments.",
+        "For explicit direct updates to existing artifacts in the active Work Session, follow the work-session skill's wait-mode selection. update_artifact defaults to wait=true; pass wait=false only when explicitly requested or directed by workflow instructions: it commits the new round and returns waited=false without attaching a waiter, preserving any existing waiter, and does not accept artifactConversationId. Do not take over an existing waiter just to perform a non-waiting update. Record the returned round and continue authorized work; absent decision/comments are expected for this commit result, so do not fetch feedback or start a wait merely because they are absent. Creation, standalone requests, and review-feedback processing keep their existing wait behavior.",
+        "Treat comments returned by a Review submission and comments read through inspect_artifact with the same policy: answer questions visibly in chat before calling update_artifact, update Markdown only for requested changes, omit markdown for question-only feedback, and ask for clarification without consuming the token when needed.",
         "Do not add Review responses to the artifact.",
-        "Pure reconnect uses inspect_artifact_review with intent=reconnect on the exact handle and same round; routing prioritizes sole live window, validated advisory artifact-window affinity, and unique focused window, or explicit candidate via selectionToken.",
+        "Pure reconnect uses inspect_artifact with intent=reconnect on the exact handle and same round; routing prioritizes sole live window, validated advisory artifact-window affinity, and unique focused window, or explicit candidate via selectionToken.",
         "For chat escape, inspect the exact handle with takeover=true.",
-        "If inspection has no comments or submission and is not an explicit chat update, reattach with wait_for_artifact_review without advancing.",
-        "When updating an artifact directly from chat on an empty round, inspect with expectedReviewRound and intent=explicit-chat-update, using takeover=true only when intentionally replacing a live waiter for a waiting update; preserve it for noWait updates, then advance with replacement markdown and the selected wait mode.",
+        "If inspection has no comments or submission and is not an explicit chat update, attach a waiter (using inspect_artifact with wait=true, or wait_for_artifact_review to resume waiting) without advancing.",
+        "When updating an artifact directly from chat on an empty round, inspect with expectedReviewRound and intent=explicit-chat-update, using takeover=true only when intentionally replacing a live waiter for a waiting update; preserve it for wait=false updates, then call update_artifact with replacement markdown and the selected wait mode.",
         "Follow structured recovery metadata on lifecycle errors, keep the same exact handle, and never replay when commit state is uncertain.",
         "When Proceed returns approve for kind plan or implementation-plan, obey nextAction and execute the complete approved plan immediately in the same turn; do not stop at acknowledgement or ask for another confirmation.",
         "When Proceed returns approve for any other kind, acknowledge the approval and conclude the review without automatically implementing code or starting another review round.",
         "Proceed ends only the review round, not the authorized execution.",
         "Just save ends the round without execution.",
-        "Reconnect later by explicitly inspecting, advancing without markdown, and waiting again; reconnect must not repeat an already executed action.",
-        "After creation, use only the exact returned artifactDirectory for wait, inspect, advance, and reconnect.",
+        "Reconnect later by explicitly inspecting, updating without markdown, and waiting again; reconnect must not repeat an already executed action.",
+        "After creation, use only the exact returned artifactDirectory for wait, inspect, update, and reconnect.",
         "Never scan global artifact storage or a workspace to discover an artifact, and never infer an artifact handle from cwd.",
       ].join(" "),
     });
@@ -2425,13 +2527,19 @@ async function handleRequest(message: JsonObject): Promise<void> {
           name: CREATE_TOOL_NAME,
           title: "Create artifact",
           description:
-            "Create a secure schema-v6 Markdown artifact in global AI Artifacts storage, optionally register it in an explicitly selected or newly requested Work Session, atomically commit its schema-v1 window-routing connection (routing to the focused VS Code window by default, or an explicit candidate via selectionToken), and return the exact persistent handle, nullable session context, and connection metadata without waiting.",
+            "Create a secure schema-v6 Markdown artifact in global AI Artifacts storage, optionally register it in an explicitly selected or newly requested Work Session, atomically commit its schema-v1 window-routing connection (routing to the focused VS Code window by default, or an explicit candidate via selectionToken), and by default (wait=true) wait for the review result while preserving handle, nullable session context, and connection metadata. Pass wait=false to return the handle immediately without waiting.",
           inputSchema: {
             type: "object",
             properties: {
               title: { type: "string", minLength: 1, maxLength: 200 },
               kind: { type: "string", pattern: "^[a-z][a-z0-9-]{0,63}$" },
               markdown: { type: "string", minLength: 1, maxLength: MAX_MARKDOWN_BYTES },
+              wait: {
+                type: "boolean",
+                default: true,
+                description:
+                  "Optional. Wait for the next review submission after creating the artifact. Defaults to true; pass false to return the created handle immediately without waiting.",
+              },
               artifactConversationId: {
                 type: "string",
                 format: "uuid",
@@ -2470,7 +2578,7 @@ async function handleRequest(message: JsonObject): Promise<void> {
           name: WAIT_TOOL_NAME,
           title: "Wait for artifact review",
           description:
-            "Attach one transient waiter to an exact artifact. expectedReviewRound is an attachment precondition only; the waiter survives noWait advances and returns the current validated submission round and its token. Return an existing submission immediately, or wait for Review, Proceed, or Just save. Every decision returns the complete validated comments document; read comments.comments. Review returns a process-review-feedback next action and round token. An approved plan returns an execute-approved-plan next action. An approved non-plan returns an approved next action. Takeover safely detaches the previous waiter.",
+            "Attach one transient waiter to an exact artifact. expectedReviewRound is an attachment precondition only; the waiter survives non-waiting (wait=false) updates and returns the current validated submission round and its token. Return an existing submission immediately, or wait for Review, Proceed, or Just save. Every decision returns the complete validated comments document; read comments.comments. Review returns a process-review-feedback next action and round token. An approved plan returns an execute-approved-plan next action. An approved non-plan returns an approved next action. Takeover safely detaches the previous waiter.",
           inputSchema: {
             type: "object",
             properties: {
@@ -2493,9 +2601,9 @@ async function handleRequest(message: JsonObject): Promise<void> {
         },
         {
           name: INSPECT_TOOL_NAME,
-          title: "Inspect artifact review",
+          title: "Inspect artifact",
           description:
-            "Read the current manifest, Markdown, comments, optional submission, connection metadata, and validated hashes for an exact artifact. Session registration occurs only when artifactConversationId or conversationName is supplied; omission is standalone. With intent=reconnect, re-evaluate and atomically bind an active VS Code window (sole live window, validated artifact-window affinity, unique focused window, or explicit via connection.selectionToken). Takeover first cancels and drains its current waiter. Returns a one-time round token when saved feedback is present or when intent is explicit-chat-update.",
+            "Read the current manifest, Markdown, comments, optional submission, connection metadata, and validated hashes for an exact artifact. Session registration occurs only when artifactConversationId or conversationName is supplied; omission is standalone. With intent=reconnect, re-evaluate and atomically bind an active VS Code window (sole live window, validated artifact-window affinity, unique focused window, or explicit via connection.selectionToken). Takeover first cancels and drains its current waiter. Returns a one-time round token when saved feedback is present or when intent is explicit-chat-update. By default (wait=false), returns immediately; when wait=true and no roundToken is returned, attaches a waiter after inspection/reconnect and returns the validated snapshot together with the review result.",
           inputSchema: {
             type: "object",
             properties: {
@@ -2506,6 +2614,12 @@ async function handleRequest(message: JsonObject): Promise<void> {
                 description: "Expected current review round. Required when intent is explicit-chat-update.",
               },
               takeover: { type: "boolean", default: false },
+              wait: {
+                type: "boolean",
+                default: false,
+                description:
+                  "Optional. When true and inspection finds no saved feedback, submission, or chat-update token, attach a waiter and return the review result together with the matching validated snapshot. Defaults to false.",
+              },
               intent: {
                 type: "string",
                 enum: ["explicit-chat-update", "reconnect"],
@@ -2640,10 +2754,10 @@ async function handleRequest(message: JsonObject): Promise<void> {
           annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
         },
         {
-          name: ADVANCE_AND_WAIT_TOOL_NAME,
-          title: "Advance and wait for artifact review",
+          name: UPDATE_TOOL_NAME,
+          title: "Update artifact",
           description:
-            "Consume a validated one-time round token, optionally replace the complete Markdown, and advance and reset the artifact round transactionally. By default, wait for the next review and return its complete validated comments, decision, and applicable next action/token. With noWait=true and artifactConversationId, return a commit result immediately with the new round/hash, artifact handle/link, and waited=false, without decision, comments, nextAction, or a new token. An existing waiter is preserved only in noWait mode; a waiting advance is rejected while another waiter exists in this process. Continue authorized work after that result. Omitting markdown preserves the artifact bytes and SHA. The work-session skill selects noWait for direct Session updates; creation, standalone requests, and review-feedback processing retain their existing wait behavior.",
+            "Consume a validated one-time round token, optionally replace the complete Markdown, and advance and reset the artifact round transactionally. By default (wait=true), wait for the next review and return its complete validated comments, decision, and applicable next action/token. With wait=false, return a commit result immediately with the new round/hash, artifact handle/link, and waited=false, without decision, comments, nextAction, or a new token. An existing waiter is preserved only when wait=false; a waiting update is rejected while another waiter exists in this process. Omitting markdown preserves the artifact bytes and SHA. Use wait=false only when explicitly requested or directed by workflow instructions; creation, standalone requests, and review-feedback processing retain their existing wait behavior.",
           inputSchema: {
             type: "object",
             properties: {
@@ -2651,16 +2765,11 @@ async function handleRequest(message: JsonObject): Promise<void> {
               expectedReviewRound: { type: "integer", minimum: 1 },
               roundToken: { type: "string" },
               markdown: { type: "string", minLength: 1, maxLength: MAX_MARKDOWN_BYTES },
-              noWait: {
+              wait: {
                 type: "boolean",
-                default: false,
+                default: true,
                 description:
-                  "Optional. When true, commit the next round without attaching a waiter or waiting for review, preserving any existing waiter. Requires artifactConversationId from the active Work Session. Defaults to false.",
-              },
-              artifactConversationId: {
-                type: "string",
-                format: "uuid",
-                description: "Optional active conversation UUID echoed back in the lifecycle result.",
+                  "Optional. When true (default), wait for the next review submission after committing the update. When false, commit the next round without attaching a waiter or waiting for review, preserving any existing waiter.",
               },
             },
             required: ["artifactDirectory", "expectedReviewRound", "roundToken"],
@@ -2693,8 +2802,8 @@ async function handleRequest(message: JsonObject): Promise<void> {
       await handleJoinSessionTool(id, params?.arguments);
       return;
     }
-    if (params?.name === ADVANCE_AND_WAIT_TOOL_NAME) {
-      await handleAdvanceAndWaitTool(id, params?.arguments);
+    if (params?.name === UPDATE_TOOL_NAME) {
+      await handleUpdateTool(id, params?.arguments);
       return;
     }
     respond(id, toolError(new Error(`Unknown tool: ${String(params?.name)}`)));

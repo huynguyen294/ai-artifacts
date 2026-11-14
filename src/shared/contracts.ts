@@ -754,7 +754,34 @@ export type SessionArtifactHandleResult = {
   connection?: ArtifactConnection | undefined;
 };
 
-export type CreateArtifactReviewResult = StandaloneArtifactHandleResult | SessionArtifactHandleResult;
+export type ArtifactWaitReviewFields = {
+  schemaVersion: typeof ARTIFACT_SCHEMA_VERSION;
+  title?: string | undefined;
+  commentsSha256: string;
+  comments: CommentsDocument;
+  decision: ReviewDecision;
+  submittedAt: string;
+  commentsPath: string;
+  submissionSha256: string;
+  nextAction?:
+    | {
+        type: "process-review-feedback" | "execute-approved-plan" | "approved";
+        instruction: string;
+      }
+    | undefined;
+  roundToken?: string | undefined;
+  roundTokenSource?: "submitted-review" | undefined;
+};
+
+export type StandaloneArtifactCreateWaitResult = StandaloneArtifactHandleResult & ArtifactWaitReviewFields;
+
+export type SessionArtifactCreateWaitResult = SessionArtifactHandleResult & ArtifactWaitReviewFields;
+
+export type CreateArtifactReviewResult =
+  | StandaloneArtifactHandleResult
+  | SessionArtifactHandleResult
+  | StandaloneArtifactCreateWaitResult
+  | SessionArtifactCreateWaitResult;
 
 export type StandaloneArtifactInspectionResult = {
   artifactDirectory: string;
@@ -802,7 +829,17 @@ export type SessionArtifactInspectionResult = {
   session: SessionContext;
 };
 
-export type InspectArtifactReviewResult = StandaloneArtifactInspectionResult | SessionArtifactInspectionResult;
+export type StandaloneArtifactInspectWaitResult = Omit<StandaloneArtifactInspectionResult, "roundTokenSource"> &
+  ArtifactWaitReviewFields;
+
+export type SessionArtifactInspectWaitResult = Omit<SessionArtifactInspectionResult, "roundTokenSource"> &
+  ArtifactWaitReviewFields;
+
+export type InspectArtifactReviewResult =
+  | StandaloneArtifactInspectionResult
+  | SessionArtifactInspectionResult
+  | StandaloneArtifactInspectWaitResult
+  | SessionArtifactInspectWaitResult;
 
 export type JoinSessionOnlyResult = {
   session: SessionContext;

@@ -650,5 +650,40 @@ describe("artifact conversation schema v1 contract", () => {
 
     expect(inspectionResult.roundTokenSource).toBe("chat-inspection");
     expect(inspectionResult.session).toBeNull();
+
+    const createWaitResult: contracts.CreateArtifactReviewResult = {
+      ...standaloneResult,
+      schemaVersion: contracts.ARTIFACT_SCHEMA_VERSION,
+      title: "Test",
+      commentsSha256: "b".repeat(64),
+      comments: comments() as any,
+      decision: "approve",
+      submittedAt: "2026-04-12T00:00:00.000Z",
+      commentsPath: "d:/workspace/artifacts/test/comments.json",
+      submissionSha256: "c".repeat(64),
+      roundToken: "token-wait",
+      roundTokenSource: "submitted-review",
+      nextAction: {
+        type: "execute-approved-plan",
+        instruction: "Execute the approved plan.",
+      },
+    };
+    expect(createWaitResult.session).toBeNull();
+    if ("roundTokenSource" in createWaitResult) {
+      expect(createWaitResult.roundTokenSource).toBe("submitted-review");
+    }
+
+    const inspectWaitResult: contracts.InspectArtifactReviewResult = {
+      ...inspectionResult,
+      schemaVersion: contracts.ARTIFACT_SCHEMA_VERSION,
+      title: "Test",
+      commentsPath: "d:/workspace/artifacts/test/comments.json",
+      decision: "revise",
+      submittedAt: "2026-04-12T00:00:00.000Z",
+      submissionSha256: "c".repeat(64),
+      roundTokenSource: "submitted-review",
+    };
+    expect(inspectWaitResult.roundTokenSource).toBe("submitted-review");
+    expect(inspectWaitResult.session).toBeNull();
   });
 });
