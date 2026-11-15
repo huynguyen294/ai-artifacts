@@ -581,6 +581,12 @@ describe("Client Drivers", () => {
         "[mcp_servers.ai_artifacts.tools.write_artifact_feedback]",
         'approval_mode = "approve"',
         "",
+        "[mcp_servers.ai_artifacts.tools.wait_in_session]",
+        'approval_mode = "approve"',
+        "",
+        "[mcp_servers.ai_artifacts.tools.request_waiter_in_session]",
+        'approval_mode = "approve"',
+        "",
         "[mcp_servers.node_repl]",
         'command = "node_repl.exe"',
         "",
@@ -1321,6 +1327,8 @@ describe("Client Driver Upgrade", () => {
       expect(upgradedContent).toContain('[mcp_servers.ai_artifacts.tools.update_artifact]\napproval_mode = "approve"');
       expect(upgradedContent).toContain('[mcp_servers.ai_artifacts.tools.join_session]\napproval_mode = "approve"');
       expect(upgradedContent).toContain('[mcp_servers.ai_artifacts.tools.write_artifact_feedback]\napproval_mode = "approve"');
+      expect(upgradedContent).toContain('[mcp_servers.ai_artifacts.tools.wait_in_session]\napproval_mode = "approve"');
+      expect(upgradedContent).toContain('[mcp_servers.ai_artifacts.tools.request_waiter_in_session]\napproval_mode = "approve"');
       expect(upgradedContent).not.toContain("inspect_artifact_review");
       expect(upgradedContent).not.toContain("advance_and_wait_for_artifact");
       await expect(fs.readFile(legacyHooksPath, "utf8")).resolves.toBe(legacyHookContent);

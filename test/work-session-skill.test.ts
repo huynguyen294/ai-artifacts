@@ -78,6 +78,24 @@ describe("work-session skill contract", () => {
     expect(skill).toContain("Public inspect may return saved feedback immediately even with `wait: true`");
   });
 
+  it("documents accurate session waiter cancellation reasons and error codes", async () => {
+    const skill = await readFile(path.join(skillDirectory, "SKILL.md"), "utf8");
+
+    for (const token of [
+      "waiter-removed",
+      "lease-expired",
+      "session-deleted",
+      "REQUEST_CANCELLED",
+      "SESSION_WAITER_LOCK_LOST",
+      "isError: true",
+    ]) {
+      expect(skill).toContain(token);
+    }
+    for (const stale of ["user-stop", "protocol-cancelled", "lock-lost"]) {
+      expect(skill).not.toContain(stale);
+    }
+  });
+
   it("documents instructions and ordered catalog zones", async () => {
     const skill = await readFile(path.join(skillDirectory, "SKILL.md"), "utf8");
 

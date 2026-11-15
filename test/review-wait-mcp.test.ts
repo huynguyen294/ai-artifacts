@@ -480,6 +480,8 @@ describe("artifact review MCP server v8", () => {
       "join_session",
       "update_artifact",
       "write_artifact_feedback",
+      "wait_in_session",
+      "request_waiter_in_session",
     ]);
     const createTool = tools.tools.find((tool: any) => tool.name === "create_artifact");
     expect(createTool.description).toContain("schema-v6");

@@ -443,7 +443,7 @@
     "build:webview": "vite build",
     "dev:webview": "vite --config vite.config.dev.ts",
     "build:enhancements": "esbuild src/webview/enhancements/shiki-entry.ts --bundle --minify --platform=browser --format=iife --outfile=dist/webview/shiki.js && esbuild src/webview/enhancements/mermaid-entry.ts --bundle --minify --platform=browser --format=iife --outfile=dist/webview/mermaid.js",
-    "build:integration": "esbuild src/integration/artifact-review-mcp.ts --bundle --minify --platform=node --format=esm --outfile=dist/integration/codex-artifacts-review-mcp.mjs",
+    "build:integration": "esbuild src/integration/artifact-review-mcp.ts --bundle --minify --platform=node --format=esm --banner:js=\"import { createRequire as __aiCreateRequire } from 'node:module'; const require = __aiCreateRequire(import.meta.url);\" --outfile=dist/integration/codex-artifacts-review-mcp.mjs",
     "check": "tsc --noEmit",
     "test": "npm run build:integration && vitest run",
     "clean:releases": "node -e \"const fs = require('fs'); fs.rmSync('releases', { recursive: true, force: true }); fs.mkdirSync('releases', { recursive: true });\"",
@@ -456,6 +456,7 @@
     "@floating-ui/react": "^0.27.20",
     "@types/mdast": "^4.0.4",
     "@types/node": "^26.4.0",
+    "@types/proper-lockfile": "^4.1.4",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.5",
     "@types/vscode": "^1.95.0",
@@ -479,6 +480,7 @@
     "zod": "^4.4.3"
   },
   "dependencies": {
+    "proper-lockfile": "4.1.2",
     "yazl": "^2.5.1"
   }
 }

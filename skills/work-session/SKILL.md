@@ -71,6 +71,16 @@ Membership remains authoritative in `registered-artifacts/`. Registered IDs abse
 
 Never directly edit `conversation.json`, `registered-artifacts/`, or managed artifact lifecycle files; use MCP tools such as `write_artifact_feedback` through the artifact skill for AI-authored feedback.
 
+## Session waiters and requests
+
+Use `wait_in_session` and `request_waiter_in_session` only when participating in the Session waiter workflow; their absence never blocks `join_session`-only work, Session Instructions, or artifact workflows. Waiters are advisory readiness signals.
+
+- **Waiting (`wait_in_session`):** Call `wait_in_session({ sessionId, name?, waitingFor, artifactId? })` with an exact Session UUID and optional non-empty `name` and `artifactId`.
+  - If `status: "requested"`, inspect `request` (`requestMessage` and optional resolved `artifact` summary) and act strictly within the Session Instructions and your assigned role/authority; waiters never replace artifact review tokens, grant `execute-approved-plan` permission, or bypass artifact approval rules.
+  - If `status: "cancelled"` (`reason`: `waiter-removed`, `lease-expired`, or `session-deleted`) or an abort/runtime error (`isError: true`: `REQUEST_CANCELLED`, `SESSION_WAITER_LOCK_LOST`, `SESSION_WAITER_BUSY`, `SESSION_WAITER_IO_ERROR`), report it and stop without auto-rewaiting, replaying uncertain writes, recreating a deleted Session, or silently clearing retained handles; handle `CONVERSATION_*` and `ARTIFACT_NOT_FOUND` via [Recovery](#recovery), and fix/retry only pre-registration `INVALID_ARTIFACT_INPUT` errors.
+- **Inspecting active waiters manually:** Without a read-only waiter list tool, resolve `waiters/` beside the Session's exact `instructionsPath` (never scan outside the Session directory). Read `<waitId>.json` files (ignoring temp files and `.coordination.lock`) together with file `mtime` stats in batch, filter live leases using `mtimeMs + leaseTtlMs > Date.now()`, and select an exact `waitId` rather than guessing. Never manually write or edit files inside `waiters/` or `waiter-requests/` to simulate a waiter or request; an external Stop only removes the active waiter record.
+- **Requesting a waiter (`request_waiter_in_session`):** Call `request_waiter_in_session({ sessionId, waitId, requestMessage, artifactId? })` with an exact active `waitId`. A `{ status: "sent" }` response confirms that the request was written, not that the target agent has received, claimed, or acted on it. On `SESSION_WAITER_NOT_WAITING`, refresh active waiters rather than guessing another slot; on `SESSION_WAITER_REQUEST_EXISTS`, stop without overwriting the existing request; on `SESSION_WAITER_BUSY` or `SESSION_WAITER_IO_ERROR`, stop automated retries and report the error.
+
 ## Recovery
 
 A failure preserves the previous Session identity and context. Do not clear an ID, auto-create a Session, retry as standalone, or replay a saved approval merely because a request failed. Window-selection retries retain the original Session intent, IDs, name, artifact handle, round, takeover and inspect intent; explicit New keeps the old ID omitted and the chosen name.

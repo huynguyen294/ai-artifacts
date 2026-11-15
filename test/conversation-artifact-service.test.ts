@@ -552,6 +552,12 @@ describe("ConversationArtifactService", () => {
     expect(classifyWatcherUri(`/root/${validSessionId}/conversation.v1.backup.json`)).toBe("ignored");
     expect(classifyWatcherUri(`/root/${validSessionId}/layout.json.tmp.123`)).toBe("ignored");
     expect(classifyWatcherUri(`/root/${validSessionId}/.update.lock`)).toBe("ignored");
+    expect(classifyWatcherUri(`/root/${validSessionId}/waiters`)).toBe("ignored");
+    expect(classifyWatcherUri(`/root/${validSessionId}/waiters/${validSessionId}.json`)).toBe("ignored");
+    expect(classifyWatcherUri(`/root/${validSessionId}/waiters/${validSessionId}.json.tmp-123`)).toBe("ignored");
+    expect(classifyWatcherUri(`/root/${validSessionId}/waiters/.coordination.lock`)).toBe("ignored");
+    expect(classifyWatcherUri(`/root/${validSessionId}/waiter-requests`)).toBe("ignored");
+    expect(classifyWatcherUri(`/root/${validSessionId}/waiter-requests/${validSessionId}.json`)).toBe("ignored");
     expect(isTemporaryOrBackupFile("test.backup.json")).toBe(true);
 
     expect(classifyWatcherUri("/root/arbitrary-unknown-path")).toBe("unclassified");

@@ -10,6 +10,8 @@ import {
   SESSION_UI_STATE_FILE,
   WORK_SESSION_INSTRUCTIONS_FILE,
   WORK_SESSION_LAYOUT_FILE,
+  WORK_SESSION_WAITER_REQUESTS_DIRECTORY,
+  WORK_SESSION_WAITERS_DIRECTORY,
   globalArtifactsRoot,
   type GlobalArtifactsRootOptions,
 } from "../shared/artifact-files";
@@ -579,6 +581,19 @@ export function classifyWatcherUri(filePath: string): WorkSessionDataChange | "u
 
   const normalized = filePath.replace(/\\/g, "/");
   const filename = path.basename(normalized);
+
+  // Ignore Session waiter runtime files/folders and .coordination.lock churn to avoid full UI refreshes.
+  const segments = normalized.split("/").filter(Boolean);
+  for (let i = 1; i < segments.length; i++) {
+    const segment = segments[i];
+    if (
+      (segment === WORK_SESSION_WAITERS_DIRECTORY
+        || segment === WORK_SESSION_WAITER_REQUESTS_DIRECTORY)
+      && artifactConversationIdSchema.safeParse(segments[i - 1]).success
+    ) {
+      return "ignored";
+    }
+  }
 
   if (filename === CONVERSATION_METADATA_FILE) {
     const sessionDirName = path.basename(path.dirname(normalized));

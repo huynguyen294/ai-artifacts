@@ -1885,3 +1885,98 @@ export async function cleanupStaleConversations(
 
   return result;
 }
+
+/**
+ * Validates and resolves the canonical directory and metadata of an existing WorkSession v2.
+ */
+export async function resolveSafeWorkSessionDirectory(
+  sessionId: string,
+  options: GlobalArtifactsRootOptions = {},
+): Promise<{
+  sessionId: string;
+  canonicalConversationDir: string;
+  metadata: WorkSessionMetadata;
+}> {
+  const validatedId = artifactConversationIdSchema.parse(sessionId);
+  const rootOptions = toRootOptions(options);
+  const registryRoot = conversationRegistryRoot(rootOptions);
+  const targetConvDir = conversationDirectory(validatedId, rootOptions);
+
+  // Pre-check without creating missing .ai-artifacts or conversation-registry directories.
+  try {
+    await fs.lstat(registryRoot);
+    await fs.lstat(targetConvDir);
+  } catch (error) {
+    if (errorCode(error) === "ENOENT") {
+      throw new ConversationNotFoundError(`Session ${validatedId} does not exist.`);
+    }
+    throw error;
+  }
+
+  const canonicalRegistryRoot = await ensureSafeConversationRegistryRoot(rootOptions);
+  let canonicalConversationDir: string;
+  try {
+    await assertSafeDirectoryEntry(targetConvDir);
+    canonicalConversationDir = await fs.realpath(targetConvDir);
+  } catch (error) {
+    if (errorCode(error) === "ENOENT") {
+      throw new ConversationNotFoundError(`Session ${validatedId} does not exist.`);
+    }
+    throw error;
+  }
+  if (
+    !sameFilesystemPath(path.dirname(canonicalConversationDir), canonicalRegistryRoot)
+    && !sameFilesystemPath(path.dirname(targetConvDir), conversationRegistryRoot(rootOptions))
+  ) {
+    throw new ConversationRegistryError(
+      "UNSAFE_CONVERSATION_PATH: the conversation directory escapes conversation-registry.",
+    );
+  }
+
+  const metadataPath = path.join(canonicalConversationDir, CONVERSATION_METADATA_FILE);
+  try {
+    await assertSafeRegularFile(metadataPath, false);
+  } catch (error) {
+    if (errorCode(error) === "ENOENT") {
+      throw new ConversationNotFoundError(`Session ${validatedId} does not exist.`);
+    }
+    throw error;
+  }
+
+  let rawMeta: unknown;
+  try {
+    rawMeta = JSON.parse(await fs.readFile(metadataPath, "utf8"));
+  } catch (error) {
+    if (errorCode(error) === "ENOENT") {
+      throw new ConversationNotFoundError(`Session ${validatedId} does not exist.`);
+    }
+    throw new ConversationRegistryError(
+      `Invalid ${CONVERSATION_METADATA_FILE} for session ${validatedId}: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+
+  if (
+    rawMeta
+    && typeof rawMeta === "object"
+    && "schemaVersion" in rawMeta
+    && rawMeta.schemaVersion === ARTIFACT_CONVERSATION_SCHEMA_VERSION
+  ) {
+    throw new ConversationMigrationRequiredError(validatedId);
+  }
+
+  try {
+    await ensureSafeConversationDirectory(validatedId, rootOptions, false);
+    await enforceOwnerOnlyFile(metadataPath);
+  } catch (error) {
+    if (errorCode(error) === "ENOENT") {
+      throw new ConversationNotFoundError(`Session ${validatedId} does not exist.`);
+    }
+    throw error;
+  }
+  const metadata = parseWorkSessionMetadata(rawMeta, validatedId);
+  return {
+    sessionId: validatedId,
+    canonicalConversationDir,
+    metadata,
+  };
+}

@@ -95,6 +95,18 @@ import {
 import { commitArtifactConnectionRequest, readArtifactConnection } from "../shared/artifact-connection";
 import { resolveWorkSessionContext } from "../shared/work-session-context";
 import { isPlanProceedKind } from "../shared/artifact-kinds";
+import { ZodError } from "zod";
+import {
+  SessionWaiterBusyError,
+  SessionWaiterIoError,
+  SessionWaiterLockLostError,
+  SessionWaiterNotWaitingError,
+  SessionWaiterRequestExistsError,
+  requestWaiterInSessionInputSchema,
+  waitInSessionInputSchema,
+} from "../shared/session-waiter-contracts";
+import { type SessionWaiterTimingOptions } from "../shared/session-waiter-store";
+import { createSessionWaiterRuntime } from "./session-waiter-runtime";
 
 const SERVER_NAME = "codex-artifacts";
 const SERVER_VERSION = String(MCP_VERSION);
@@ -105,6 +117,8 @@ const INSPECT_TOOL_NAME = "inspect_artifact";
 const JOIN_SESSION_TOOL_NAME = "join_session";
 const UPDATE_TOOL_NAME = "update_artifact";
 const WRITE_FEEDBACK_TOOL_NAME = "write_artifact_feedback";
+const WAIT_IN_SESSION_TOOL_NAME = "wait_in_session";
+const REQUEST_WAITER_IN_SESSION_TOOL_NAME = "request_waiter_in_session";
 const ROUND_TOKEN_TTL_MS = 60 * 60 * 1000;
 const MAX_MARKDOWN_BYTES = 2 * 1024 * 1024;
 const LIFECYCLE_JSON_READ_ATTEMPTS = 21;
@@ -2697,6 +2711,222 @@ async function handleWriteFeedbackTool(id: unknown, args: JsonObject | undefined
   }
 }
 
+const WAIT_IN_SESSION_ALLOWED_KEYS: ReadonlySet<string> = new Set([
+  "sessionId",
+  "waitingFor",
+  "name",
+  "artifactId",
+]);
+
+const REQUEST_WAITER_IN_SESSION_ALLOWED_KEYS: ReadonlySet<string> = new Set([
+  "sessionId",
+  "waitId",
+  "requestMessage",
+  "artifactId",
+]);
+
+function parsePositiveTestEnvInt(name: string): number | undefined {
+  if (process.env.NODE_ENV !== "test") {
+    return undefined;
+  }
+  const raw = process.env[name];
+  if (!raw) {
+    return undefined;
+  }
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+}
+
+function readTestSessionWaiterTiming(): SessionWaiterTimingOptions | undefined {
+  if (process.env.NODE_ENV !== "test") {
+    return undefined;
+  }
+  const leaseTtlMs = parsePositiveTestEnvInt("CODEX_ARTIFACTS_TEST_WAITER_LEASE_TTL_MS");
+  const heartbeatIntervalMs = parsePositiveTestEnvInt("CODEX_ARTIFACTS_TEST_WAITER_HEARTBEAT_MS");
+  const pollIntervalMs = parsePositiveTestEnvInt("CODEX_ARTIFACTS_TEST_WAITER_POLL_MS");
+  const lockRetries = parsePositiveTestEnvInt("CODEX_ARTIFACTS_TEST_WAITER_LOCK_RETRIES");
+  const lockRetryIntervalMs = parsePositiveTestEnvInt("CODEX_ARTIFACTS_TEST_WAITER_LOCK_RETRY_MS");
+  const timing: SessionWaiterTimingOptions = {
+    ...(leaseTtlMs !== undefined ? { leaseTtlMs } : {}),
+    ...(heartbeatIntervalMs !== undefined ? { heartbeatIntervalMs } : {}),
+    ...(pollIntervalMs !== undefined ? { pollIntervalMs } : {}),
+    ...(lockRetries !== undefined ? { lockRetries } : {}),
+    ...(lockRetryIntervalMs !== undefined ? { lockRetryIntervalMs } : {}),
+  };
+  return Object.keys(timing).length > 0 ? timing : undefined;
+}
+
+const sessionWaiterTestTiming = readTestSessionWaiterTiming();
+const sessionWaiterRuntime = createSessionWaiterRuntime({
+  getRootOptions: () => globalRootOptions(),
+  ...(sessionWaiterTestTiming ? { timing: sessionWaiterTestTiming } : {}),
+});
+let isStdinClosed = false;
+
+function sessionWaiterToolError(error: unknown): JsonObject {
+  const message = error instanceof Error ? error.message : String(error);
+
+  if (
+    error instanceof SessionWaiterNotWaitingError
+    || error instanceof SessionWaiterRequestExistsError
+    || error instanceof SessionWaiterBusyError
+    || error instanceof SessionWaiterLockLostError
+    || error instanceof SessionWaiterIoError
+  ) {
+    return {
+      content: [{ type: "text", text: message }],
+      structuredContent: {
+        code: error.code,
+        message,
+        ...(error.sessionId !== undefined ? { sessionId: error.sessionId } : {}),
+        ...(error.waitId !== undefined ? { waitId: error.waitId } : {}),
+      },
+      isError: true,
+    };
+  }
+
+  if (error instanceof ConversationMigrationRequiredError) {
+    return {
+      content: [{ type: "text", text: message }],
+      structuredContent: {
+        code: error.code,
+        message,
+        artifactConversationId: error.artifactConversationId,
+      },
+      isError: true,
+    };
+  }
+
+  if (error instanceof ConversationNotFoundError) {
+    return {
+      content: [{ type: "text", text: message }],
+      structuredContent: {
+        code: "CONVERSATION_NOT_FOUND",
+        message,
+      },
+      isError: true,
+    };
+  }
+
+  if (error instanceof ConversationRegistryError) {
+    return {
+      content: [{ type: "text", text: message }],
+      structuredContent: {
+        code: "CONVERSATION_REGISTRY_INVALID",
+        message,
+      },
+      isError: true,
+    };
+  }
+
+  if (error instanceof ZodError) {
+    const details = error.issues
+      .map((issue) => `${issue.path.join(".") || "input"}: ${issue.message}`)
+      .join("; ");
+    const formatted = `INVALID_ARTIFACT_INPUT: ${details}`;
+    return {
+      content: [{ type: "text", text: formatted }],
+      structuredContent: {
+        code: "INVALID_ARTIFACT_INPUT",
+        message: formatted,
+      },
+      isError: true,
+    };
+  }
+
+  if (message.startsWith("ARTIFACT_NOT_FOUND:")) {
+    return {
+      content: [{ type: "text", text: message }],
+      structuredContent: {
+        code: "ARTIFACT_NOT_FOUND",
+        message,
+      },
+      isError: true,
+    };
+  }
+
+  if (error instanceof Error && error.name === "AbortError") {
+    return {
+      content: [{ type: "text", text: message }],
+      structuredContent: {
+        code: "REQUEST_CANCELLED",
+        message,
+      },
+      isError: true,
+    };
+  }
+
+  const prefixedCodes = [
+    "INVALID_ARTIFACT_INPUT",
+    "UNSAFE_ARTIFACT_PATH",
+    "UNSAFE_ARTIFACT_PERMISSIONS",
+    "UNSAFE_CONVERSATION_PATH",
+    "UNSAFE_SESSION_WAITER_PATH",
+  ] as const;
+  for (const prefix of prefixedCodes) {
+    if (message.startsWith(`${prefix}:`)) {
+      return {
+        content: [{ type: "text", text: message }],
+        structuredContent: {
+          code: prefix,
+          message,
+        },
+        isError: true,
+      };
+    }
+  }
+
+  return {
+    content: [{ type: "text", text: message }],
+    structuredContent: {
+      code: "SESSION_WAITER_IO_ERROR",
+      message,
+    },
+    isError: true,
+  };
+}
+
+async function handleWaitInSessionTool(
+  id: unknown,
+  args: JsonObject | undefined,
+): Promise<void> {
+  const controller = new AbortController();
+  pending.set(requestKey(id), controller);
+  try {
+    assertAllowedToolKeys(WAIT_IN_SESSION_TOOL_NAME, args, WAIT_IN_SESSION_ALLOWED_KEYS);
+    const input = waitInSessionInputSchema.parse(args ?? {});
+    const result = await sessionWaiterRuntime.waitInSession(input, {
+      signal: controller.signal,
+    });
+    respond(id, toolResult(result));
+  } catch (error) {
+    if (isStdinClosed && error instanceof Error && error.name === "AbortError") {
+      return;
+    }
+    respond(id, sessionWaiterToolError(error));
+  } finally {
+    pending.delete(requestKey(id));
+  }
+}
+
+async function handleRequestWaiterInSessionTool(
+  id: unknown,
+  args: JsonObject | undefined,
+): Promise<void> {
+  try {
+    assertAllowedToolKeys(
+      REQUEST_WAITER_IN_SESSION_TOOL_NAME,
+      args,
+      REQUEST_WAITER_IN_SESSION_ALLOWED_KEYS,
+    );
+    const input = requestWaiterInSessionInputSchema.parse(args ?? {});
+    const result = await sessionWaiterRuntime.requestWaiterInSession(input);
+    respond(id, toolResult(result));
+  } catch (error) {
+    respond(id, sessionWaiterToolError(error));
+  }
+}
+
 async function handleRequest(message: JsonObject): Promise<void> {
   const { id, method, params } = message;
   if (method === "initialize") {
@@ -2732,6 +2962,7 @@ async function handleRequest(message: JsonObject): Promise<void> {
         "Reconnect later by explicitly inspecting, updating without markdown, and waiting again; reconnect must not repeat an already executed action.",
         "After creation, use only the exact returned artifactDirectory for wait, inspect, update, and reconnect.",
         "Never scan global artifact storage or a workspace to discover an artifact, and never infer an artifact handle from cwd.",
+        "Use wait_in_session to register one transient agent waiter record in an exact schema-v2 Work Session and pause for a targeted work request (status=requested does not approve plan execution), or call request_waiter_in_session to deliver one request to an active waitId (status=sent confirms atomic publish, not guaranteed agent receipt); stop immediately if cancelled instead of auto-rewaiting.",
       ].join(" "),
     });
     return;
@@ -3049,6 +3280,74 @@ async function handleRequest(message: JsonObject): Promise<void> {
           },
           annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
         },
+        {
+          name: WAIT_IN_SESSION_TOOL_NAME,
+          title: "Wait in Work Session",
+          description:
+            "Register a transient agent waiter record in an exact schema-v2 Work Session and wait for a targeted request, UI removal/cancellation, lease expiry, or Session deletion. Keep artifactId optional as a reference without changing Session membership or attaching an artifact review waiter. Return the exact requested or cancelled result without auto-rewaiting.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              sessionId: {
+                type: "string",
+                format: "uuid",
+                description: "Target schema-v2 Work Session UUID.",
+              },
+              waitingFor: {
+                type: "string",
+                minLength: 1,
+                description: "Non-empty summary of what the agent is waiting for.",
+              },
+              name: {
+                type: "string",
+                maxLength: 120,
+                description: "Optional display or role name (defaults to Agent; case-insensitive collisions receive numeric suffixes).",
+              },
+              artifactId: {
+                type: "string",
+                minLength: 1,
+                description: "Optional global schema-v6 artifact ID reference associated with this wait.",
+              },
+            },
+            required: ["sessionId", "waitingFor"],
+            additionalProperties: false,
+          },
+          annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+        },
+        {
+          name: REQUEST_WAITER_IN_SESSION_TOOL_NAME,
+          title: "Request active Session waiter",
+          description:
+            "Deliver one unqueued request payload (requestMessage and optional global artifactId reference) to an active waiter identified by exact waitId in a schema-v2 Work Session. Rejects missing/expired waiters and duplicate pending requests without overwriting. Returns status=sent upon atomic publish confirmation, not agent receipt.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              sessionId: {
+                type: "string",
+                format: "uuid",
+                description: "Target schema-v2 Work Session UUID.",
+              },
+              waitId: {
+                type: "string",
+                format: "uuid",
+                description: "Exact active waiter UUID in the target Session.",
+              },
+              requestMessage: {
+                type: "string",
+                minLength: 1,
+                description: "Non-empty request instructions for the waiting agent.",
+              },
+              artifactId: {
+                type: "string",
+                minLength: 1,
+                description: "Optional global schema-v6 artifact ID reference attached to the request.",
+              },
+            },
+            required: ["sessionId", "waitId", "requestMessage"],
+            additionalProperties: false,
+          },
+          annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+        },
       ],
     });
     return;
@@ -3082,6 +3381,14 @@ async function handleRequest(message: JsonObject): Promise<void> {
       await handleWriteFeedbackTool(id, params?.arguments);
       return;
     }
+    if (params?.name === WAIT_IN_SESSION_TOOL_NAME) {
+      await handleWaitInSessionTool(id, params?.arguments);
+      return;
+    }
+    if (params?.name === REQUEST_WAITER_IN_SESSION_TOOL_NAME) {
+      await handleRequestWaiterInSessionTool(id, params?.arguments);
+      return;
+    }
     respond(id, toolError(new Error(`Unknown tool: ${String(params?.name)}`)));
     return;
   }
@@ -3110,4 +3417,6 @@ for await (const line of lines) {
     process.stderr.write(`Invalid MCP message: ${error instanceof Error ? error.message : String(error)}\n`);
   }
 }
+isStdinClosed = true;
 for (const controller of pending.values()) controller.abort();
+await sessionWaiterRuntime.shutdown();
