@@ -13,10 +13,12 @@ import {
   artifactConversationIdSchema,
   sessionWebviewToExtensionMessageSchema,
   type SessionExtensionToWebviewMessage,
+  type WorkSessionWaiterItem,
 } from "../shared/contracts";
 import { buildSessionConnectPrompt } from "../shared/session-connect-prompt";
 import { listSessionTypes } from "../shared/session-type-registry";
 import { deleteSession } from "../shared/conversation-artifact-registry";
+import { cancelSessionWaiter } from "../shared/session-waiter-store";
 import { getSessionUiState, patchSessionUiState } from "./artifact-ui-state";
 import type { ArtifactReviewOpenCoordinator } from "./artifact-review-open";
 import type { ConversationArtifactService } from "./conversation-artifact-service";
@@ -27,6 +29,19 @@ import { ArtifactStore } from "./artifact-store";
 import { promptRenameArtifact, promptChangeArtifactType } from "./artifact-metadata-command";
 import { getWebviewHtml } from "./webview-html";
 import { resolveWorkSessionSupport } from "./work-session-support";
+
+function waiterDisplaySignature(waiters: readonly WorkSessionWaiterItem[]): string {
+  return JSON.stringify(
+    waiters.map((w) => [
+      w.waitId,
+      w.name,
+      w.waitingFor,
+      w.createdAt,
+      w.artifact?.artifactId ?? null,
+      w.artifact?.title ?? null,
+    ]),
+  );
+}
 
 export class WorkSessionDocument implements vscode.CustomDocument {
   constructor(
@@ -93,12 +108,72 @@ export class WorkSessionProvider implements vscode.CustomReadonlyEditorProvider<
     const post = (msg: SessionExtensionToWebviewMessage) => webviewPanel.webview.postMessage(msg);
 
     let lastPersistedInstructions: string | undefined;
+    let lastWaitersSignature: string | undefined;
+    let waiterExpiryTimer: ReturnType<typeof setTimeout> | undefined;
+    let panelDisposed = false;
+
+    const clearWaiterExpiryTimer = (): void => {
+      if (waiterExpiryTimer !== undefined) {
+        clearTimeout(waiterExpiryTimer);
+        waiterExpiryTimer = undefined;
+      }
+    };
+
+    const scheduleWaiterExpiryTimer = (waiters: readonly WorkSessionWaiterItem[]): void => {
+      clearWaiterExpiryTimer();
+      if (panelDisposed || waiters.length === 0) {
+        return;
+      }
+      let earliestExpiryMs = Number.POSITIVE_INFINITY;
+      for (const waiter of waiters) {
+        const parsedMs = Date.parse(waiter.expiresAt);
+        if (Number.isFinite(parsedMs) && parsedMs < earliestExpiryMs) {
+          earliestExpiryMs = parsedMs;
+        }
+      }
+      if (!Number.isFinite(earliestExpiryMs)) {
+        return;
+      }
+      const delayMs = Math.min(Math.max(earliestExpiryMs - Date.now() + 50, 50), 2_147_483_647);
+      waiterExpiryTimer = setTimeout(() => {
+        waiterExpiryTimer = undefined;
+        if (!panelDisposed) {
+          void syncWaiters();
+        }
+      }, delayMs);
+    };
+
+    const syncWaiters = async (): Promise<void> => {
+      try {
+        const waiters = await this.service.resolveSessionWaiters(document.sessionId);
+        if (panelDisposed) {
+          return;
+        }
+        scheduleWaiterExpiryTimer(waiters);
+        const nextSignature = waiterDisplaySignature(waiters);
+        if (nextSignature !== lastWaitersSignature) {
+          lastWaitersSignature = nextSignature;
+          void post({
+            type: "workSessionWaitersPatch",
+            waiters,
+          });
+        }
+      } catch {
+        // Keep existing state on transient read errors; explicit actions surface errors separately.
+      }
+    };
 
     const refreshFull = async (): Promise<void> => {
       try {
         const previousPersisted = lastPersistedInstructions;
         const viewData = await this.service.resolveSessionViewData(document.sessionId);
+        if (panelDisposed) {
+          return;
+        }
         lastPersistedInstructions = viewData.instructions;
+        const waiters = viewData.waiters ?? [];
+        lastWaitersSignature = waiterDisplaySignature(waiters);
+        scheduleWaiterExpiryTimer(waiters);
         const panelExpanded = getPanelExpanded();
         void post({
           type: "workSessionState",
@@ -253,6 +328,13 @@ export class WorkSessionProvider implements vscode.CustomReadonlyEditorProvider<
           } catch {
             await refreshFull();
           }
+        }
+
+        const hasWaiters = sessionChanges.some(
+          (c) => c.kind === "waiters" && c.sessionId === document.sessionId,
+        );
+        if (hasWaiters) {
+          await syncWaiters();
         }
       }),
       webviewPanel.webview.onDidReceiveMessage(async (raw) => {
@@ -559,11 +641,26 @@ export class WorkSessionProvider implements vscode.CustomReadonlyEditorProvider<
             const message = error instanceof Error ? error.message : String(error);
             void post({ type: "actionError", action: "exportSession", message });
           }
+        } else if (msg.type === "stopSessionWaiter") {
+          try {
+            if (!(await ensureSupport("stopSessionWaiter"))) return;
+            await cancelSessionWaiter(
+              { sessionId: document.sessionId, waitId: msg.waitId },
+              this.rootOptions,
+            );
+            await syncWaiters();
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            void post({ type: "actionError", action: "stopSessionWaiter", message });
+            await syncWaiters();
+          }
         }
       }),
     ];
 
     webviewPanel.onDidDispose(() => {
+      panelDisposed = true;
+      clearWaiterExpiryTimer();
       for (const d of disposables) d.dispose();
     });
   }

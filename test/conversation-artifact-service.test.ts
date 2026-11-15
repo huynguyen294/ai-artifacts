@@ -553,7 +553,12 @@ describe("ConversationArtifactService", () => {
     expect(classifyWatcherUri(`/root/${validSessionId}/layout.json.tmp.123`)).toBe("ignored");
     expect(classifyWatcherUri(`/root/${validSessionId}/.update.lock`)).toBe("ignored");
     expect(classifyWatcherUri(`/root/${validSessionId}/waiters`)).toBe("ignored");
-    expect(classifyWatcherUri(`/root/${validSessionId}/waiters/${validSessionId}.json`)).toBe("ignored");
+    expect(classifyWatcherUri(`/root/${validSessionId}/waiters/${validSessionId}.json`)).toEqual({
+      kind: "waiters",
+      sessionId: validSessionId,
+    });
+    expect(classifyWatcherUri(`/root/${validSessionId}/waiters/nested/${validSessionId}.json`)).toBe("ignored");
+    expect(classifyWatcherUri(`/root/${validSessionId}/waiters/notes.txt`)).toBe("ignored");
     expect(classifyWatcherUri(`/root/${validSessionId}/waiters/${validSessionId}.json.tmp-123`)).toBe("ignored");
     expect(classifyWatcherUri(`/root/${validSessionId}/waiters/.coordination.lock`)).toBe("ignored");
     expect(classifyWatcherUri(`/root/${validSessionId}/waiter-requests`)).toBe("ignored");

@@ -1294,7 +1294,144 @@ body:has(.session-app-container),
 }
 
 .session-zone-working .session-zone-header-row {
-  height: 28px;
+  min-height: 28px;
+  flex-wrap: wrap;
+}
+
+.session-zone-header-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.session-waiting-room-anchor {
+  position: relative;
+  display: inline-flex;
+  flex-shrink: 0;
+}
+
+.session-waiting-room-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 10px;
+  font-size: 0.75rem;
+  font-weight: 500;
+  border-radius: 4px;
+  border: 1px solid var(--vscode-button-secondaryBorder, var(--vscode-editorWidget-border, #454545));
+  background: var(--vscode-button-secondaryBackground, #3a3d41);
+  color: var(--vscode-button-secondaryForeground, #ffffff);
+  cursor: pointer;
+  line-height: 1.4;
+  white-space: nowrap;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+
+.session-waiting-room-btn:hover {
+  background: var(--vscode-button-secondaryHoverBackground, #45494e);
+}
+
+.session-waiting-room-btn.has-waiters {
+  border-color: var(--vscode-focusBorder, #007fd4);
+}
+
+.session-waiters-popover {
+  position: fixed;
+  top: 96px;
+  left: 16px;
+  z-index: 60;
+  width: min(360px, calc(100vw - 16px));
+  max-height: 260px;
+  overflow-y: auto;
+  background: var(--vscode-menu-background, #252526);
+  color: var(--vscode-menu-foreground, #cccccc);
+  border: 1px solid var(--vscode-menu-border, rgba(128, 128, 128, 0.35));
+  border-radius: 6px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.38);
+  padding: 10px 12px;
+  box-sizing: border-box;
+}
+
+.session-waiters-empty-title {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--vscode-editor-foreground, #ffffff);
+  margin-bottom: 6px;
+}
+
+.session-waiters-empty-desc {
+  margin: 0 0 6px 0;
+  font-size: 0.85rem;
+  line-height: 1.45;
+  color: var(--vscode-descriptionForeground, #aaaaaa);
+}
+
+.session-waiters-empty-steps {
+  margin: 0;
+  padding-left: 16px;
+  font-size: 0.85rem;
+  line-height: 1.45;
+  color: var(--vscode-menu-foreground, #cccccc);
+}
+
+.session-waiters-empty-steps li + li {
+  margin-top: 4px;
+}
+
+.session-waiters-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.session-waiter-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 0;
+}
+
+.session-waiter-item + .session-waiter-item {
+  border-top: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.2));
+  padding-top: 8px;
+}
+
+.session-waiter-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 260px;
+  font-size: 0.9rem;
+  line-height: 1.35;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.session-waiter-stop-btn {
+  flex-shrink: 0;
+  padding: 3px 10px;
+  font-size: 0.85rem;
+  font-weight: 500;
+  line-height: 1.4;
+  border-radius: 4px;
+  border: 1px solid var(--vscode-button-secondaryBorder, var(--vscode-editorWidget-border, #454545));
+  background: var(--vscode-button-secondaryBackground, #3a3d41);
+  color: var(--vscode-button-secondaryForeground, #ffffff);
+  cursor: pointer;
+}
+
+.session-waiter-stop-btn:hover:not(:disabled) {
+  background: var(--vscode-button-secondaryHoverBackground, #45494e);
+}
+
+.session-waiter-stop-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 .session-zone-helper {

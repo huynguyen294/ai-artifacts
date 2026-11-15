@@ -603,6 +603,26 @@ export const workSessionArtifactRowSchema = z
   .strict();
 export type WorkSessionArtifactRow = z.infer<typeof workSessionArtifactRowSchema>;
 
+export const workSessionWaiterArtifactSchema = z
+  .object({
+    artifactId: artifactIdSchema,
+    title: z.string().min(1),
+  })
+  .strict();
+export type WorkSessionWaiterArtifact = z.infer<typeof workSessionWaiterArtifactSchema>;
+
+export const workSessionWaiterItemSchema = z
+  .object({
+    waitId: z.string().uuid(),
+    name: z.string().trim().min(1),
+    waitingFor: z.string().trim().min(1),
+    createdAt: z.string().datetime(),
+    expiresAt: z.string().datetime(),
+    artifact: workSessionWaiterArtifactSchema.optional(),
+  })
+  .strict();
+export type WorkSessionWaiterItem = z.infer<typeof workSessionWaiterItemSchema>;
+
 export const workSessionViewDataSchema = z
   .object({
     sessionId: artifactConversationIdSchema,
@@ -615,6 +635,7 @@ export const workSessionViewDataSchema = z
     working: z.array(workSessionArtifactRowSchema),
     references: z.array(workSessionArtifactRowSchema),
     archived: z.array(workSessionArtifactRowSchema),
+    waiters: z.array(workSessionWaiterItemSchema).optional(),
     uiState: z
       .object({
         pinned: z.boolean(),
@@ -630,6 +651,7 @@ export type WorkSessionDataChange =
   | { kind: "instructions"; sessionId: string }
   | { kind: "membership"; sessionId: string; artifactId: string }
   | { kind: "layout"; sessionId: string }
+  | { kind: "waiters"; sessionId: string }
   | { kind: "artifact"; artifactId: string }
   | { kind: "artifactUiState"; artifactId: string }
   | { kind: "sessionUiState"; sessionId: string }
@@ -675,6 +697,7 @@ export const sessionWebviewToExtensionMessageSchema = z.discriminatedUnion("type
   z.object({ type: z.literal("archiveSession") }).strict(),
   z.object({ type: z.literal("deleteSession") }).strict(),
   z.object({ type: z.literal("exportSession") }).strict(),
+  z.object({ type: z.literal("stopSessionWaiter"), waitId: z.string().uuid() }).strict(),
 ]);
 export type SessionWebviewToExtensionMessage = z.infer<typeof sessionWebviewToExtensionMessageSchema>;
 
@@ -694,6 +717,10 @@ export type SessionExtensionToWebviewMessage =
       references: WorkSessionArtifactRow[];
       archived: WorkSessionArtifactRow[];
       updatedAt: string;
+    }
+  | {
+      type: "workSessionWaitersPatch";
+      waiters: WorkSessionWaiterItem[];
     }
   | {
       type: "workSessionInstructionsPatch";
