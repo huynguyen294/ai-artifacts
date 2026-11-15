@@ -146,7 +146,7 @@ After an install command succeeds for one or more clients, choose **Reload Windo
 <details>
 <summary>Runtime version and expected tools</summary>
 
-The current source bundles numeric MCP version 12 (`MCP_VERSION = 12`), review skill version 4, and work session skill version 1 (with `SKILL_VERSION = 4` bridge constant). The MCP catalog contains nine tools: `resolve_artifact_window`, `create_artifact`, `wait_for_artifact_review`, `inspect_artifact`, `update_artifact`, `write_artifact_feedback`, `join_session`, `wait_in_session`, and `request_waiter_in_session`. The standardized API replaces the old inspect/update names without aliases. Create/update default to `wait: true`; inspect defaults to `wait: false`, public wait remains available for wait-only/resume, and Session Waiters Phase 1 adds MCP waiter/request runtime coordination (`wait_in_session` and `request_waiter_in_session`; Session Manager UI integration for Phase 2 is not yet implemented). Clients need the matching runtime and skills installed together, followed by a client restart and fresh chat.
+The current source bundles numeric MCP version 12 (`MCP_VERSION = 12`), review skill version 4, and work session skill version 1 (with `SKILL_VERSION = 4` bridge constant). The MCP catalog contains nine tools: `resolve_artifact_window`, `create_artifact`, `wait_for_artifact_review`, `inspect_artifact`, `update_artifact`, `write_artifact_feedback`, `join_session`, `wait_in_session`, and `request_waiter_in_session`. The standardized API replaces the old inspect/update names without aliases. Create/update default to `wait: true`; inspect defaults to `wait: false`, public wait remains available for wait-only/resume, and Session Waiters add targeted agent handoffs through `wait_in_session` and `request_waiter_in_session`, with a Waiting room in the Session Manager to view and stop active waits. Clients need the matching runtime and skills installed together, followed by a client restart and fresh chat.
 
 Extension 2.0.0 bundles MCP version 12 for Work Sessions. The current runtime supports schema-v2 Sessions and explicit migration from legacy v1 conversations. Session instructions are read from `instructions.md`; existing v2 metadata may still contain an optional inline `instructions` string, which is accepted but not used as the instructions source. New metadata writes omit that field. Updating a test runtime bundle still requires reinstalling the changed runtime even when its numeric version remains 12.
 
@@ -335,7 +335,16 @@ A chat has at most one active Work Session, while a session can be used by multi
 
 Once connected, artifacts created or inspected in that chat are automatically added to the active session. You can request a standalone artifact for an individual task while keeping the session active for later requests. A chat without an active session can create and review standalone artifacts without starting a Work Session.
 
-For related work, the Session skill reads the latest shared instructions and relevant artifact Markdown. When it needs to find a new artifact or get a session overview, it refreshes the catalog with `join_session`. Reading a reference document through its catalog path leaves its review lifecycle unchanged. Agents can also wait on or target active Session waiters via `wait_in_session` and `request_waiter_in_session` (`work-session` Phase 1 runtime; the Extension Session Manager Waiters panel in Phase 2 is not yet implemented).
+For related work, the Session skill reads the latest shared instructions and relevant artifact Markdown. When it needs to find a new artifact or get a session overview, it refreshes the catalog with `join_session`. Reading a reference document through its catalog path leaves its review lifecycle unchanged. Agents can also wait on or target active Session waiters via `wait_in_session` and `request_waiter_in_session`.
+
+#### Waiting room
+
+Click **Waiting room (n)** beside **Add Artifact** in Working to see which agents are waiting and what they are waiting for. The button remains available at zero and shows getting-started guidance. Hover an entry for its full text and related artifact title, when provided.
+
+1. Ask a connected agent to wait in the session for a specific task or handoff.
+2. Ask another agent in the same session to send that waiting agent a message. Only the selected wait is awakened; sending a request does not confirm that the agent has received or acted on it.
+
+Use **Stop** beside an entry to end that wait. Stop does not resume automatically or undo work the agent has already started. Heartbeats update wait availability without resetting unsaved Instructions or refreshing unrelated Session sections.
 
 ### Organize Session Artifacts
 

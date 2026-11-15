@@ -14,6 +14,11 @@ Minor typos, formatting fixes, or cosmetic wording adjustments that do not chang
 
 Each entry includes the date, category, summary of changes, rationale, and affected components or files.
 
+## 2026-11-15 - Document Waiting Room UI and include it in 2.0.0 highlights
+
+- **Product docs (`README.md`, `docs/INSTRUCTION.md`, `docs/ARCHITECTURE.md`, `docs/COMPONENTS.md`, `docs/PHILOSOPHY.md`):** Replaced runtime-only/Phase-2-pending descriptions with the implemented Waiting room, per-wait Stop, scoped waiter patches, heartbeat filtering and expiry refreshes. The extension reads and cancels through the shared store; request sending stays with MCP.
+- **Release content (`CHANGELOG.md`, `src/shared/whats-new-releases.ts`, `src/content/whats-new/2.0.0.md`):** Added Waiting Room as a user-facing 2.0.0 feature in both the release card and article. MCP changes remain under Improvements. Package and integration counters are unchanged; 2.0.0 remains Unreleased pending end-to-end acceptance and release.
+
 ## 2026-11-15 - Implement Session Waiters Phase 1 runtime (`wait_in_session`, `request_waiter_in_session`)
 
 - **Shared contracts & store (`src/shared/session-waiter-contracts.ts`, `src/shared/session-waiter-store.ts`, `src/shared/artifact-files.ts`, `src/shared/conversation-artifact-registry.ts`, `package.json`):** Added schema-v1 waiter and request contracts, five isolated typed error classes (`SESSION_WAITER_BUSY`, `SESSION_WAITER_LOCK_LOST`, `SESSION_WAITER_IO_ERROR`, `SESSION_WAITER_NOT_WAITING`, `SESSION_WAITER_REQUEST_EXISTS`), deterministic unique name allocation, `resolveSafeWorkSessionDirectory` preflight, and shared `proper-lockfile` (`waiters/.coordination.lock`) serialization for register, `fs.utimes` `mtime` lease renewal, exclusive single-winner request delivery/rollback, `unlink(waiterPath)` claim commit, cancel, and expired cleanup.

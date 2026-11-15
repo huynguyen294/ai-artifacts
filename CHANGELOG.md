@@ -10,14 +10,20 @@ Version 1.2.0 was not released; its planned changes are included in 2.0.0.
 
 ### MCP Improvements (Breaking Changes)
 
-- Renamed `inspect_artifact_review` to `inspect_artifact` and `advance_and_wait_for_artifact` to `update_artifact`, without compatibility aliases. Added `write_artifact_feedback` for general AI-authored comments (with optional `revise` submission) and Session Waiters Phase 1 runtime tools (`wait_in_session`, `request_waiter_in_session`), bringing the catalog to nine tools alongside `wait_for_artifact_review` for wait-only and resume workflows.
-- Added Session Waiters Phase 1 runtime coordination beneath schema-v2 Work Sessions (`waiters/` with shared `proper-lockfile` `.coordination.lock` and immutable records renewed via `mtime` `utimes` heartbeats, `waiter-requests/` with single-winner delivery and claim commits, `wait_in_session` and `request_waiter_in_session` MCP tools, isolated `sessionWaiterToolError` recovery payloads, `classifyWatcherUri` ignores for waiter directories, and `work-session` skill guidance). Phase 2 Extension Session Manager Waiters UI is not yet implemented.
+- Renamed `inspect_artifact_review` to `inspect_artifact` and `advance_and_wait_for_artifact` to `update_artifact`, without compatibility aliases. Added `write_artifact_feedback` for general AI-authored comments (with optional `revise` submission) and Session Waiters runtime tools (`wait_in_session`, `request_waiter_in_session`), bringing the catalog to nine tools alongside `wait_for_artifact_review` for wait-only and resume workflows.
+- Added Session Waiters coordination beneath schema-v2 Work Sessions: immutable waiter records with heartbeat leases, one targeted request per wait, cross-process cancellation/cleanup, and Work Session skill guidance.
 - Added optional `wait` to create and inspect, sharing the existing wait mechanism. Create and update default to `wait: true`; inspect defaults to `wait: false`. A completed waiting call returns its review result directly, removing the extra create/inspect → wait call.
 - Replaced update's `noWait` option with positive `wait` and removed `artifactConversationId` from update inputs and results. Updates retain exact-handle, expected-round, one-time token and transactional commit checks. Non-waiting updates preserve existing waiters.
 - Inspect returns saved comments, submissions or an explicit chat-update token immediately even with `wait: true`; it does not advance the round. If create/inspect completes before waiting fails, recovery retains the completed operation's handle and avoids duplicate commits.
 - Updated Codex tool definitions and existing-configuration migration to use the new names. Reinstall the matching MCP runtime and skills through **AI Artifacts: Installer**, restart the affected AI client, and start a fresh chat.
 - Aligned artifact and Work Session skills with the new API while preserving feedback, question-only, approval/save, routing and token safeguards. Non-waiting updates require a specific user or workflow request; active Session membership alone does not choose the wait mode.
 - Kept common guidance in `SKILL.md`, with conditional references for AI feedback, error recovery and storage protocol details. Retention guidance remains in product documentation.
+
+### Waiting Room
+
+- Added **Waiting room (n)** beside **Add Artifact** in the Session Manager, with getting-started guidance when empty and active waits listed by registration order.
+- Each entry shows the agent name and waiting purpose, with the full text and optional related artifact title on hover. **Stop** ends the selected wait without automatically restarting it; agents send targeted requests through MCP.
+- Added scoped waiter patches, heartbeat filtering and lease-expiry refreshes so waiting-room updates preserve unsaved Instructions and unrelated Session sections.
 
 ### Artifact Search Ordering
 

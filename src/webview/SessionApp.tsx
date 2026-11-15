@@ -697,7 +697,6 @@ export function SessionApp({
                           : undefined
                       }
                       onClick={(e) => e.stopPropagation()}
-                      onKeyDown={(e) => e.stopPropagation()}
                     >
                       {waiters.length === 0 ? (
                         <div className="session-waiters-empty">

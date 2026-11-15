@@ -152,7 +152,7 @@ The skills must never directly create or edit artifact lifecycle files, includin
 - Group fresh window candidates and issue short-lived, single-use window selection tokens.
 - Generate the artifact ID and `reviewSessionId`.
 - Create a schema-v6 artifact beneath the global per-user collection at review round 1.
-- Manage schema-v2 Work Sessions beneath `~/.ai-artifacts/conversation-registry/<sessionId>/`: support standalone create/inspect (default when no session params are passed), accept optional `artifactConversationId` or `conversationName`, handle preflight migration checks for legacy v1 conversations (`CONVERSATION_MIGRATION_REQUIRED`), rollback session registration if connection commits fail, serve read-only session inspection via `join_session`, and run Session Waiters Phase 1 coordination via `wait_in_session` / `request_waiter_in_session` (shared `proper-lockfile` `.coordination.lock`, immutable waiter records with `fs.utimes` `mtime` heartbeats, single-winner request delivery/claim commits, and isolated `sessionWaiterToolError` codes; Phase 2 Extension Waiters UI is not yet implemented).
+- Manage schema-v2 Work Sessions beneath `~/.ai-artifacts/conversation-registry/<sessionId>/`: support standalone create/inspect (default when no session params are passed), accept optional `artifactConversationId` or `conversationName`, handle preflight migration checks for legacy v1 conversations (`CONVERSATION_MIGRATION_REQUIRED`), rollback session registration if connection commits fail, serve read-only session inspection via `join_session`, and run Session Waiters coordination via `wait_in_session` / `request_waiter_in_session` (shared `proper-lockfile` `.coordination.lock`, immutable waiter records with `fs.utimes` `mtime` heartbeats, single-winner request delivery/claim commits, and isolated `sessionWaiterToolError` codes). The Session Manager reads active waiters and stops individual waits through the shared store.
 - Select the focused live target window (or explicit selection token), atomically commit connection state, and return the persistent artifact handle plus connection metadata before attaching any waiter.
 - Attach one transient tool call to `review-submission.json`, or return an existing submission immediately.
 - Detect a submission through filesystem watching with periodic polling as a fallback.
@@ -275,7 +275,7 @@ Each artifact is a direct child of the global per-user collection:
 | `instructions.md`        | Extension; AI for explicit instruction-edit requests | Effective raw Markdown Instructions; no inline JSON fallback |
 | `layout.json`            | Shared registry via Extension organization/migration/cleanup | Ordered zone IDs, reconciled with membership |
 | `registered-artifacts/<id>.json` | MCP / Extension via shared registry | Membership and registeredAt; create/inspect registration refreshes Session activity |
-| `waiters/<waitId>.json`  | Shared store (`session-waiter-store.ts`) via MCP           | Immutable schema-v1 active Session waiter descriptor; lease expiration uses file `mtime` (`utimes`) |
+| `waiters/<waitId>.json`  | Shared store (`session-waiter-store.ts`) via MCP registration/heartbeat and extension Stop           | Immutable schema-v1 active Session waiter descriptor; lease expiration uses file `mtime` (`utimes`) |
 | `waiters/.coordination.lock` | Shared store (`proper-lockfile`)                       | Coordinate waiter register, lease renewal, request send/claim, cancel, and expired cleanup         |
 | `waiter-requests/<waitId>.json` | Shared store via MCP                                  | Exclusive schema-v1 targeted request payload consumed and removed on waiter claim                  |
 
@@ -669,9 +669,9 @@ Tests document the expected responsibility boundaries:
 | -------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
 | Global artifact loading, comments, submissions, schema-v3/v4 rejection, and permissions | `test/artifact-store.test.ts`, `test/global-artifact-path.test.ts`                              |
 | MCP creation, waiting, takeover, inspection, reconnect, token use, rollback, and safety | `test/review-wait-mcp.test.ts`                                                                 |
-| Session Waiters Phase 1 store, `proper-lockfile` races, and multi-process MCP runtime   | `test/session-waiter-store.test.ts`, `test/session-waiter-mcp.test.ts`                          |
+| Session Waiters store, `proper-lockfile` races, and multi-process MCP runtime   | `test/session-waiter-store.test.ts`, `test/session-waiter-mcp.test.ts`                          |
 | Session registry persistence, atomic writes, reconciliation, migration, and retention cleanup | `test/conversation-artifact-registry.test.ts` |
-| Conversation artifact service discovery, scoped change events (ignoring `waiters/` and `waiter-requests/`), and session mutations | `test/conversation-artifact-service.test.ts` |
+| Conversation artifact service discovery, scoped waiter changes (ignoring requests/temp/lock entries), and session mutations | `test/conversation-artifact-service.test.ts` |
 | Work Session Manager provider, webview state machine, sidebar filter/search, and Quick Input commands | `test/work-session-provider.test.ts`, `test/session-app.test.tsx`, `test/work-session-sidebar.test.ts`, `test/session-type-command.test.ts`, `test/session-filter-command.test.ts`, `test/session-search-command.test.ts`, `test/session-migration-command.test.ts` |
 | Provider message dispatch, submission guard, and Session navigation                    | `test/artifact-review-provider.test.ts`                                                         |
 | Workspace evidence, grouped windows, selection grants, and focus-as-hint behavior      | `test/workspace-registry.test.ts`                                                               |

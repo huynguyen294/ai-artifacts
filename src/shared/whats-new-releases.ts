@@ -23,6 +23,7 @@ export const whatsNewReleases: readonly WhatsNewRelease[] = [
       "Shared instructions and artifacts across multiple AI agents and chats.",
       "A dedicated sidebar with pinning, archiving, search, and session types.",
       "Agent-to-agent review: one agent waits while another submits feedback.",
+      "A Waiting room to see which agents are waiting, hand off work, or stop a wait.",
     ],
     bugFixes: [
       "Search Artifact now sorts results by last updated, newest first.",
