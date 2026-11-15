@@ -667,6 +667,7 @@ export type WorkSessionSummary = {
 
 export const sessionWebviewToExtensionMessageSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("ready") }),
+  z.object({ type: z.literal("setArtifactAutoOpen"), enabled: z.boolean() }).strict(),
   z.object({ type: z.literal("openArtifact"), artifactId: artifactIdSchema }).strict(),
   z.object({ type: z.literal("openExternal"), url: z.string().url() }).strict(),
   z.object({ type: z.literal("renameSession") }).strict(),
@@ -701,7 +702,13 @@ export const sessionWebviewToExtensionMessageSchema = z.discriminatedUnion("type
 ]);
 export type SessionWebviewToExtensionMessage = z.infer<typeof sessionWebviewToExtensionMessageSchema>;
 
+export type ArtifactAutoOpenState = {
+  enabled: boolean;
+  configuredEnabled: boolean;
+};
+
 export type SessionExtensionToWebviewMessage =
+  | { type: "artifactAutoOpenState"; state: ArtifactAutoOpenState }
   | {
       type: "workSessionState";
       state: { status: "ready"; data: WorkSessionViewData } | { status: "error"; message: string };

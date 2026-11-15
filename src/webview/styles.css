@@ -846,7 +846,7 @@ body:has(.session-app-container),
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 8px;
+  gap: 0;
   flex-shrink: 0;
   min-width: max-content;
   white-space: nowrap;
@@ -1093,6 +1093,7 @@ body:has(.session-app-container),
   align-items: center;
   justify-content: center;
   gap: 6px;
+  margin-right: 8px;
   min-width: 88px;
   padding: 3px 10px;
   font-size: 0.75rem;
@@ -1737,6 +1738,7 @@ body:has(.session-app-container),
 .session-header-dropdown {
   top: calc(100% + 4px);
   right: 0;
+  min-width: 230px;
 }
 
 .session-archived-badge {

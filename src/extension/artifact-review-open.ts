@@ -6,13 +6,44 @@ import {
   parseArtifactManifest,
   type SafeGlobalArtifactHandle,
 } from "../shared/artifact-validation";
-import type { ArtifactManifest } from "../shared/contracts";
+import type { ArtifactAutoOpenState, ArtifactManifest } from "../shared/contracts";
 import { ARTIFACT_CONNECTION_FILE, type GlobalArtifactsRootOptions } from "../shared/artifact-files";
 import { readArtifactConnectionRoute } from "../shared/artifact-connection";
 
 export type ArtifactFileUri = {
   readonly fsPath: string;
 };
+
+export class ArtifactAutoOpenController {
+  private paused = false;
+  private readonly listeners = new Set<(state: ArtifactAutoOpenState) => void>();
+
+  constructor(private readonly readConfiguredEnabled: () => boolean) {}
+
+  getState(): ArtifactAutoOpenState {
+    const configuredEnabled = this.readConfiguredEnabled();
+    return { configuredEnabled, enabled: configuredEnabled && !this.paused };
+  }
+
+  isEnabled(): boolean {
+    return this.getState().enabled;
+  }
+
+  setEnabled(enabled: boolean): void {
+    this.paused = !enabled;
+    this.refresh();
+  }
+
+  refresh(): void {
+    const state = this.getState();
+    for (const listener of this.listeners) listener(state);
+  }
+
+  onDidChange(listener: (state: ArtifactAutoOpenState) => void): { dispose: () => void } {
+    this.listeners.add(listener);
+    return { dispose: () => { this.listeners.delete(listener); } };
+  }
+}
 
 export type ValidatedArtifactReviewTarget = SafeGlobalArtifactHandle & {
   artifactPath: string;

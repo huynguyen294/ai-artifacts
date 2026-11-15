@@ -52,6 +52,7 @@ vi.mock("vscode", () => ({
 import * as vscode from "vscode";
 import { WorkSessionProvider, WorkSessionDocument } from "../src/extension/work-session-provider";
 import { ConversationArtifactService } from "../src/extension/conversation-artifact-service";
+import { ArtifactAutoOpenController } from "../src/extension/artifact-review-open";
 import {
   createSession,
   registerArtifactInSession,
@@ -69,8 +70,12 @@ describe("WorkSessionProvider", () => {
   let service: ConversationArtifactService<any>;
   let openCoordinator: any;
   let mockContext: any;
+  let autoOpenController: ArtifactAutoOpenController;
+  let configuredAutoOpen: boolean;
 
   beforeEach(async () => {
+    configuredAutoOpen = true;
+    autoOpenController = new ArtifactAutoOpenController(() => configuredAutoOpen);
     tempHome = await mkdtemp(path.join(tmpdir(), "ai-artifacts-prov-"));
     service = new ConversationArtifactService<any>({
       uriFromFilePath: (p) => ({ fsPath: p }),
@@ -103,6 +108,69 @@ describe("WorkSessionProvider", () => {
     await rm(tempHome, { recursive: true, force: true }).catch(() => {});
   });
 
+  it("shares temporary auto-open across panels and follows configuration changes without saving it", async () => {
+    const firstSession = await createSession({ title: "First", userHome: tempHome });
+    const secondSession = await createSession({ title: "Second", userHome: tempHome });
+    const provider = new WorkSessionProvider(mockContext, service, openCoordinator, autoOpenController, { userHome: tempHome });
+    const persist = vi.spyOn(mockContext.globalState, "update");
+
+    const attach = async (sessionId: string) => {
+      let receive!: (message: unknown) => Promise<void>;
+      let dispose!: () => void;
+      const post = vi.fn();
+      const panel = {
+        webview: {
+          options: {}, html: "", cspSource: "vscode-webview://test",
+          asWebviewUri: (uri: any) => uri.fsPath,
+          postMessage: post,
+          onDidReceiveMessage: (listener: typeof receive) => {
+            receive = listener;
+            return { dispose: () => {} };
+          },
+        },
+        onDidDispose: (listener: () => void) => { dispose = listener; return { dispose: () => {} }; },
+      };
+      const doc = new WorkSessionDocument({ fsPath: path.join(conversationDirectory(sessionId, { userHome: tempHome }), "conversation.json") } as any, sessionId);
+      await provider.resolveCustomEditor(doc, panel as any, {} as any);
+      await receive({ type: "ready" });
+      return { receive, dispose, post };
+    };
+
+    const first = await attach(firstSession.sessionId);
+    const second = await attach(secondSession.sessionId);
+    await first.receive({ type: "setArtifactAutoOpen", enabled: false });
+    for (const panel of [first, second]) {
+      expect(panel.post).toHaveBeenCalledWith({ type: "artifactAutoOpenState", state: { enabled: false, configuredEnabled: true } });
+    }
+    expect(autoOpenController.isEnabled()).toBe(false);
+
+    configuredAutoOpen = false;
+    autoOpenController.refresh();
+    expect(second.post).toHaveBeenLastCalledWith({ type: "artifactAutoOpenState", state: { enabled: false, configuredEnabled: false } });
+    configuredAutoOpen = true;
+    autoOpenController.refresh();
+    expect(autoOpenController.isEnabled()).toBe(false);
+
+    first.dispose();
+    second.dispose();
+    const reopened = await attach(firstSession.sessionId);
+    expect(reopened.post).toHaveBeenCalledWith({ type: "artifactAutoOpenState", state: { enabled: false, configuredEnabled: true } });
+    await reopened.receive({ type: "setArtifactAutoOpen", enabled: true });
+    expect(autoOpenController.isEnabled()).toBe(true);
+
+    configuredAutoOpen = false;
+    autoOpenController.refresh();
+    await reopened.receive({ type: "setArtifactAutoOpen", enabled: true });
+    expect(autoOpenController.isEnabled()).toBe(false);
+    expect(persist).not.toHaveBeenCalled();
+    reopened.dispose();
+
+    configuredAutoOpen = true;
+    const otherWindow = new ArtifactAutoOpenController(() => configuredAutoOpen);
+    autoOpenController.setEnabled(false);
+    expect(otherWindow.isEnabled()).toBe(true);
+  });
+
   it("openCustomDocument validates document path and returns WorkSessionDocument", async () => {
     const session = await createSession({
       title: "Doc Test Session",
@@ -113,6 +181,7 @@ describe("WorkSessionProvider", () => {
       mockContext,
       service,
       openCoordinator,
+      autoOpenController,
       { userHome: tempHome },
     );
 
@@ -173,6 +242,7 @@ describe("WorkSessionProvider", () => {
       mockContext,
       service,
       openCoordinator,
+      autoOpenController,
       { userHome: tempHome },
     );
 
@@ -286,6 +356,7 @@ describe("WorkSessionProvider", () => {
       mockContext,
       service,
       openCoordinator,
+      autoOpenController,
       { userHome: tempHome },
     );
 
@@ -372,6 +443,7 @@ describe("WorkSessionProvider", () => {
       mockContext,
       service,
       openCoordinator,
+      autoOpenController,
       { userHome: tempHome },
     );
 
@@ -420,6 +492,7 @@ describe("WorkSessionProvider", () => {
       mockContext,
       service,
       openCoordinator,
+      autoOpenController,
       { userHome: tempHome },
     );
 
@@ -503,6 +576,7 @@ describe("WorkSessionProvider", () => {
       mockContext,
       service,
       openCoordinator as any,
+      autoOpenController,
       { userHome: tempHome },
       openTextDocument,
     );
@@ -586,6 +660,7 @@ describe("WorkSessionProvider", () => {
       mockContext,
       service,
       openCoordinator,
+      autoOpenController,
       { userHome: tempHome },
     );
 
@@ -669,6 +744,7 @@ describe("WorkSessionProvider", () => {
       mockContext,
       service,
       openCoordinator,
+      autoOpenController,
       { userHome: tempHome },
     );
 

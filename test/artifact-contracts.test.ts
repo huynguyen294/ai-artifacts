@@ -597,6 +597,7 @@ describe("artifact conversation schema v1 contract", () => {
       { type: "reorderArtifact", artifactId: "artifact-001", direction: "up" },
       { type: "removeArtifact", artifactId: "artifact-001" },
       { type: "setSessionPanelExpanded", expanded: false },
+      { type: "setArtifactAutoOpen", enabled: false },
     ];
 
     for (const action of validActions) {
@@ -604,6 +605,7 @@ describe("artifact conversation schema v1 contract", () => {
     }
 
     // Rejects invalid actions or malformed payloads
+    expect(() => contracts.sessionWebviewToExtensionMessageSchema.parse({ type: "setArtifactAutoOpen", enabled: "false" })).toThrow();
     expect(() =>
       contracts.sessionWebviewToExtensionMessageSchema.parse({
         type: "moveArtifact",

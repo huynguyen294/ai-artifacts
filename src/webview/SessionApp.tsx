@@ -2,6 +2,7 @@ import { useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { formatArtifactKindLabel } from "../shared/artifact-kinds";
 import { normalizeArtifactTitleSearch } from "../shared/artifact-title-search";
 import type {
+  ArtifactAutoOpenState,
   SessionExtensionToWebviewMessage,
   WorkSessionArtifactRow,
   WorkSessionViewData,
@@ -22,6 +23,7 @@ export interface SessionAppProps {
 
 export interface SessionManagerState {
   state: SessionAppState;
+  artifactAutoOpen?: ArtifactAutoOpenState;
   panelExpanded: boolean;
   draftInstructions: string;
   hasInitializedDraft: boolean;
@@ -126,6 +128,10 @@ export function sessionManagerReducer(
     case "message": {
       const msg = action.message;
       if (!msg) return current;
+
+      if (msg.type === "artifactAutoOpenState") {
+        return { ...current, artifactAutoOpen: msg.state };
+      }
 
       if (msg.type === "workSessionState") {
         if (msg.state.status === "ready") {
@@ -388,6 +394,7 @@ export function SessionApp({
 
   const {
     state,
+    artifactAutoOpen,
     panelExpanded,
     draftInstructions,
     savingInstructions,
@@ -1039,18 +1046,37 @@ export function SessionApp({
                 <button
                   type="button"
                   className="session-icon-button session-more-btn"
-                  title="More options"
-                  aria-label="More options"
+                  title="Settings"
+                  aria-label="Settings"
                   aria-expanded={moreMenuOpen}
                   onClick={() => {
                     setWaitingRoomOpen(false);
                     setMoreMenuOpen(!moreMenuOpen);
                   }}
                 >
-                  ⋯
+                  <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round">
+                    <path d="m9.5 3-.6 2.1-1.8 1-2.1-.5-2.5 4.3 1.5 1.6v2l-1.5 1.6L5 19.4l2.1-.5 1.8 1 .6 2.1h5l.6-2.1 1.8-1 2.1.5 2.5-4.3-1.5-1.6v-2l1.5-1.6L19 5.6l-2.1.5-1.8-1-.6-2.1z" />
+                    <circle cx="12" cy="12.5" r="3" />
+                  </svg>
                 </button>
                 {moreMenuOpen && (
                   <div className="session-card-dropdown session-header-dropdown" onClick={(e) => e.stopPropagation()}>
+                    <button
+                      type="button"
+                      className="session-dropdown-item"
+                      disabled={!artifactAutoOpen?.configuredEnabled}
+                      title={artifactAutoOpen?.configuredEnabled === false
+                        ? "Auto-open is disabled in IDE settings"
+                        : artifactAutoOpen ? "Change auto-open temporarily for this window" : "Loading auto-open setting"}
+                      onClick={() => {
+                        if (!artifactAutoOpen) return;
+                        vscode.postMessage({ type: "setArtifactAutoOpen", enabled: !artifactAutoOpen.enabled });
+                        setMoreMenuOpen(false);
+                      }}
+                    >
+                      {artifactAutoOpen?.enabled ? "Turn off auto-open artifact" : "Turn on auto-open artifact"}
+                    </button>
+                    <div className="session-dropdown-divider" />
                     <button
                       type="button"
                       className="session-dropdown-item"

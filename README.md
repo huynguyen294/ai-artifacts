@@ -281,7 +281,7 @@ Asking for a plan or Markdown document without explicitly requesting an artifact
 
 The review editor opens automatically in the focused IDE window, or the only open window. If the target window is unclear, the agent asks you to choose one.
 
-If it doesn't open, run **AI Artifacts: Open Artifact Review**. You can control automatic opening with `agentPlus.autoOpenArtifactReview`.
+If it doesn't open, run **AI Artifacts: Open Artifact Review**. You can control automatic opening with `agentPlus.autoOpenArtifactReview`. To pause it temporarily, open **Settings** (gear icon) in the Session Manager and choose **Turn off auto-open artifact**; choose **Turn on auto-open artifact** to resume. This pause is shared by all Session Managers in the current IDE window and resets on window reload, without changing the saved setting. Turning on is unavailable while the IDE setting is disabled. Manual opening and artifact review waits still work.
 
 A file link in the agent's response is a regular file link, not a deep link, and may open `artifact.md` in the default Markdown text editor instead of the review editor. To reopen that artifact in the review editor, right-click `artifact.md` in Explorer, in the Markdown editor, or on its editor tab and choose **Open Artifact Review**. The command validates the artifact before opening it. The target may be unfocused; other windows ignore the event.
 
@@ -355,7 +355,7 @@ Use **Stop** beside an entry to end that wait. Stop does not resume automaticall
 5. Click **＋** beside **Working** to choose an existing artifact from a Quick Pick. The selected artifact is added to the end of Working; it can belong to more than one session.
 6. Use artifact menus to move items between **Working**, **References**, and **Archived**, reorder them with **Move Up** / **Move Down**, or **Remove from session** without deleting the artifact itself.
 7. Use the in-session filter bar to search artifacts by title or filter by artifact kind across all zones. Cards display title, kind badge, a 2-line description snippet, and updatedAt timestamp.
-8. Use the More (`⋯`) menu in the Session Manager header to **Export** the session to a `.zip` archive containing `Instructions.md` and organized folders (`Working/`, `References/`, `Archived/`) with numbered Markdown files, or to **Archive** or **Delete** the session.
+8. Use the **Settings** (gear) menu in the Session Manager header to toggle auto-open temporarily, **Export** the session to a `.zip` archive containing `Instructions.md` and organized folders (`Working/`, `References/`, `Archived/`) with numbered Markdown files, or **Archive** or **Delete** the session.
 
 Working occupies the main column with a responsive grid layout. References and Archived appear in the collapsible side panel (fixed 2 columns), whose visibility is remembered separately for each session. The in-session Archived zone is a layout zone within the session; it differs from global artifact archiving. Global session archives are automatically pruned according to the shared `agentPlus.artifactRetentionDays` setting (default 90 days), measured from `session-ui-state.json.archivedAt`.
 

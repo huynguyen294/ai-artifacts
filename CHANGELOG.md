@@ -55,6 +55,7 @@ Version 1.2.0 was not released; its planned changes are included in 2.0.0.
 
 ### Artifact and Session Management
 
+- Added a Settings menu in the Session Manager with **Turn off auto-open artifact** / **Turn on auto-open artifact**. The temporary pause is shared across managers in the current IDE window and resets on reload, without changing the saved IDE setting. Labels update live; enabling remains unavailable when the IDE setting is off. Existing Session actions remain in the menu.
 - Added context menus, Pin, Archive, and Delete actions for artifacts and Sessions. Archived items are hidden from normal sidebar lists, remain searchable, and open with a primary Restore action.
 - Added separate UI state files for Pin and Archive without changing the artifact schema. Deleting a Session preserves its artifacts; artifact deletion prunes related Session membership and layout entries.
 - Added activation-time cleanup of archived Sessions using the same `agentPlus.artifactRetentionDays` setting as artifacts (default 90 days), measured from the Session Archive timestamp. Session deletion preserves artifacts, and empty active v2 Sessions remain available.

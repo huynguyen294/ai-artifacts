@@ -159,14 +159,25 @@ describe("SessionApp Webview Component (Phase 3)", () => {
       expect(html).toContain("session-card-menu-btn");
     });
 
-    it("renders More options button in normal active header", () => {
+    it("updates auto-open state without replacing the instructions draft or Session data", () => {
+      const initial = createInitialSessionManagerState({ status: "ready", data: sampleViewData });
+      const edited = sessionManagerReducer(initial, { type: "setDraft", draft: "Unsaved instructions" });
+      const updated = sessionManagerReducer(edited, {
+        type: "message", message: { type: "artifactAutoOpenState", state: { enabled: false, configuredEnabled: true } },
+      });
+      expect(updated.artifactAutoOpen).toEqual({ enabled: false, configuredEnabled: true });
+      expect(updated.draftInstructions).toBe("Unsaved instructions");
+      expect(updated.state).toBe(edited.state);
+    });
+
+    it("renders Settings button in normal active header", () => {
       const html = renderToStaticMarkup(
         <SessionApp
           initialState={{ status: "ready", data: sampleViewData }}
           initialPanelExpanded={true}
         />,
       );
-      expect(html).toContain('title="More options"');
+      expect(html).toContain('title="Settings"');
       expect(html).toContain("session-more-btn");
     });
 
@@ -192,7 +203,7 @@ describe("SessionApp Webview Component (Phase 3)", () => {
 
       // Regular buttons must NOT be rendered in header
       expect(html).not.toContain('title="Rename session"');
-      expect(html).not.toContain('title="More options"');
+      expect(html).not.toContain('title="Settings"');
       expect(html).not.toContain("Connect");
       expect(html).not.toContain("session-panel-toggle-btn");
 

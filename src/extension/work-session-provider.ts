@@ -20,7 +20,7 @@ import { listSessionTypes } from "../shared/session-type-registry";
 import { deleteSession } from "../shared/conversation-artifact-registry";
 import { cancelSessionWaiter } from "../shared/session-waiter-store";
 import { getSessionUiState, patchSessionUiState } from "./artifact-ui-state";
-import type { ArtifactReviewOpenCoordinator } from "./artifact-review-open";
+import type { ArtifactAutoOpenController, ArtifactReviewOpenCoordinator } from "./artifact-review-open";
 import type { ConversationArtifactService } from "./conversation-artifact-service";
 import { runAddArtifactToSessionQuickPick } from "./session-artifact-add-command";
 import { runSelectSessionTypeQuickPick, type SessionTypeQuickPickItem } from "./session-type-command";
@@ -59,6 +59,7 @@ export class WorkSessionProvider implements vscode.CustomReadonlyEditorProvider<
     private readonly context: vscode.ExtensionContext,
     private readonly service: ConversationArtifactService<any>,
     private readonly openCoordinator: ArtifactReviewOpenCoordinator<vscode.Uri>,
+    private readonly autoOpenController: ArtifactAutoOpenController,
     private readonly rootOptions: GlobalArtifactsRootOptions = {},
     private readonly openTextDocument: (uri: vscode.Uri) => Thenable<unknown> = (uri) =>
       vscode.window.showTextDocument(uri, { preview: false }),
@@ -212,6 +213,9 @@ export class WorkSessionProvider implements vscode.CustomReadonlyEditorProvider<
     };
 
     const disposables: vscode.Disposable[] = [
+      this.autoOpenController.onDidChange((state) => {
+        void post({ type: "artifactAutoOpenState", state });
+      }),
       this.service.onDidChange(async (changes) => {
         if (!changes || changes.length === 0) {
           await refreshFull();
@@ -343,7 +347,10 @@ export class WorkSessionProvider implements vscode.CustomReadonlyEditorProvider<
         const msg = parsed.data;
 
         if (msg.type === "ready") {
+          void post({ type: "artifactAutoOpenState", state: this.autoOpenController.getState() });
           await refreshFull();
+        } else if (msg.type === "setArtifactAutoOpen") {
+          this.autoOpenController.setEnabled(msg.enabled);
         } else if (msg.type === "openArtifact") {
           try {
             const session = await this.service.getWorkSession(document.sessionId);
