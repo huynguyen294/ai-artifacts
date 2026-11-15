@@ -666,7 +666,7 @@ function parseCreateArguments(args: JsonObject | undefined): CreateArtifactInput
     throw new Error(`INVALID_ARTIFACT_INPUT: markdown exceeds ${MAX_MARKDOWN_BYTES} bytes.`);
   }
 
-  const wait = parseOptionalWaitArgument(args, true);
+  const wait = parseOptionalWaitArgument(args, false);
 
   let connection: ExplicitWindowConnectionInput | undefined;
   if (connectionRaw !== undefined) {
@@ -2941,12 +2941,12 @@ async function handleRequest(message: JsonObject): Promise<void> {
         "When multiple windows exist and none or multiple are focused, create_artifact returns WINDOW_SELECTION_REQUIRED with candidates and single-use selection tokens.",
         "To query windows or inspect active candidates, call resolve_artifact_window.",
         "Pass connection: { targetMode: 'explicit-window', selectionToken } when targeting a specific candidate, or connection: { targetMode: 'artifact-window', windowInstanceId } to inspect_artifact (intent=reconnect) as an advisory affinity hint.",
-        "By default (wait=true), create_artifact returns the exact artifactDirectory, reviewRound, committed connection metadata, nullable Work Session context, and waits for the review result. Pass wait=false only when the handle is needed immediately without waiting. A non-null Work Session context is returned only when a Session is selected or explicitly created.",
+        "By default (wait=false), create_artifact returns the exact artifactDirectory, reviewRound, committed connection metadata, and nullable Work Session context immediately. Retain the handle and send its link before calling wait_for_artifact_review for a create/review workflow. Pass wait=true only when explicitly requesting a combined create-and-wait call. A non-null Work Session context is returned only when a Session is selected or explicitly created.",
         "Create and inspect without artifactConversationId or conversationName are standalone and return session: null without creating or registering a Work Session. While a chat has an active Session, pass its ID unless the user explicitly requests standalone; a name without an ID explicitly creates a new Session.",
         "Use the work-session skill to join or refresh an exact Session with join_session and sessionId; supply artifactId only when the request also calls for artifact inspection and registration in that Session.",
         "A cancelled waiter never ends or deletes the artifact. expectedReviewRound is checked when attaching; an attached waiter can receive a later round after non-waiting (wait=false) updates, with the result and token bound to that submitted round.",
         "wait_for_artifact_review, waiting create_artifact (wait=true), waiting inspect_artifact (wait=true), and waiting update_artifact (wait=true) all return the complete validated comments document for every submitted decision; read feedback from comments.comments. A revise result also returns nextAction.type=process-review-feedback and a one-time roundToken so feedback can be processed without an additional inspection just to fetch comments.",
-        "For explicit direct updates to existing artifacts in the active Work Session, follow the work-session skill's wait-mode selection. update_artifact defaults to wait=true; pass wait=false only when explicitly requested or directed by workflow instructions: it commits the new round and returns waited=false without attaching a waiter, preserving any existing waiter, and does not accept artifactConversationId. Do not take over an existing waiter just to perform a non-waiting update. Record the returned round and continue authorized work; absent decision/comments are expected for this commit result, so do not fetch feedback or start a wait merely because they are absent. Creation, standalone requests, and review-feedback processing keep their existing wait behavior.",
+        "For explicit direct updates to existing artifacts in the active Work Session, follow the work-session skill's wait-mode selection. update_artifact defaults to wait=true; pass wait=false only when explicitly requested or directed by workflow instructions: it commits the new round and returns waited=false without attaching a waiter, preserving any existing waiter, and does not accept artifactConversationId. Do not take over an existing waiter just to perform a non-waiting update. Record the returned round and continue authorized work; absent decision/comments are expected for this commit result, so do not fetch feedback or start a wait merely because they are absent. Review-feedback processing keeps its waiting flow; create returns its handle before a separate review wait by default.",
         "Treat comments returned by a Review submission and comments read through inspect_artifact with the same policy: answer questions visibly in chat before calling update_artifact, update Markdown only for requested changes, omit markdown for question-only feedback, and ask for clarification without consuming the token when needed.",
         "Do not add Review responses to the artifact.",
         "When explicitly asked to author AI feedback on an artifact, call write_artifact_feedback on the exact artifactDirectory with general-comment bodies (omit submit or pass false to save comments only, or pass submit=true to create a revise submission without taking over waiters, consuming round tokens, or advancing rounds).",
@@ -2997,7 +2997,7 @@ async function handleRequest(message: JsonObject): Promise<void> {
           name: CREATE_TOOL_NAME,
           title: "Create artifact",
           description:
-            "Create a secure schema-v6 Markdown artifact in global AI Artifacts storage, optionally register it in an explicitly selected or newly requested Work Session, atomically commit its schema-v1 window-routing connection (routing to the focused VS Code window by default, or an explicit candidate via selectionToken), and by default (wait=true) wait for the review result while preserving handle, nullable session context, and connection metadata. Pass wait=false to return the handle immediately without waiting.",
+            "Create a secure schema-v6 Markdown artifact in global AI Artifacts storage, optionally register it in an explicitly selected or newly requested Work Session, atomically commit its schema-v1 window-routing connection (routing to the focused VS Code window by default, or an explicit candidate via selectionToken), and by default (wait=false) return its handle, nullable session context, and connection metadata immediately. Retain the handle before calling wait_for_artifact_review. Pass wait=true to explicitly wait internally for a review result.",
           inputSchema: {
             type: "object",
             properties: {
@@ -3006,9 +3006,9 @@ async function handleRequest(message: JsonObject): Promise<void> {
               markdown: { type: "string", minLength: 1, maxLength: MAX_MARKDOWN_BYTES },
               wait: {
                 type: "boolean",
-                default: true,
+                default: false,
                 description:
-                  "Optional. Wait for the next review submission after creating the artifact. Defaults to true; pass false to return the created handle immediately without waiting.",
+                  "Optional. Defaults to false, returning the created handle immediately before a separate review wait. Pass true to explicitly wait for the next review submission in the same call.",
               },
               artifactConversationId: {
                 type: "string",
@@ -3227,7 +3227,7 @@ async function handleRequest(message: JsonObject): Promise<void> {
           name: UPDATE_TOOL_NAME,
           title: "Update artifact",
           description:
-            "Consume a validated one-time round token, optionally replace the complete Markdown, and advance and reset the artifact round transactionally. By default (wait=true), wait for the next review and return its complete validated comments, decision, and applicable next action/token. With wait=false, return a commit result immediately with the new round/hash, artifact handle/link, and waited=false, without decision, comments, nextAction, or a new token. An existing waiter is preserved only when wait=false; a waiting update is rejected while another waiter exists in this process. Omitting markdown preserves the artifact bytes and SHA. Use wait=false only when explicitly requested or directed by workflow instructions; creation, standalone requests, and review-feedback processing retain their existing wait behavior.",
+            "Consume a validated one-time round token, optionally replace the complete Markdown, and advance and reset the artifact round transactionally. By default (wait=true), wait for the next review and return its complete validated comments, decision, and applicable next action/token. With wait=false, return a commit result immediately with the new round/hash, artifact handle/link, and waited=false, without decision, comments, nextAction, or a new token. An existing waiter is preserved only when wait=false; a waiting update is rejected while another waiter exists in this process. Omitting markdown preserves the artifact bytes and SHA. Use wait=false only when explicitly requested or directed by workflow instructions; review-feedback processing retains its existing waiting flow.",
           inputSchema: {
             type: "object",
             properties: {

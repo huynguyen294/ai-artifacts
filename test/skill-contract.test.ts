@@ -185,7 +185,12 @@ describe("create-review-artifact skill contract", () => {
     expect(results).toContain("neither the wait argument nor a round token alone identifies a fresh decision");
     expect(results).toContain("`join_session.inspection` always remains an inspection snapshot");
     expect(results).toContain("Never create a duplicate just because waiting failed");
-    expect(skill).toContain("do not split create and wait just to display the link");
+    expect(skill).toContain("Send the returned `artifactLink` before starting the wait");
+    expect(skill).toContain("call `wait_for_artifact_review` with the exact retained `artifactDirectory`");
+    const createContract = skill.split("\n").find((line) => /^\|\s*`create_artifact`\s*\|/.test(line));
+    expect(createContract).toContain("`wait` defaults to `false`");
+    expect(skill).not.toContain("If cancellation leaves no `artifactDirectory`");
+    expect(skill).not.toContain("library icon");
   });
 
   it("defines schema-v6 global storage without workspace ownership metadata", async () => {

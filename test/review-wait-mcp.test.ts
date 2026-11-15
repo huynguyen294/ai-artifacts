@@ -235,7 +235,7 @@ async function createArtifact(
     title: options.title ?? "MCP bridge",
     kind: options.kind ?? "implementation-plan",
     markdown: options.markdown ?? initialMarkdown,
-    wait: options.wait ?? false,
+    ...(options.wait !== undefined ? { wait: options.wait } : {}),
     ...(options.artifactConversationId ? { artifactConversationId: options.artifactConversationId } : {}),
     ...(options.conversationName ? { conversationName: options.conversationName } : {}),
   };
@@ -490,7 +490,7 @@ describe("artifact review MCP server v8", () => {
     expect(createTool.inputSchema.additionalProperties).toBe(false);
     expect(createTool.inputSchema.properties).not.toHaveProperty("workspaceRoot");
     expect(createTool.inputSchema.properties).not.toHaveProperty("workspaceEvidence");
-    expect(createTool.inputSchema.properties.wait).toMatchObject({ type: "boolean", default: true });
+    expect(createTool.inputSchema.properties.wait).toMatchObject({ type: "boolean", default: false });
     expect(createTool.inputSchema.properties).not.toHaveProperty("noWait");
     expect(createTool.inputSchema.required).toEqual(expect.arrayContaining(["title", "kind", "markdown"]));
     const createWindowTokenDescription =
@@ -972,7 +972,7 @@ describe("artifact review MCP server v8", () => {
     },
   );
 
-  it("cancels only the waiter and can attach again to the same artifact round", async () => {
+  it("keeps the default create handle when a separate waiter is cancelled and resumed", async () => {
     const fixture = await workspaceFixture();
     const client = startClient(fixture.registry);
     await initialize(client);
@@ -4099,15 +4099,45 @@ describe("artifact review MCP server v8", () => {
   });
 
   describe("Phase 2.1 wait integration on create_artifact and inspect_artifact", () => {
-    it("create_artifact defaults to wait=true and returns merged handle, session, connection, and review result", async () => {
+    it("create_artifact returns its handle, session, and connection before review by default", async () => {
+      const fixture = await workspaceFixture();
+      const client = startClient(fixture.registry);
+      await initialize(client);
+
+      const result = await callTool(client, "create_artifact", {
+        title: "Create Before Review",
+        kind: "plan",
+        markdown: "# Plan\n\nReturn the handle first.\n",
+        conversationName: "Create Before Wait",
+      });
+
+      expect(result.isError).not.toBe(true);
+      const created = result.structuredContent;
+      expect(created).toMatchObject({
+        artifactDirectory: expect.any(String),
+        artifactId: expect.any(String),
+        reviewRound: 1,
+        artifactLink: expect.any(String),
+        connection: { connectionRevision: 1, source: "create" },
+        session: { title: "Create Before Wait" },
+      });
+      for (const field of ["decision", "comments", "roundToken", "nextAction"]) {
+        expect(created).not.toHaveProperty(field);
+      }
+      await expect(access(path.join(created.artifactDirectory, "review-submission.json"))).rejects.toThrow();
+      expect(JSON.parse(result.content[0].text)).toEqual(created);
+    });
+
+    it("create_artifact with explicit wait=true returns merged handle, session, connection, and review result", async () => {
       const fixture = await workspaceFixture();
       const client = startClient(fixture.registry);
       await initialize(client);
 
       const creating = callToolTracked(client, "create_artifact", {
-        title: "Create And Wait Default",
+        title: "Create And Wait Explicitly",
         kind: "plan",
-        markdown: "# Plan\n\nWait by default.\n",
+        markdown: "# Plan\n\nWait by explicit request.\n",
+        wait: true,
         conversationName: "Create Wait Thread",
       });
       await creating.sent;
@@ -4156,6 +4186,7 @@ describe("artifact review MCP server v8", () => {
         title: "Cancel After Create",
         kind: "spec",
         markdown: "# Spec\n\nCancel during initial wait.\n",
+        wait: true,
         conversationName: "Post Create Cancel Session",
       });
       await creating.sent;
@@ -4194,6 +4225,7 @@ describe("artifact review MCP server v8", () => {
         title: "Delete During Wait",
         kind: "spec",
         markdown: "# Deleted Spec\n",
+        wait: true,
       });
       await creatingDeleted.sent;
 

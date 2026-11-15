@@ -16,7 +16,7 @@ To preserve archived content beyond its retention window, restore the artifact o
 
 ## Two ways to interact with the same artifact
 
-The default flow provides an in-editor review experience through `create_artifact(wait: true)`, followed by `update_artifact(wait: true)` for ordinary revisions. The tools wait internally; public wait remains for wait-only/resume, while inspection defaults to returning immediately:
+The default flow creates with `create_artifact(wait: false)`, retains and shares the handle/link, then calls `wait_for_artifact_review`. Cancelling that wait leaves the artifact and its already returned handle intact. Ordinary revisions use `update_artifact(wait: true)`; inspection defaults to returning immediately and can optionally wait internally:
 
 ```mermaid
 flowchart LR
