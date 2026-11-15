@@ -627,6 +627,7 @@ describe("Workspace Integration Asset Verifiers", () => {
       "inspect_artifact",
       "update_artifact",
       "join_session",
+      "write_artifact_feedback",
     ];
     expect(configuredTools).toEqual(expectedTools);
 
@@ -673,6 +674,7 @@ describe("Workspace Integration Asset Verifiers", () => {
       "inspect_artifact",
       "join_session",
       "update_artifact",
+      "write_artifact_feedback",
     ]);
 
     const installedSkill = await fs.readFile(path.join(installedPaths.targetSkill, "SKILL.md"), "utf8");

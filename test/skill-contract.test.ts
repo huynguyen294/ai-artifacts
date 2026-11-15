@@ -56,8 +56,9 @@ describe("create-review-artifact skill contract", () => {
     expect(feedback).toContain("## 1. Comment");
     expect(feedback).toContain("## 2. Comment and submit Review");
     expect(feedback).toContain("inspect_artifact` without takeover");
+    expect(feedback).toContain("`write_artifact_feedback`");
+    expect(feedback).toContain("general feedback items only (`{ body }` without block anchors or offsets)");
     expect(feedback).toContain("only this request's AI-generated batch");
-    expect(feedback).toContain("commentsSha256");
     expect(feedback).toContain('`decision: "revise"`');
     expect(contract).toContain("[AI-authored feedback](ai-feedback.md)");
   });
@@ -121,6 +122,7 @@ describe("create-review-artifact skill contract", () => {
       "`wait_for_artifact_review`",
       "`inspect_artifact`",
       "`update_artifact`",
+      "`write_artifact_feedback`",
     ]) expect(skill).toContain(tool);
     expect(skill).not.toContain("`resolve_artifact_workspace`");
     expect(skill).toContain("artifact lifetime > waiter lifetime > chat-turn lifetime");

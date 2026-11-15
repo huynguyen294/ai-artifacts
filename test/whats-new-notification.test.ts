@@ -62,7 +62,7 @@ describe("whats-new notification controller", () => {
     expect(clickDeps.recordVersion).toHaveBeenCalledWith("1.2.0", true);
     expect(clickDeps.showInformationMessage).toHaveBeenCalledTimes(1);
     expect(clickDeps.showInformationMessage).toHaveBeenCalledWith(
-      "AI Artifacts 1.2.0: Work Sessions are here — with multi-agent support",
+      "AI Artifacts 1.2.0 is out — Work Sessions are here — with multi-agent support",
       VIEW_WHATS_NEW_ACTION,
     );
     expect(clickDeps.openVersion).toHaveBeenCalledTimes(1);
@@ -94,7 +94,7 @@ describe("whats-new notification controller", () => {
     await runWhatsNewNotification(deps);
 
     expect(deps.showInformationMessage).toHaveBeenCalledWith(
-      `AI Artifacts ${release.version}: Work Sessions for multi-agent work`,
+      `AI Artifacts ${release.version} is out — Work Sessions for multi-agent work`,
       VIEW_WHATS_NEW_ACTION,
     );
   });

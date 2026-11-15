@@ -10,7 +10,7 @@ Version 1.2.0 was not released; its planned changes are included in 2.0.0.
 
 ### MCP Improvements (Breaking Changes)
 
-- Renamed `inspect_artifact_review` to `inspect_artifact` and `advance_and_wait_for_artifact` to `update_artifact`, without compatibility aliases. The catalog retains six tools, including `wait_for_artifact_review` for wait-only and resume workflows.
+- Renamed `inspect_artifact_review` to `inspect_artifact` and `advance_and_wait_for_artifact` to `update_artifact`, without compatibility aliases. Added `write_artifact_feedback` for general AI-authored comments (with optional `revise` submission), bringing the catalog to seven tools alongside `wait_for_artifact_review` for wait-only and resume workflows.
 - Added optional `wait` to create and inspect, sharing the existing wait mechanism. Create and update default to `wait: true`; inspect defaults to `wait: false`. A completed waiting call returns its review result directly, removing the extra create/inspect → wait call.
 - Replaced update's `noWait` option with positive `wait` and removed `artifactConversationId` from update inputs and results. Updates retain exact-handle, expected-round, one-time token and transactional commit checks. Non-waiting updates preserve existing waiters.
 - Inspect returns saved comments, submissions or an explicit chat-update token immediately even with `wait: true`; it does not advance the round. If create/inspect completes before waiting fails, recovery retains the completed operation's handle and avoids duplicate commits.

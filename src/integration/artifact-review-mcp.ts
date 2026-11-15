@@ -15,6 +15,9 @@ import {
   parseBoundReviewSubmission,
 } from "../shared/artifact-validation";
 import {
+  ARTIFACT_ROOT_BLOCK_ID,
+  ARTIFACT_ROOT_BLOCK_TYPE,
+  ARTIFACT_ROOT_TEXT,
   ARTIFACT_SCHEMA_VERSION,
   MCP_VERSION,
   ArtifactConnectionInvalidError,
@@ -34,6 +37,8 @@ import {
   conversationNameSchema,
   explicitWindowConnectionInputSchema,
   reconnectConnectionInputSchema,
+  reviewCommentSchema,
+  reviewSubmissionSchema,
   ARTIFACT_CONVERSATION_SCHEMA_VERSION,
   ConversationMigrationRequiredError,
   type ArtifactConnection,
@@ -99,6 +104,7 @@ const WAIT_TOOL_NAME = "wait_for_artifact_review";
 const INSPECT_TOOL_NAME = "inspect_artifact";
 const JOIN_SESSION_TOOL_NAME = "join_session";
 const UPDATE_TOOL_NAME = "update_artifact";
+const WRITE_FEEDBACK_TOOL_NAME = "write_artifact_feedback";
 const ROUND_TOKEN_TTL_MS = 60 * 60 * 1000;
 const MAX_MARKDOWN_BYTES = 2 * 1024 * 1024;
 const LIFECYCLE_JSON_READ_ATTEMPTS = 21;
@@ -455,6 +461,43 @@ async function copyManagedFile(
   const safeTarget = await ensureSafeManagedArtifactFile(artifactDirectory, target, { allowMissing: true });
   await fs.copyFile(safeSource, safeTarget, exclusive ? constants.COPYFILE_EXCL : 0);
   await ensureSafeManagedArtifactFile(artifactDirectory, safeTarget);
+}
+
+async function linkManagedFileToMissingTarget(
+  artifactDirectory: string,
+  source: string,
+  target: string,
+): Promise<void> {
+  const safeSource = await ensureSafeManagedArtifactFile(artifactDirectory, source);
+  const safeTarget = await ensureSafeManagedArtifactFile(artifactDirectory, target, { allowMissing: true });
+  await fs.link(safeSource, safeTarget);
+  await ensureSafeManagedArtifactFile(artifactDirectory, safeTarget);
+}
+
+async function replaceManagedFile(
+  artifactDirectory: string,
+  source: string,
+  target: string,
+): Promise<void> {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const safeSource = await ensureSafeManagedArtifactFile(artifactDirectory, source);
+    const safeTarget = await ensureSafeManagedArtifactFile(artifactDirectory, target, { allowMissing: true });
+    try {
+      await fs.rename(safeSource, safeTarget);
+      await ensureSafeManagedArtifactFile(artifactDirectory, safeTarget);
+      return;
+    } catch (error) {
+      if (attempt < 2 && isWindowsReplaceBlock(error)) {
+        await new Promise((resolve) => setTimeout(resolve, 25 * (attempt + 1)));
+        continue;
+      }
+      if (isWindowsReplaceBlock(error) || errorCode(error) === "EXDEV") {
+        await copyManagedFile(artifactDirectory, safeSource, safeTarget);
+        return;
+      }
+      throw error;
+    }
+  }
 }
 
 async function renameManagedFileToMissingTarget(
@@ -2459,6 +2502,201 @@ async function handleUpdateTool(id: unknown, args: JsonObject | undefined): Prom
   }
 }
 
+const WRITE_FEEDBACK_ALLOWED_KEYS: ReadonlySet<string> = new Set([
+  "artifactDirectory",
+  "comments",
+  "submit",
+]);
+
+type WriteArtifactFeedbackInput = {
+  artifactDirectory: string;
+  comments: string[];
+  submit: boolean;
+};
+
+type WriteArtifactFeedbackResult = {
+  artifactDirectory: string;
+  artifactId: string;
+  reviewRound: number;
+  commentCount: number;
+  submitted: boolean;
+};
+
+function parseFeedbackArguments(args: JsonObject | undefined): WriteArtifactFeedbackInput {
+  if (!args || typeof args !== "object" || Array.isArray(args)) {
+    throw new Error(`INVALID_ARTIFACT_INPUT: ${WRITE_FEEDBACK_TOOL_NAME} requires an arguments object.`);
+  }
+  assertAllowedToolKeys(WRITE_FEEDBACK_TOOL_NAME, args, WRITE_FEEDBACK_ALLOWED_KEYS);
+
+  const artifactDirectory = args.artifactDirectory;
+  if (typeof artifactDirectory !== "string" || !path.isAbsolute(artifactDirectory)) {
+    throw new Error("artifactDirectory must be an absolute path.");
+  }
+
+  const rawComments = args.comments;
+  if (!Array.isArray(rawComments) || rawComments.length === 0) {
+    throw new Error(`INVALID_ARTIFACT_INPUT: ${WRITE_FEEDBACK_TOOL_NAME} requires comments to be a non-empty array.`);
+  }
+
+  const comments: string[] = [];
+  for (let index = 0; index < rawComments.length; index++) {
+    const rawItem = rawComments[index];
+    if (!rawItem || typeof rawItem !== "object" || Array.isArray(rawItem)) {
+      throw new Error(`INVALID_ARTIFACT_INPUT: comments[${index}] must be an object containing only body.`);
+    }
+    for (const key of Object.keys(rawItem)) {
+      if (key !== "body") {
+        throw new Error(
+          `INVALID_ARTIFACT_INPUT: ${WRITE_FEEDBACK_TOOL_NAME} comments[${index}] received unrecognized key(s): ${key}. Only body is allowed.`,
+        );
+      }
+    }
+    const rawBody = (rawItem as JsonObject).body;
+    if (typeof rawBody !== "string") {
+      throw new Error(`INVALID_ARTIFACT_INPUT: comments[${index}].body must be a non-empty string.`);
+    }
+    const body = rawBody.trim();
+    if (!body) {
+      throw new Error(`INVALID_ARTIFACT_INPUT: comments[${index}].body must be a non-empty string.`);
+    }
+    comments.push(body);
+  }
+
+  const rawSubmit = args.submit;
+  if (rawSubmit !== undefined && typeof rawSubmit !== "boolean") {
+    throw new Error("INVALID_ARTIFACT_INPUT: submit must be a boolean when provided.");
+  }
+
+  return {
+    artifactDirectory,
+    comments,
+    submit: rawSubmit ?? false,
+  };
+}
+
+async function writeCommentsAtomically(
+  artifactDirectory: string,
+  commentsPath: string,
+  serializedComments: string,
+): Promise<void> {
+  const temporaryPath = `${commentsPath}.tmp-${generatedTransactionId()}`;
+  let temporaryCreated = false;
+  try {
+    await writeNewManagedFile(artifactDirectory, temporaryPath, serializedComments);
+    temporaryCreated = true;
+    await replaceManagedFile(artifactDirectory, temporaryPath, commentsPath);
+  } finally {
+    if (temporaryCreated) await removeManagedFileIfExists(artifactDirectory, temporaryPath).catch(() => {});
+  }
+}
+
+async function publishSubmissionCreateOnce(
+  artifactDirectory: string,
+  submissionPath: string,
+  serializedSubmission: string,
+): Promise<void> {
+  const temporaryPath = `${submissionPath}.tmp-${generatedTransactionId()}`;
+  let temporaryCreated = false;
+  try {
+    await writeNewManagedFile(artifactDirectory, temporaryPath, serializedSubmission);
+    temporaryCreated = true;
+    try {
+      await linkManagedFileToMissingTarget(artifactDirectory, temporaryPath, submissionPath);
+    } catch (error) {
+      if (errorCode(error) === "EEXIST") throw new Error("This artifact review round was already submitted.");
+      if (!isWindowsReplaceBlock(error) && errorCode(error) !== "ENOSYS") throw error;
+      try {
+        await copyManagedFile(artifactDirectory, temporaryPath, submissionPath, true);
+      } catch (copyError) {
+        if (errorCode(copyError) === "EEXIST") {
+          throw new Error("This artifact review round was already submitted.");
+        }
+        throw copyError;
+      }
+    }
+  } finally {
+    if (temporaryCreated) await removeManagedFileIfExists(artifactDirectory, temporaryPath).catch(() => {});
+  }
+}
+
+async function handleWriteFeedbackTool(id: unknown, args: JsonObject | undefined): Promise<void> {
+  try {
+    const input = parseFeedbackArguments(args);
+    const context = await loadArtifactContext(input.artifactDirectory);
+    if (await managedFileExists(context.artifactDirectory, context.submissionPath)) {
+      throw new Error("REVIEW_ALREADY_SUBMITTED: This artifact review round was already submitted.");
+    }
+
+    const nowIso = new Date().toISOString();
+    const commentEntries = input.comments.map((body) =>
+      reviewCommentSchema.parse({
+        id: randomUUID(),
+        createdAt: nowIso,
+        block: {
+          id: ARTIFACT_ROOT_BLOCK_ID,
+          type: ARTIFACT_ROOT_BLOCK_TYPE,
+          heading: null,
+        },
+        selection: {
+          quote: ARTIFACT_ROOT_TEXT,
+          start: 0,
+          end: ARTIFACT_ROOT_TEXT.length,
+          prefix: "",
+          suffix: "",
+        },
+        body,
+      }),
+    );
+    const commentsDocument = commentsDocumentSchema.parse({
+      schemaVersion: ARTIFACT_SCHEMA_VERSION,
+      artifactId: context.artifactId,
+      reviewRound: context.reviewRound,
+      artifactSha256: context.artifactSha256,
+      comments: commentEntries,
+    });
+    const serializedComments = `${JSON.stringify(commentsDocument, null, 2)}\n`;
+
+    let serializedSubmission: string | undefined;
+    if (input.submit) {
+      const submission = reviewSubmissionSchema.parse({
+        schemaVersion: ARTIFACT_SCHEMA_VERSION,
+        artifactId: context.artifactId,
+        reviewRound: context.reviewRound,
+        reviewSessionId: context.reviewSessionId,
+        submittedAt: new Date().toISOString(),
+        decision: "revise",
+        artifactSha256: context.artifactSha256,
+        commentsSha256: sha256(serializedComments),
+      });
+      serializedSubmission = `${JSON.stringify(submission, null, 2)}\n`;
+    }
+
+    await writeCommentsAtomically(context.artifactDirectory, context.commentsPath, serializedComments);
+
+    if (serializedSubmission !== undefined) {
+      try {
+        await publishSubmissionCreateOnce(context.artifactDirectory, context.submissionPath, serializedSubmission);
+      } catch (submitError) {
+        const submitDetail = submitError instanceof Error ? submitError.message : String(submitError);
+        throw new Error(
+          `Comments were saved to comments.json for round ${context.reviewRound}, but creating the Review submission failed: ${submitDetail}`,
+        );
+      }
+    }
+
+    const result: WriteArtifactFeedbackResult = {
+      artifactDirectory: context.artifactDirectory,
+      artifactId: context.artifactId,
+      reviewRound: context.reviewRound,
+      commentCount: commentEntries.length,
+      submitted: serializedSubmission !== undefined,
+    };
+    respond(id, toolResult(result));
+  } catch (error) {
+    respond(id, toolError(error));
+  }
+}
+
 async function handleRequest(message: JsonObject): Promise<void> {
   const { id, method, params } = message;
   if (method === "initialize") {
@@ -2481,6 +2719,7 @@ async function handleRequest(message: JsonObject): Promise<void> {
         "For explicit direct updates to existing artifacts in the active Work Session, follow the work-session skill's wait-mode selection. update_artifact defaults to wait=true; pass wait=false only when explicitly requested or directed by workflow instructions: it commits the new round and returns waited=false without attaching a waiter, preserving any existing waiter, and does not accept artifactConversationId. Do not take over an existing waiter just to perform a non-waiting update. Record the returned round and continue authorized work; absent decision/comments are expected for this commit result, so do not fetch feedback or start a wait merely because they are absent. Creation, standalone requests, and review-feedback processing keep their existing wait behavior.",
         "Treat comments returned by a Review submission and comments read through inspect_artifact with the same policy: answer questions visibly in chat before calling update_artifact, update Markdown only for requested changes, omit markdown for question-only feedback, and ask for clarification without consuming the token when needed.",
         "Do not add Review responses to the artifact.",
+        "When explicitly asked to author AI feedback on an artifact, call write_artifact_feedback on the exact artifactDirectory with general-comment bodies (omit submit or pass false to save comments only, or pass submit=true to create a revise submission without taking over waiters, consuming round tokens, or advancing rounds).",
         "Pure reconnect uses inspect_artifact with intent=reconnect on the exact handle and same round; routing prioritizes sole live window, validated advisory artifact-window affinity, and unique focused window, or explicit candidate via selectionToken.",
         "For chat escape, inspect the exact handle with takeover=true.",
         "If inspection has no comments or submission and is not an explicit chat update, attach a waiter (using inspect_artifact with wait=true, or wait_for_artifact_review to resume waiting) without advancing.",
@@ -2777,6 +3016,39 @@ async function handleRequest(message: JsonObject): Promise<void> {
           },
           annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
         },
+        {
+          name: WRITE_FEEDBACK_TOOL_NAME,
+          title: "Write artifact feedback",
+          description:
+            "Author AI feedback on an exact schema-v6 artifactDirectory by replacing the current round's comments batch with general comments, and optionally creating a Review submission (decision: revise) when submit=true. Never takes over waiters, consumes round tokens, advances rounds, or edits Markdown, manifest, routing, or Session files.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              artifactDirectory: { type: "string" },
+              comments: {
+                type: "array",
+                minItems: 1,
+                items: {
+                  type: "object",
+                  properties: {
+                    body: { type: "string", minLength: 1 },
+                  },
+                  required: ["body"],
+                  additionalProperties: false,
+                },
+              },
+              submit: {
+                type: "boolean",
+                default: false,
+                description:
+                  "Optional. Omit or pass false to save comments without submitting. Pass true to save this batch and create a Review submission (decision: revise) for any existing waiter.",
+              },
+            },
+            required: ["artifactDirectory", "comments"],
+            additionalProperties: false,
+          },
+          annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+        },
       ],
     });
     return;
@@ -2804,6 +3076,10 @@ async function handleRequest(message: JsonObject): Promise<void> {
     }
     if (params?.name === UPDATE_TOOL_NAME) {
       await handleUpdateTool(id, params?.arguments);
+      return;
+    }
+    if (params?.name === WRITE_FEEDBACK_TOOL_NAME) {
+      await handleWriteFeedbackTool(id, params?.arguments);
       return;
     }
     respond(id, toolError(new Error(`Unknown tool: ${String(params?.name)}`)));

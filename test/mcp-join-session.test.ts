@@ -222,7 +222,7 @@ describe("join_session MCP tool & proceed directives", () => {
     }
     temporaryDirectories.length = 0;
   });
-  it("tools/list exposes 6 tools including join_session with exact schema", async () => {
+  it("tools/list exposes 7 tools including join_session and write_artifact_feedback with exact schema", async () => {
     const fixture = await workspaceFixture();
     const client = startClient(fixture.registry);
     await initialize(client);
@@ -236,6 +236,7 @@ describe("join_session MCP tool & proceed directives", () => {
       "inspect_artifact",
       "join_session",
       "update_artifact",
+      "write_artifact_feedback",
     ]);
 
     const joinTool = toolsResponse.tools.find((t: any) => t.name === "join_session");

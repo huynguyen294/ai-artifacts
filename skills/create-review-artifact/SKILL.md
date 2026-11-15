@@ -13,7 +13,7 @@ When asked to comment on an artifact, with or without submitting Review, follow 
 
 ## Tools and Window Routing
 
-1. Require the current tool catalog to expose `resolve_artifact_window`, `create_artifact`, `wait_for_artifact_review`, `inspect_artifact`, and `update_artifact`. Do not probe MCP resources or run filesystem commands to check availability. If a tool is unavailable, ask the user to run **AI Artifacts: Installer**, select their AI client, confirm with **OK**, **Run**, or **Enter**, restart their AI client, and start a new chat. Check only once per chat lifecycle unless a tool becomes unavailable, the MCP restarts, or a new chat begins.
+1. Require the current tool catalog to expose `resolve_artifact_window`, `create_artifact`, `wait_for_artifact_review`, `inspect_artifact`, `update_artifact`, and `write_artifact_feedback`. Do not probe MCP resources or run filesystem commands to check availability. If a tool is unavailable, ask the user to run **AI Artifacts: Installer**, select their AI client, confirm with **OK**, **Run**, or **Enter**, restart their AI client, and start a new chat. Check only once per chat lifecycle unless a tool becomes unavailable, the MCP restarts, or a new chat begins.
 2. Use the tool and result contract below for normal lifecycle calls. Read [references/storage-protocol.md](references/storage-protocol.md) only when investigating persisted schemas or raw window-resolution data.
 3. By default, call `create_artifact` directly without any prior window resolution:
    - The server routes directly to the currently focused VS Code window (or the sole live window).
@@ -30,6 +30,7 @@ When asked to comment on an artifact, with or without submitting Review, follow 
 | `inspect_artifact`         | Exact `artifactDirectory`; optional `expectedReviewRound`, `takeover`, `intent`, `connection`, Session arguments, and `wait` (default `false`). Returns a validated snapshot. With `wait: true`, waits internally only when there are no saved comments, submission, or chat-update token to return. `intent: "explicit-chat-update"` requires `expectedReviewRound` and an empty round. |
 | `update_artifact`          | Exact `artifactDirectory`, `expectedReviewRound`, `roundToken`; optional complete `markdown` and `wait` (default `true`). Commits the next round and waits internally. `wait: false` commits without waiting and preserves any existing waiter. This tool does not accept or echo `artifactConversationId`.                                                                              |
 | `wait_for_artifact_review` | Exact `artifactDirectory`, `expectedReviewRound`; optional `takeover` and `artifactConversationId`. Use for wait-only/resume. The expected round is checked at attachment only; an attached waiter can receive a later validated round after non-waiting updates. The result/token belong to that submitted round.                                                                       |
+| `write_artifact_feedback`  | Exact `artifactDirectory`, non-empty `comments` array of `{ body }`, and optional `submit` (default `false`). Replaces the current round's comments with general feedback, and when `submit: true` also submits Review (`decision: "revise"`). Used only for explicit **Author AI feedback** requests; never takes over waiters, consumes tokens, advances rounds, or edits Markdown/manifest/routing/Session files. |
 
 Use `wait: false` for update only when the user or specific Instructions/workflow requests a non-waiting update; otherwise keep `wait: true`. An active Session alone does not select non-waiting mode. Create/review and saved-feedback processing keep their waiting flow unless explicitly directed otherwise.
 
@@ -119,8 +120,8 @@ When a lifecycle tool reports an error, read [references/recovery.md](references
 - Advancing replaces the same `artifact.md` only when Markdown is supplied, increments the round, resets handled comments, and removes the old submission. It does not create revision history.
 - Round tokens are in-memory, single-use, expire after one hour, and bind the exact artifact/review session, round, artifact/comments hashes, and submission presence/hash. Consume them only through a successful update; any intervening state change rejects the token. After MCP restart, inspect the exact artifact again to obtain a fresh token.
 - Create and explicit reconnect may commit routing state. Wait and update preserve it unchanged; they do not rebind windows or emit open requests. Never scan storage or infer an artifact handle from cwd.
-- Only the MCP server creates artifacts, advances rounds, resets comments, consumes tokens, and writes lifecycle metadata.
-- Never edit lifecycle files directly, except `comments.json` and `review-submission.json` for explicitly requested **Author AI feedback**. Keep artifact creation, content updates and round management in the MCP tools.
+- Only the MCP server creates artifacts, advances rounds, writes AI feedback, resets comments, consumes tokens, and writes lifecycle metadata.
+- Never edit lifecycle files directly, including `comments.json` and `review-submission.json`. Keep artifact creation, content updates, feedback authoring, and round management in the MCP tools.
 - Write a coherent artifact, not a patch or changelog. Include checklist/progress content only when requested; this does not authorize automatic artifact creation.
 
 ## User Custom Rules

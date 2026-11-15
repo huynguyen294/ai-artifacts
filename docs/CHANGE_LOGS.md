@@ -14,9 +14,14 @@ Minor typos, formatting fixes, or cosmetic wording adjustments that do not chang
 
 Each entry includes the date, category, summary of changes, rationale, and affected components or files.
 
+## 2026-11-15 - Add `write_artifact_feedback` MCP tool for general AI-authored feedback
+
+- **MCP server & Codex config (`src/integration/artifact-review-mcp.ts`, `src/extension/mcp-config.ts`):** Added the 7th tool `write_artifact_feedback` (without changing `MCP_VERSION = 12` or package/skill versions) so AI agents save general (`__artifact_root__`) `{ body }` comments into `comments.json` atomically with `0600` permissions and optionally create `review-submission.json` once (`decision: "revise"` when `submit: true`; `submit` defaults to `false`). Rejects unknown fields (including inline targets), empty/whitespace bodies, symlinked targets, and already-submitted rounds before mutating disk, while leaving Markdown, manifest, connection, Session files, and live waiters untouched.
+- **Skills & docs (`skills/create-review-artifact/*`, `skills/work-session/SKILL.md`, `README.md`, `CHANGELOG.md`, `docs/*`):** Removed the direct-edit exception for `comments.json` and `review-submission.json`, routed `ai-feedback.md` and skill/architecture docs through `write_artifact_feedback`, and updated tests for the 7-tool catalog and `write_artifact_feedback` contracts.
+
 ## 2026-11-15 - Avoid repeated version wording in What's New notifications
 
-- **Notification copy:** Added optional `notificationTitle` to release metadata, falling back to the article title. Version 2.0.0 uses “Work Sessions for multi-agent work” after the existing product/version prefix; the article and card retain their launch headline. Notification eligibility, history and navigation are unchanged. Added coverage using the real v2 metadata alongside the existing fallback test.
+- **Notification copy:** Added optional `notificationTitle` to release metadata, falling back to the article title. Version 2.0.0 shows “AI Artifacts 2.0.0 is out — Work Sessions for multi-agent work”; the article and card retain their launch headline. Notification eligibility, history and navigation are unchanged. Added coverage using the real v2 metadata alongside the existing fallback test.
 
 ## 2026-11-15 - Clarify recovery after create cancellation without a handle
 

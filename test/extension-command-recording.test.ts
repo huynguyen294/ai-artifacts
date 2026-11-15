@@ -821,11 +821,11 @@ describe("Extension activation wiring & manual command recording", () => {
       );
 
       await capturedDeps.showInformationMessage(
-        "AI Artifacts 1.2.0: Work Sessions",
+        "AI Artifacts 1.2.0 is out — Work Sessions",
         "View what's new",
       );
       expect(mockShowInformationMessage).toHaveBeenCalledWith(
-        "AI Artifacts 1.2.0: Work Sessions",
+        "AI Artifacts 1.2.0 is out — Work Sessions",
         "View what's new",
       );
 

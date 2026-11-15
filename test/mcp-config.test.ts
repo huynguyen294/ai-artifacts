@@ -27,6 +27,7 @@ describe("Codex Artifacts MCP config", () => {
     expect(second).toContain("[mcp_servers.ai_artifacts.tools.inspect_artifact]");
     expect(second).toContain("[mcp_servers.ai_artifacts.tools.update_artifact]");
     expect(second).toContain("[mcp_servers.ai_artifacts.tools.join_session]");
+    expect(second).toContain("[mcp_servers.ai_artifacts.tools.write_artifact_feedback]");
     expect(second).not.toContain("inspect_artifact_review");
     expect(second).not.toContain("advance_and_wait_for_artifact");
     expect(second).not.toContain("create_and_wait_for_artifact");
@@ -92,6 +93,9 @@ describe("Codex Artifacts MCP config", () => {
       'approval_mode = "approve"',
       "",
       "[mcp_servers.ai_artifacts.tools.join_session]",
+      'approval_mode = "approve"',
+      "",
+      "[mcp_servers.ai_artifacts.tools.write_artifact_feedback]",
       'approval_mode = "approve"',
     ].join("\r\n");
 
@@ -162,6 +166,9 @@ describe("Codex Artifacts MCP config", () => {
       'approval_mode = "approve"',
       "",
       "[mcp_servers.ai_artifacts.tools.join_session]",
+      'approval_mode = "approve"',
+      "",
+      "[mcp_servers.ai_artifacts.tools.write_artifact_feedback]",
       'approval_mode = "approve"',
       "",
       "[mcp_servers.node_repl]",
@@ -241,6 +248,7 @@ describe("Codex Artifacts MCP config", () => {
     expect(migrated).toContain("[mcp_servers.ai_artifacts.tools.inspect_artifact]");
     expect(migrated).toContain("[mcp_servers.ai_artifacts.tools.update_artifact]");
     expect(migrated).toContain("[mcp_servers.ai_artifacts.tools.join_session]");
+    expect(migrated).toContain("[mcp_servers.ai_artifacts.tools.write_artifact_feedback]");
     expect(migrated).not.toContain("inspect_artifact_review");
     expect(migrated).not.toContain("advance_and_wait_for_artifact");
     expect(migrated).toContain('model = "gpt-5.6-sol"');

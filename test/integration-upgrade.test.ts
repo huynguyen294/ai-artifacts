@@ -1022,6 +1022,7 @@ describe("Workspace Integration Auto-Upgrade Coordinator & Selection Policy", ()
     expect(codexPatched).toContain("[mcp_servers.ai_artifacts.tools.inspect_artifact]");
     expect(codexPatched).toContain("[mcp_servers.ai_artifacts.tools.update_artifact]");
     expect(codexPatched).toContain("[mcp_servers.ai_artifacts.tools.join_session]");
+    expect(codexPatched).toContain("[mcp_servers.ai_artifacts.tools.write_artifact_feedback]");
     expect(codexPatched).not.toContain("[mcp_servers.ai_artifacts.tools.inspect_artifact_review]");
     expect(codexPatched).not.toContain("[mcp_servers.ai_artifacts.tools.advance_and_wait_for_artifact]");
 
@@ -1126,6 +1127,7 @@ describe("Workspace Integration Auto-Upgrade Coordinator & Selection Policy", ()
     expect(replacedCodex).toContain("tool_timeout_sec = 3600");
     expect(replacedCodex).toContain('[mcp_servers.ai_artifacts.tools.create_artifact]\napproval_mode = "approve"');
     expect(replacedCodex).toContain('[mcp_servers.ai_artifacts.tools.join_session]\napproval_mode = "approve"');
+    expect(replacedCodex).toContain('[mcp_servers.ai_artifacts.tools.write_artifact_feedback]\napproval_mode = "approve"');
     expect(await readInstalledIntegrationVersion({ userHome: tempHome })).toMatchObject({
       status: "valid",
       manifest: { mcpVersion: MCP_VERSION },

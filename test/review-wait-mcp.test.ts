@@ -18,6 +18,7 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { createInterface } from "node:readline";
+import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { ArtifactStore } from "../src/extension/artifact-store";
 import {
@@ -394,8 +395,16 @@ describe("artifact review MCP server v8", () => {
     const manifestRaw = await readFile(manifestPath, "utf8");
     const manifest = JSON.parse(manifestRaw);
     const markdown = await readFile(created.artifactPath, "utf8");
-    const feedback = await readFile(path.resolve("skills/create-review-artifact/references/ai-feedback.md"), "utf8");
-    const template = JSON.parse(feedback.match(/```json\r?\n([\s\S]*?)```/)![1]!);
+    const template = {
+      block: { id: ARTIFACT_ROOT_BLOCK_ID, type: ARTIFACT_ROOT_BLOCK_TYPE, heading: null },
+      selection: {
+        quote: ARTIFACT_ROOT_TEXT,
+        start: 0,
+        end: ARTIFACT_ROOT_TEXT.length,
+        prefix: "",
+        suffix: "",
+      },
+    };
     const waiting = callToolTracked(client, "wait_for_artifact_review", {
       artifactDirectory: created.artifactDirectory,
       expectedReviewRound: manifest.reviewRound,
@@ -458,7 +467,7 @@ describe("artifact review MCP server v8", () => {
     expect(await readFile(created.artifactPath, "utf8")).toBe(markdown);
   });
 
-  it("lists the resolver plus four lifecycle tools and creates a detached schema-v6 global artifact immediately", async () => {
+  it("lists seven MCP tools and creates a detached schema-v6 global artifact immediately", async () => {
     const fixture = await workspaceFixture();
     const client = startClient(fixture.registry);
     await initialize(client);
@@ -470,6 +479,7 @@ describe("artifact review MCP server v8", () => {
       "inspect_artifact",
       "join_session",
       "update_artifact",
+      "write_artifact_feedback",
     ]);
     const createTool = tools.tools.find((tool: any) => tool.name === "create_artifact");
     expect(createTool.description).toContain("schema-v6");
@@ -4371,5 +4381,391 @@ describe("artifact review MCP server v8", () => {
         reviewRound: 1,
       });
     });
+  });
+});
+
+describe("write_artifact_feedback MCP tool", () => {
+  it("exposes write_artifact_feedback with general-only strict schema and annotations", async () => {
+    const fixture = await workspaceFixture();
+    const client = startClient(fixture.registry);
+    await initialize(client);
+
+    const toolsResponse = await client.request("tools/list");
+    const feedbackTool = toolsResponse.tools.find((t: any) => t.name === "write_artifact_feedback");
+    expect(feedbackTool).toBeDefined();
+    expect(feedbackTool.annotations).toEqual({
+      readOnlyHint: false,
+      destructiveHint: true,
+      openWorldHint: false,
+    });
+    expect(feedbackTool.inputSchema).toMatchObject({
+      type: "object",
+      required: ["artifactDirectory", "comments"],
+      additionalProperties: false,
+      properties: {
+        artifactDirectory: { type: "string" },
+        comments: {
+          type: "array",
+          minItems: 1,
+          items: {
+            type: "object",
+            required: ["body"],
+            additionalProperties: false,
+            properties: {
+              body: { type: "string", minLength: 1 },
+            },
+          },
+        },
+        submit: {
+          type: "boolean",
+          default: false,
+        },
+      },
+    });
+  });
+
+  it("saves general comment batches without submit (omitted or false), replaces prior comments, keeps waiter pending, and works without active Session or live windows", async () => {
+    const fixture = await workspaceFixture();
+    const client = startClient(fixture.registry);
+    await initialize(client);
+    const created = await createArtifact(client, fixture.workspace, { kind: "analysis", title: "Comment Only" });
+    const manifestPath = path.join(created.artifactDirectory, "artifact.json");
+    const commentsPath = path.join(created.artifactDirectory, "comments.json");
+    const submissionPath = path.join(created.artifactDirectory, "review-submission.json");
+    const connectionPath = path.join(created.artifactDirectory, "artifact-connection.json");
+
+    await writeComments(created.artifactDirectory, ["User inline note to be replaced."]);
+    const manifestBefore = await readFile(manifestPath, "utf8");
+    const markdownBefore = await readFile(created.artifactPath, "utf8");
+    const connectionBefore = await readFile(connectionPath, "utf8");
+
+    // Simulate no active VS Code windows at feedback write time.
+    await rm(fixture.registry, { recursive: true, force: true });
+    await mkdir(fixture.registry, { recursive: true });
+
+    const waiting = callToolTracked(client, "wait_for_artifact_review", {
+      artifactDirectory: created.artifactDirectory,
+      expectedReviewRound: 1,
+    });
+    await client.waitUntilWaiting(waiting.id);
+    let settled = false;
+    void waiting.promise.then(
+      () => {
+        settled = true;
+      },
+      () => {
+        settled = true;
+      },
+    );
+
+    const omittedSubmit = await callTool(client, "write_artifact_feedback", {
+      artifactDirectory: created.artifactDirectory,
+      comments: [{ body: "  First general note  " }, { body: "Second general note" }],
+    });
+    expect(omittedSubmit.isError, omittedSubmit.content?.[0]?.text).not.toBe(true);
+    const expectedReceiptOne = {
+      artifactDirectory: created.artifactDirectory,
+      artifactId: created.artifactId,
+      reviewRound: 1,
+      commentCount: 2,
+      submitted: false,
+    };
+    expect(omittedSubmit.structuredContent).toEqual(expectedReceiptOne);
+    expect(JSON.parse(omittedSubmit.content[0].text)).toEqual(expectedReceiptOne);
+    expect(omittedSubmit.structuredContent.decision).toBeUndefined();
+    expect(omittedSubmit.structuredContent.nextAction).toBeUndefined();
+    expect(omittedSubmit.structuredContent.roundToken).toBeUndefined();
+
+    const store = new ArtifactStore(created.artifactPath, { userHome: fixture.userHome });
+    const loadedOne = await store.load();
+    expect(loadedOne.comments).toEqual({
+      schemaVersion: ARTIFACT_SCHEMA_VERSION,
+      artifactId: created.artifactId,
+      reviewRound: 1,
+      artifactSha256: sha256(markdownBefore),
+      comments: [
+        {
+          id: expect.stringMatching(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i),
+          createdAt: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/),
+          block: { id: ARTIFACT_ROOT_BLOCK_ID, type: ARTIFACT_ROOT_BLOCK_TYPE, heading: null },
+          selection: {
+            quote: ARTIFACT_ROOT_TEXT,
+            start: 0,
+            end: ARTIFACT_ROOT_TEXT.length,
+            prefix: "",
+            suffix: "",
+          },
+          body: "First general note",
+        },
+        {
+          id: expect.stringMatching(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i),
+          createdAt: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/),
+          block: { id: ARTIFACT_ROOT_BLOCK_ID, type: ARTIFACT_ROOT_BLOCK_TYPE, heading: null },
+          selection: {
+            quote: ARTIFACT_ROOT_TEXT,
+            start: 0,
+            end: ARTIFACT_ROOT_TEXT.length,
+            prefix: "",
+            suffix: "",
+          },
+          body: "Second general note",
+        },
+      ],
+    });
+    expect(loadedOne.comments?.comments[0]?.id).not.toBe(loadedOne.comments?.comments[1]?.id);
+    if (process.platform !== "win32") {
+      expect((await stat(commentsPath)).mode & 0o777).toBe(OWNER_ONLY_FILE_MODE);
+    }
+
+    const explicitFalse = await callTool(client, "write_artifact_feedback", {
+      artifactDirectory: created.artifactDirectory,
+      comments: [{ body: "Replaced general note" }],
+      submit: false,
+    });
+    expect(explicitFalse.isError, explicitFalse.content?.[0]?.text).not.toBe(true);
+    expect(explicitFalse.structuredContent).toEqual({
+      artifactDirectory: created.artifactDirectory,
+      artifactId: created.artifactId,
+      reviewRound: 1,
+      commentCount: 1,
+      submitted: false,
+    });
+    expect((await store.load()).comments?.comments.map((entry) => entry.body)).toEqual(["Replaced general note"]);
+    await expect(access(submissionPath)).rejects.toThrow();
+    await new Promise((resolve) => setTimeout(resolve, 1_100));
+    expect(settled).toBe(false);
+    expect(await readFile(manifestPath, "utf8")).toBe(manifestBefore);
+    expect(await readFile(created.artifactPath, "utf8")).toBe(markdownBefore);
+    expect(await readFile(connectionPath, "utf8")).toBe(connectionBefore);
+    await expectNoTransactionResidue(created.artifactDirectory);
+  });
+
+  it("writes comments and creates revise submission once with submit=true, waking live waiter without touching Session or lifecycle metadata", async () => {
+    const fixture = await workspaceFixture();
+    const client = startClient(fixture.registry);
+    await initialize(client);
+    const created = await createArtifact(client, fixture.workspace, {
+      kind: "plan",
+      title: "Submit Review Feedback",
+      conversationName: "AI Feedback Session",
+    });
+    const sessionId = created.session.sessionId as string;
+    const sessionMetaPath = conversationMetadataPath(sessionId, { userHome: fixture.userHome });
+    const sessionRegPath = conversationRegisteredArtifactPath(sessionId, created.artifactId, {
+      userHome: fixture.userHome,
+    });
+    const manifestPath = path.join(created.artifactDirectory, "artifact.json");
+    const commentsPath = path.join(created.artifactDirectory, "comments.json");
+    const submissionPath = path.join(created.artifactDirectory, "review-submission.json");
+    const connectionPath = path.join(created.artifactDirectory, "artifact-connection.json");
+
+    const manifestBefore = await readFile(manifestPath, "utf8");
+    const markdownBefore = await readFile(created.artifactPath, "utf8");
+    const connectionBefore = await readFile(connectionPath, "utf8");
+    const sessionMetaBefore = await readFile(sessionMetaPath, "utf8");
+    const sessionRegBefore = await readFile(sessionRegPath, "utf8");
+
+    const waiting = callToolTracked(client, "wait_for_artifact_review", {
+      artifactDirectory: created.artifactDirectory,
+      expectedReviewRound: 1,
+    });
+    await client.waitUntilWaiting(waiting.id);
+
+    const submitted = await callTool(client, "write_artifact_feedback", {
+      artifactDirectory: created.artifactDirectory,
+      comments: [{ body: "AI: Clarify rollback." }, { body: "AI: Add verification command." }],
+      submit: true,
+    });
+    expect(submitted.isError, submitted.content?.[0]?.text).not.toBe(true);
+    const expectedReceipt = {
+      artifactDirectory: created.artifactDirectory,
+      artifactId: created.artifactId,
+      reviewRound: 1,
+      commentCount: 2,
+      submitted: true,
+    };
+    expect(submitted.structuredContent).toEqual(expectedReceipt);
+    expect(JSON.parse(submitted.content[0].text)).toEqual(expectedReceipt);
+    expect(submitted.structuredContent.decision).toBeUndefined();
+    expect(submitted.structuredContent.nextAction).toBeUndefined();
+    expect(submitted.structuredContent.roundToken).toBeUndefined();
+
+    const savedCommentsRaw = await readFile(commentsPath, "utf8");
+    const savedComments = JSON.parse(savedCommentsRaw);
+    const waited = await waiting.promise;
+    expect(waited.isError, waited.content?.[0]?.text).not.toBe(true);
+    expect(waited.structuredContent).toMatchObject({
+      decision: "revise",
+      reviewRound: 1,
+      comments: savedComments,
+      commentsSha256: sha256(savedCommentsRaw),
+      nextAction: { type: "process-review-feedback" },
+      roundToken: expect.any(String),
+    });
+
+    const store = new ArtifactStore(created.artifactPath, { userHome: fixture.userHome });
+    const loaded = await store.load();
+    expect(loaded.comments).toEqual(savedComments);
+    expect(loaded.submission).toMatchObject({
+      schemaVersion: ARTIFACT_SCHEMA_VERSION,
+      artifactId: created.artifactId,
+      reviewRound: 1,
+      reviewSessionId: created.reviewSessionId,
+      decision: "revise",
+      artifactSha256: sha256(markdownBefore),
+      commentsSha256: sha256(savedCommentsRaw),
+    });
+    if (process.platform !== "win32") {
+      expect((await stat(commentsPath)).mode & 0o777).toBe(OWNER_ONLY_FILE_MODE);
+      expect((await stat(submissionPath)).mode & 0o777).toBe(OWNER_ONLY_FILE_MODE);
+    }
+
+    expect(await readFile(manifestPath, "utf8")).toBe(manifestBefore);
+    expect(await readFile(created.artifactPath, "utf8")).toBe(markdownBefore);
+    expect(await readFile(connectionPath, "utf8")).toBe(connectionBefore);
+    expect(await readFile(sessionMetaPath, "utf8")).toBe(sessionMetaBefore);
+    expect(await readFile(sessionRegPath, "utf8")).toBe(sessionRegBefore);
+    await expectNoTransactionResidue(created.artifactDirectory);
+  });
+
+  it("rejects invalid arguments, unsupported schema, linked targets, and already-submitted rounds without mutating comments or submissions", async () => {
+    const fixture = await workspaceFixture();
+    const client = startClient(fixture.registry);
+    await initialize(client);
+    const created = await createArtifact(client, fixture.workspace, { kind: "analysis", title: "Validation" });
+    const commentsPath = path.join(created.artifactDirectory, "comments.json");
+    const submissionPath = path.join(created.artifactDirectory, "review-submission.json");
+    const initialComments = await writeComments(created.artifactDirectory, ["Existing comment"]);
+
+    const invalidPayloads: Array<Record<string, unknown>> = [
+      { artifactDirectory: created.artifactDirectory, comments: [] },
+      { artifactDirectory: created.artifactDirectory, comments: [{ body: "   \n\t  " }] },
+      { artifactDirectory: created.artifactDirectory, comments: [{}] },
+      { artifactDirectory: created.artifactDirectory, comments: [{ body: 42 }] },
+      { artifactDirectory: created.artifactDirectory, comments: [{ body: "Inline", blockId: "paragraph-001" }] },
+      { artifactDirectory: created.artifactDirectory, comments: [{ body: "Valid first" }, { body: "   " }] },
+      {
+        artifactDirectory: created.artifactDirectory,
+        comments: [{ body: "Valid first" }, { body: "Extra", selection: { quote: "q" } }],
+      },
+      { artifactDirectory: created.artifactDirectory, comments: [{ body: "Extra top" }], roundToken: "tok" },
+      { artifactDirectory: created.artifactDirectory, comments: [{ body: "Bad submit" }], submit: "true" },
+      { artifactDirectory: "relative/artifact", comments: [{ body: "Relative" }] },
+      {
+        artifactDirectory: path.join(fixture.globalRoot, "missing-artifact-000"),
+        comments: [{ body: "Missing" }],
+      },
+    ];
+
+    for (const payload of invalidPayloads) {
+      const response = await callTool(client, "write_artifact_feedback", payload);
+      expect(response.isError).toBe(true);
+      expect(await readFile(commentsPath, "utf8")).toBe(initialComments);
+      await expect(access(submissionPath)).rejects.toThrow();
+    }
+
+    // Linked comments.json and linked review-submission.json must be rejected without touching the link target.
+    const outsideCommentsDir = path.join(fixture.workspace, "outside-linked-comments");
+    await mkdir(outsideCommentsDir);
+    const linkedArtifact = await createArtifact(client, fixture.workspace, { title: "Linked File" });
+    const linkedCommentsPath = path.join(linkedArtifact.artifactDirectory, "comments.json");
+    await rm(linkedCommentsPath);
+    await createDirectoryLink(outsideCommentsDir, linkedCommentsPath);
+    const linkedRes = await callTool(client, "write_artifact_feedback", {
+      artifactDirectory: linkedArtifact.artifactDirectory,
+      comments: [{ body: "Should reject link" }],
+    });
+    expect(linkedRes.isError).toBe(true);
+    expect(linkedRes.content[0].text).toContain("symbolic links");
+    expect(await readdir(outsideCommentsDir)).toEqual([]);
+
+    const outsideSubmissionDir = path.join(fixture.workspace, "outside-linked-submission");
+    await mkdir(outsideSubmissionDir);
+    const linkedSubArtifact = await createArtifact(client, fixture.workspace, { title: "Linked Submission" });
+    const linkedSubCommentsBefore = await writeComments(linkedSubArtifact.artifactDirectory, ["Keep comments"]);
+    await createDirectoryLink(outsideSubmissionDir, path.join(linkedSubArtifact.artifactDirectory, "review-submission.json"));
+    const linkedSubRes = await callTool(client, "write_artifact_feedback", {
+      artifactDirectory: linkedSubArtifact.artifactDirectory,
+      comments: [{ body: "Should reject linked submission" }],
+      submit: true,
+    });
+    expect(linkedSubRes.isError).toBe(true);
+    expect(linkedSubRes.content[0].text).toContain("symbolic links");
+    expect(await readFile(path.join(linkedSubArtifact.artifactDirectory, "comments.json"), "utf8")).toBe(
+      linkedSubCommentsBefore,
+    );
+    expect(await readdir(outsideSubmissionDir)).toEqual([]);
+
+    // Legacy schema-v5 artifact must be rejected before mutating comments.json.
+    const v5Artifact = await createArtifact(client, fixture.workspace, { title: "Legacy Schema" });
+    const v5ManifestPath = path.join(v5Artifact.artifactDirectory, "artifact.json");
+    const v5CommentsPath = path.join(v5Artifact.artifactDirectory, "comments.json");
+    const v5CommentsBefore = await writeComments(v5Artifact.artifactDirectory, ["Legacy comment"]);
+    const v5Manifest = JSON.parse(await readFile(v5ManifestPath, "utf8"));
+    v5Manifest.schemaVersion = 5;
+    await atomicWrite(v5ManifestPath, `${JSON.stringify(v5Manifest, null, 2)}\n`);
+    const v5Res = await callTool(client, "write_artifact_feedback", {
+      artifactDirectory: v5Artifact.artifactDirectory,
+      comments: [{ body: "Should reject v5" }],
+    });
+    expect(v5Res.isError).toBe(true);
+    expect(await readFile(v5CommentsPath, "utf8")).toBe(v5CommentsBefore);
+
+    // Already-submitted round must fail before mutating comments.json or review-submission.json.
+    await submitDecision(created.artifactDirectory, "approve");
+    const commentsBeforeSubmitReject = await readFile(commentsPath, "utf8");
+    const submissionBefore = await readFile(submissionPath, "utf8");
+    const alreadySubmitted = await callTool(client, "write_artifact_feedback", {
+      artifactDirectory: created.artifactDirectory,
+      comments: [{ body: "Too late" }],
+      submit: true,
+    });
+    expect(alreadySubmitted.isError).toBe(true);
+    expect(alreadySubmitted.content[0].text).toContain("REVIEW_ALREADY_SUBMITTED");
+    expect(await readFile(commentsPath, "utf8")).toBe(commentsBeforeSubmitReject);
+    expect(await readFile(submissionPath, "utf8")).toBe(submissionBefore);
+    await expectNoTransactionResidue(created.artifactDirectory);
+  });
+
+  it("reports saved comments clearly when submit=true fails creating review-submission.json after saving comments.json", async () => {
+    const fixture = await workspaceFixture();
+    const hookPath = path.join(path.dirname(fixture.registry), "fail-submission-link.mjs");
+    await writeFile(
+      hookPath,
+      [
+        'import { promises as fs } from "node:fs";',
+        "const originalLink = fs.link.bind(fs);",
+        "fs.link = async (existingPath, newPath) => {",
+        '  if (typeof newPath === "string" && newPath.endsWith("review-submission.json")) {',
+        '    const error = new Error("EEXIST: concurrent review submission");',
+        '    error.code = "EEXIST";',
+        "    throw error;",
+        "  }",
+        "  return originalLink(existingPath, newPath);",
+        "};",
+      ].join("\n"),
+      "utf8",
+    );
+    const nodeOptions = [process.env.NODE_OPTIONS, `--import=${pathToFileURL(hookPath).href}`]
+      .filter(Boolean)
+      .join(" ");
+    const client = startClient(fixture.registry, { NODE_OPTIONS: nodeOptions });
+    await initialize(client);
+    const created = await createArtifact(client, fixture.workspace, { kind: "analysis", title: "Partial Submit Failure" });
+
+    const result = await callTool(client, "write_artifact_feedback", {
+      artifactDirectory: created.artifactDirectory,
+      comments: [{ body: "Saved before submit race" }],
+      submit: true,
+    });
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("Comments were saved to comments.json for round 1");
+    expect(result.content[0].text).toContain("creating the Review submission failed");
+
+    const store = new ArtifactStore(created.artifactPath, { userHome: fixture.userHome });
+    const loaded = await store.load();
+    expect(loaded.comments?.comments.map((entry) => entry.body)).toEqual(["Saved before submit race"]);
+    expect(loaded.submission).toBeUndefined();
+    await expectNoTransactionResidue(created.artifactDirectory);
   });
 });

@@ -578,6 +578,9 @@ describe("Client Drivers", () => {
         "[mcp_servers.ai_artifacts.tools.join_session]",
         'approval_mode = "approve"',
         "",
+        "[mcp_servers.ai_artifacts.tools.write_artifact_feedback]",
+        'approval_mode = "approve"',
+        "",
         "[mcp_servers.node_repl]",
         'command = "node_repl.exe"',
         "",
@@ -1295,6 +1298,7 @@ describe("Client Driver Upgrade", () => {
       expect(sixToolUpgradedContent).toContain("[mcp_servers.ai_artifacts.tools.inspect_artifact]");
       expect(sixToolUpgradedContent).toContain("[mcp_servers.ai_artifacts.tools.update_artifact]");
       expect(sixToolUpgradedContent).toContain("[mcp_servers.ai_artifacts.tools.join_session]");
+      expect(sixToolUpgradedContent).toContain("[mcp_servers.ai_artifacts.tools.write_artifact_feedback]");
       expect(sixToolUpgradedContent).not.toContain("inspect_artifact_review");
       expect(sixToolUpgradedContent).not.toContain("advance_and_wait_for_artifact");
 
@@ -1316,6 +1320,7 @@ describe("Client Driver Upgrade", () => {
       expect(upgradedContent).toContain('[mcp_servers.ai_artifacts.tools.inspect_artifact]\napproval_mode = "approve"');
       expect(upgradedContent).toContain('[mcp_servers.ai_artifacts.tools.update_artifact]\napproval_mode = "approve"');
       expect(upgradedContent).toContain('[mcp_servers.ai_artifacts.tools.join_session]\napproval_mode = "approve"');
+      expect(upgradedContent).toContain('[mcp_servers.ai_artifacts.tools.write_artifact_feedback]\napproval_mode = "approve"');
       expect(upgradedContent).not.toContain("inspect_artifact_review");
       expect(upgradedContent).not.toContain("advance_and_wait_for_artifact");
       await expect(fs.readFile(legacyHooksPath, "utf8")).resolves.toBe(legacyHookContent);
@@ -1370,6 +1375,7 @@ describe("Client Driver Upgrade", () => {
       expect(overrideAfter).toContain(`args = ["${scriptPath}"]`);
       expect(overrideAfter).not.toContain("[mcp_servers.codex_artifacts]");
       expect(overrideAfter).toContain("[mcp_servers.ai_artifacts.tools.join_session]");
+      expect(overrideAfter).toContain("[mcp_servers.ai_artifacts.tools.write_artifact_feedback]");
 
       // Unexpected key in config.toml fails closed by throwing CodexUnexpectedKeyConflictError without writing
       const unexpectedConfig = [

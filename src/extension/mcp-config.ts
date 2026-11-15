@@ -16,6 +16,7 @@ export const REQUIRED_CODEX_ARTIFACTS_TOOLS = [
   "inspect_artifact",
   "update_artifact",
   "join_session",
+  "write_artifact_feedback",
 ] as const;
 
 const CURRENT_BEGIN_MARKER = `# >>> ${AI_ARTIFACTS_MCP_MARKER} >>>`;

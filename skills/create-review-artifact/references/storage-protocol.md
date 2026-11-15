@@ -14,7 +14,7 @@ Read this reference only when investigating persisted schemas or raw window-reso
   artifact-ui-state.json    # optional Pin/Archive state
 ```
 
-Schema v6 is the only supported lifecycle contract. Older schemas are unsupported and are not live-migrated. Comment/submission formats for AI authoring are in [AI-authored feedback](ai-feedback.md).
+Schema v6 is the only supported lifecycle contract. Older schemas are unsupported and are not live-migrated. AI-authored feedback uses `write_artifact_feedback` via [AI-authored feedback](ai-feedback.md).
 
 `artifact.json` is schema-v6 and does not store workspace location: `{ schemaVersion: 6, kind, artifactId, title, createdAt, updatedAt, reviewRound, reviewSessionId }`. Optional `artifact-connection.json` is schema-v1 UI-routing state only: `{ schemaVersion, windowInstanceId, connectionRevision, openRequestId, source, updatedAt }`. `connectionRevision` orders successful commits and `openRequestId` deduplicates filesystem events.
 

@@ -69,7 +69,7 @@ When the user requests Session organization, AI may move or reorder existing Ses
 
 Membership remains authoritative in `registered-artifacts/`. Registered IDs absent from layout are appended to Working on read; unknown IDs are ignored. Removing an ID from layout therefore does not remove membership. The `archived` array is this Session's Archived zone, not global artifact archiving. Layout changes do not update Session recency. User and agent saves use last-write-wins without conflict handling; do not add locks, conflict checks, merge protocols, or extra confirmation solely for concurrent editing.
 
-Never directly edit `conversation.json`, `registered-artifacts/`, or managed artifact lifecycle files except the explicit AI-feedback exception in the artifact skill.
+Never directly edit `conversation.json`, `registered-artifacts/`, or managed artifact lifecycle files; use MCP tools such as `write_artifact_feedback` through the artifact skill for AI-authored feedback.
 
 ## Recovery
 

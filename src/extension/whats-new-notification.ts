@@ -68,7 +68,7 @@ export async function runWhatsNewNotification(
   let selectedAction: string | undefined;
   try {
     selectedAction = await deps.showInformationMessage(
-      `AI Artifacts ${currentVersion}: ${matchingRelease.notificationTitle ?? matchingRelease.title}`,
+      `AI Artifacts ${currentVersion} is out — ${matchingRelease.notificationTitle ?? matchingRelease.title}`,
       VIEW_WHATS_NEW_ACTION,
     );
   } catch (uiError) {
