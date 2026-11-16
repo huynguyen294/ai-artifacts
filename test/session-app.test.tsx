@@ -812,7 +812,7 @@ describe("SessionApp Webview Component (Phase 3)", () => {
           { getBoundingClientRect: () => ({ left: 450, bottom: 650 }) },
           { innerWidth: 500, innerHeight: 680 },
         ),
-      ).toEqual({ top: 560, left: 132 });
+      ).toEqual({ top: 560, left: 42 });
     });
   });
 

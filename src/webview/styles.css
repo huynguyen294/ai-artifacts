@@ -1342,7 +1342,7 @@ body:has(.session-app-container),
   top: 96px;
   left: 16px;
   z-index: 60;
-  width: min(360px, calc(100vw - 16px));
+  width: min(450px, calc(100vw - 16px));
   max-height: 260px;
   overflow-y: auto;
   background: var(--vscode-menu-background, #252526);
@@ -1392,7 +1392,6 @@ body:has(.session-app-container),
 .session-waiter-item {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 8px;
   padding: 4px 0;
 }
@@ -1405,7 +1404,6 @@ body:has(.session-app-container),
 .session-waiter-text {
   flex: 1 1 auto;
   min-width: 0;
-  max-width: 260px;
   font-size: 0.9rem;
   line-height: 1.35;
   white-space: nowrap;
@@ -1414,25 +1412,39 @@ body:has(.session-app-container),
 }
 
 .session-waiter-stop-btn {
-  flex-shrink: 0;
-  padding: 3px 10px;
-  font-size: 0.85rem;
-  font-weight: 500;
-  line-height: 1.4;
-  border-radius: 4px;
-  border: 1px solid var(--vscode-button-secondaryBorder, var(--vscode-editorWidget-border, #454545));
-  background: var(--vscode-button-secondaryBackground, #3a3d41);
-  color: var(--vscode-button-secondaryForeground, #ffffff);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border-radius: 50%;
+  border: none;
+  background: color-mix(in srgb, var(--vscode-foreground, #cccccc) 12%, transparent);
   cursor: pointer;
+  flex-shrink: 0;
+  transition: all 0.15s ease;
 }
 
 .session-waiter-stop-btn:hover:not(:disabled) {
-  background: var(--vscode-button-secondaryHoverBackground, #45494e);
+  background: color-mix(in srgb, var(--vscode-foreground, #cccccc) 22%, transparent);
 }
 
 .session-waiter-stop-btn:disabled {
-  opacity: 0.6;
+  opacity: 0.45;
   cursor: not-allowed;
+}
+
+.session-waiter-stop-icon {
+  display: block;
+  flex-shrink: 0;
+  color: var(--vscode-errorForeground, #cf6666);
+  opacity: 0.85;
+  transition: opacity 0.15s ease;
+}
+
+.session-waiter-stop-btn:hover:not(:disabled) .session-waiter-stop-icon {
+  opacity: 1;
 }
 
 .session-zone-helper {
@@ -1564,6 +1576,11 @@ body:has(.session-app-container),
   color: var(--vscode-editor-foreground);
 }
 
+.session-zone-references .session-artifact-card,
+.session-zone-archived .session-artifact-card {
+  padding: 7px 10px;
+}
+
 .session-zone-references .session-card-header,
 .session-zone-archived .session-card-header {
   align-items: center;
@@ -1581,6 +1598,11 @@ body:has(.session-app-container),
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.session-zone-references .session-card-meta,
+.session-zone-archived .session-card-meta {
+  margin-top: 4px;
 }
 
 .session-card-kind-badge {
@@ -1733,6 +1755,7 @@ body:has(.session-app-container),
   position: relative;
   display: inline-flex;
   flex-shrink: 0;
+  margin-left: 2px;
 }
 
 .session-header-dropdown {

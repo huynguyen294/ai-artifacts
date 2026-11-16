@@ -366,7 +366,7 @@ export function computeWaitersPopoverPosition(
   const vw = viewport?.innerWidth ?? (typeof window !== "undefined" ? window.innerWidth : 0);
   const vh = viewport?.innerHeight ?? (typeof window !== "undefined" ? window.innerHeight : 0);
   const rect = button.getBoundingClientRect();
-  const maxWidth = Math.min(360, Math.max(240, vw - 16));
+  const maxWidth = Math.min(450, Math.max(240, vw - 16));
   const left = Math.max(8, Math.min(rect.left, vw - maxWidth - 8));
   const top = Math.min(rect.bottom + 4, Math.max(8, vh - 120));
   return { top: Math.round(top), left: Math.round(left) };
@@ -732,20 +732,35 @@ export function SessionApp({
                                 className="session-waiter-item"
                                 title={formatWaiterHoverInfo(waiter)}
                               >
-                                <span className="session-waiter-text">
-                                  <strong>{waiter.name}</strong> waiting for {waiter.waitingFor}
-                                </span>
                                 <button
                                   type="button"
                                   className="secondary session-waiter-stop-btn"
                                   disabled={isStopping}
+                                  title={isStopping ? "Stopping..." : "Stop waiting"}
+                                  aria-label={
+                                    isStopping
+                                      ? `Stopping wait for ${waiter.name}`
+                                      : `Stop waiting for ${waiter.name}`
+                                  }
                                   onClick={(e) => {
                                     e.stopPropagation();
                                     handleStopWaiter(waiter.waitId);
                                   }}
                                 >
-                                  {isStopping ? "Stopping..." : "Stop"}
+                                  <svg
+                                    aria-hidden="true"
+                                    width="8"
+                                    height="8"
+                                    viewBox="0 0 8 8"
+                                    fill="currentColor"
+                                    className="session-waiter-stop-icon"
+                                  >
+                                    <rect width="8" height="8" rx="1.5" />
+                                  </svg>
                                 </button>
+                                <span className="session-waiter-text">
+                                  <strong>{waiter.name}</strong> waiting for {waiter.waitingFor}
+                                </span>
                               </li>
                             );
                           })}
