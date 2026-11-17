@@ -4,9 +4,10 @@ import { vscode } from "./vscode-api";
 import { whatsNewContent } from "./whats-new-content";
 import { subscribeToWhatsNewNavigation } from "./whats-new-navigation";
 import { WhatsNewDocument } from "./WhatsNewDocument";
+import { WhatsNewGuideCard } from "./WhatsNewGuideCard";
 import { WhatsNewReleaseCard, WhatsNewReleaseMeta } from "./WhatsNewReleaseCard";
 
-export type WhatsNewView = { kind: "list" } | { kind: "article"; version: string } | { kind: "tips" };
+export type WhatsNewView = { kind: "list" } | { kind: "article"; version: string } | { kind: "guides" };
 
 type NavigationState = {
   view: WhatsNewView;
@@ -88,15 +89,19 @@ export function WhatsNewApp(props?: { initialView?: WhatsNewView; mediaBaseUri?:
     }
   }, [view]);
 
-  const isTipsActive = view.kind === "tips";
-  const isWhatsNewActive = !isTipsActive;
+  const isGuidesActive = view.kind === "guides";
+  const isWhatsNewActive = !isGuidesActive;
+
+  const openGuideExternal = (url: string): void => {
+    vscode.postMessage({ type: "openExternal", url });
+  };
 
   return (
     <div className="whats-new-shell">
       <div className="whats-new-container">
         <header className="whats-new-header">
           <div className="whats-new-title-group">
-            <h1 className="whats-new-title">What&apos;s New &amp; Tips</h1>
+            <h1 className="whats-new-title">What&apos;s New &amp; Guides</h1>
             <p className="whats-new-subtitle">AI Artifacts product updates and usage guides</p>
           </div>
           <nav className="whats-new-tabs" aria-label="What's New sections">
@@ -110,11 +115,11 @@ export function WhatsNewApp(props?: { initialView?: WhatsNewView; mediaBaseUri?:
             </button>
             <button
               type="button"
-              className={`whats-new-tab-btn${isTipsActive ? " is-active" : ""}`}
-              aria-pressed={isTipsActive}
-              onClick={() => navigateLocal({ kind: "tips" })}
+              className={`whats-new-tab-btn${isGuidesActive ? " is-active" : ""}`}
+              aria-pressed={isGuidesActive}
+              onClick={() => navigateLocal({ kind: "guides" })}
             >
-              Tips
+              Guides
             </button>
           </nav>
         </header>
@@ -157,8 +162,18 @@ export function WhatsNewApp(props?: { initialView?: WhatsNewView; mediaBaseUri?:
                 </div>
               </div>
             )
+          ) : whatsNewContent.guides.length > 0 ? (
+            <div className="whats-new-guide-list">
+              {whatsNewContent.guides.map((guide) => (
+                <WhatsNewGuideCard
+                  key={guide.id}
+                  guide={guide}
+                  onOpenExternal={openGuideExternal}
+                />
+              ))}
+            </div>
           ) : (
-            <WhatsNewDocument markdown={whatsNewContent.tipsMarkdown} mediaBaseUri={mediaBaseUri} />
+            <div className="whats-new-empty">No guides to show yet.</div>
           )}
         </main>
       </div>

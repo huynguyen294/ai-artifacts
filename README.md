@@ -100,6 +100,8 @@ When AI Artifacts activates for the first time without an existing `~/.ai-artifa
 2. Select one or more AI clients using the checkboxes. Detected clients and clients saved by earlier manual installs are selected by default; adjust the selection before running. Each row shows `Detected` / `Saved` badges where applicable and its configuration path.
 3. Click **OK**, click the **Run** button in the title bar, or press **Enter** to install all selected clients in one operation. Use the same command to reinstall or repair selected integrations.
 
+![Install AI Artifacts, select AI clients in the Installer, and reload the window](media/getting-started-install.gif)
+
 For custom setup:
 
 - Run **`AI Artifacts: Copy MCP Configuration JSON`** to copy the ready-to-use JSON configuration snippet directly to your clipboard to paste into any MCP-compatible editor.

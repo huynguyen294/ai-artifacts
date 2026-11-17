@@ -86,7 +86,7 @@
       },
       {
         "command": "agentPlus.openWhatsNew",
-        "title": "AI Artifacts: What's New & Tips"
+        "title": "AI Artifacts: What's New & Guides"
       },
       {
         "command": "agentPlus.filterRecentArtifacts",

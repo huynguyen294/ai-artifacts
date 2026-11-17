@@ -232,7 +232,7 @@ describe("v2.0.0 release contract", () => {
       expect.arrayContaining([
         {
           command: "agentPlus.openWhatsNew",
-          title: "AI Artifacts: What's New & Tips",
+          title: "AI Artifacts: What's New & Guides",
         },
       ]),
     );
