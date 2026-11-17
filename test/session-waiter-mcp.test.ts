@@ -650,6 +650,15 @@ describe("session-waiter MCP multi-process integration", () => {
     }).promise;
     expect(sendLate.isError).toBe(true);
     expect(sendLate.structuredContent.code).toBe("SESSION_WAITER_NOT_WAITING");
+    const waiterErrLines = sendLate.content[0].text.split("\n");
+    const waiterErrMetaRaw = waiterErrLines.at(-1)!;
+    const waiterErrMsg = waiterErrLines.slice(0, -1).join("\n");
+    expect(waiterErrMsg).toContain("SESSION_WAITER_NOT_WAITING");
+    expect(JSON.parse(waiterErrMetaRaw)).toEqual({
+      code: "SESSION_WAITER_NOT_WAITING",
+      sessionId: session.sessionId,
+      waitId: killedWaitId,
+    });
     expect(await pathExists(workSessionWaiterRequestPath(session.sessionId, killedWaitId, { userHome }))).toBe(
       false,
     );

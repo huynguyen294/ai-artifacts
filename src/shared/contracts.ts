@@ -526,16 +526,25 @@ export const sessionCatalogSchema = z
 
 export type SessionCatalog = z.infer<typeof sessionCatalogSchema>;
 
-export const sessionContextSchema = z
+export const sessionHandleSchema = z
   .object({
     sessionId: artifactConversationIdSchema,
     title: sessionTitleSchema,
     typeId: sessionTypeIdSchema,
     typeLabel: z.string().min(1),
+    sessionDirectory: z.string().min(1),
+    instructionsPath: z.string().min(1),
+    layoutPath: z.string().min(1),
     createdAt: z.string().datetime(),
     updatedAt: z.string().datetime(),
+  })
+  .strict();
+
+export type SessionHandle = z.infer<typeof sessionHandleSchema>;
+
+export const sessionContextSchema = sessionHandleSchema
+  .extend({
     instructions: z.string(),
-    instructionsPath: z.string().min(1),
     catalog: sessionCatalogSchema,
   })
   .strict();
@@ -785,7 +794,7 @@ export type SessionArtifactHandleResult = {
   kind: string;
   artifactConversationId: string;
   conversationName?: string | undefined;
-  session: SessionContext;
+  session: SessionHandle;
   connection?: ArtifactConnection | undefined;
 };
 
@@ -861,7 +870,7 @@ export type SessionArtifactInspectionResult = {
   roundToken?: string | undefined;
   roundTokenSource?: "chat-inspection" | "chat-update" | undefined;
   connection?: ArtifactConnection | undefined;
-  session: SessionContext;
+  session: SessionHandle;
 };
 
 export type StandaloneArtifactInspectWaitResult = Omit<StandaloneArtifactInspectionResult, "roundTokenSource"> &

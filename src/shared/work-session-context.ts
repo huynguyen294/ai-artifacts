@@ -4,15 +4,20 @@ import {
   DEFAULT_SESSION_TYPE_ID,
   artifactConversationIdSchema,
   sessionContextSchema,
+  sessionHandleSchema,
   type SessionCatalog,
   type SessionCatalogItem,
   type SessionContext,
+  type SessionHandle,
+  type SessionType,
 } from "./contracts";
 import {
   ARTIFACT_MANIFEST_FILE,
   ARTIFACT_MARKDOWN_FILE,
   artifactCollectionRoot,
+  conversationDirectory,
   workSessionInstructionsPath,
+  workSessionLayoutPath,
   type GlobalArtifactsRootOptions,
 } from "./artifact-files";
 import {
@@ -20,15 +25,52 @@ import {
   ensureSafeManagedArtifactFile,
   parseArtifactManifest,
 } from "./artifact-validation";
-import { readSession } from "./conversation-artifact-registry";
+import { readSession, readSessionSummary, type WorkSessionSummary } from "./conversation-artifact-registry";
 import { listSessionTypes } from "./session-type-registry";
 import { extractMarkdownDescription } from "./markdown-description";
 
 export type ResolveSessionContextOptions = GlobalArtifactsRootOptions;
 
+function buildSessionHandleFields(
+  session: WorkSessionSummary,
+  types: SessionType[],
+  options: GlobalArtifactsRootOptions,
+): SessionHandle {
+  const matchedType = types.find((t) => t.id === session.typeId);
+  const typeLabel =
+    matchedType?.label ?? (session.typeId === DEFAULT_SESSION_TYPE_ID ? "Conversation" : session.typeId);
+  return {
+    sessionId: session.sessionId,
+    title: session.title,
+    typeId: session.typeId,
+    typeLabel,
+    sessionDirectory: conversationDirectory(session.sessionId, options),
+    instructionsPath: workSessionInstructionsPath(session.sessionId, options),
+    layoutPath: workSessionLayoutPath(session.sessionId, options),
+    createdAt: session.createdAt,
+    updatedAt: session.updatedAt,
+  };
+}
+
+/**
+ * Resolves lightweight Session identity and file paths without reading instructions.md
+ * or scanning/reading catalog artifacts.
+ */
+export async function resolveWorkSessionHandle(
+  sessionId: string,
+  options: ResolveSessionContextOptions = {},
+): Promise<SessionHandle> {
+  const validatedSessionId = artifactConversationIdSchema.parse(sessionId);
+  const [summary, types] = await Promise.all([
+    readSessionSummary(validatedSessionId, options),
+    listSessionTypes({ ...options, seedIfMissing: false }),
+  ]);
+  return sessionHandleSchema.parse(buildSessionHandleFields(summary, types, options));
+}
+
 /**
  * Resolves full context for a Work Session including session metadata,
- * resolved type label, instructions text and path, and catalog items
+ * resolved type label, instructions text and paths, and catalog items
  * across working, references, and archived zones.
  *
  * For unavailable or invalid artifacts, emits `{ artifactId, unavailable: true }`
@@ -39,12 +81,11 @@ export async function resolveWorkSessionContext(
   options: ResolveSessionContextOptions = {},
 ): Promise<SessionContext> {
   const validatedSessionId = artifactConversationIdSchema.parse(sessionId);
-  const session = await readSession(validatedSessionId, options);
-  const types = await listSessionTypes({ ...options, seedIfMissing: false });
-  const matchedType = types.find((t) => t.id === session.typeId);
-  const typeLabel =
-    matchedType?.label ?? (session.typeId === DEFAULT_SESSION_TYPE_ID ? "Conversation" : session.typeId);
-  const instructionsPath = workSessionInstructionsPath(validatedSessionId, options);
+  const [session, types] = await Promise.all([
+    readSession(validatedSessionId, options),
+    listSessionTypes({ ...options, seedIfMissing: false }),
+  ]);
+  const handle = buildSessionHandleFields(session, types, options);
   const collectionRoot = artifactCollectionRoot(options);
 
   async function resolveCatalogItem(artifactId: string): Promise<SessionCatalogItem> {
@@ -103,14 +144,8 @@ export async function resolveWorkSessionContext(
   };
 
   const context: SessionContext = {
-    sessionId: session.sessionId,
-    title: session.title,
-    typeId: session.typeId,
-    typeLabel,
-    createdAt: session.createdAt,
-    updatedAt: session.updatedAt,
+    ...handle,
     instructions: session.instructions,
-    instructionsPath,
     catalog,
   };
 

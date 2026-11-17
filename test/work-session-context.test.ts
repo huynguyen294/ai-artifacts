@@ -6,7 +6,9 @@ import {
   ARTIFACT_MANIFEST_FILE,
   ARTIFACT_MARKDOWN_FILE,
   artifactCollectionRoot,
+  conversationDirectory,
   workSessionInstructionsPath,
+  workSessionLayoutPath,
 } from "../src/shared/artifact-files";
 import {
   createSession,
@@ -15,7 +17,7 @@ import {
   setSessionType,
 } from "../src/shared/conversation-artifact-registry";
 import { createSessionType } from "../src/shared/session-type-registry";
-import { resolveWorkSessionContext } from "../src/shared/work-session-context";
+import { resolveWorkSessionContext, resolveWorkSessionHandle } from "../src/shared/work-session-context";
 
 describe("resolveWorkSessionContext", () => {
   let tempHome: string;
@@ -91,8 +93,10 @@ describe("resolveWorkSessionContext", () => {
     expect(context.title).toBe("Context Feature Session");
     expect(context.typeId).toBe(customType.id);
     expect(context.typeLabel).toBe("Architecture Review");
+    expect(context.sessionDirectory).toBe(conversationDirectory(session.sessionId, { userHome: tempHome }));
     expect(context.instructions).toBe("## Custom Session Guidelines\nAlways write tests first.");
     expect(context.instructionsPath).toBe(workSessionInstructionsPath(session.sessionId, { userHome: tempHome }));
+    expect(context.layoutPath).toBe(workSessionLayoutPath(session.sessionId, { userHome: tempHome }));
 
     // Catalog: Working
     expect(context.catalog.working).toHaveLength(1);
@@ -229,6 +233,37 @@ describe("resolveWorkSessionContext", () => {
         unavailable: true,
       },
     ]);
+  });
+
+  it("resolveWorkSessionHandle returns lightweight handle and paths without reading instructions.md or catalog artifacts", async () => {
+    const customType = await createSessionType("Planning Session", { userHome: tempHome });
+    const session = await createSession({
+      title: "Handle Only Session",
+      instructions: "# Secret/Large Instructions\nShould not be read for handle.",
+      userHome: tempHome,
+    });
+    await setSessionType(session.sessionId, customType.id, { userHome: tempHome });
+    await registerArtifactInSession(session.sessionId, "missing-artifact-not-read", { userHome: tempHome });
+
+    // Remove instructions.md and replace with a directory so any attempt to read instructions.md as a file fails.
+    const instructionsFile = workSessionInstructionsPath(session.sessionId, { userHome: tempHome });
+    await fs.rm(instructionsFile);
+    await fs.mkdir(instructionsFile);
+
+    const handle = await resolveWorkSessionHandle(session.sessionId, { userHome: tempHome });
+    expect(handle).toEqual({
+      sessionId: session.sessionId,
+      title: "Handle Only Session",
+      typeId: customType.id,
+      typeLabel: "Planning Session",
+      sessionDirectory: conversationDirectory(session.sessionId, { userHome: tempHome }),
+      instructionsPath: instructionsFile,
+      layoutPath: workSessionLayoutPath(session.sessionId, { userHome: tempHome }),
+      createdAt: session.createdAt,
+      updatedAt: expect.any(String),
+    });
+    expect("instructions" in handle).toBe(false);
+    expect("catalog" in handle).toBe(false);
   });
 });
 

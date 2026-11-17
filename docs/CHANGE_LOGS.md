@@ -14,6 +14,14 @@ Minor typos, formatting fixes, or cosmetic wording adjustments that do not chang
 
 Each entry includes the date, category, summary of changes, rationale, and affected components or files.
 
+## 2026-11-17 - Separate SessionHandle from SessionContext and include structured recovery metadata in MCP error text
+
+- **Shared contracts & context (`src/shared/contracts.ts`, `src/shared/conversation-artifact-registry.ts`, `src/shared/work-session-context.ts`):** Added `sessionHandleSchema` (`SessionHandle`: `sessionId`, `title`, `typeId`, `typeLabel`, `sessionDirectory`, `instructionsPath`, `layoutPath`, `createdAt`, `updatedAt`) without `instructions` content or `catalog`, and redefined `sessionContextSchema` (`SessionContext`) as `sessionHandleSchema.extend({ instructions, catalog })`. Added `readSessionSummary`, `registerArtifactInSessionSummary`, and `resolveWorkSessionHandle` so Session-handle preflight, membership registration, and handle resolution skip reading `instructions.md`, `layout.json`, and catalog artifacts.
+- **MCP server (`src/integration/artifact-review-mcp.ts`):**
+  - Switched `create_artifact` and `inspect_artifact` Session-bound results to return `session: SessionHandle` (`session: null` for standalone) while keeping `join_session` as the sole provider of full `SessionContext` snapshots (`instructions` + `catalog`). Left `inspect_artifact` `markdown` payload handling unchanged.
+  - Updated `toolError`, `postLifecycleStepToolError`, and `sessionWaiterToolError` to append compact JSON recovery/selection/waiter metadata after the human-readable error message in `content[0].text` while keeping `structuredContent` intact (using minimal handle fields in `postLifecycleStepToolError` error text instead of repeating `markdown` or `session`).
+- **Skills, docs & tests (`skills/`, `docs/`, `test/`):** Clarified `SessionHandle` vs `SessionContext` ownership, caching, and path usage (`sessionDirectory`, `instructionsPath`, `layoutPath`) in `skills/work-session/SKILL.md`, `skills/create-review-artifact/SKILL.md`, `docs/INSTRUCTION.md`, `docs/ARCHITECTURE.md`, and `docs/COMPONENTS.md`, and updated/expanded test coverage across `test/`. Package, MCP, and skill version counters remain unchanged per release versioning policy.
+
 ## 2026-11-17 - Clarify README benefits and make Tips discoverable in the Command Palette
 
 - **README:** Preserved the Multi-Agent positioning and full introductory client list, strengthened preview/review and shared-work benefits, and kept the existing How It Works flow and GIFs with only a short Review wording correction. Expanded Session value and user-defined handoff examples in the detailed usage sections. Corrected waiting defaults, Instructions refresh guidance, the current tool count, and Tips descriptions.

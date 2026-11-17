@@ -477,6 +477,40 @@ describe("artifact conversation schema v1 contract", () => {
     expect(() => contracts.workSessionMetadataSchema.parse({ ...validMeta, unknownField: true })).toThrow();
   });
 
+  it("validates SessionHandle without instructions or catalog and extends it for SessionContext", () => {
+    const validHandle = {
+      sessionId: artifactConversationId,
+      title: "Session Handle Title",
+      typeId: "conversation",
+      typeLabel: "Conversation",
+      sessionDirectory: "/tmp/sessions/" + artifactConversationId,
+      instructionsPath: `/tmp/sessions/${artifactConversationId}/instructions.md`,
+      layoutPath: `/tmp/sessions/${artifactConversationId}/layout.json`,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    };
+    expect(contracts.sessionHandleSchema.parse(validHandle)).toEqual(validHandle);
+    expect(() =>
+      contracts.sessionHandleSchema.parse({
+        ...validHandle,
+        instructions: "# Rules",
+      }),
+    ).toThrow();
+    expect(() =>
+      contracts.sessionHandleSchema.parse({
+        ...validHandle,
+        catalog: { working: [], references: [], archived: [] },
+      }),
+    ).toThrow();
+
+    const validContext = {
+      ...validHandle,
+      instructions: "# Rules",
+      catalog: { working: [], references: [], archived: [] },
+    };
+    expect(contracts.sessionContextSchema.parse(validContext)).toEqual(validContext);
+  });
+
   it("locks work session layout schema version to 1 and validates zones", () => {
     expect(contracts.WORK_SESSION_LAYOUT_SCHEMA_VERSION).toBe(1);
     const validLayout = {

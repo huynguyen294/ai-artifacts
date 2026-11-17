@@ -813,6 +813,17 @@ describe("artifact review MCP server v8", () => {
       reuseRoundToken: false,
       useSameArtifactHandle: true,
     });
+    const replayLines = replay.content[0].text.split("\n");
+    const replayMetaRaw = replayLines.at(-1)!;
+    const replayMsg = replayLines.slice(0, -1).join("\n");
+    expect(replayMsg).toContain("ROUND_TOKEN_ALREADY_CONSUMED");
+    expect(JSON.parse(replayMetaRaw)).toEqual({
+      code: "ROUND_TOKEN_ALREADY_CONSUMED",
+      retryable: true,
+      expectedNextTool: "inspect_artifact",
+      reuseRoundToken: false,
+      useSameArtifactHandle: true,
+    });
   });
 
   it.each([
@@ -2590,6 +2601,20 @@ describe("artifact review MCP server v8", () => {
 
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain("WINDOW_SELECTION_REQUIRED");
+    const winLines = result.content[0].text.split("\n");
+    const winMetaRaw = winLines.at(-1)!;
+    const winMsg = winLines.slice(0, -1).join("\n");
+    expect(winMsg).toContain("WINDOW_SELECTION_REQUIRED");
+    expect(JSON.parse(winMetaRaw)).toMatchObject({
+      code: "WINDOW_SELECTION_REQUIRED",
+      status: "selection-required",
+      retryable: true,
+      expectedNextTool: "create_artifact",
+      lifecycleMutated: false,
+      takeoverOccurred: false,
+      useSameArtifactHandle: false,
+      candidates: expect.arrayContaining([expect.objectContaining({ windowInstanceId: secondInstanceId })]),
+    });
     expect(result.structuredContent).toMatchObject({
       status: "selection-required",
       candidates: expect.arrayContaining([expect.objectContaining({ windowInstanceId: secondInstanceId })]),
@@ -4405,6 +4430,22 @@ describe("artifact review MCP server v8", () => {
           title: "Live Waiter Session",
         },
       });
+      const conflictLines = conflicted.content[0].text.split("\n");
+      const conflictMetaRaw = conflictLines.at(-1)!;
+      const conflictMsg = conflictLines.slice(0, -1).join("\n");
+      expect(conflictMsg).toContain("ARTIFACT_ALREADY_WAITING");
+      const conflictMeta = JSON.parse(conflictMetaRaw);
+      expect(conflictMeta).toMatchObject({
+        code: "ARTIFACT_ALREADY_WAITING",
+        retryable: true,
+        currentReviewRound: 1,
+        artifactDirectory: created.artifactDirectory,
+        artifactId: created.artifactId,
+        reviewRound: 1,
+        artifactConversationId: created.artifactConversationId,
+      });
+      expect(conflictMeta).not.toHaveProperty("markdown");
+      expect(conflictMeta).not.toHaveProperty("session");
 
       // Original live waiter is still alive and receives the submitted decision
       await submitDecision(created.artifactDirectory, "save");

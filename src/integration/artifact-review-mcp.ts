@@ -49,6 +49,7 @@ import {
   type ReconnectConnectionInput,
   type ReviewDecision,
   type SessionContext,
+  type SessionHandle,
   type WorkSession,
   type CreateArtifactReviewResult,
   type InspectArtifactReviewResult,
@@ -77,11 +78,13 @@ import {
   createSession,
   readConversationMetadata,
   readSession,
+  readSessionSummary,
   registerArtifactInConversation,
-  registerArtifactInSession,
+  registerArtifactInSessionSummary,
   removeArtifactFromConversation,
   removeArtifactFromSession,
   removeConversation,
+  type WorkSessionSummary,
 } from "../shared/conversation-artifact-registry";
 import { readFreshWorkspaceSnapshots, workspaceRegistryDirectory } from "../shared/workspace-registry";
 import {
@@ -93,7 +96,7 @@ import {
   type WindowCandidate,
 } from "../shared/window-routing";
 import { commitArtifactConnectionRequest, readArtifactConnection } from "../shared/artifact-connection";
-import { resolveWorkSessionContext } from "../shared/work-session-context";
+import { resolveWorkSessionContext, resolveWorkSessionHandle } from "../shared/work-session-context";
 import { isPlanProceedKind } from "../shared/artifact-kinds";
 import { ZodError } from "zod";
 import {
@@ -737,8 +740,8 @@ async function persistArtifact(
 ): Promise<{
   context: ArtifactContext;
   connection: ArtifactConnection;
-  conversation: WorkSession | undefined;
-  session: SessionContext | null;
+  conversation: WorkSessionSummary | undefined;
+  session: SessionHandle | null;
 }> {
   const rootOptions = globalRootOptions();
   const collectionRoot = await ensureSafeGlobalArtifactsRoot(rootOptions);
@@ -792,17 +795,17 @@ async function persistArtifact(
         throw new ConversationRegistryError("Injected conversation registration failure.");
       }
 
-      let conversation: WorkSession | undefined;
-      let session: SessionContext | null = null;
+      let conversation: WorkSessionSummary | undefined;
+      let session: SessionHandle | null = null;
       if (input.artifactConversationId) {
         await preflightConversationVersion(input.artifactConversationId, rootOptions);
         registeredInExistingConversationId = input.artifactConversationId;
-        const reg = await registerArtifactInSession(input.artifactConversationId, artifactId, {
+        const reg = await registerArtifactInSessionSummary(input.artifactConversationId, artifactId, {
           ...rootOptions,
           registeredAt: createdAt,
         });
         conversation = reg.session;
-        session = await resolveWorkSessionContext(conversation.sessionId, rootOptions);
+        session = await resolveWorkSessionHandle(conversation.sessionId, rootOptions);
       } else if (input.conversationName) {
         const created = await createSession({
           ...rootOptions,
@@ -810,12 +813,12 @@ async function persistArtifact(
           createdAt,
         });
         createdConversationId = created.sessionId;
-        const reg = await registerArtifactInSession(created.sessionId, artifactId, {
+        const reg = await registerArtifactInSessionSummary(created.sessionId, artifactId, {
           ...rootOptions,
           registeredAt: createdAt,
         });
         conversation = reg.session;
-        session = await resolveWorkSessionContext(conversation.sessionId, rootOptions);
+        session = await resolveWorkSessionHandle(conversation.sessionId, rootOptions);
       } else {
         conversation = undefined;
         session = null;
@@ -882,13 +885,13 @@ async function preflightConversationVersion(
 async function createArtifact(input: CreateArtifactInput): Promise<{
   context: ArtifactContext;
   connection: ArtifactConnection;
-  conversation: WorkSession | undefined;
-  session: SessionContext | null;
+  conversation: WorkSessionSummary | undefined;
+  session: SessionHandle | null;
 }> {
   if (input.artifactConversationId) {
     try {
       await preflightConversationVersion(input.artifactConversationId, globalRootOptions());
-      await readSession(input.artifactConversationId, globalRootOptions());
+      await readSessionSummary(input.artifactConversationId, globalRootOptions());
     } catch (error) {
       if (errorCode(error) === "ENOENT") {
         throw new ConversationNotFoundError(`conversation ${input.artifactConversationId} not found`);
@@ -1537,6 +1540,47 @@ function toolResult(value: unknown): JsonObject {
   return { content: [{ type: "text", text: JSON.stringify(value) }], structuredContent: value };
 }
 
+function structuredErrorResult(
+  message: string,
+  structuredContent: JsonObject,
+  textMetadata: JsonObject = structuredContent,
+): JsonObject {
+  const { message: _omittedMessage, ...metadataWithoutMessage } = textMetadata;
+  return {
+    content: [
+      {
+        type: "text",
+        text: `${message}\n${JSON.stringify(metadataWithoutMessage)}`,
+      },
+    ],
+    structuredContent,
+    isError: true,
+  };
+}
+
+function minimalLifecycleHandle(preservedPayload: JsonObject): JsonObject {
+  return {
+    ...(typeof preservedPayload.artifactDirectory === "string"
+      ? { artifactDirectory: preservedPayload.artifactDirectory }
+      : {}),
+    ...(typeof preservedPayload.artifactId === "string"
+      ? { artifactId: preservedPayload.artifactId }
+      : {}),
+    ...(typeof preservedPayload.reviewSessionId === "string"
+      ? { reviewSessionId: preservedPayload.reviewSessionId }
+      : {}),
+    ...(typeof preservedPayload.reviewRound === "number"
+      ? { reviewRound: preservedPayload.reviewRound }
+      : {}),
+    ...(typeof preservedPayload.kind === "string"
+      ? { kind: preservedPayload.kind }
+      : {}),
+    ...(typeof preservedPayload.artifactConversationId === "string"
+      ? { artifactConversationId: preservedPayload.artifactConversationId }
+      : {}),
+  };
+}
+
 function toolError(error: unknown): JsonObject {
   const message = error instanceof Error ? error.message : String(error);
   if (error instanceof McpWindowSelectionRequiredError) {
@@ -1551,19 +1595,11 @@ function toolError(error: unknown): JsonObject {
       useSameArtifactHandle: error.useSameArtifactHandle,
       candidates: error.candidates,
     };
-    return {
-      content: [{ type: "text", text: message }],
-      structuredContent,
-      isError: true,
-    };
+    return structuredErrorResult(message, structuredContent);
   }
   if (error instanceof ArtifactRecoveryError) {
     const structuredContent = { message, ...error.recovery };
-    return {
-      content: [{ type: "text", text: message }],
-      structuredContent,
-      isError: true,
-    };
+    return structuredErrorResult(message, structuredContent);
   }
   return {
     content: [{ type: "text", text: message }],
@@ -1589,7 +1625,7 @@ type BaseArtifactHandle = {
 function artifactHandle(
   context: ArtifactContext,
   connection?: ArtifactConnection,
-  conversation?: ArtifactConversationMetadata | WorkSession,
+  conversation?: ArtifactConversationMetadata | WorkSession | WorkSessionSummary,
 ): BaseArtifactHandle {
   const artifactUrl = toArtifactFileUrl(context.artifactPath);
   const artifactLink = formatArtifactLink(context.manifest.title, artifactUrl);
@@ -1688,29 +1724,27 @@ function postLifecycleStepToolError(
   });
   const message =
     recoveryErrorObj instanceof Error ? recoveryErrorObj.message : String(recoveryErrorObj);
-  if (recoveryErrorObj instanceof ArtifactRecoveryError) {
-    return {
-      content: [{ type: "text", text: message }],
-      structuredContent: {
-        ...preservedPayload,
-        message,
-        ...recoveryErrorObj.recovery,
-      },
-      isError: true,
-    };
-  }
-  return {
-    content: [{ type: "text", text: message }],
-    structuredContent: {
+  const recoveryFields: JsonObject =
+    recoveryErrorObj instanceof ArtifactRecoveryError
+      ? recoveryErrorObj.recovery
+      : {
+          retryable: true,
+          expectedNextTool: entryTool,
+          reuseRoundToken: false,
+          useSameArtifactHandle: true,
+        };
+  return structuredErrorResult(
+    message,
+    {
       ...preservedPayload,
       message,
-      retryable: true,
-      expectedNextTool: entryTool,
-      reuseRoundToken: false,
-      useSameArtifactHandle: true,
+      ...recoveryFields,
     },
-    isError: true,
-  };
+    {
+      ...minimalLifecycleHandle(preservedPayload),
+      ...recoveryFields,
+    },
+  );
 }
 
 async function handleCreateTool(id: unknown, args: JsonObject | undefined): Promise<void> {
@@ -1855,12 +1889,14 @@ type InspectCoreInput = {
   artifactConversationId?: string | undefined;
   conversationName?: string | undefined;
   expectedNextTool?: typeof CREATE_TOOL_NAME | typeof INSPECT_TOOL_NAME | typeof JOIN_SESSION_TOOL_NAME | undefined;
+  sessionMode?: "handle" | "context" | undefined;
 };
 
 type InspectCoreResult = {
   context: ArtifactContext;
   inspection: ArtifactInspectionRaw;
-  session: WorkSession | undefined;
+  session: WorkSessionSummary | undefined;
+  sessionHandle: SessionHandle | null;
   sessionContext: SessionContext | null;
   connection: ArtifactConnection | null;
   roundToken?: string | undefined;
@@ -1875,10 +1911,15 @@ async function executeInspectCore(input: InspectCoreInput): Promise<InspectCoreR
   }
 
   const rootOptions = globalRootOptions();
+  const sessionMode = input.sessionMode ?? "handle";
   if (input.artifactConversationId) {
     try {
       await preflightConversationVersion(input.artifactConversationId, rootOptions);
-      await readSession(input.artifactConversationId, rootOptions);
+      if (sessionMode === "context") {
+        await readSession(input.artifactConversationId, rootOptions);
+      } else {
+        await readSessionSummary(input.artifactConversationId, rootOptions);
+      }
     } catch (error) {
       if (errorCode(error) === "ENOENT") {
         throw new ConversationNotFoundError(`conversation ${input.artifactConversationId} not found`);
@@ -1954,11 +1995,12 @@ async function executeInspectCore(input: InspectCoreInput): Promise<InspectCoreR
   let createdInspectConversationId: string | undefined;
   let existingInspectConversationId: string | undefined;
   let previousMembershipRegisteredAt: string | undefined;
-  let session: WorkSession | undefined;
+  let session: WorkSessionSummary | undefined;
+  let sessionHandle: SessionHandle | null = null;
   let sessionContext: SessionContext | null = null;
   if (input.artifactConversationId) {
     existingInspectConversationId = input.artifactConversationId;
-    const reg = await registerArtifactInSession(
+    const reg = await registerArtifactInSessionSummary(
       input.artifactConversationId,
       context.artifactId,
       rootOptions,
@@ -1966,10 +2008,14 @@ async function executeInspectCore(input: InspectCoreInput): Promise<InspectCoreR
     previousMembershipRegisteredAt = reg.previousRegisteredAt;
     session = reg.session;
     try {
-      sessionContext = await resolveWorkSessionContext(session.sessionId, rootOptions);
+      if (sessionMode === "context") {
+        sessionContext = await resolveWorkSessionContext(session.sessionId, rootOptions);
+      } else {
+        sessionHandle = await resolveWorkSessionHandle(session.sessionId, rootOptions);
+      }
     } catch (error) {
       if (previousMembershipRegisteredAt !== undefined) {
-        await registerArtifactInSession(existingInspectConversationId, context.artifactId, {
+        await registerArtifactInSessionSummary(existingInspectConversationId, context.artifactId, {
           ...rootOptions,
           registeredAt: previousMembershipRegisteredAt,
         }).catch(() => undefined);
@@ -1987,15 +2033,20 @@ async function executeInspectCore(input: InspectCoreInput): Promise<InspectCoreR
     });
     createdInspectConversationId = created.sessionId;
     try {
-      const reg = await registerArtifactInSession(created.sessionId, context.artifactId, rootOptions);
+      const reg = await registerArtifactInSessionSummary(created.sessionId, context.artifactId, rootOptions);
       session = reg.session;
-      sessionContext = await resolveWorkSessionContext(session.sessionId, rootOptions);
+      if (sessionMode === "context") {
+        sessionContext = await resolveWorkSessionContext(session.sessionId, rootOptions);
+      } else {
+        sessionHandle = await resolveWorkSessionHandle(session.sessionId, rootOptions);
+      }
     } catch (error) {
       await removeConversation(created.sessionId, rootOptions).catch(() => undefined);
       throw error;
     }
   } else {
     session = undefined;
+    sessionHandle = null;
     sessionContext = null;
   }
 
@@ -2028,7 +2079,7 @@ async function executeInspectCore(input: InspectCoreInput): Promise<InspectCoreR
       await removeConversation(createdInspectConversationId, rootOptions).catch(() => undefined);
     } else if (existingInspectConversationId) {
       if (previousMembershipRegisteredAt !== undefined) {
-        await registerArtifactInSession(existingInspectConversationId, context.artifactId, {
+        await registerArtifactInSessionSummary(existingInspectConversationId, context.artifactId, {
           ...rootOptions,
           registeredAt: previousMembershipRegisteredAt,
         }).catch(() => undefined);
@@ -2051,6 +2102,7 @@ async function executeInspectCore(input: InspectCoreInput): Promise<InspectCoreR
     context,
     inspection,
     session,
+    sessionHandle,
     sessionContext,
     connection,
     roundToken,
@@ -2107,7 +2159,7 @@ async function handleInspectTool(id: unknown, args: JsonObject | undefined): Pro
       }
     }
 
-    const { context, inspection, session, sessionContext, connection, roundToken, roundTokenSource } =
+    const { context, inspection, session, sessionHandle, connection, roundToken, roundTokenSource } =
       await executeInspectCore({
         artifactDirectory,
         expectedReviewRound,
@@ -2117,6 +2169,7 @@ async function handleInspectTool(id: unknown, args: JsonObject | undefined): Pro
         artifactConversationId: conversationArgs.artifactConversationId,
         conversationName: conversationArgs.conversationName,
         expectedNextTool: INSPECT_TOOL_NAME,
+        sessionMode: "handle",
       });
 
     const baseHandle = artifactHandle(context, connection ?? undefined, session);
@@ -2125,7 +2178,7 @@ async function handleInspectTool(id: unknown, args: JsonObject | undefined): Pro
         ? roundTokenSource
         : undefined;
     inspectionResult =
-      sessionContext !== null && session !== undefined
+      sessionHandle !== null && session !== undefined
         ? {
             ...baseHandle,
             artifactConversationId: session.sessionId,
@@ -2138,7 +2191,7 @@ async function handleInspectTool(id: unknown, args: JsonObject | undefined): Pro
             ...(inspection.submissionSha256 !== undefined ? { submissionSha256: inspection.submissionSha256 } : {}),
             ...(roundToken !== undefined ? { roundToken } : {}),
             ...(validRoundTokenSource !== undefined ? { roundTokenSource: validRoundTokenSource } : {}),
-            session: sessionContext,
+            session: sessionHandle,
           }
         : {
             ...baseHandle,
@@ -2262,6 +2315,7 @@ async function handleJoinSessionTool(id: unknown, args: JsonObject | undefined):
         connection: reconnectConnectionInput,
         artifactConversationId: sessionId,
         expectedNextTool: JOIN_SESSION_TOOL_NAME,
+        sessionMode: "context",
       });
 
     const baseHandle = artifactHandle(context, connection ?? undefined, session);
@@ -2773,50 +2827,34 @@ function sessionWaiterToolError(error: unknown): JsonObject {
     || error instanceof SessionWaiterLockLostError
     || error instanceof SessionWaiterIoError
   ) {
-    return {
-      content: [{ type: "text", text: message }],
-      structuredContent: {
-        code: error.code,
-        message,
-        ...(error.sessionId !== undefined ? { sessionId: error.sessionId } : {}),
-        ...(error.waitId !== undefined ? { waitId: error.waitId } : {}),
-      },
-      isError: true,
-    };
+    return structuredErrorResult(message, {
+      code: error.code,
+      message,
+      ...(error.sessionId !== undefined ? { sessionId: error.sessionId } : {}),
+      ...(error.waitId !== undefined ? { waitId: error.waitId } : {}),
+    });
   }
 
   if (error instanceof ConversationMigrationRequiredError) {
-    return {
-      content: [{ type: "text", text: message }],
-      structuredContent: {
-        code: error.code,
-        message,
-        artifactConversationId: error.artifactConversationId,
-      },
-      isError: true,
-    };
+    return structuredErrorResult(message, {
+      code: error.code,
+      message,
+      artifactConversationId: error.artifactConversationId,
+    });
   }
 
   if (error instanceof ConversationNotFoundError) {
-    return {
-      content: [{ type: "text", text: message }],
-      structuredContent: {
-        code: "CONVERSATION_NOT_FOUND",
-        message,
-      },
-      isError: true,
-    };
+    return structuredErrorResult(message, {
+      code: "CONVERSATION_NOT_FOUND",
+      message,
+    });
   }
 
   if (error instanceof ConversationRegistryError) {
-    return {
-      content: [{ type: "text", text: message }],
-      structuredContent: {
-        code: "CONVERSATION_REGISTRY_INVALID",
-        message,
-      },
-      isError: true,
-    };
+    return structuredErrorResult(message, {
+      code: "CONVERSATION_REGISTRY_INVALID",
+      message,
+    });
   }
 
   if (error instanceof ZodError) {
@@ -2824,36 +2862,24 @@ function sessionWaiterToolError(error: unknown): JsonObject {
       .map((issue) => `${issue.path.join(".") || "input"}: ${issue.message}`)
       .join("; ");
     const formatted = `INVALID_ARTIFACT_INPUT: ${details}`;
-    return {
-      content: [{ type: "text", text: formatted }],
-      structuredContent: {
-        code: "INVALID_ARTIFACT_INPUT",
-        message: formatted,
-      },
-      isError: true,
-    };
+    return structuredErrorResult(formatted, {
+      code: "INVALID_ARTIFACT_INPUT",
+      message: formatted,
+    });
   }
 
   if (message.startsWith("ARTIFACT_NOT_FOUND:")) {
-    return {
-      content: [{ type: "text", text: message }],
-      structuredContent: {
-        code: "ARTIFACT_NOT_FOUND",
-        message,
-      },
-      isError: true,
-    };
+    return structuredErrorResult(message, {
+      code: "ARTIFACT_NOT_FOUND",
+      message,
+    });
   }
 
   if (error instanceof Error && error.name === "AbortError") {
-    return {
-      content: [{ type: "text", text: message }],
-      structuredContent: {
-        code: "REQUEST_CANCELLED",
-        message,
-      },
-      isError: true,
-    };
+    return structuredErrorResult(message, {
+      code: "REQUEST_CANCELLED",
+      message,
+    });
   }
 
   const prefixedCodes = [
@@ -2865,25 +2891,17 @@ function sessionWaiterToolError(error: unknown): JsonObject {
   ] as const;
   for (const prefix of prefixedCodes) {
     if (message.startsWith(`${prefix}:`)) {
-      return {
-        content: [{ type: "text", text: message }],
-        structuredContent: {
-          code: prefix,
-          message,
-        },
-        isError: true,
-      };
+      return structuredErrorResult(message, {
+        code: prefix,
+        message,
+      });
     }
   }
 
-  return {
-    content: [{ type: "text", text: message }],
-    structuredContent: {
-      code: "SESSION_WAITER_IO_ERROR",
-      message,
-    },
-    isError: true,
-  };
+  return structuredErrorResult(message, {
+    code: "SESSION_WAITER_IO_ERROR",
+    message,
+  });
 }
 
 async function handleWaitInSessionTool(
@@ -2941,9 +2959,9 @@ async function handleRequest(message: JsonObject): Promise<void> {
         "When multiple windows exist and none or multiple are focused, create_artifact returns WINDOW_SELECTION_REQUIRED with candidates and single-use selection tokens.",
         "To query windows or inspect active candidates, call resolve_artifact_window.",
         "Pass connection: { targetMode: 'explicit-window', selectionToken } when targeting a specific candidate, or connection: { targetMode: 'artifact-window', windowInstanceId } to inspect_artifact (intent=reconnect) as an advisory affinity hint.",
-        "By default (wait=false), create_artifact returns the exact artifactDirectory, reviewRound, committed connection metadata, and nullable Work Session context immediately. Retain the handle and send its link before calling wait_for_artifact_review for a create/review workflow. Pass wait=true only when explicitly requesting a combined create-and-wait call. A non-null Work Session context is returned only when a Session is selected or explicitly created.",
+        "By default (wait=false), create_artifact returns the exact artifactDirectory, reviewRound, committed connection metadata, and nullable SessionHandle (sessionId, paths, and metadata without instructions content or catalog) immediately. Retain the handle and send its link before calling wait_for_artifact_review for a create/review workflow. Pass wait=true only when explicitly requesting a combined create-and-wait call. A non-null SessionHandle is returned only when a Session is selected or explicitly created.",
         "Create and inspect without artifactConversationId or conversationName are standalone and return session: null without creating or registering a Work Session. While a chat has an active Session, pass its ID unless the user explicitly requests standalone; a name without an ID explicitly creates a new Session.",
-        "Use the work-session skill to join or refresh an exact Session with join_session and sessionId; supply artifactId only when the request also calls for artifact inspection and registration in that Session.",
+        "Use the work-session skill to join or refresh an exact Session with join_session and sessionId when you need the full SessionContext snapshot (instructions content and catalog); supply artifactId only when the request also calls for artifact inspection and registration in that Session.",
         "A cancelled waiter never ends or deletes the artifact. expectedReviewRound is checked when attaching; an attached waiter can receive a later round after non-waiting (wait=false) updates, with the result and token bound to that submitted round.",
         "wait_for_artifact_review, waiting create_artifact (wait=true), waiting inspect_artifact (wait=true), and waiting update_artifact (wait=true) all return the complete validated comments document for every submitted decision; read feedback from comments.comments. A revise result also returns nextAction.type=process-review-feedback and a one-time roundToken so feedback can be processed without an additional inspection just to fetch comments.",
         "For explicit direct updates to existing artifacts in the active Work Session, follow the work-session skill's wait-mode selection. update_artifact defaults to wait=true; pass wait=false only when explicitly requested or directed by workflow instructions: it commits the new round and returns waited=false without attaching a waiter, preserving any existing waiter, and does not accept artifactConversationId. Do not take over an existing waiter just to perform a non-waiting update. Record the returned round and continue authorized work; absent decision/comments are expected for this commit result, so do not fetch feedback or start a wait merely because they are absent. Review-feedback processing keeps its waiting flow; create returns its handle before a separate review wait by default.",
@@ -2997,7 +3015,7 @@ async function handleRequest(message: JsonObject): Promise<void> {
           name: CREATE_TOOL_NAME,
           title: "Create artifact",
           description:
-            "Create a secure schema-v6 Markdown artifact in global AI Artifacts storage, optionally register it in an explicitly selected or newly requested Work Session, atomically commit its schema-v1 window-routing connection (routing to the focused VS Code window by default, or an explicit candidate via selectionToken), and by default (wait=false) return its handle, nullable session context, and connection metadata immediately. Retain the handle before calling wait_for_artifact_review. Pass wait=true to explicitly wait internally for a review result.",
+            "Create a secure schema-v6 Markdown artifact in global AI Artifacts storage, optionally register it in an explicitly selected or newly requested Work Session, atomically commit its schema-v1 window-routing connection (routing to the focused VS Code window by default, or an explicit candidate via selectionToken), and by default (wait=false) return its handle, nullable SessionHandle (sessionId, metadata, and directory/instructions/layout paths without instructions content or catalog), and connection metadata immediately. Retain the handle before calling wait_for_artifact_review. Pass wait=true to explicitly wait internally for a review result.",
           inputSchema: {
             type: "object",
             properties: {
@@ -3073,7 +3091,7 @@ async function handleRequest(message: JsonObject): Promise<void> {
           name: INSPECT_TOOL_NAME,
           title: "Inspect artifact",
           description:
-            "Read the current manifest, Markdown, comments, optional submission, connection metadata, and validated hashes for an exact artifact. Session registration occurs only when artifactConversationId or conversationName is supplied; omission is standalone. With intent=reconnect, re-evaluate and atomically bind an active VS Code window (sole live window, validated artifact-window affinity, unique focused window, or explicit via connection.selectionToken). Takeover first cancels and drains its current waiter. Returns a one-time round token when saved feedback is present or when intent is explicit-chat-update. By default (wait=false), returns immediately; when wait=true and no roundToken is returned, attaches a waiter after inspection/reconnect and returns the validated snapshot together with the review result.",
+            "Read the current manifest, Markdown, comments, optional submission, connection metadata, and validated hashes for an exact artifact. Session registration occurs only when artifactConversationId or conversationName is supplied; omission is standalone, returning session: null, while Session-bound calls return a lightweight SessionHandle (sessionId, metadata, and directory/instructions/layout paths without instructions content or catalog—use join_session for full SessionContext snapshots). With intent=reconnect, re-evaluate and atomically bind an active VS Code window (sole live window, validated artifact-window affinity, unique focused window, or explicit via connection.selectionToken). Takeover first cancels and drains its current waiter. Returns a one-time round token when saved feedback is present or when intent is explicit-chat-update. By default (wait=false), returns immediately; when wait=true and no roundToken is returned, attaches a waiter after inspection/reconnect and returns the validated snapshot together with the review result.",
           inputSchema: {
             type: "object",
             properties: {
