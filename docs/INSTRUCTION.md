@@ -2,7 +2,7 @@
 
 ## Project
 
-AI Artifacts is a VS Code extension for reviewing AI-generated Markdown through a local, MCP-owned review lifecycle and organizing shared work across agents and chats in Work Sessions.
+AI Artifacts is a VS Code extension for reading and refining AI-generated documents through preview and inline review, retaining useful conclusions, and organizing reusable context in Work Sessions. A standalone artifact is a complete use case; a Session supports document organization and continuity even with one agent. Optional workflow automation coordinates participating agents through shared Instructions and handoffs while preserving human approval rules.
 
 - Package version source of truth: `package.json`
 - Current and only supported artifact schema: `v6`
@@ -16,7 +16,7 @@ AI Artifacts is a VS Code extension for reviewing AI-generated Markdown through 
 
 Before changing behavior, read the smallest relevant set in this order:
 
-1. `docs/PHILOSOPHY.md` for product intent, lifecycle meaning, and non-goals.
+1. `docs/PHILOSOPHY.md` for product intent, when each capability is useful, UX principles, lifecycle meaning, and non-goals. For feature or substantial UX proposals, use its product-growth questions to assess fit and scope; workflow examples do not define mandatory product behavior.
 2. `docs/ARCHITECTURE.md` for current boundaries and safety invariants.
 3. `skills/create-review-artifact/SKILL.md` for the self-contained tool/feedback/lifecycle contract; read `references/recovery.md` when a lifecycle tool reports an error and `references/storage-protocol.md` when investigating persisted schemas or raw window-resolution data. Use `skills/work-session/SKILL.md` for Session entry, Instructions, and context refresh.
 4. The implementation and tests for the area being changed.
@@ -68,7 +68,7 @@ If product intent, documentation, tests, and implementation disagree, call out t
 - The receipt stores `mcpVersion`, optional `codexMcpVersion` (`>= 0`, falling back to `mcpVersion` for legacy receipts omitting it), artifact skill versions in `skills`, and Session skill versions in `sessionSkills`; both maps track `agents`, `claude`, and `antigravity` independently. Shared base setup commits the runtime and both Agents skill receipts after all three steps succeed (and automatic upgrade commits each completed skill step incrementally and commits `mcpVersion` independently of Codex migration failures); Claude and Antigravity receipts are committed after each client's own installation succeeds (without implying read-back content verification). Preserve other entries on partial updates. Never mark a partial failure current.
 - Preserve only the declared skill customization points (`description:` and `USER CUSTOM RULES`) during automatic upgrade or reinstall of `create-review-artifact`. Work Session skill assets are replaced officially without customization. If target frontmatter or markers cannot be preserved deterministically, fail closed before replacing the target.
 - Keep **What's New & Tips** (`agentPlus.openWhatsNew`, `WhatsNewPanelController`, `WhatsNewApp`) isolated from review/session lifecycles and integration mutations: pure `src/shared/whats-new-releases.ts` metadata has no `?raw` imports, every shipped release maps to non-empty Markdown in `src/webview/whats-new-content.ts` (`2.0.0` ships without a preview badge and retains `notify: true`), local PNG/GIF assets live under `media/whats-new/`, external links only, no video/YouTube embeds. Preserve the panel ready/visible gate and ACK handshake.
-- Keep What's New notifications upgrade-only and non-blocking, with no welcome/Tips popup or Tips command. Use `context.globalState.get/update` for the single `whatsNew.highestObservedVersion` string; await update before UI, retain the highest version on downgrade, and observe silent versions without catch-up. Do not add custom file state, filesystem claims, or `globalStorageUri` scheme guards. Cross-window duplicate popups during simultaneous activation are accepted. Share one pre-install/upgrade integration receipt snapshot with activation: absent notification history plus a `valid` or `invalid` receipt permits the current exact `notify: true` announcement, while missing/unreadable receipt evidence initializes silently. Subsequent announcements require a higher stable `X.Y.Z`; manual views never mutate version history. Integration counters are not extension SemVer. See `docs/ARCHITECTURE.md`.
+- Keep What's New notifications upgrade-only and non-blocking, with no welcome/Tips popup or separate Tips command. Use `context.globalState.get/update` for the single `whatsNew.highestObservedVersion` string; await update before UI, retain the highest version on downgrade, and observe silent versions without catch-up. Do not add custom file state, filesystem claims, or `globalStorageUri` scheme guards. Cross-window duplicate popups during simultaneous activation are accepted. Share one pre-install/upgrade integration receipt snapshot with activation: absent notification history plus a `valid` or `invalid` receipt permits the current exact `notify: true` announcement, while missing/unreadable receipt evidence initializes silently. Subsequent announcements require a higher stable `X.Y.Z`; manual views never mutate version history. Integration counters are not extension SemVer. See `docs/ARCHITECTURE.md`.
 
 ## Change guidelines
 
@@ -115,7 +115,7 @@ If product intent, documentation, tests, and implementation disagree, call out t
 - `src/shared/`: shared schemas, file contracts, artifact-connection safety/persistence, validation, grouped workspace registry rules, Session Waiters contracts and filesystem store (`session-waiter-contracts.ts`, `session-waiter-store.ts`), pure release metadata (`whats-new-releases.ts`), and strict What's New panel protocol (`whats-new-protocol.ts`).
 - `src/shared/session-connect-prompt.ts`: builder for agent takeover/join prompts targeting a specific Work Session.
 - `skills/create-review-artifact/`: review artifact lifecycle orchestration contract.
-- `skills/work-session/`: multi-agent work session orchestration contract.
+- `skills/work-session/`: Session entry, shared Instructions, context refresh, and optional agent-coordination contract.
 - `test/`: executable regression coverage for contracts and failure behavior.
 
 ## Validation

@@ -283,11 +283,12 @@ describe("create-review-artifact skill contract", () => {
   });
 
   it("keeps retention policy in product docs rather than the skill", async () => {
-    const [skill, contract, recovery, philosophy] = await Promise.all([
+    const [skill, contract, recovery, philosophy, architecture] = await Promise.all([
       readFile(path.join(skillDirectory, "SKILL.md"), "utf8"),
       readFile(path.join(skillDirectory, "references", "storage-protocol.md"), "utf8"),
       readFile(path.join(skillDirectory, "references", "recovery.md"), "utf8"),
       readFile(path.join(skillDirectory, "..", "..", "docs", "PHILOSOPHY.md"), "utf8"),
+      readFile(path.join(skillDirectory, "..", "..", "docs", "ARCHITECTURE.md"), "utf8"),
     ]);
 
     expect(skill).not.toMatch(/retention/i);
@@ -295,10 +296,12 @@ describe("create-review-artifact skill contract", () => {
     expect(recovery).not.toMatch(/retention/i);
     expect(skill).toContain("never deletes or finishes an artifact");
     expect(skill).toContain("ARTIFACT_NOT_FOUND");
-    expect(philosophy).toContain("Only globally archived artifacts are subject to configured retention");
-    expect(philosophy).toContain("agentPlus.artifactRetentionDays");
-    expect(philosophy).toContain("artifact-ui-state.json.archivedAt");
-    expect(philosophy).toContain("Restore clears `archivedAt`");
+    expect(philosophy).toContain("Unarchived artifacts and Work Sessions are kept regardless of age");
+    expect(philosophy).toContain("[Architecture](ARCHITECTURE.md#lifetime-model)");
+    expect(architecture).toContain("Only globally archived artifacts are subject to configured retention");
+    expect(architecture).toContain("agentPlus.artifactRetentionDays");
+    expect(architecture).toContain("artifact-ui-state.json.archivedAt");
+    expect(architecture).toContain("Restore clears the archive timestamp");
   });
 
   it("documents artifactUrl and artifactLink as regular file links", async () => {

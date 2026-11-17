@@ -4,9 +4,9 @@
 
 📦 [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=huynguyen294.ai-artifacts) · 🌐 [Open VSX](https://open-vsx.org/extension/huynguyen294/ai-artifacts) · 🐙 [GitHub](https://github.com/huynguyen294/ai-artifacts)
 
-**AI Artifacts** is an interactive artifact review editor that lets AI coding agents such as Cursor, Codex, Claude, GitHub Copilot, Cline, Windsurf, and Antigravity create planning artifacts, Markdown specs, and technical write-ups directly in your IDE. Add inline comments, request revisions, and approve plans for execution through MCP and agent skills.
+**AI Artifacts** brings readable previews, inline comments, and repeated review rounds to plans, designs, requirements, and technical write-ups from AI coding agents such as **Cursor, Codex, Claude, GitHub Copilot, Cline, Windsurf, and Antigravity**, directly in your IDE. Ask questions, refine the proposal, approve plans for execution, and keep useful conclusions for later work through MCP and agent skills.
 
-**Multi-Agent Work Sessions** keep related artifacts and shared instructions together across agents and chats. Organize ongoing work, define rules and workflows, and connect another agent to continue with the session’s latest artifacts and instructions.
+**Multi-Agent Work Sessions** bring related documents and shared Instructions together across agents, chats, and supported clients. See the work's documents at a glance and let agents hand work over according to your workflow, while you keep the review checkpoints that matter.
 
 ## Contents
 
@@ -33,7 +33,7 @@
 1. **Ask for an artifact** — Ask your AI agent to create a plan or write-up as an artifact. It opens in your IDE for review.
 2. **Leave comments** — Select text and add feedback wherever you want changes or clarification.
 3. **Choose what happens next:**
-   - **Review** — Send your comments to the agent for revision.
+   - **Review** — Send questions and requested changes to the agent for another review round.
    - **Proceed** — Approve the plan and let the agent execute it.
    - **Just save** — Save the document without executing the plan.
    - **Copy Markdown** — Copy the document’s Markdown to your clipboard.
@@ -154,7 +154,7 @@ Extension 2.0.0 bundles MCP version 12 for Work Sessions. The current runtime su
 
 ### 4. Explore What's New & Tips
 
-Run **`AI Artifacts: What's New`** from the Command Palette to explore the latest features with illustrated guides. Switch to **Tips** to learn how to start a Work Session, write shared instructions, and connect another agent.
+Run **`AI Artifacts: What's New & Tips`** from the Command Palette to explore the latest features with illustrated guides. Switch to **Tips** for practical advice on reviewing proposals, preparing context for another chat, and working with agents.
 
 ### Optional: Antigravity global rule
 
@@ -303,7 +303,7 @@ Click a local file link in the review document to open it in the VS Code text ed
 
 If you haven't saved any comments or submitted a decision for the current round, you can request a change directly in chat—for example, “add a rollout phase to this artifact.” The agent updates the document and opens the next review round.
 
-For a direct update to an existing artifact as part of the chat's active Work Session, the agent commits the update and continues working by default. Ask explicitly to update and wait for review when you want it to pause. New artifacts always wait for review; standalone updates and processing saved review feedback keep their existing review flow. If an AI request is already waiting on that artifact, the update keeps it waiting and your next submission returns the updated round and feedback to that request. The agent can attach a waiter later when none is active and you request review.
+Artifact updates wait for review by default, including within an active Work Session. A non-waiting update requires an explicit request from you or the Session's Instructions/workflow. In that mode, the agent commits the update and continues authorized work; an existing review wait stays attached and receives the updated round's feedback when submitted. Creating an artifact normally returns and shares its link before waiting for review, unless creation without review was requested.
 
 ### Search & Reconnect Artifacts
 
@@ -316,7 +316,11 @@ Inspect focuses on the selected artifact. If the chat is already connected to a 
 
 ### Multi-Agent Work Sessions
 
-Use a Work Session for ongoing work that spans multiple artifacts, agents, or chats. A session keeps its artifacts and shared instructions together, so you can move from planning with one agent to implementation or review with another.
+Use a Work Session for ongoing work that spans multiple artifacts, agents, or chats. The Session Manager gives you an overview of related plans, designs, requirements, and conclusions, with readable previews. Shared Instructions, an organized document catalog, and the `work-session` skill give agents a prepared entry point to the relevant context, without requiring you to invent and explain a folder structure for every task.
+
+Working documents live outside the source repository in your AI Artifacts storage. A Session is useful with one agent, when continuing in a new chat, or when coordinating several agents. You can organize documents without automation, and agents can follow a workflow without keeping the manager open.
+
+For multi-agent work, connect the participating agents to the same Session, define roles and handoff conditions in Instructions, and have them exchange requests or review feedback while preserving your chosen approval checkpoints. The workflow is yours to define; shared context comes from saved Instructions and documents, not another chat's transcript.
 
 #### Start from an artifact
 
@@ -335,7 +339,7 @@ A chat has at most one active Work Session, while a session can be used by multi
 
 Once connected, artifacts created or inspected in that chat are automatically added to the active session. You can request a standalone artifact for an individual task while keeping the session active for later requests. A chat without an active session can create and review standalone artifacts without starting a Work Session.
 
-For related work, the Session skill reads the latest shared instructions and relevant artifact Markdown. When it needs to find a new artifact or get a session overview, it refreshes the catalog with `join_session`. Reading a reference document through its catalog path leaves its review lifecycle unchanged. Agents can also wait on or target active Session waiters via `wait_in_session` and `request_waiter_in_session`.
+For related work, the Session skill uses the Instructions received on joining and reads relevant artifacts through their catalog paths. When asked to discover artifacts or report the current Session overview, it refreshes the catalog; newly returned Session context also refreshes the agent's Instructions. Changes are not pushed continuously into existing chats, so ask an agent to reload Instructions after you edit them. Reading a reference document through its catalog path leaves its review lifecycle unchanged. Agents can also wait on or target active Session waiters via `wait_in_session` and `request_waiter_in_session`.
 
 #### Waiting room
 
@@ -363,17 +367,23 @@ Working occupies the main column with a responsive grid layout. References and A
 
 Session Instructions hold rules, workflows, and other guidance for agents working in that session. For example, describe the module’s conventions, the preferred development workflow, or which design decisions agents should follow.
 
+For a workflow with an implementer and a reviewer, you could write:
+
+> Implementer: carry out the approved plan, then hand the implementation summary and verification results to the Reviewer. Reviewer: assess the changes and return findings. Implementer: assess those findings and wait for my decision before applying fixes.
+
+This is one possible workflow. You choose the roles, handoff conditions, and human review checkpoints; joining a Session or receiving a handoff does not itself approve a plan.
+
 - Edit Markdown directly in the **Instructions** text area and click **Save**.
 - Use **Open Markdown File** to edit the session’s `instructions.md` in your editor. You can also ask an agent to update that file explicitly.
 - Closing or reloading the manager before clicking Save discards unsaved text. Changes saved to `instructions.md` outside the manager are reflected in the open Instructions field.
 
-The `work-session` skill applies the latest instructions to related requests and uses the artifact catalog to find supporting plans, references, or other documents. Instructions are stored in `instructions.md` inside the session directory; the file is separate from session metadata and artifact review state.
+The `work-session` skill checks the Instructions held in the chat before related tasks and uses the artifact catalog to find supporting documents. It refreshes Instructions when a tool returns fresh Session context or when you explicitly request a reload; it also reloads them if the cached Instructions are missing. Instructions are stored in `instructions.md` inside the session directory, separately from session metadata and artifact review state.
 
 ### What's New & Tips
 
-Run **`AI Artifacts: What's New`** (`agentPlus.openWhatsNew`) from the Command Palette at any time to open or reveal the **What's New & Tips** view. This viewer is standalone and separate from Artifact Review editors, Work Sessions, and integration setup; manually opening or reading it never alters upgrade-notification history.
+Run **`AI Artifacts: What's New & Tips`** (`agentPlus.openWhatsNew`) from the Command Palette at any time to open or reveal the **What's New & Tips** view. Search for **Tips** or **What's New** to find the command. This viewer is standalone and separate from Artifact Review editors, Work Sessions, and integration setup; manually opening or reading it never alters upgrade-notification history.
 
-- **Two views:** Switch between **What's New** (curated release highlights) and **Tips** (direct usage guides) using the top tabs.
+- **Two views:** Switch between **What's New** (curated release highlights) and **Tips** (practical advice that complements step-by-step tutorials) using the top tabs.
 - **Release cards & full articles:** Each card shows its version label (plus an optional release date and `Preview content` badge when in preview), title, short description, **Features** and optional **Bug fixes** lists collapsed by default, and **View more details →** to open the full Markdown article with **← All updates** navigation. Release highlights are curated and distinct from the exhaustive [Changelog](CHANGELOG.md).
 - **Rich content & safety:** Both release articles and **Tips** render sanitized Markdown with local PNG/GIF illustrations under `media/whats-new/` and external HTTP/HTTPS/mailto links only (video and YouTube embeds are not included). Version `2.0.0` introduces Work Sessions and multi-agent workflows, with practical guidance on the **Tips** tab.
 - **Upgrade-only notifications:** Fresh installs without notification history or a pre-existing integration receipt silently record their current version, without a welcome/Tips popup or separate Tips command. Existing users with `~/.ai-artifacts/managed/integration-version.json` (`valid` or `invalid`) before activation can receive the exact current opt-in release announcement on their first tracked activation. Later notifications require a higher stable `X.Y.Z` version whose exact entry sets `notify: true`. The non-modal Info notification offers **View what's new**, opening that release article.
@@ -427,7 +437,7 @@ The retention setting also applies to globally archived Work Sessions, using `se
 - Version 1.1.0 supports only schema v6 stored under `~/.ai-artifacts/artifacts/`.
 - The current integration uses numeric `MCP_VERSION = 12`, `CREATE_REVIEW_ARTIFACT_SKILL_VERSION = 4` (`SKILL_VERSION = 4`), and `WORK_SESSION_SKILL_VERSION = 1`. These are independent monotonic asset versions, not SemVer and not the extension package version.
 - Successful manual client installation merges the client selection into `~/.ai-artifacts/managed/installed-clients.json`; successful manual uninstall removes only the selected client IDs from that list. Installed MCP runtime, shared `.agents` skills (`skills` and `sessionSkills`), Claude, and Antigravity skill versions are tracked independently in `~/.ai-artifacts/managed/integration-version.json`. An absent or mismatched receipt entry is stale.
-- On extension activation, AI Artifacts reads `~/.ai-artifacts/managed/integration-version.json` once. When the version file is absent, it skips client detection and automatic upgrade and offers **Run Installer** once until clicked (re-offering on later activations if dismissed while still absent). When an existing valid or invalid receipt file is present, AI Artifacts runs an asynchronous automatic upgrade across the merged `saved ∪ detected` client set: it deploys stale shared assets once, commits receipts as steps complete, reconciles required client definitions (such as replacing outdated managed Codex `ai_artifacts` tables into the canonical six-tool block—even if `# >>>` markers were removed—while failing closed without modifying `config.toml` if unexpected custom keys exist), and updates stale Claude/Antigravity skills while keeping current files, customizations, and Antigravity rules/permissions untouched. When Codex migration fails, AI Artifacts tracks Codex readiness separately (`codexMcpVersion`) so shared MCP upgrades, sibling clients, and Work Sessions stay unblocked while subsequent activations keep retrying and notifying for Codex until resolved or Codex is uninstalled. Healthy updates, unchanged clients, and runs with no target clients stay silent.
+- On extension activation, AI Artifacts reads `~/.ai-artifacts/managed/integration-version.json` once. When the version file is absent, it skips client detection and automatic upgrade and offers **Run Installer** once until clicked (re-offering on later activations if dismissed while still absent). When an existing valid or invalid receipt file is present, AI Artifacts runs an asynchronous automatic upgrade across the merged `saved ∪ detected` client set: it deploys stale shared assets once, commits receipts as steps complete, reconciles required client definitions (such as replacing outdated managed Codex `ai_artifacts` tables into the canonical nine-tool block—even if `# >>>` markers were removed—while failing closed without modifying `config.toml` if unexpected custom keys exist), and updates stale Claude/Antigravity skills while keeping current files, customizations, and Antigravity rules/permissions untouched. When Codex migration fails, AI Artifacts tracks Codex readiness separately (`codexMcpVersion`) so shared MCP upgrades, sibling clients, and Work Sessions stay unblocked while subsequent activations keep retrying and notifying for Codex until resolved or Codex is uninstalled. Healthy updates, unchanged clients, and runs with no target clients stay silent.
 - Automatic upgrade never auto-installs unconfigured clients or overwrites damaged skills when receipts are current. Use **AI Artifacts: Verify All Integrations** to inspect on-disk `Ready` status, and run **AI Artifacts: Installer** to add or repair clients. If reading the receipt file or running an automatic upgrade hits an error, VS Code shows a single error notification naming the failed client(s) (when applicable) and **AI Artifacts: Installer**, with a **View Installation Guide** action.
 - Schema v3/v4/v5 and workspace-local `.ai-artifacts` or `.codex-artifacts` lifecycles are not opened, advanced, or migrated by v1.1.x. Existing files remain untouched on disk.
 - This is a hard compatibility cutoff. A rollback to a 0.9.x extension also requires reinstalling the matching older runtime and skill; do not use a 0.9.x runtime with v1.1.x artifacts.

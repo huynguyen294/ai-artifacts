@@ -14,6 +14,31 @@ Minor typos, formatting fixes, or cosmetic wording adjustments that do not chang
 
 Each entry includes the date, category, summary of changes, rationale, and affected components or files.
 
+## 2026-11-17 - Clarify README benefits and make Tips discoverable in the Command Palette
+
+- **README:** Preserved the Multi-Agent positioning and full introductory client list, strengthened preview/review and shared-work benefits, and kept the existing How It Works flow and GIFs with only a short Review wording correction. Expanded Session value and user-defined handoff examples in the detailed usage sections. Corrected waiting defaults, Instructions refresh guidance, the current tool count, and Tips descriptions.
+- **Command contribution (`package.json`):** Renamed the visible command to **AI Artifacts: What's New & Tips** so its title includes both search terms. The command ID remains `agentPlus.openWhatsNew`; activation, panel navigation, notification behavior, and version counters are unchanged.
+- **Documentation and validation:** Aligned current command references and the existing release-contract assertion. Updated the documentation test to check protocol details in technical references and links from PHILOSOPHY, matching the earlier documentation separation. No new command or separate Tips entry point was added.
+
+## 2026-11-17 - Refocus Tips on practical usage advice
+
+- **Tips content (`src/content/tips.md`):** Replaced the sequential Session setup walkthrough with independent tips about question-only reviews, useful context checkpoints, collaborative Instructions, agent-assisted organization, assessing review findings, and temporarily pausing auto-open. Retained useful agent prompts while separating situational advice from setup tutorials.
+- **Scope and rationale:** Tips complements step-by-step usage guides rather than duplicating them. Examples preserve explicit user requests and approval checkpoints, distinguish Session organization from global Archive, and describe review assessment as a user-chosen method. No runtime, UI, skill, version, README, or release-article changes.
+
+## 2026-11-17 - Align technical documentation with product philosophy and current skill contracts
+
+- **Project guidance (`docs/INSTRUCTION.md`):** Clarified standalone review, Session use with one agent, and optional coordination; routed feature and substantial UX proposals to the philosophy's existing product-growth guidance without duplicating it as a new checklist.
+- **Architecture and component mapping (`docs/ARCHITECTURE.md`, `docs/COMPONENTS.md`):** Connected the product capabilities to their technical owners, distinguished the human overview from agent context access and handoffs, and made the overview diagram client-neutral. User-defined roles and review methods remain separate from runtime mechanisms.
+- **Contract corrections (`docs/COMPONENTS.md`):** Replaced stale creation/wait and Session-update defaults with the current retain-handle/share-link/public-wait flow and waiting updates unless explicitly directed otherwise. Aligned cached Instructions and requested layout-editing responsibilities with the current Work Session skill. These correct documentation drift; no runtime, schema, skill, or version changes.
+- **Scope:** Changes are limited to `docs/`; README, Tips, and release-article updates are deferred to separate passes.
+
+## 2026-11-17 - Reframe product philosophy around artifact review and Work Sessions
+
+- **Product philosophy (`docs/PHILOSOPHY.md`):** Reorganized the document around reviewable outputs and reusable working context, reflecting the product-owner decisions in the content discussion. Distinguished Artifact review, Work Session organization and context continuity, and optional cross-agent workflows; explained when each is useful and how the manager UI and automation can be used independently.
+- **Positioning and boundaries:** Clarified Session value as organized documents, Instructions, guided agent access, readable previews, and context outside the repository. Defined at-a-glance as a document overview and Coder/Reviewer loops as user-defined methods. Preserved human approval checkpoints and distinguished saved shared context from another chat's transcript.
+- **Philosophy clarification (`docs/PHILOSOPHY.md`):** Made readable review and agent-authored synthesis explicit, explained the Session's complementary views for people and agents, and distinguished workflow automation from user-defined review methods. Added concrete usage situations, UX principles, and focused feature-selection questions to connect the philosophy to product decisions without prescribing new UI or workflow behavior. Replaced duplicated protocol details with canonical references while retaining user-facing approval and persistence commitments.
+- **Scope and continuity:** Retained review-decision semantics, exact-handle recovery, explicit artifact requests, and global-Archive-based retention. Condensed implementation detail into a technical reference with links to canonical contracts. No runtime behavior, UI, schema, skill, or version changes.
+
 ## 2026-11-15 - Document Waiting Room UI and include it in 2.0.0 highlights
 
 - **Product docs (`README.md`, `docs/INSTRUCTION.md`, `docs/ARCHITECTURE.md`, `docs/COMPONENTS.md`, `docs/PHILOSOPHY.md`):** Replaced runtime-only/Phase-2-pending descriptions with the implemented Waiting room, per-wait Stop, scoped waiter patches, heartbeat filtering and expiry refreshes. The extension reads and cancels through the shared store; request sending stays with MCP.

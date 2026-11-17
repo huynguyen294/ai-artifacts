@@ -36,8 +36,8 @@ button:disabled {
   align-items: center;
   justify-content: space-between;
   gap: 24px;
-  min-height: 74px;
-  padding: 12px 24px;
+  min-height: 52px;
+  padding: 10px 24px;
   border-bottom: 1px solid var(--vscode-panel-border);
   background: color-mix(in srgb, var(--vscode-editor-background) 92%, transparent);
   backdrop-filter: blur(12px);
@@ -176,7 +176,7 @@ button:disabled {
 .workspace {
   display: grid;
   grid-template-columns: minmax(440px, 1fr) 340px;
-  min-height: calc(100vh - 74px);
+  min-height: calc(100vh - 52px);
 }
 .plan {
   max-width: 100%;
@@ -315,7 +315,7 @@ button:disabled {
 }
 
 .document-workspace {
-  min-height: calc(100vh - 114px);
+  min-height: calc(100vh - 92px);
   padding: 12px clamp(8px, 1.5vw, 20px) 48px;
 }
 .artifact-document {

@@ -1,46 +1,39 @@
 # AI Artifacts Tips
 
-## Start a Work Session with your agent
+Small habits that make reviews easier and shared context more useful.
 
-### Create an artifact and start the session
+## Use a review round to resolve uncertainty
 
-Start with a feature or task you want to work on. Ask your agent to create an artifact, such as a requirements document or implementation plan, and start a new Work Session for it.
+You can ask about a proposal before deciding whether it needs a change. When submitted comments contain only questions, the agent answers in chat and opens another review round with the document unchanged. Make a requested edit explicit when you want one.
 
-Try asking:
+> Why does this design need a background process? Explain the trade-off before changing the proposal.
 
-> Create a requirements artifact for this feature and start a new Work Session for it.
+## Leave a useful checkpoint before switching chats
 
-### Write and update Session Instructions
+After a long discussion, capture the decisions, their reasons, unresolved questions, and next step in a context artifact. A new chat can continue from those saved conclusions; joining a Session does not transfer the previous chat's history. Keeping pending choices clearly marked helps the next agent avoid treating a suggestion as an approved decision.
 
-Work together to define the session’s **Instructions**: team conventions, the rules to follow, each agent’s role, the workflow, and when to hand work over or wait for feedback. Once you’ve agreed on the guidance, ask the agent to save it to the session’s Instructions so connected agents read the same rules before starting work.
+> Update this Session's context artifact with what we decided, why, and what remains open. Include the next step for a new chat.
 
-As your work evolves, ask the agent to update the Instructions directly, so agents joining or continuing the session can read the latest guidance.
+## Shape Instructions together with your agent
 
-Try these prompts:
+You do not need to write a complete workflow upfront. Describe how you want to work and ask the agent to help formulate the rules, including where it should stop for your decision. Save the agreed guidance in Instructions; keep the work's findings and changing progress in artifacts. After changing Instructions, ask agents already working in the Session to reload them.
 
-- **Add Instructions:** “Help me define this session’s Instructions, including roles, rules, workflow, and handoff expectations. Save the guidance once we’ve agreed on it.”
-- **Update:** “Update this session’s Instructions with the review and handoff rules we just agreed on.”
+> Help me define when agents should hand work over and when they should wait for me. Save the Instructions once we agree.
 
-### Organize the session’s artifacts
+## Let your agent tidy the Session
 
-You can also ask the agent to organize your session by moving artifacts between **Working**, **References**, and **Archived**.
+When Working becomes crowded, ask the agent to move or reorder existing artifacts instead of arranging every card yourself. Name the documents and destinations so the intended organization is clear. Moving a document into a Session's **Archived** zone keeps it available as context; it does not globally archive it or schedule its deletion.
 
-- Keep active plans and review outputs in **Working**.
-- Place requirements and background specs in **References** so agents can read them on demand.
-- Move finished artifacts to **Archived** within the session when you want a cleaner workspace without deleting history.
+> Move the requirements artifact to References and the completed review to this Session's Archived zone. Keep the current plan first in Working.
 
-Try asking:
+## Assess review findings before choosing fixes
 
-> Move the requirements artifact to References and the completed review to Archived in this Work Session.
+For work with a separate reviewer, you can ask another agent to assess the findings before you choose changes. Keep the original findings alongside the assessment so you can judge whether each issue is valid, necessary to address, and within scope. This is a workflow you choose, not an automatic product judgment.
 
-### Connect another agent cleanly
+> Assess these findings for validity, necessity, scope, and regression risk. Keep the original findings visible and wait for my decision before applying fixes.
 
-Use **Connect** in the Work Session header (or from the Sessions sidebar) to copy a join prompt with the exact session ID rather than pasting long chat transcripts.
+## Pause automatic opening during a busy workflow
 
-```text
-Use the work-session skill to join this work session and apply its instructions:
-tool: "join_session"
-sessionId: "<your-session-id>"
-```
+If incoming artifacts interrupt your reading, use **Turn off auto-open artifact** in the Session Manager's **Settings** menu. You can still open documents manually, and review waits remain active. The pause applies to the current IDE window and resets when that window reloads.
 
-For project documentation and updates, visit the [AI Artifacts GitHub repository](https://github.com/huynguyen294/ai-artifacts).
+For setup and step-by-step usage, see the [AI Artifacts guide](https://github.com/huynguyen294/ai-artifacts#readme).

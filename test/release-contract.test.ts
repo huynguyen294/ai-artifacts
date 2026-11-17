@@ -232,7 +232,7 @@ describe("v2.0.0 release contract", () => {
       expect.arrayContaining([
         {
           command: "agentPlus.openWhatsNew",
-          title: "AI Artifacts: What's New",
+          title: "AI Artifacts: What's New & Tips",
         },
       ]),
     );
@@ -252,11 +252,11 @@ describe("v2.0.0 release contract", () => {
         read("docs/CHANGE_LOGS.md"),
       ]);
 
-    for (const document of [readme, philosophy, architecture, components, instructions, contract]) {
+    for (const document of [readme, architecture, components, instructions, contract]) {
       expect(document).toMatch(/schema[- ]v6/i);
       expect(document).toContain("~/.ai-artifacts/artifacts/");
     }
-    for (const document of [readme, philosophy, architecture, components, instructions]) {
+    for (const document of [readme, architecture, components, instructions]) {
       expect(document).toContain("~/.ai-artifacts/conversation-registry/");
     }
     expect(readme).toContain("MCP_VERSION = 12");
@@ -270,10 +270,12 @@ describe("v2.0.0 release contract", () => {
     expect(readme).toContain("not a deep link");
     expect(readme).toContain("artifact-connection.json");
     expect(readme).toContain("The target may be unfocused; other windows ignore the event");
-    expect(philosophy).toContain("Focus is a ranking hint, not identity, authorization, or a requirement");
-    expect(philosophy).toContain("numeric MCP version 12");
-    expect(philosophy).toContain("numeric skill version 4");
-    expect(philosophy).toContain("not SemVer");
+    expect(philosophy).toContain("[Architecture](ARCHITECTURE.md)");
+    expect(philosophy).toContain("[Project instructions](INSTRUCTION.md)");
+    expect(philosophy).toContain("../skills/create-review-artifact/SKILL.md");
+    expect(philosophy).toContain("../skills/work-session/SKILL.md");
+    expect(instructions).toContain("numeric MCP version 12");
+    expect(instructions).toContain("not SemVer");
     expect(architecture).toContain("Integration asset versioning and skill customization");
     expect(architecture).toContain("valid partial install");
     expect(architecture).toContain("extension-only update with current receipts");
