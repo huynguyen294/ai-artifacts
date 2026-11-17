@@ -8,13 +8,13 @@ async function read(relativePath: string): Promise<string> {
   return readFile(path.join(repositoryRoot, relativePath), "utf8");
 }
 
-describe("v1.2.0 release contract", () => {
+describe("v2.0.0 release contract", () => {
   it("keeps package and lock metadata synchronized", async () => {
     const packageJson = JSON.parse(await read("package.json"));
     const packageLock = JSON.parse(await read("package-lock.json"));
 
     expect(packageJson.name).toBe("ai-artifacts");
-    expect(packageJson.version).toBe("1.2.0");
+    expect(packageJson.version).toBe("2.0.0");
     expect(packageLock.name).toBe(packageJson.name);
     expect(packageLock.version).toBe(packageJson.version);
     expect(packageLock.packages[""].name).toBe(packageJson.name);
@@ -232,30 +232,31 @@ describe("v1.2.0 release contract", () => {
       expect.arrayContaining([
         {
           command: "agentPlus.openWhatsNew",
-          title: "AI Artifacts: What's New",
+          title: "AI Artifacts: What's New & Guides",
         },
       ]),
     );
   });
 
   it("keeps release-facing docs on global v6 and independent integration versions", async () => {
-    const [readme, philosophy, architecture, components, instructions, contract, changelog, documentationChanges] =
+    const [readme, philosophy, architecture, components, instructions, skill, contract, changelog, documentationChanges] =
       await Promise.all([
         read("README.md"),
         read("docs/PHILOSOPHY.md"),
         read("docs/ARCHITECTURE.md"),
         read("docs/COMPONENTS.md"),
         read("docs/INSTRUCTION.md"),
-        read("skills/create-review-artifact/references/artifact-contract.md"),
+        read("skills/create-review-artifact/SKILL.md"),
+        read("skills/create-review-artifact/references/storage-protocol.md"),
         read("CHANGELOG.md"),
         read("docs/CHANGE_LOGS.md"),
       ]);
 
-    for (const document of [readme, philosophy, architecture, components, instructions, contract]) {
+    for (const document of [readme, architecture, components, instructions, contract]) {
       expect(document).toMatch(/schema[- ]v6/i);
       expect(document).toContain("~/.ai-artifacts/artifacts/");
     }
-    for (const document of [readme, philosophy, architecture, components, instructions]) {
+    for (const document of [readme, architecture, components, instructions]) {
       expect(document).toContain("~/.ai-artifacts/conversation-registry/");
     }
     expect(readme).toContain("MCP_VERSION = 12");
@@ -269,15 +270,17 @@ describe("v1.2.0 release contract", () => {
     expect(readme).toContain("not a deep link");
     expect(readme).toContain("artifact-connection.json");
     expect(readme).toContain("The target may be unfocused; other windows ignore the event");
-    expect(philosophy).toContain("Focus is a ranking hint, not identity, authorization, or a requirement");
-    expect(philosophy).toContain("numeric MCP version 12");
-    expect(philosophy).toContain("numeric skill version 4");
-    expect(philosophy).toContain("not SemVer");
+    expect(philosophy).toContain("[Architecture](ARCHITECTURE.md)");
+    expect(philosophy).toContain("[Project instructions](INSTRUCTION.md)");
+    expect(philosophy).toContain("../skills/create-review-artifact/SKILL.md");
+    expect(philosophy).toContain("../skills/work-session/SKILL.md");
+    expect(instructions).toContain("numeric MCP version 12");
+    expect(instructions).toContain("not SemVer");
     expect(architecture).toContain("Integration asset versioning and skill customization");
     expect(architecture).toContain("valid partial install");
     expect(architecture).toContain("extension-only update with current receipts");
     expect(architecture).toContain("artifact-connection.json` creation and change");
-    expect(architecture).toContain("Both wait and advance preserve existing connection state");
+    expect(architecture).toContain("Wait and update preserve connection state");
     expect(components).toContain("WINDOW_SELECTION_REQUIRED");
     expect(components).toContain("numeric `MCP_VERSION` / `SKILL_VERSION`");
     expect(components).toContain("Record verified MCP, `.agents`, `.claude`, and Antigravity (`.gemini/config`) versions independently");
@@ -286,7 +289,7 @@ describe("v1.2.0 release contract", () => {
     expect(instructions).toContain("extension-only changes with current receipts must not force reinstall");
     expect(instructions).toContain("Never mark a partial failure current");
     expect(contract).toContain("schema-v1 UI-routing state only");
-    expect(contract).toContain("AI Artifacts: Installer");
+    expect(skill).toContain("AI Artifacts: Installer");
     expect(changelog).toContain("## [1.1.4] - 2026-11-04");
     expect(changelog).toContain("## [1.1.3] - 2026-11-02");
     expect(changelog).toContain("### Preserve Active Waiters During Non-waiting Updates");
@@ -299,7 +302,7 @@ describe("v1.2.0 release contract", () => {
     expect(changelog).toContain("## [1.0.0] - 2026-09-20");
     expect(changelog).toContain("MCP server 9.0.0");
     const { version } = JSON.parse(await read("package.json"));
-    const latestRelease = changelog.match(/^## \[([^\]]+)\] - \d{4}-\d{2}-\d{2}$/m);
+    const latestRelease = changelog.match(/^## \[([^\]]+)\] - (?:Unreleased|\d{4}-\d{2}-\d{2})$/m);
     expect(latestRelease?.[1]).toBe(version);
     expect(changelog).toContain("MCP server 10.0.0");
     expect(documentationChanges).toContain("Skill Customization & Independent Integration Asset Versioning");
@@ -312,7 +315,7 @@ describe("v1.2.0 release contract", () => {
     const autoOpen = packageJson.contributes.configuration.properties["agentPlus.autoOpenArtifactReview"];
     const retentionDays = packageJson.contributes.configuration.properties["agentPlus.artifactRetentionDays"];
 
-    expect(packageJson.version).toBe("1.2.0");
+    expect(packageJson.version).toBe("2.0.0");
     expect(autoOpen.type).toBe("boolean");
     expect(autoOpen.default).toBe(true);
     expect(autoOpen.description).toContain("selected target window");

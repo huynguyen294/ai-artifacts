@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import tipsMarkdown from "../src/content/tips.md?raw";
+import { whatsNewGuides } from "../src/shared/whats-new-guides";
 import { whatsNewReleases } from "../src/shared/whats-new-releases";
 import { resolveContentImage } from "../src/webview/content-media";
 import { whatsNewContent } from "../src/webview/whats-new-content";
@@ -14,15 +14,16 @@ function extractImageReferences(markdown: string): string[] {
 }
 
 describe("whats-new-content", () => {
-  it("loads non-empty tips markdown via a raw import", () => {
-    expect(tipsMarkdown.trim().length).toBeGreaterThan(0);
-    expect(whatsNewContent.tipsMarkdown).toBe(tipsMarkdown);
+  it("exposes shared guides metadata in editorial order", () => {
+    expect(whatsNewContent.guides).toEqual(whatsNewGuides);
   });
 
   it("maps every shared release metadata entry to non-empty Markdown in source order with valid assets", async () => {
     expect(whatsNewContent.articles).toHaveLength(whatsNewReleases.length);
     const versions = whatsNewContent.articles.map((item) => item.version);
     expect(new Set(versions).size).toBe(versions.length);
+    const { version } = JSON.parse(await readFile(path.join(repositoryRoot, "package.json"), "utf8"));
+    expect(versions).toContain(version);
 
     for (const [index, release] of whatsNewReleases.entries()) {
       const article = whatsNewContent.articles[index]!;
@@ -30,10 +31,7 @@ describe("whats-new-content", () => {
       expect(article.markdown.trim().length).toBeGreaterThan(0);
     }
 
-    const imageRefs = [
-      ...whatsNewContent.articles.flatMap((article) => extractImageReferences(article.markdown)),
-      ...extractImageReferences(whatsNewContent.tipsMarkdown),
-    ];
+    const imageRefs = whatsNewContent.articles.flatMap((article) => extractImageReferences(article.markdown));
 
     for (const ref of imageRefs) {
       expect(resolveContentImage(ref, "https://example.test/media/whats-new")).toBeDefined();

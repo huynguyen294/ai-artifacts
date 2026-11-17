@@ -40,7 +40,7 @@ describe("regular artifact file-link contract", () => {
     const [skill, contract] = await Promise.all([
       readFile(path.join(repositoryRoot, "skills", "create-review-artifact", "SKILL.md"), "utf8"),
       readFile(
-        path.join(repositoryRoot, "skills", "create-review-artifact", "references", "artifact-contract.md"),
+        path.join(repositoryRoot, "skills", "create-review-artifact", "references", "storage-protocol.md"),
         "utf8",
       ),
     ]);
@@ -50,7 +50,7 @@ describe("regular artifact file-link contract", () => {
     expect(skill).toContain("regular file link");
     expect(skill).toContain("It is not a deep link; it opens `artifact.md` in a plain Markdown/text editor");
     expect(skill).toContain("Open Artifact Review");
-    expect(contract).toContain("`artifactLink` is a regular file link, not a deep link; it opens `artifact.md` in a plain Markdown/text editor");
-    expect(contract).toContain("Open Artifact Review");
+    expect(skill).toContain("`artifactUrl`");
+    expect(contract).toContain("[SKILL.md](../SKILL.md)");
   });
 });

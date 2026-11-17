@@ -126,7 +126,8 @@ async function createSourceTree(sourceRoot: string, versionTag = "v2"): Promise<
     buildReviewSkillMarkdown(`# Core Review ${versionTag}`),
     "utf8",
   );
-  await fs.writeFile(path.join(reviewDir, "references", "artifact-contract.md"), `# Contract ${versionTag}\n`, "utf8");
+  await fs.writeFile(path.join(reviewDir, "references", "storage-protocol.md"), `# Contract ${versionTag}\n`, "utf8");
+  await fs.writeFile(path.join(reviewDir, "references", "recovery.md"), `# Recovery ${versionTag}\n`, "utf8");
   await fs.writeFile(path.join(reviewDir, "references", "ai-feedback.md"), `# Feedback ${versionTag}\n`, "utf8");
   await fs.writeFile(path.join(reviewDir, "agents", "openai.yaml"), `prompt: review-${versionTag}\n`, "utf8");
   await fs.writeFile(path.join(sessionDir, "SKILL.md"), `# Work Session ${versionTag}\n`, "utf8");
@@ -1018,7 +1019,14 @@ describe("Workspace Integration Auto-Upgrade Coordinator & Selection Policy", ()
       },
     });
     const codexPatched = await fs.readFile(codexConfigPath, "utf8");
+    expect(codexPatched).toContain("[mcp_servers.ai_artifacts.tools.inspect_artifact]");
+    expect(codexPatched).toContain("[mcp_servers.ai_artifacts.tools.update_artifact]");
     expect(codexPatched).toContain("[mcp_servers.ai_artifacts.tools.join_session]");
+    expect(codexPatched).toContain("[mcp_servers.ai_artifacts.tools.write_artifact_feedback]");
+    expect(codexPatched).toContain("[mcp_servers.ai_artifacts.tools.wait_in_session]");
+    expect(codexPatched).toContain("[mcp_servers.ai_artifacts.tools.request_waiter_in_session]");
+    expect(codexPatched).not.toContain("[mcp_servers.ai_artifacts.tools.inspect_artifact_review]");
+    expect(codexPatched).not.toContain("[mcp_servers.ai_artifacts.tools.advance_and_wait_for_artifact]");
 
     // Third run: both mcpVersion and codexMcpVersion are now at 12, so Codex & Antigravity neither read receipt/config nor rewrite files
     const beforeThird = codexPatched;
@@ -1121,6 +1129,9 @@ describe("Workspace Integration Auto-Upgrade Coordinator & Selection Policy", ()
     expect(replacedCodex).toContain("tool_timeout_sec = 3600");
     expect(replacedCodex).toContain('[mcp_servers.ai_artifacts.tools.create_artifact]\napproval_mode = "approve"');
     expect(replacedCodex).toContain('[mcp_servers.ai_artifacts.tools.join_session]\napproval_mode = "approve"');
+    expect(replacedCodex).toContain('[mcp_servers.ai_artifacts.tools.write_artifact_feedback]\napproval_mode = "approve"');
+    expect(replacedCodex).toContain('[mcp_servers.ai_artifacts.tools.wait_in_session]\napproval_mode = "approve"');
+    expect(replacedCodex).toContain('[mcp_servers.ai_artifacts.tools.request_waiter_in_session]\napproval_mode = "approve"');
     expect(await readInstalledIntegrationVersion({ userHome: tempHome })).toMatchObject({
       status: "valid",
       manifest: { mcpVersion: MCP_VERSION },

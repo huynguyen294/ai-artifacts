@@ -868,12 +868,19 @@ export async function createSession(
   };
 }
 
-export async function readSession(
-  sessionId: string,
-  options: GlobalArtifactsRootOptions = {},
-): Promise<WorkSession> {
-  const validatedId = artifactConversationIdSchema.parse(sessionId);
-  const rootOptions = toRootOptions(options);
+export type WorkSessionSummary = WorkSessionMetadata & {
+  updatedAt: string;
+};
+
+async function readSessionMetadataAndMemberships(
+  validatedId: string,
+  rootOptions: GlobalArtifactsRootOptions,
+): Promise<{
+  canonicalConversationDir: string;
+  metadata: WorkSessionMetadata;
+  memberships: ArtifactConversationMembership[];
+  updatedAt: string;
+}> {
   const { canonicalConversationDir, canonicalRegisteredArtifactsDir } =
     await ensureSafeConversationDirectory(validatedId, rootOptions, false);
 
@@ -919,6 +926,46 @@ export async function readSession(
       // skip invalid membership entry
     }
   }
+
+  let updatedAt = metadata.createdAt;
+  for (const membership of memberships) {
+    if (compareIsoTimestampsAsc(membership.registeredAt, updatedAt) > 0) {
+      updatedAt = membership.registeredAt;
+    }
+  }
+
+  return {
+    canonicalConversationDir,
+    metadata,
+    memberships,
+    updatedAt,
+  };
+}
+
+/**
+ * Reads schema-v2 Work Session metadata and derived updatedAt without reading instructions.md or layout.json.
+ */
+export async function readSessionSummary(
+  sessionId: string,
+  options: GlobalArtifactsRootOptions = {},
+): Promise<WorkSessionSummary> {
+  const validatedId = artifactConversationIdSchema.parse(sessionId);
+  const rootOptions = toRootOptions(options);
+  const { metadata, updatedAt } = await readSessionMetadataAndMemberships(validatedId, rootOptions);
+  return {
+    ...metadata,
+    updatedAt,
+  };
+}
+
+export async function readSession(
+  sessionId: string,
+  options: GlobalArtifactsRootOptions = {},
+): Promise<WorkSession> {
+  const validatedId = artifactConversationIdSchema.parse(sessionId);
+  const rootOptions = toRootOptions(options);
+  const { canonicalConversationDir, metadata, memberships } =
+    await readSessionMetadataAndMemberships(validatedId, rootOptions);
 
   const layoutFilePath = path.join(canonicalConversationDir, WORK_SESSION_LAYOUT_FILE);
   let layout: WorkSessionLayout | null = null;
@@ -1065,12 +1112,15 @@ export async function setSessionType(
   };
 }
 
-export async function registerArtifactInSession(
+async function registerArtifactMembershipWrite(
   sessionId: string,
   artifactId: string,
   options: GlobalArtifactsRootOptions & { registeredAt?: string } = {},
 ): Promise<{
-  session: WorkSession;
+  validatedSessionId: string;
+  validatedArtifactId: string;
+  rootOptions: GlobalArtifactsRootOptions;
+  membershipPath: string;
   previousRegisteredAt?: string | undefined;
   added: boolean;
 }> {
@@ -1134,8 +1184,37 @@ export async function registerArtifactInSession(
 
   await writeAtomicJsonFile(canonicalRegisteredArtifactsDir, membershipPath, membership, false);
 
+  return {
+    validatedSessionId,
+    validatedArtifactId,
+    rootOptions,
+    membershipPath,
+    previousRegisteredAt,
+    added,
+  };
+}
+
+async function registerArtifactWithReader<TSession>(
+  sessionId: string,
+  artifactId: string,
+  options: GlobalArtifactsRootOptions & { registeredAt?: string },
+  readTarget: (validatedSessionId: string, rootOptions: GlobalArtifactsRootOptions) => Promise<TSession>,
+): Promise<{
+  session: TSession;
+  previousRegisteredAt?: string | undefined;
+  added: boolean;
+}> {
+  const {
+    validatedSessionId,
+    validatedArtifactId,
+    rootOptions,
+    membershipPath,
+    previousRegisteredAt,
+    added,
+  } = await registerArtifactMembershipWrite(sessionId, artifactId, options);
+
   try {
-    const session = await readSession(validatedSessionId, rootOptions);
+    const session = await readTarget(validatedSessionId, rootOptions);
     return { session, previousRegisteredAt, added };
   } catch (readError) {
     if (added) {
@@ -1147,10 +1226,43 @@ export async function registerArtifactInSession(
         artifactId: validatedArtifactId,
         registeredAt: previousRegisteredAt,
       };
-      await writeAtomicJsonFile(canonicalRegisteredArtifactsDir, membershipPath, rollbackMembership, false).catch(() => {});
+      await writeAtomicJsonFile(
+        path.dirname(membershipPath),
+        membershipPath,
+        rollbackMembership,
+        false,
+      ).catch(() => {});
     }
     throw readError;
   }
+}
+
+export async function registerArtifactInSession(
+  sessionId: string,
+  artifactId: string,
+  options: GlobalArtifactsRootOptions & { registeredAt?: string } = {},
+): Promise<{
+  session: WorkSession;
+  previousRegisteredAt?: string | undefined;
+  added: boolean;
+}> {
+  return registerArtifactWithReader(sessionId, artifactId, options, readSession);
+}
+
+/**
+ * Registers an artifact in a Work Session and reads back only WorkSessionSummary
+ * without touching instructions.md or layout.json.
+ */
+export async function registerArtifactInSessionSummary(
+  sessionId: string,
+  artifactId: string,
+  options: GlobalArtifactsRootOptions & { registeredAt?: string } = {},
+): Promise<{
+  session: WorkSessionSummary;
+  previousRegisteredAt?: string | undefined;
+  added: boolean;
+}> {
+  return registerArtifactWithReader(sessionId, artifactId, options, readSessionSummary);
 }
 
 export async function moveArtifactInSession(
@@ -1884,4 +1996,99 @@ export async function cleanupStaleConversations(
   }
 
   return result;
+}
+
+/**
+ * Validates and resolves the canonical directory and metadata of an existing WorkSession v2.
+ */
+export async function resolveSafeWorkSessionDirectory(
+  sessionId: string,
+  options: GlobalArtifactsRootOptions = {},
+): Promise<{
+  sessionId: string;
+  canonicalConversationDir: string;
+  metadata: WorkSessionMetadata;
+}> {
+  const validatedId = artifactConversationIdSchema.parse(sessionId);
+  const rootOptions = toRootOptions(options);
+  const registryRoot = conversationRegistryRoot(rootOptions);
+  const targetConvDir = conversationDirectory(validatedId, rootOptions);
+
+  // Pre-check without creating missing .ai-artifacts or conversation-registry directories.
+  try {
+    await fs.lstat(registryRoot);
+    await fs.lstat(targetConvDir);
+  } catch (error) {
+    if (errorCode(error) === "ENOENT") {
+      throw new ConversationNotFoundError(`Session ${validatedId} does not exist.`);
+    }
+    throw error;
+  }
+
+  const canonicalRegistryRoot = await ensureSafeConversationRegistryRoot(rootOptions);
+  let canonicalConversationDir: string;
+  try {
+    await assertSafeDirectoryEntry(targetConvDir);
+    canonicalConversationDir = await fs.realpath(targetConvDir);
+  } catch (error) {
+    if (errorCode(error) === "ENOENT") {
+      throw new ConversationNotFoundError(`Session ${validatedId} does not exist.`);
+    }
+    throw error;
+  }
+  if (
+    !sameFilesystemPath(path.dirname(canonicalConversationDir), canonicalRegistryRoot)
+    && !sameFilesystemPath(path.dirname(targetConvDir), conversationRegistryRoot(rootOptions))
+  ) {
+    throw new ConversationRegistryError(
+      "UNSAFE_CONVERSATION_PATH: the conversation directory escapes conversation-registry.",
+    );
+  }
+
+  const metadataPath = path.join(canonicalConversationDir, CONVERSATION_METADATA_FILE);
+  try {
+    await assertSafeRegularFile(metadataPath, false);
+  } catch (error) {
+    if (errorCode(error) === "ENOENT") {
+      throw new ConversationNotFoundError(`Session ${validatedId} does not exist.`);
+    }
+    throw error;
+  }
+
+  let rawMeta: unknown;
+  try {
+    rawMeta = JSON.parse(await fs.readFile(metadataPath, "utf8"));
+  } catch (error) {
+    if (errorCode(error) === "ENOENT") {
+      throw new ConversationNotFoundError(`Session ${validatedId} does not exist.`);
+    }
+    throw new ConversationRegistryError(
+      `Invalid ${CONVERSATION_METADATA_FILE} for session ${validatedId}: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+
+  if (
+    rawMeta
+    && typeof rawMeta === "object"
+    && "schemaVersion" in rawMeta
+    && rawMeta.schemaVersion === ARTIFACT_CONVERSATION_SCHEMA_VERSION
+  ) {
+    throw new ConversationMigrationRequiredError(validatedId);
+  }
+
+  try {
+    await ensureSafeConversationDirectory(validatedId, rootOptions, false);
+    await enforceOwnerOnlyFile(metadataPath);
+  } catch (error) {
+    if (errorCode(error) === "ENOENT") {
+      throw new ConversationNotFoundError(`Session ${validatedId} does not exist.`);
+    }
+    throw error;
+  }
+  const metadata = parseWorkSessionMetadata(rawMeta, validatedId);
+  return {
+    sessionId: validatedId,
+    canonicalConversationDir,
+    metadata,
+  };
 }

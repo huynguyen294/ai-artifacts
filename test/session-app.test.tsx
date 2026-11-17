@@ -2,9 +2,11 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import type { WorkSessionViewData } from "../src/shared/contracts";
 import {
+  computeWaitersPopoverPosition,
   createInitialSessionManagerState,
   formatArtifactDate,
   formatArtifactHoverInfo,
+  formatWaiterHoverInfo,
   SessionApp,
   sessionManagerReducer,
 } from "../src/webview/SessionApp";
@@ -157,14 +159,25 @@ describe("SessionApp Webview Component (Phase 3)", () => {
       expect(html).toContain("session-card-menu-btn");
     });
 
-    it("renders More options button in normal active header", () => {
+    it("updates auto-open state without replacing the instructions draft or Session data", () => {
+      const initial = createInitialSessionManagerState({ status: "ready", data: sampleViewData });
+      const edited = sessionManagerReducer(initial, { type: "setDraft", draft: "Unsaved instructions" });
+      const updated = sessionManagerReducer(edited, {
+        type: "message", message: { type: "artifactAutoOpenState", state: { enabled: false, configuredEnabled: true } },
+      });
+      expect(updated.artifactAutoOpen).toEqual({ enabled: false, configuredEnabled: true });
+      expect(updated.draftInstructions).toBe("Unsaved instructions");
+      expect(updated.state).toBe(edited.state);
+    });
+
+    it("renders Settings button in normal active header", () => {
       const html = renderToStaticMarkup(
         <SessionApp
           initialState={{ status: "ready", data: sampleViewData }}
           initialPanelExpanded={true}
         />,
       );
-      expect(html).toContain('title="More options"');
+      expect(html).toContain('title="Settings"');
       expect(html).toContain("session-more-btn");
     });
 
@@ -190,7 +203,7 @@ describe("SessionApp Webview Component (Phase 3)", () => {
 
       // Regular buttons must NOT be rendered in header
       expect(html).not.toContain('title="Rename session"');
-      expect(html).not.toContain('title="More options"');
+      expect(html).not.toContain('title="Settings"');
       expect(html).not.toContain("Connect");
       expect(html).not.toContain("session-panel-toggle-btn");
 
@@ -715,6 +728,145 @@ describe("SessionApp Webview Component (Phase 3)", () => {
       const helperIdx = html.indexOf("Rules, workflows, and other guidance for AI in this session.");
       expect(textareaIdx).toBeGreaterThan(-1);
       expect(helperIdx).toBeGreaterThan(textareaIdx);
+    });
+
+    it("renders Waiting room (0) beside Add Artifact and semantic HTML empty guidance when open", () => {
+      const html = renderToStaticMarkup(
+        <SessionApp
+          initialState={{ status: "ready", data: sampleViewData }}
+          initialWaitingRoomOpen={true}
+        />,
+      );
+
+      expect(html).toContain("session-zone-header-actions");
+      expect(html).toContain("Waiting room (0)");
+      expect(html.indexOf("Add Artifact")).toBeLessThan(html.indexOf("Waiting room (0)"));
+      expect(html).toContain('role="dialog"');
+      expect(html).toContain('<p class="session-waiters-empty-desc">');
+      expect(html).toContain('<ol class="session-waiters-empty-steps">');
+      expect(html).toContain("Let connected agents stay on standby in this session");
+      expect(html).toContain("wait in the waiting room");
+      expect(html).toContain("wake that waiting agent");
+    });
+
+    it("renders waiter items in order with truncated text, hover full info including artifact, and Stop button", () => {
+      const waiter1 = {
+        waitId: "11111111-1111-4111-8111-111111111111",
+        name: "Reviewer",
+        waitingFor: "very long code diff review summary across multiple modules",
+        createdAt: "2026-11-15T10:00:00.000Z",
+        expiresAt: "2026-11-15T10:01:00.000Z",
+        artifact: {
+          artifactId: "artifact-working-01",
+          title: "Main Implementation Plan",
+        },
+      };
+      const waiter2 = {
+        waitId: "22222222-2222-4222-8222-222222222222",
+        name: "Coder",
+        waitingFor: "next instruction",
+        createdAt: "2026-11-15T10:00:05.000Z",
+        expiresAt: "2026-11-15T10:01:05.000Z",
+      };
+
+      const html = renderToStaticMarkup(
+        <SessionApp
+          initialState={{
+            status: "ready",
+            data: {
+              ...sampleViewData,
+              waiters: [waiter1, waiter2],
+            },
+          }}
+          initialWaitingRoomOpen={true}
+        />,
+      );
+
+      expect(html).toContain("Waiting room (2)");
+      expect(html).toContain("<strong>Reviewer</strong> waiting for very long code diff review summary across multiple modules");
+      expect(html).toContain("<strong>Coder</strong> waiting for next instruction");
+      expect(html.indexOf("Reviewer")).toBeLessThan(html.indexOf("Coder"));
+      expect(html).toContain('class="secondary session-waiter-stop-btn"');
+      expect(html).not.toContain('title="View">Artifact');
+
+      const hoverWithArtifact = formatWaiterHoverInfo(waiter1);
+      expect(hoverWithArtifact).toBe(
+        "Reviewer waiting for very long code diff review summary across multiple modules\nArtifact: Main Implementation Plan",
+      );
+      expect(formatWaiterHoverInfo(waiter2)).toBe("Coder waiting for next instruction");
+      expect(html).toContain(
+        `title="Reviewer waiting for very long code diff review summary across multiple modules\nArtifact: Main Implementation Plan"`,
+      );
+    });
+
+    it("computes Waiting Room popover coordinates synchronously from the anchor button and clamps to viewport", () => {
+      expect(computeWaitersPopoverPosition(null, { innerWidth: 800, innerHeight: 600 })).toBeUndefined();
+      expect(
+        computeWaitersPopoverPosition(
+          { getBoundingClientRect: () => ({ left: 420.4, bottom: 92.2 }) },
+          { innerWidth: 1000, innerHeight: 700 },
+        ),
+      ).toEqual({ top: 96, left: 420 });
+      expect(
+        computeWaitersPopoverPosition(
+          { getBoundingClientRect: () => ({ left: 450, bottom: 650 }) },
+          { innerWidth: 500, innerHeight: 680 },
+        ),
+      ).toEqual({ top: 560, left: 42 });
+    });
+  });
+
+  describe("Waiting Room Reducer Actions", () => {
+    it("tracks stoppingWaitIds, applies workSessionWaitersPatch, and clears stopping state on stopSessionWaiter actionError", () => {
+      const w1 = {
+        waitId: "11111111-1111-4111-8111-111111111111",
+        name: "Reviewer",
+        waitingFor: "review",
+        createdAt: "2026-11-15T10:00:00.000Z",
+        expiresAt: "2026-11-15T10:01:00.000Z",
+      };
+      const w2 = {
+        waitId: "22222222-2222-4222-8222-222222222222",
+        name: "Coder",
+        waitingFor: "task",
+        createdAt: "2026-11-15T10:00:05.000Z",
+        expiresAt: "2026-11-15T10:01:05.000Z",
+      };
+      const initial = createInitialSessionManagerState({
+        status: "ready",
+        data: { ...sampleViewData, waiters: [w1, w2] },
+      });
+
+      const stopping = sessionManagerReducer(initial, {
+        type: "startStopWaiter",
+        waitId: w1.waitId,
+      });
+      expect(stopping.stoppingWaitIds).toEqual([w1.waitId]);
+
+      const afterPatch = sessionManagerReducer(stopping, {
+        type: "message",
+        message: {
+          type: "workSessionWaitersPatch",
+          waiters: [w2],
+        },
+      });
+      expect(afterPatch.stoppingWaitIds).toEqual([]);
+      expect(afterPatch.state.status === "ready" && afterPatch.state.data.waiters).toEqual([w2]);
+
+      const stoppingW2 = sessionManagerReducer(afterPatch, {
+        type: "startStopWaiter",
+        waitId: w2.waitId,
+      });
+      const afterError = sessionManagerReducer(stoppingW2, {
+        type: "message",
+        message: {
+          type: "actionError",
+          action: "stopSessionWaiter",
+          message: "Failed to stop waiter",
+        },
+      });
+      expect(afterError.stoppingWaitIds).toEqual([]);
+      expect(afterError.actionError).toBe("Failed to stop waiter");
     });
   });
 });

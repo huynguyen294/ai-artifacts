@@ -477,6 +477,40 @@ describe("artifact conversation schema v1 contract", () => {
     expect(() => contracts.workSessionMetadataSchema.parse({ ...validMeta, unknownField: true })).toThrow();
   });
 
+  it("validates SessionHandle without instructions or catalog and extends it for SessionContext", () => {
+    const validHandle = {
+      sessionId: artifactConversationId,
+      title: "Session Handle Title",
+      typeId: "conversation",
+      typeLabel: "Conversation",
+      sessionDirectory: "/tmp/sessions/" + artifactConversationId,
+      instructionsPath: `/tmp/sessions/${artifactConversationId}/instructions.md`,
+      layoutPath: `/tmp/sessions/${artifactConversationId}/layout.json`,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    };
+    expect(contracts.sessionHandleSchema.parse(validHandle)).toEqual(validHandle);
+    expect(() =>
+      contracts.sessionHandleSchema.parse({
+        ...validHandle,
+        instructions: "# Rules",
+      }),
+    ).toThrow();
+    expect(() =>
+      contracts.sessionHandleSchema.parse({
+        ...validHandle,
+        catalog: { working: [], references: [], archived: [] },
+      }),
+    ).toThrow();
+
+    const validContext = {
+      ...validHandle,
+      instructions: "# Rules",
+      catalog: { working: [], references: [], archived: [] },
+    };
+    expect(contracts.sessionContextSchema.parse(validContext)).toEqual(validContext);
+  });
+
   it("locks work session layout schema version to 1 and validates zones", () => {
     expect(contracts.WORK_SESSION_LAYOUT_SCHEMA_VERSION).toBe(1);
     const validLayout = {
@@ -597,6 +631,7 @@ describe("artifact conversation schema v1 contract", () => {
       { type: "reorderArtifact", artifactId: "artifact-001", direction: "up" },
       { type: "removeArtifact", artifactId: "artifact-001" },
       { type: "setSessionPanelExpanded", expanded: false },
+      { type: "setArtifactAutoOpen", enabled: false },
     ];
 
     for (const action of validActions) {
@@ -604,6 +639,7 @@ describe("artifact conversation schema v1 contract", () => {
     }
 
     // Rejects invalid actions or malformed payloads
+    expect(() => contracts.sessionWebviewToExtensionMessageSchema.parse({ type: "setArtifactAutoOpen", enabled: "false" })).toThrow();
     expect(() =>
       contracts.sessionWebviewToExtensionMessageSchema.parse({
         type: "moveArtifact",
@@ -667,5 +703,40 @@ describe("artifact conversation schema v1 contract", () => {
 
     expect(inspectionResult.roundTokenSource).toBe("chat-inspection");
     expect(inspectionResult.session).toBeNull();
+
+    const createWaitResult: contracts.CreateArtifactReviewResult = {
+      ...standaloneResult,
+      schemaVersion: contracts.ARTIFACT_SCHEMA_VERSION,
+      title: "Test",
+      commentsSha256: "b".repeat(64),
+      comments: comments() as any,
+      decision: "approve",
+      submittedAt: "2026-04-12T00:00:00.000Z",
+      commentsPath: "d:/workspace/artifacts/test/comments.json",
+      submissionSha256: "c".repeat(64),
+      roundToken: "token-wait",
+      roundTokenSource: "submitted-review",
+      nextAction: {
+        type: "execute-approved-plan",
+        instruction: "Execute the approved plan.",
+      },
+    };
+    expect(createWaitResult.session).toBeNull();
+    if ("roundTokenSource" in createWaitResult) {
+      expect(createWaitResult.roundTokenSource).toBe("submitted-review");
+    }
+
+    const inspectWaitResult: contracts.InspectArtifactReviewResult = {
+      ...inspectionResult,
+      schemaVersion: contracts.ARTIFACT_SCHEMA_VERSION,
+      title: "Test",
+      commentsPath: "d:/workspace/artifacts/test/comments.json",
+      decision: "revise",
+      submittedAt: "2026-04-12T00:00:00.000Z",
+      submissionSha256: "c".repeat(64),
+      roundTokenSource: "submitted-review",
+    };
+    expect(inspectWaitResult.roundTokenSource).toBe("submitted-review");
+    expect(inspectWaitResult.session).toBeNull();
   });
 });

@@ -188,7 +188,8 @@ describe("Workspace Integration Asset Verifiers", () => {
     await fs.mkdir(path.join(paths.sourceSkill, "references"), { recursive: true });
     await fs.mkdir(path.join(paths.sourceSkill, "agents"), { recursive: true });
     await fs.writeFile(path.join(paths.sourceSkill, "SKILL.md"), SOURCE_SKILL_MARKDOWN, "utf8");
-    await fs.writeFile(path.join(paths.sourceSkill, "references", "artifact-contract.md"), "# Contract", "utf8");
+    await fs.writeFile(path.join(paths.sourceSkill, "references", "storage-protocol.md"), "# Contract", "utf8");
+    await fs.writeFile(path.join(paths.sourceSkill, "references", "recovery.md"), "# Recovery", "utf8");
     await fs.writeFile(path.join(paths.sourceSkill, "references", "ai-feedback.md"), "# AI feedback", "utf8");
     await fs.writeFile(path.join(paths.sourceSkill, "agents", "openai.yaml"), "prompt: test", "utf8");
 
@@ -239,8 +240,12 @@ describe("Workspace Integration Asset Verifiers", () => {
     await fs.mkdir(path.join(paths.targetSkill, "agents"), { recursive: true });
     await fs.copyFile(path.join(paths.sourceSkill, "SKILL.md"), path.join(paths.targetSkill, "SKILL.md"));
     await fs.copyFile(
-      path.join(paths.sourceSkill, "references", "artifact-contract.md"),
-      path.join(paths.targetSkill, "references", "artifact-contract.md"),
+      path.join(paths.sourceSkill, "references", "storage-protocol.md"),
+      path.join(paths.targetSkill, "references", "storage-protocol.md"),
+    );
+    await fs.copyFile(
+      path.join(paths.sourceSkill, "references", "recovery.md"),
+      path.join(paths.targetSkill, "references", "recovery.md"),
     );
     await fs.copyFile(
       path.join(paths.sourceSkill, "references", "ai-feedback.md"),
@@ -277,8 +282,8 @@ describe("Workspace Integration Asset Verifiers", () => {
     // Write modified SKILL.md
     await fs.writeFile(path.join(paths.targetSkill, "SKILL.md"), "# Outdated skill", "utf8");
     await fs.copyFile(
-      path.join(paths.sourceSkill, "references", "artifact-contract.md"),
-      path.join(paths.targetSkill, "references", "artifact-contract.md"),
+      path.join(paths.sourceSkill, "references", "storage-protocol.md"),
+      path.join(paths.targetSkill, "references", "storage-protocol.md"),
     );
     await fs.copyFile(
       path.join(paths.sourceSkill, "agents", "openai.yaml"),
@@ -299,6 +304,8 @@ describe("Workspace Integration Asset Verifiers", () => {
     await fs.mkdir(paths.targetSkill, { recursive: true });
     await fs.writeFile(path.join(paths.targetSkill, "SKILL.md"), existingSkill, "utf8");
     await fs.writeFile(path.join(paths.targetSkill, "obsolete-instruction.md"), "obsolete\n", "utf8");
+    await fs.mkdir(path.join(paths.targetSkill, "references"), { recursive: true });
+    await fs.writeFile(path.join(paths.targetSkill, "references", "artifact-contract.md"), "# Old contract\n", "utf8");
 
     await replaceSkillDirectory(paths.sourceSkill, paths.targetSkill);
 
@@ -308,6 +315,12 @@ describe("Workspace Integration Asset Verifiers", () => {
     expect(installed).toContain("# Skill content");
     expect(installed).not.toContain("# Legacy core content");
     await expect(fs.access(path.join(paths.targetSkill, "obsolete-instruction.md"))).rejects.toThrow();
+    await expect(fs.access(path.join(paths.targetSkill, "references", "artifact-contract.md"))).rejects.toThrow();
+    for (const file of ["storage-protocol.md", "recovery.md"]) {
+      expect(await fs.readFile(path.join(paths.targetSkill, "references", file), "utf8")).toBe(
+        await fs.readFile(path.join(paths.sourceSkill, "references", file), "utf8"),
+      );
+    }
     expect(await skillAssetsAreCurrent(paths)).toBe(true);
   });
 
@@ -573,7 +586,8 @@ describe("Workspace Integration Asset Verifiers", () => {
     await expect(fs.access(installedPaths.targetLegacyMcpScript)).rejects.toThrow();
     for (const relativePath of [
       "SKILL.md",
-      path.join("references", "artifact-contract.md"),
+      path.join("references", "storage-protocol.md"),
+      path.join("references", "recovery.md"),
       path.join("references", "ai-feedback.md"),
       path.join("agents", "openai.yaml"),
     ]) {
@@ -610,9 +624,12 @@ describe("Workspace Integration Asset Verifiers", () => {
       "resolve_artifact_window",
       "create_artifact",
       "wait_for_artifact_review",
-      "inspect_artifact_review",
-      "advance_and_wait_for_artifact",
+      "inspect_artifact",
+      "update_artifact",
       "join_session",
+      "write_artifact_feedback",
+      "wait_in_session",
+      "request_waiter_in_session",
     ];
     expect(configuredTools).toEqual(expectedTools);
 
@@ -656,20 +673,23 @@ describe("Workspace Integration Asset Verifiers", () => {
       "resolve_artifact_window",
       "create_artifact",
       "wait_for_artifact_review",
-      "inspect_artifact_review",
+      "inspect_artifact",
       "join_session",
-      "advance_and_wait_for_artifact",
+      "update_artifact",
+      "write_artifact_feedback",
+      "wait_in_session",
+      "request_waiter_in_session",
     ]);
 
     const installedSkill = await fs.readFile(path.join(installedPaths.targetSkill, "SKILL.md"), "utf8");
     const installedContract = await fs.readFile(
-      path.join(installedPaths.targetSkill, "references", "artifact-contract.md"),
+      path.join(installedPaths.targetSkill, "references", "storage-protocol.md"),
       "utf8",
     );
     expect(installedSkill).toContain("The server routes directly to the currently focused VS Code window");
     expect(installedSkill).toContain("WINDOW_SELECTION_REQUIRED");
     expect(installedContract).toContain("schema-v1 UI-routing state only");
-    expect(installedContract).toContain("wait and advance preserve it unchanged");
+    expect(installedSkill).toContain("Wait and update preserve it unchanged");
 
     const resolution = await client.request("tools/call", {
       name: "resolve_artifact_window",
@@ -691,6 +711,7 @@ describe("Workspace Integration Asset Verifiers", () => {
         title: "Installed lifecycle",
         kind: "implementation-plan",
         markdown,
+        wait: false,
       },
     });
     expect(createResult.isError, createResult.content?.[0]?.text).not.toBe(true);
@@ -720,7 +741,7 @@ describe("Workspace Integration Asset Verifiers", () => {
     expect(loaded.markdown).toBe(markdown);
 
     const reconnectResult = await client.request("tools/call", {
-      name: "inspect_artifact_review",
+      name: "inspect_artifact",
       arguments: {
         artifactDirectory: created.artifactDirectory,
         expectedReviewRound: 1,
@@ -1799,7 +1820,10 @@ describe("Workspace Integration Asset Verifiers", () => {
       expect(renameTargets.filter((target) => target === runtimePath)).toHaveLength(1);
       expect(readPaths).not.toContain(runtimePath);
       expect(readPaths).not.toContain(
-        path.resolve(targetDir, ".agents", "skills", "create-review-artifact", "references", "artifact-contract.md"),
+        path.resolve(targetDir, ".agents", "skills", "create-review-artifact", "references", "storage-protocol.md"),
+      );
+      expect(readPaths).not.toContain(
+        path.resolve(targetDir, ".agents", "skills", "create-review-artifact", "references", "recovery.md"),
       );
       expect(readPaths).not.toContain(
         path.resolve(targetDir, ".agents", "skills", "create-review-artifact", "references", "ai-feedback.md"),

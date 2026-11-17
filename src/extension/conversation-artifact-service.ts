@@ -10,6 +10,8 @@ import {
   SESSION_UI_STATE_FILE,
   WORK_SESSION_INSTRUCTIONS_FILE,
   WORK_SESSION_LAYOUT_FILE,
+  WORK_SESSION_WAITER_REQUESTS_DIRECTORY,
+  WORK_SESSION_WAITERS_DIRECTORY,
   globalArtifactsRoot,
   type GlobalArtifactsRootOptions,
 } from "../shared/artifact-files";
@@ -26,8 +28,11 @@ import {
   type WorkSessionArtifactRow,
   type WorkSessionDataChange,
   type WorkSessionViewData,
+  type WorkSessionWaiterItem,
   type ArtifactSessionTarget,
 } from "../shared/contracts";
+import { sessionWaitIdSchema, type SessionWaiterSnapshot } from "../shared/session-waiter-contracts";
+import { readActiveSessionWaiters } from "../shared/session-waiter-store";
 import { extractMarkdownDescription } from "../shared/markdown-description";
 import { getSessionUiState } from "./artifact-ui-state";
 import {
@@ -354,10 +359,14 @@ export class ConversationArtifactService<TUri extends ArtifactFileUri> {
       return rows;
     };
 
-    const [working, references, archived, uiState] = await Promise.all([
+    const [working, references, archived, waiters, uiState] = await Promise.all([
       resolveZone(session.working),
       resolveZone(session.references),
       resolveZone(session.archived),
+      this.resolveSessionWaiters(sessionId).catch((err) => {
+        console.warn(`[ConversationArtifactService] Failed to read waiters for ${sessionId}:`, err);
+        return [] as WorkSessionWaiterItem[];
+      }),
       getSessionUiState(sessionId, this.rootOptions).catch((err) => {
         console.warn(`[ConversationArtifactService] Failed to read UI state for ${sessionId}:`, err);
         return undefined;
@@ -382,8 +391,17 @@ export class ConversationArtifactService<TUri extends ArtifactFileUri> {
       working,
       references,
       archived,
+      waiters,
       ...(uiStateData ? { uiState: uiStateData } : {}),
     };
+  }
+
+  /**
+   * Lists active non-expired waiter items formatted for the Session Manager UI.
+   */
+  async resolveSessionWaiters(sessionId: string): Promise<WorkSessionWaiterItem[]> {
+    const snapshots = await readActiveSessionWaiters(sessionId, this.rootOptions);
+    return toWorkSessionWaiterItems(snapshots);
   }
 
   async createSession(input: { title: string; typeId?: string; instructions?: string }): Promise<WorkSession> {
@@ -558,6 +576,26 @@ export class ConversationArtifactService<TUri extends ArtifactFileUri> {
   }
 }
 
+function toWorkSessionWaiterItems(
+  snapshots: readonly SessionWaiterSnapshot[],
+): WorkSessionWaiterItem[] {
+  return snapshots.map((snapshot) => ({
+    waitId: snapshot.waitId,
+    name: snapshot.name,
+    waitingFor: snapshot.waitingFor,
+    createdAt: snapshot.createdAt,
+    expiresAt: snapshot.expiresAt,
+    ...(snapshot.artifact
+      ? {
+          artifact: {
+            artifactId: snapshot.artifact.artifactId,
+            title: snapshot.artifact.title,
+          },
+        }
+      : {}),
+  }));
+}
+
 export function isTemporaryOrBackupFile(filePath: string): boolean {
   const base = path.basename(filePath);
   if (
@@ -579,6 +617,29 @@ export function classifyWatcherUri(filePath: string): WorkSessionDataChange | "u
 
   const normalized = filePath.replace(/\\/g, "/");
   const filename = path.basename(normalized);
+
+  // Emit scoped waiter changes only for `<waitId>.json` records; ignore directories, lock/temp files, and requests.
+  const segments = normalized.split("/").filter(Boolean);
+  for (let i = 1; i < segments.length; i++) {
+    const segment = segments[i];
+    const parentSessionId = segments[i - 1]!;
+    if (!artifactConversationIdSchema.safeParse(parentSessionId).success) {
+      continue;
+    }
+    if (segment === WORK_SESSION_WAITERS_DIRECTORY) {
+      if (
+        i === segments.length - 2
+        && filename.toLowerCase().endsWith(".json")
+        && sessionWaitIdSchema.safeParse(filename.slice(0, -5)).success
+      ) {
+        return { kind: "waiters", sessionId: parentSessionId };
+      }
+      return "ignored";
+    }
+    if (segment === WORK_SESSION_WAITER_REQUESTS_DIRECTORY) {
+      return "ignored";
+    }
+  }
 
   if (filename === CONVERSATION_METADATA_FILE) {
     const sessionDirName = path.basename(path.dirname(normalized));
@@ -641,6 +702,8 @@ export function changeKey(change: WorkSessionDataChange): string {
       return `membership:${change.sessionId}:${change.artifactId}`;
     case "layout":
       return `layout:${change.sessionId}`;
+    case "waiters":
+      return `waiters:${change.sessionId}`;
     case "artifact":
       return `artifact:${change.artifactId}`;
     case "artifactUiState":

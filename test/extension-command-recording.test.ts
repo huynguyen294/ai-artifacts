@@ -190,6 +190,7 @@ vi.mock("vscode", () => ({
     withProgress: mockWithProgress,
   },
   workspace: {
+    onDidChangeConfiguration: vi.fn(() => ({ dispose: () => {} })),
     createFileSystemWatcher: () => ({
       onDidCreate: () => ({ dispose: () => {} }),
       onDidChange: () => ({ dispose: () => {} }),
@@ -235,7 +236,8 @@ vi.mock("../src/extension/workspace-registry-publisher", () => ({
     dispose = () => {};
   },
 }));
-vi.mock("../src/extension/artifact-review-open", () => ({
+vi.mock("../src/extension/artifact-review-open", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../src/extension/artifact-review-open")>(),
   ArtifactReviewOpenCoordinator: class {
     open = vi.fn(async () => undefined);
   },
@@ -821,11 +823,11 @@ describe("Extension activation wiring & manual command recording", () => {
       );
 
       await capturedDeps.showInformationMessage(
-        "AI Artifacts 1.2.0: Work Sessions",
+        "AI Artifacts 1.2.0 is out — Work Sessions",
         "View what's new",
       );
       expect(mockShowInformationMessage).toHaveBeenCalledWith(
-        "AI Artifacts 1.2.0: Work Sessions",
+        "AI Artifacts 1.2.0 is out — Work Sessions",
         "View what's new",
       );
 

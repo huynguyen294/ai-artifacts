@@ -1,6 +1,7 @@
 export type WhatsNewRelease = {
   version: string;
   title: string;
+  notificationTitle?: string;
   description: string;
   features: readonly string[];
   bugFixes: readonly string[];
@@ -12,8 +13,9 @@ export type WhatsNewRelease = {
 
 export const whatsNewReleases: readonly WhatsNewRelease[] = [
   {
-    version: "1.2.0",
-    title: "Work Sessions are here — with multi-agent support",
+    version: "2.0.0",
+    title: "AI Artifacts v2 is out — Work Sessions for multi-agent work",
+    notificationTitle: "Work Sessions for multi-agent work",
     description:
       "You can now manage your session’s artifacts and shared instructions in one place, and continue the work across AI agents and chats.",
     features: [
@@ -21,6 +23,7 @@ export const whatsNewReleases: readonly WhatsNewRelease[] = [
       "Shared instructions and artifacts across multiple AI agents and chats.",
       "A dedicated sidebar with pinning, archiving, search, and session types.",
       "Agent-to-agent review: one agent waits while another submits feedback.",
+      "A Waiting room to see which agents are waiting, hand off work, or stop a wait.",
     ],
     bugFixes: [
       "Search Artifact now sorts results by last updated, newest first.",

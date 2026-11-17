@@ -13,9 +13,12 @@ export const REQUIRED_CODEX_ARTIFACTS_TOOLS = [
   "resolve_artifact_window",
   "create_artifact",
   "wait_for_artifact_review",
-  "inspect_artifact_review",
-  "advance_and_wait_for_artifact",
+  "inspect_artifact",
+  "update_artifact",
   "join_session",
+  "write_artifact_feedback",
+  "wait_in_session",
+  "request_waiter_in_session",
 ] as const;
 
 const CURRENT_BEGIN_MARKER = `# >>> ${AI_ARTIFACTS_MCP_MARKER} >>>`;
@@ -683,5 +686,5 @@ export function needsCodexArtifactsMcpUpgrade(
   previousMcpVersion: number,
   targetMcpVersion: number,
 ): boolean {
-  return previousMcpVersion < 12 && targetMcpVersion >= 12;
+  return previousMcpVersion < targetMcpVersion;
 }

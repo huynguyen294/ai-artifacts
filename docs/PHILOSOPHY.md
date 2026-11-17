@@ -1,93 +1,146 @@
 # Product Philosophy
 
-## Artifacts are persistent review data; waiters are ephemeral connections
+## Purpose: reviewable work and reusable context
 
-The core lifecycle rule is:
+AI Artifacts helps people understand and refine AI output through readable documents, keep the useful conclusions, and continue the work across chats and agents. Plans, designs, blueprints, requirements, roadmaps, and distilled conclusions should remain useful beyond the chat that produced them.
 
-```text
-artifact lifetime > waiter lifetime > chat-turn lifetime
-```
+The product serves two connected needs: **confidence through review and informed decisions**, and **continuity through reusable working context**. Artifacts make one request reviewable. Work Sessions organize the documents and Instructions of a larger piece of work. Optional workflow automation connects agents working within that context while preserving the user's chosen review checkpoints.
 
-An artifact represents a request awaiting human review and persists in the user's global AI Artifacts collection until the user deletes it or its global Archive retention expires. Only globally archived artifacts are subject to configured retention (`agentPlus.artifactRetentionDays`, default 90 days), measured from `artifact-ui-state.json.archivedAt`. An absent UI state file or absent `archivedAt` means unarchived: the artifact is kept regardless of age, without backfilling state or migrating data. Restore clears `archivedAt` and removes automatic deletion eligibility; archiving again starts a new retention period. Artifact reads and review-round advances do not reset this archive timestamp; `artifact.json.updatedAt` no longer determines retention. Artifacts belong to review sessions rather than repository paths, decoupling review lifecycles from workspace folder ownership. A waiter is merely a temporary connection between an active MCP request and an artifact identity, and can survive non-waiting round advances. Individual chat turns are shorter still.
+These capabilities should fit the user's work without requiring everyone to adopt a multi-agent process. Reviewing one document is a complete use case. A Session is useful even with one agent. Workflow automation is an optional way to use a Session.
 
-Therefore, cancellations, takeovers, concluding a chat turn, or restarting the MCP server must never delete or terminate an artifact. They only clear in-memory waiters or active round tokens. The AI can inspect the exact known artifact handle, obtain a fresh token from validated persistent state, and reconnect later. However, an exact handle may become permanently missing after retention cleanup; in that case, the AI must not retry, scan for a replacement, or recreate the same artifact ID.
+## Product structure and when to use it
 
-To preserve archived content beyond its retention window, restore the artifact or save a copy with **Just save**, **Copy Markdown**, or a manual export before cleanup.
+| Capability | Problem it addresses | What it provides | A situation that calls for it |
+| --- | --- | --- | --- |
+| **Artifact review** | A substantial AI proposal is difficult to inspect and refine through chat alone; useful conclusions get buried in discussion. | Readable preview, inline comments, repeated review rounds, and a current synthesized document. | "I need to understand and refine this proposal" or "I want to keep the conclusions of this discussion." |
+| **Work Session** | Related documents become scattered, and another chat needs context prepared again. | A document overview for people, plus Instructions, an organized catalog, and guided context access for agents. | "I need an overview of this work" or "I want another chat or client to continue from these documents." |
+| **Workflow automation** | Moving work between agents requires repeated copying, prompting, and waiting. | Handoffs between participating agents within a shared Session, guided by the user's Instructions. | "I am relaying results between agents and want them to coordinate while keeping my review checkpoints." |
 
-## Two ways to interact with the same artifact
+Artifact review is the foundation. A Session extends that foundation from one document to a body of related work. The Session Manager and workflow automation are parallel ways to use a Session: people can use the overview without automation, use workflows without keeping the manager open, or use both. This is a structure of capabilities, not a sequence every user must complete.
 
-The default flow provides an intuitive, in-editor review experience:
+These are use cases, not claims about audience size. Developers, technical leads, solo builders, and people using AI for research or content may need different combinations depending on the work.
 
-```mermaid
-flowchart LR
-    A[AI creates artifact] --> B[AI attaches waiter]
-    B --> C[User reviews]
-    C --> D{Decision}
-    D -->|Review| E[AI updates & starts new round]
-    E --> B
-    D -->|Proceed| F[Execute approved plan or acknowledge non-plan approval]
-    D -->|Just save| G[Save Markdown]
-```
+## Artifact: understand, refine, and retain the result of one request
 
-The chat escape flow allows the user to save comments and say "read the review" without pressing the Review button. The previous waiter is safely cancelled; the AI inspects the exact artifact handle, reads the comments, and:
+An artifact turns the output of a request into a coherent document that can be improved over several review rounds. Preview and inline feedback help the user understand what the agent proposes, question specific passages, and decide what to accept. Requirements, designs, blueprints, research conclusions, and plans can all benefit from this process.
 
-- Answers questions directly in chat.
-- Revises the artifact if comments request changes.
-- Both answers and edits if feedback is mixed.
-- Clarifies in chat without consuming the round if feedback is ambiguous.
+- **Read comfortably:** preview presents the document, including supported tables and diagrams, without making raw Markdown the primary reading experience.
+- **Respond precisely:** inline comments attach feedback to the relevant passage instead of requiring the user to explain its location in chat.
+- **Refine deliberately:** the user can ask questions, request changes, and review again before accepting the result.
+- **Keep the conclusion useful:** the artifact holds the current synthesized document rather than a transcript of the discussion. It can remain standalone or become context within a Session.
 
-After processing, the AI starts the next round and attaches a new waiter. If feedback consisted solely of questions, the round advances while preserving the exact bytes and SHA of `artifact.md`. If no comments or submissions were saved, the AI reattaches to the current round without advancing, unless the user explicitly requested an artifact edit directly in chat (`intent: "explicit-chat-update"`), in which case the AI updates the Markdown and advances to the next round.
+The agent synthesizes the relevant conclusions when asked; the product supplies the surface to read, review, and retain that synthesis. A document can therefore serve first as a proposal under review and later as context for further work. Its value comes from useful content that people can understand and agents can reuse.
 
-For an explicit chat update to an existing artifact as part of the active Work Session, the Session skill defaults to committing without waiting, unless the user asks to wait for review. The artifact still advances its round and consumes its exact-state token; `waited: false` confirms a commit rather than a review decision. The AI records the new round and continues the authorized work, obtaining a fresh token for any later update. An existing waiter stays attached without takeover; its next validated submission supplies the current round, comments, and matching token. The expected round is an attachment precondition, not a restriction for the lifetime of the waiter. Creation always waits for review, including within a Session, while standalone updates and saved-feedback processing retain their existing wait behavior. User-requested checklist/progress content may be updated in an existing Session artifact under this narrow exception; it does not trigger automatic artifact creation or add task-manager UI.
+Questions are answered visibly in chat; question-only feedback preserves the document's exact Markdown. Requested edits revise the same artifact and start another round. The lifecycle retains the current document, not a revision history. Conversational answers do not accumulate inside the document itself.
 
-## Meaning of review decisions
+The review surface is shared across supported AI clients through MCP and skills. Users should retain a familiar reading and feedback experience when choosing another supported client or model, including when using only one agent at a time.
 
-1. **Review:** Submits a `revise` decision. The waiting tool returns the full validated comments and a `process-review-feedback` directive so the AI can process them immediately without inspecting just to retrieve comments. This contract is shared by the initial wait and every advanced round, independently of client or model. The AI processes batch comments using the same policy as the chat escape flow: answers questions directly in chat, updates `artifact.md` only when edits are requested, resets state, and begins the next round. Question-only feedback preserves Markdown bytes and SHA. No revision history or conversational responses are inserted into the artifact document itself.
-2. **Proceed:** Concludes the current review round. For `plan` and `implementation-plan`, this authorizes immediate execution of the entire approved plan within the same turn; the MCP server returns an `execute-approved-plan` runtime directive, and the AI must not halt at confirmation, explain what it will do, or ask for execution authorization again. For other fixed or open kinds, the MCP returns `approved`: acknowledge approval and conclude review without automatic code execution. It does not automatically open another review round.
-3. **Just save:** Concludes the current round, saves the Markdown as requested, and does not execute proposed work. It does not automatically open another review round.
-4. **Copy Markdown:** Copies content locally to the clipboard without submitting a decision or mutating lifecycle state.
+## Work Session: give a body of work a shared context
 
-Proceed and Just save conclude the round without destroying the artifact. The user may explicitly request a reconnect later. Reconnect opens a fresh round; it does not re-execute the previous Proceed or Just save action.
+A Work Session begins with a simple need: keep the useful artifacts of a larger piece of work together. It can contain plans, designs, requirements, roadmaps, and distilled conclusions from more than one conversation. It does not require multiple agents.
 
-## Exact handles, no speculative artifact guessing
+The same organized collection serves two audiences: people see the work through the manager and document previews; agents discover relevant context through Instructions and the catalog. The supplied structure and skill guidance reduce the setup users would otherwise have to design and teach to each new chat.
 
-The AI must use the exact `artifactDirectory` returned when creating the artifact or retained from an interrupted waiter in the same conversation. It must never select the "newest artifact", scan the workspace to guess, or infer an artifact from the current working directory. If the context does not contain a single unique handle, the AI must ask the user for the artifact path.
+### A document overview for people
 
-This safety invariant takes precedence over convenience: binding to the wrong artifact could attach comments, document content, and execution authorization to the wrong conversation.
+The Session Manager makes the body of work visible at a glance. Users can see related artifacts, open their readable previews, and organize them into **Working**, **References**, and **Archived** zones. The overview helps people understand which documents belong to the work and how they are being used.
 
-## Curated feature announcements (What's New & Tips)
+This overview concerns the documents and context of the work. The Waiting room provides narrow visibility into active waits and lets the user stop them; it does not represent the progress, reasoning, or overall activity of every agent.
 
-AI Artifacts treats release announcements (**What's New & Tips**) separately from the exhaustive release changelog and from MCP/skill integration management:
+### A prepared entry point for agents
 
-- **Curated over exhaustive:** **What's New** presents high-level feature highlights and preview/release guides rather than every implementation detail in `CHANGELOG.md`; **Tips** focuses on practical workflows without turning the extension into an intrusive onboarding wizard.
-- **Upgrade-only, silent for new users:** Fresh installs without notification history or a pre-existing integration receipt stay silent; there is no welcome/Tips popup or standalone Tips command. An existing `valid` or `invalid` integration receipt captured before activation install/upgrade identifies a legacy integration user who may receive the exact current opt-in announcement on first tracked activation. The integration receipt does not reveal the previous extension SemVer.
-- **Exact-version opt-in, no catch-up:** After bootstrap, notifications require a higher stable `X.Y.Z` runtime version with an exact shared release entry setting `notify: true`. Release `1.2.0` opts in to announce Work Sessions and multi-agent support. Intermediate skipped versions are never backfilled, and reloads, downgrades, dismissals, UI errors, or manual views via **AI Artifacts: What's New** never re-arm or replay a popup.
-- **VS Code-managed notification history:** Store the highest observed version with `context.globalState.get/update` and await persistence before showing Info. Normal reloads and downgrades do not replay announcements. Simultaneously activating windows can both notify; there is no cross-window atomic claim or custom filesystem state. Bootstrap alone consumes the shared pre-mutation integration receipt snapshot; a new user subsequently running Installer is not reclassified.
+A Session combines user-authored **Instructions**, an organized artifact catalog, and a skill that guides agents in using that context. The user does not have to invent a folder convention and teach every new chat how to discover the relevant documents.
 
-## Product intent
+Joining the exact Session gives another chat or supported agent access to its Instructions and categorized catalog, including exact paths to available artifacts. The agent reads the documents relevant to its role and task. The same structure supports continuing in a new chat, changing clients, or bringing another model into the work.
 
-AI Artifacts provides a dedicated review layer for AI-generated Markdown. It enables users to read, annotate, and drive the feedback loop without turning the extension into a task manager or a second chat interface. Conversational interaction belongs in AI chat; the webview provides document review and Work Session organization: shared Instructions, artifact zones, and navigation across agents and chats.
+Continuity comes from the Instructions and documents that have been saved. A Session does not transfer another chat's transcript, recover unstated decisions, or automatically load every artifact into a model's context. Important conclusions must be captured in documents to become shared context. The skill guides entry, role preparation, and context refresh; the user supplies the work-specific rules and material.
 
-The artifact skill triggers only when the user explicitly requests creating or updating an artifact, reading saved feedback, reconnecting an existing lifecycle, or authoring AI comments with or without submitting Review. AI-authored feedback has two actions: comment only, or generate comments and submit them as `revise`; it is separate from processing saved user feedback. The document type alone is never an auto-trigger condition. The separate Work Session skill handles explicit Session connection or continuation of related work with an already active Session.
+### Working documents outside the repository
 
-## Current implementation status
+Artifacts and Sessions live in the user's global AI Artifacts storage. A feature's planning and review material can remain separate from the source repository instead of adding working documents throughout the project. Users can explicitly save or export material when it belongs elsewhere.
 
-The current implementation uses artifact schema v6, connection schema v1, Work Session registry schema v2 with legacy v1 migration, numeric MCP version 12, and numeric skill version 4 (`CREATE_REVIEW_ARTIFACT_SKILL_VERSION = 4`, `WORK_SESSION_SKILL_VERSION = 1`, `SKILL_VERSION = 4`). Extension 1.2.0 bundles MCP 12 for Work Sessions. Every lifecycle is stored beneath the per-user `~/.ai-artifacts/artifacts/` collection. `artifact.json` remains the source of truth for artifact identity without repository path ownership; optional `artifact-connection.json` records only the current UI-routing request. Schemas v3/v4/v5 and workspace-local artifact directories are outside the live protocol and are not migrated.
+A Markdown folder can also hold shared context. The Session packages organization, Instructions, guided agent access, readable previews, and review interaction into one working environment. This makes prepared context accessible to people who do not maintain their own folder conventions, as well as people managing many documents. Users still choose the relevant material, and agents must follow the guidance to use it correctly.
 
-Session instructions use `instructions.md` as their only effective source. Existing schema-v2 metadata may retain an optional inline `instructions` string without invalidating the Session. Readers accept but do not use that string as fallback, and new metadata writes omit it. Listing or opening a Session does not migrate or rewrite its stored instructions.
+## Workflow: coordinate agents without giving up control
 
-Artifact protocol compatibility and installed integration freshness are separate concerns. `MCP_VERSION`, `CREATE_REVIEW_ARTIFACT_SKILL_VERSION`, and `WORK_SESSION_SKILL_VERSION` are independent monotonic counters, not SemVer and not aliases for the extension package version. `SKILL_VERSION` aliases only the artifact skill counter. Manual install commands record selected clients in `~/.ai-artifacts/managed/installed-clients.json`, while installed shared MCP runtime (`mcpVersion`), optional Codex TOML migration state (`codexMcpVersion`, falling back to `mcpVersion` on legacy receipts so Codex conflicts do not block shared readiness), and skill versions for `.agents`, `.claude`, and Antigravity (`.gemini/config`) (`skills` and `sessionSkills`) are recorded independently in `~/.ai-artifacts/managed/integration-version.json` as steps succeed (without implying post-install read-back verification); absent, invalid, or mismatched entries are stale. Missing `integration-version.json` marks first-time users for onboarding (`Run Installer` once until clicked, without running client detection or automatic upgrade). When an existing receipt file is present (`valid` or `invalid`), activation runs silent automatic upgrades for saved or detected clients across stale assets and required definition updates without prompting on success, unchanged runs, or empty targets; an error notification citing **`AI Artifacts: Installer`** appears only on failure. Manual install commands confirm operational completion and offer **`Reload Window`** alongside guidance to restart external AI clients and start a fresh chat. **`Ready`** readiness semantics belong strictly to manual **`AI Artifacts: Verify All Integrations`**.
+Shared Session context makes it possible for different chats, clients, and models to work on the same material. Optional Session waiters and requests let a participating agent wait for a handoff and another agent deliver the next request. This supports connected steps without the user manually relaying every message.
 
-Artifact skill updates preserve only the two declared customization points: a non-official YAML `description:` and the contents of the `USER CUSTOM RULES` block. The `.agents`, `.claude`, and Antigravity (`.gemini/config`) targets remain independent. The installer merges those values into the packaged skill before swapping directories and fails closed without replacing the target when frontmatter or markers cannot be preserved safely. The Work Session skill is replaced with official assets without customization merging. In **`AI Artifacts: Verify All Integrations`**, a `Ready` result proves on-disk asset synchronization and expected config state, not semantic compatibility of arbitrary custom rules with the official lifecycle.
+The user defines roles, handoff conditions, and review checkpoints in Instructions. They can choose different supported clients and models for different parts of the work. The extension supplies the shared context, review surface, and coordination mechanisms; the user chooses which tools suit each role.
 
-A conversation often produces multiple related artifacts over time (for example, architecture designs, phased implementation plans, test checklists). AI Artifacts introduces the conversation registry (`~/.ai-artifacts/conversation-registry/<artifactConversationId>/`) to group these artifacts together for quick visual switching in the Work Sessions manager and sidebar. Work Sessions also share Instructions and categorized artifact context across agents and chats through `join_session`; they do not share another chat's transcript or couple separate artifact lifecycles or waiters. Artifacts remain independently reviewable, including standalone artifacts without memberships. Session navigation does not alter `artifact-connection.json`; explicit artifact reconnect retains its routing contract. Each chat keeps at most one active Session, adopts changes only after success, and never infers it from memberships. Related requests read current Instructions and artifact paths on demand; latest/current-overview requests refresh the catalog first. New non-null Session results replace the catalog without discarding separate review handles.
+A Coder/Reviewer loop is one possible workflow. For example, the user may review a plan in full, have one agent implement it, ask another to find issues, and have an agent assess those findings for validity, necessity, and scope before deciding what to fix. This lets the user choose where to review the full work and where to review an assessment.
 
-The `agentPlus.artifactRetentionDays` machine-scoped setting (default 90 days, minimum 1) controls retention after global Archive for both artifacts and Work Sessions, using each item's own `archivedAt` timestamp. Deleting a Session preserves its artifacts. When the extension host activates, a best-effort asynchronous cleanup enumerates validated schema-v6 artifacts and deletes candidates only when `now >= archivedAt + retentionDays`. It re-reads the manifest and Archive state before atomically renaming each expired candidate to managed cleanup staging (`~/.ai-artifacts/managed/cleanup/`) for permanent deletion. Missing UI state or `archivedAt` preserves the artifact; malformed or unreadable state is skipped. Pin does not exempt archived artifacts, and the in-session Archived layout zone does not enable global cleanup. Cleanup also prunes stale or unreferenced conversation registry entries and removes empty legacy v1 conversation directories while preserving empty v2 Work Sessions. Migration from v1 is explicit through the single/bulk UI; MCP access to v1 stops with `CONVERSATION_MIGRATION_REQUIRED`. Cleanup does not block activation, does not require a global lock (per-artifact atomic rename resolves multi-window races), and skips legacy, malformed, or linked entries. Active waiters terminate with `ARTIFACT_NOT_FOUND` when their artifact is deleted. Uninstall does not run retention cleanup; reinstall followed by activation may delete archived artifacts whose retention period expired during the extension's absence.
+**Automation is a product capability; a particular review workflow is a method the user defines.** Cross-review and filtering unnecessary findings are supported uses, not built-in quality judgments or a mandatory pipeline. Their results remain subject to the user's review.
 
-Window routing defaults to the currently focused live VS Code window (or sole live window), matching user mental models without requiring workspace resolution rituals. Generic reconnect routing additionally respects advisory artifact-window affinity when matching stored connection state and present in the registry. When multiple windows exist and focus/affinity is ambiguous, creation or inspection requests explicit candidate selection (`WINDOW_SELECTION_REQUIRED`), returning opaque single-use selection tokens. Focus is a ranking hint, not identity, authorization, or a requirement for opening the target. Selection tokens bind an exact window instance. After creation, all lifecycle operations use the exact global artifact handle.
+## Human decisions and component responsibilities
 
-Create and explicit reconnect atomically commit schema-v1 connection state containing a window instance ID, monotonically increasing connection revision, unique open-request ID, source, and timestamp. The extension window whose stable instance ID matches the request may open the editor even when unfocused; every other window ignores it. Wait and advance preserve routing state and cannot silently rebind an artifact. Reconnect may select another live window but never changes lifecycle identity, Markdown, comments, submission, review round, or a prior Proceed/Just save action.
+Confidence should come from being able to inspect the proposal, question it, refine it, and choose what happens next. More agents or automatic handoffs do not replace those decisions.
 
-The artifact skill requires five artifact tools, supports fixed or open kinds, verifies tool availability once per chat lifecycle, and manages exact handle-to-round mappings. The separate Work Session skill requires `join_session` for entry and refresh; the server catalog exposes six tools in total. Approval of plans directs immediate execution via `execute-approved-plan`, while non-plan approvals emit `approved` for chat acknowledgment without code execution. Reconnect, saved-comment inspection, and explicit chat updates follow an explicit decision table with fail-closed safety. Lifecycle errors supply structured recovery metadata so agents preserve handles and avoid duplicate commits. Round tokens remain in-memory, single-use, and state-bound with a one-hour expiration.
+| Participant or component | Responsibility |
+| --- | --- |
+| **User** | Defines the goal, scope, workflow, and approval checkpoints; makes the final decisions. |
+| **Agent** | Works within its assigned role, reads relevant context, synthesizes documents or findings, and follows authorized handoffs. |
+| **Artifact** | Holds the current reviewable document and its independent review lifecycle. |
+| **Work Session** | Groups related artifacts and provides shared Instructions and organized context. |
+| **Skills** | Guide explicit artifact operations, Session entry, context use, and the applicable workflow rules. |
+| **MCP server** | Coordinates artifact lifecycle operations and Session wait/request delivery. |
+| **Extension UI** | Provides document preview, human feedback and review decisions, Session organization, and visibility into active waits. |
 
-Artifact Markdown, comments, and decisions may contain sensitive project information. Local-only transport does not make the files non-sensitive: POSIX runtime paths are restricted to owner-only directory/file modes, users remain responsible for their account and Windows filesystem ACLs, and uninstall deliberately retains user review data in `~/.ai-artifacts/artifacts/` to prevent data loss.
+Joining a Session, reading a document, or receiving a waiter request does not grant permission to execute an unapproved plan. Session Instructions and handoffs must preserve the user's authority and the artifact's approval rules.
+
+## Review decisions retain their meaning
+
+| Action | Meaning |
+| --- | --- |
+| **Review** | Submits feedback for another round. The agent answers questions in chat and edits the document only when changes are requested. |
+| **Proceed** | Concludes review. For `plan` and `implementation-plan`, it authorizes immediate execution of the approved plan in the same turn. For other kinds, it acknowledges approval without automatically executing code. |
+| **Just save** | Concludes the round and saves Markdown as requested without executing proposed work. |
+| **Copy Markdown** | Copies the document without submitting a review decision. |
+
+Proceed and Just save preserve the artifact. Explicit reconnect can reopen review later without replaying an earlier approval or save. A saved submission encountered during inspection is historical state, not a new execution directive.
+
+Artifact creation and lifecycle work remain explicit user requests. A document type, Session membership, or a desire to track progress does not automatically create an artifact or start a review round.
+
+## Persistence follows the user's decision to keep the work
+
+Artifacts and Sessions remain useful beyond a chat turn. Closing a chat, cancelling a wait, changing agents, or restarting the MCP server must not discard the documents. A Session groups artifacts without taking over their independent review lifecycles; deleting a Session preserves its artifacts.
+
+An artifact waiter is a temporary connection to a persistent document. Cancellation or takeover releases waiting state without deleting the artifact. Reconnection uses the exact retained artifact handle; it never guesses a replacement. If that artifact is permanently missing, report it rather than recreating the same identity or selecting another document.
+
+Unarchived artifacts and Work Sessions are kept regardless of age. Global Archive marks an item as eligible for permanent deletion after the configured retention period, currently 90 days by default, measured from when it was archived. Restore removes that eligibility; archiving again starts a new period. Expired archived items are deleted during extension activation. Users can restore or export them before expiry.
+
+Moving an artifact into a Session's **Archived** zone only organizes that Session. It does not globally archive the artifact or make it eligible for deletion. Detailed retention and recovery rules are maintained in [Architecture](ARCHITECTURE.md#lifetime-model).
+
+## Product boundaries
+
+- **Conversation stays in AI chat.** The product provides documents, review, shared context, and handoffs; it does not reproduce chat histories as another conversation interface.
+- **The overview centers on work documents.** A general agent monitoring dashboard and a task/project management system are outside the product's focus. A user-requested checklist can still be ordinary artifact content.
+- **Context is explicit.** Instructions and selected artifacts are the basis for continuity. Claims of complete agent memory or automatic knowledge of unsaved conversation are outside this model.
+- **Workflows are chosen by the user.** Sample roles and cross-review recipes demonstrate possibilities without becoming required product behavior.
+
+## UX: make it clear when each capability helps
+
+The interface and product explanations should help users recognize their current need and choose the relevant capability. Someone reviewing one proposal should be able to complete that work without learning Sessions. Someone organizing a Session should not need to configure an automated workflow.
+
+- **Explain the need at the point of use.** Names, entry points, and empty states should connect the capability to a concrete situation: refining a proposal, organizing related documents, continuing in another chat, or handing work to another agent.
+- **Keep the document readable.** Preview, precise feedback, and an understandable overview are part of the core experience for people, including when agents automate parts of the work.
+- **Let complexity follow the user's work.** Shared context and coordination should become useful as the work calls for them. These principles guide design; they do not prescribe automatic prompts, Session creation, or a fixed onboarding sequence.
+- **Explain benefits before infrastructure.** Preview and precise feedback explain review; organized documents and prepared context explain Sessions; connected handoffs explain workflows. Routing, schemas, and integration receipts support those experiences.
+
+Feature announcements and Tips should follow the same structure: show one concrete problem, the relevant capability, and its result. Workflow demonstrations and artifact-review demonstrations can complement each other without making every introduction explain the entire product. Curated announcements remain separate from exhaustive release notes; notifications remain upgrade-only and non-blocking.
+
+## Keep product growth focused
+
+Use the following questions when considering a new capability or a substantial UX change:
+
+1. What concrete problem does it solve, for whom, and when does that person need it?
+2. Does it improve review of one request, organization and continuity of a body of work, or coordination between agents? Which component should own it?
+3. Does it need product behavior, or can the need be met by Instructions, a workflow example, or clearer guidance using existing capabilities?
+4. What additional effort does it impose on people who only need a simpler use case?
+
+These questions support product judgment without creating a checklist for every small fix. Supporting functions should make the core experiences easier to use and maintain. A useful workflow example alone is not a reason to turn its roles and steps into required product behavior.
+
+## Technical references
+
+This document defines product intent and user-facing commitments. Detailed lifecycle, ownership, routing, retention, installation, and compatibility rules belong in [Architecture](ARCHITECTURE.md), [Project instructions](INSTRUCTION.md), and the [artifact](../skills/create-review-artifact/SKILL.md) and [Work Session](../skills/work-session/SKILL.md) skill contracts. Implementation versions and protocol details are maintained there rather than duplicated here.
+
+Local review content can contain sensitive project information. The extension host and MCP must share the supported user filesystem; uninstall preserves user review data. Artifact Markdown, comments, and decisions remain subject to the user's local account permissions and filesystem protections.

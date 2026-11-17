@@ -251,7 +251,7 @@ describe("WhatsNewPanelController & webview HTML", () => {
     expect(mockCreateWebviewPanel).toHaveBeenCalledTimes(1);
     const firstPanel = createdPanels[0]!;
     expect(firstPanel.viewType).toBe("agentPlus.whatsNew");
-    expect(firstPanel.title).toBe("What's New & Tips");
+    expect(firstPanel.title).toBe("What's New & Guides");
     expect(firstPanel.viewColumn).toBe(1);
     expect(firstPanel.options).toEqual({
       enableScripts: true,

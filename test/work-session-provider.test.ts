@@ -52,20 +52,30 @@ vi.mock("vscode", () => ({
 import * as vscode from "vscode";
 import { WorkSessionProvider, WorkSessionDocument } from "../src/extension/work-session-provider";
 import { ConversationArtifactService } from "../src/extension/conversation-artifact-service";
+import { ArtifactAutoOpenController } from "../src/extension/artifact-review-open";
 import {
   createSession,
   registerArtifactInSession,
   updateSessionDetails,
 } from "../src/shared/conversation-artifact-registry";
 import { conversationDirectory, globalArtifactsRoot } from "../src/shared/artifact-files";
+import {
+  readActiveSessionWaiters,
+  registerSessionWaiter,
+  renewSessionWaiterLease,
+} from "../src/shared/session-waiter-store";
 
 describe("WorkSessionProvider", () => {
   let tempHome: string;
   let service: ConversationArtifactService<any>;
   let openCoordinator: any;
   let mockContext: any;
+  let autoOpenController: ArtifactAutoOpenController;
+  let configuredAutoOpen: boolean;
 
   beforeEach(async () => {
+    configuredAutoOpen = true;
+    autoOpenController = new ArtifactAutoOpenController(() => configuredAutoOpen);
     tempHome = await mkdtemp(path.join(tmpdir(), "ai-artifacts-prov-"));
     service = new ConversationArtifactService<any>({
       uriFromFilePath: (p) => ({ fsPath: p }),
@@ -98,6 +108,69 @@ describe("WorkSessionProvider", () => {
     await rm(tempHome, { recursive: true, force: true }).catch(() => {});
   });
 
+  it("shares temporary auto-open across panels and follows configuration changes without saving it", async () => {
+    const firstSession = await createSession({ title: "First", userHome: tempHome });
+    const secondSession = await createSession({ title: "Second", userHome: tempHome });
+    const provider = new WorkSessionProvider(mockContext, service, openCoordinator, autoOpenController, { userHome: tempHome });
+    const persist = vi.spyOn(mockContext.globalState, "update");
+
+    const attach = async (sessionId: string) => {
+      let receive!: (message: unknown) => Promise<void>;
+      let dispose!: () => void;
+      const post = vi.fn();
+      const panel = {
+        webview: {
+          options: {}, html: "", cspSource: "vscode-webview://test",
+          asWebviewUri: (uri: any) => uri.fsPath,
+          postMessage: post,
+          onDidReceiveMessage: (listener: typeof receive) => {
+            receive = listener;
+            return { dispose: () => {} };
+          },
+        },
+        onDidDispose: (listener: () => void) => { dispose = listener; return { dispose: () => {} }; },
+      };
+      const doc = new WorkSessionDocument({ fsPath: path.join(conversationDirectory(sessionId, { userHome: tempHome }), "conversation.json") } as any, sessionId);
+      await provider.resolveCustomEditor(doc, panel as any, {} as any);
+      await receive({ type: "ready" });
+      return { receive, dispose, post };
+    };
+
+    const first = await attach(firstSession.sessionId);
+    const second = await attach(secondSession.sessionId);
+    await first.receive({ type: "setArtifactAutoOpen", enabled: false });
+    for (const panel of [first, second]) {
+      expect(panel.post).toHaveBeenCalledWith({ type: "artifactAutoOpenState", state: { enabled: false, configuredEnabled: true } });
+    }
+    expect(autoOpenController.isEnabled()).toBe(false);
+
+    configuredAutoOpen = false;
+    autoOpenController.refresh();
+    expect(second.post).toHaveBeenLastCalledWith({ type: "artifactAutoOpenState", state: { enabled: false, configuredEnabled: false } });
+    configuredAutoOpen = true;
+    autoOpenController.refresh();
+    expect(autoOpenController.isEnabled()).toBe(false);
+
+    first.dispose();
+    second.dispose();
+    const reopened = await attach(firstSession.sessionId);
+    expect(reopened.post).toHaveBeenCalledWith({ type: "artifactAutoOpenState", state: { enabled: false, configuredEnabled: true } });
+    await reopened.receive({ type: "setArtifactAutoOpen", enabled: true });
+    expect(autoOpenController.isEnabled()).toBe(true);
+
+    configuredAutoOpen = false;
+    autoOpenController.refresh();
+    await reopened.receive({ type: "setArtifactAutoOpen", enabled: true });
+    expect(autoOpenController.isEnabled()).toBe(false);
+    expect(persist).not.toHaveBeenCalled();
+    reopened.dispose();
+
+    configuredAutoOpen = true;
+    const otherWindow = new ArtifactAutoOpenController(() => configuredAutoOpen);
+    autoOpenController.setEnabled(false);
+    expect(otherWindow.isEnabled()).toBe(true);
+  });
+
   it("openCustomDocument validates document path and returns WorkSessionDocument", async () => {
     const session = await createSession({
       title: "Doc Test Session",
@@ -108,6 +181,7 @@ describe("WorkSessionProvider", () => {
       mockContext,
       service,
       openCoordinator,
+      autoOpenController,
       { userHome: tempHome },
     );
 
@@ -168,6 +242,7 @@ describe("WorkSessionProvider", () => {
       mockContext,
       service,
       openCoordinator,
+      autoOpenController,
       { userHome: tempHome },
     );
 
@@ -281,6 +356,7 @@ describe("WorkSessionProvider", () => {
       mockContext,
       service,
       openCoordinator,
+      autoOpenController,
       { userHome: tempHome },
     );
 
@@ -367,6 +443,7 @@ describe("WorkSessionProvider", () => {
       mockContext,
       service,
       openCoordinator,
+      autoOpenController,
       { userHome: tempHome },
     );
 
@@ -415,6 +492,7 @@ describe("WorkSessionProvider", () => {
       mockContext,
       service,
       openCoordinator,
+      autoOpenController,
       { userHome: tempHome },
     );
 
@@ -498,6 +576,7 @@ describe("WorkSessionProvider", () => {
       mockContext,
       service,
       openCoordinator as any,
+      autoOpenController,
       { userHome: tempHome },
       openTextDocument,
     );
@@ -581,6 +660,7 @@ describe("WorkSessionProvider", () => {
       mockContext,
       service,
       openCoordinator,
+      autoOpenController,
       { userHome: tempHome },
     );
 
@@ -623,5 +703,156 @@ describe("WorkSessionProvider", () => {
     current = await service.getWorkSession(session.sessionId);
     expect(current.working).toEqual([artA, artC]);
     expect(current.archived).toEqual([artB]);
+  });
+
+  it("syncs active waiters, filters pure heartbeats, and cancels a waiter on stopSessionWaiter", async () => {
+    const session = await createSession({
+      title: "Waiting Room Provider Session",
+      userHome: tempHome,
+    });
+
+    const artId = "waiter-art-01";
+    const artDir = path.join(globalArtifactsRoot({ userHome: tempHome }), artId);
+    await mkdir(artDir, { recursive: true });
+    await writeFile(
+      path.join(artDir, "artifact.json"),
+      JSON.stringify({
+        schemaVersion: 6,
+        kind: "implementation-plan",
+        artifactId: artId,
+        title: "Phase 2 UI Plan",
+        createdAt: "2026-04-10T10:00:00.000Z",
+        updatedAt: "2026-04-10T11:00:00.000Z",
+        reviewRound: 1,
+        reviewSessionId: "00000000-0000-4000-8000-000000000001",
+      }),
+    );
+    await writeFile(path.join(artDir, "artifact.md"), "# Plan\n");
+
+    const reg1 = await registerSessionWaiter(
+      {
+        sessionId: session.sessionId,
+        ownerInstanceId: "owner-1",
+        name: "Reviewer",
+        waitingFor: "code diff review",
+        artifactId: artId,
+      },
+      { userHome: tempHome },
+    );
+
+    const provider = new WorkSessionProvider(
+      mockContext,
+      service,
+      openCoordinator,
+      autoOpenController,
+      { userHome: tempHome },
+    );
+
+    const doc = new WorkSessionDocument(
+      { fsPath: path.join(conversationDirectory(session.sessionId, { userHome: tempHome }), "conversation.json") } as any,
+      session.sessionId,
+    );
+
+    let messageListener: ((msg: any) => any) | undefined;
+    let disposeListener: (() => void) | undefined;
+    const postMessage = vi.fn();
+    const panel = {
+      webview: {
+        options: {},
+        html: "",
+        cspSource: "vscode-webview://test",
+        asWebviewUri: (uri: any) => uri.fsPath ?? String(uri),
+        onDidReceiveMessage: (listener: any) => {
+          messageListener = listener;
+          return { dispose: () => {} };
+        },
+        postMessage,
+      },
+      onDidDispose: (listener: () => void) => {
+        disposeListener = listener;
+        return { dispose: () => {} };
+      },
+    };
+
+    await provider.resolveCustomEditor(doc, panel as any, {} as any);
+    await messageListener!({ type: "ready" });
+
+    expect(postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "workSessionState",
+        state: expect.objectContaining({
+          status: "ready",
+          data: expect.objectContaining({
+            waiters: [
+              expect.objectContaining({
+                waitId: reg1.waitId,
+                name: "Reviewer",
+                waitingFor: "code diff review",
+                artifact: {
+                  artifactId: artId,
+                  title: "Phase 2 UI Plan",
+                },
+              }),
+            ],
+          }),
+        }),
+      }),
+    );
+
+    postMessage.mockClear();
+    const resolveWaitersSpy = vi.spyOn(service, "resolveSessionWaiters");
+
+    // Pure heartbeat shifts mtime/expiresAt only -> must NOT emit workSessionWaitersPatch
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    await renewSessionWaiterLease(
+      {
+        sessionId: session.sessionId,
+        waitId: reg1.waitId,
+        ownerInstanceId: "owner-1",
+      },
+      { userHome: tempHome },
+    );
+    service.notifyChanged([{ kind: "waiters", sessionId: session.sessionId }]);
+    await vi.waitFor(() => {
+      expect(resolveWaitersSpy).toHaveBeenCalledTimes(1);
+    });
+    await resolveWaitersSpy.mock.results[0]?.value;
+    await Promise.resolve();
+    expect(postMessage).not.toHaveBeenCalled();
+
+    // New waiter added -> emits workSessionWaitersPatch
+    const reg2 = await registerSessionWaiter(
+      {
+        sessionId: session.sessionId,
+        ownerInstanceId: "owner-2",
+        name: "Coder",
+        waitingFor: "final verification",
+      },
+      { userHome: tempHome },
+    );
+    service.notifyChanged([{ kind: "waiters", sessionId: session.sessionId }]);
+    await vi.waitFor(() => {
+      expect(postMessage).toHaveBeenCalledWith({
+        type: "workSessionWaitersPatch",
+        waiters: expect.arrayContaining([
+          expect.objectContaining({ waitId: reg1.waitId, name: "Reviewer" }),
+          expect.objectContaining({ waitId: reg2.waitId, name: "Coder" }),
+        ]),
+      });
+    });
+    expect(postMessage).toHaveBeenCalledTimes(1);
+
+    postMessage.mockClear();
+
+    // Stop reg1 from UI -> cancels waiter on disk and emits updated workSessionWaitersPatch
+    await messageListener!({ type: "stopSessionWaiter", waitId: reg1.waitId });
+    const remaining = await readActiveSessionWaiters(session.sessionId, { userHome: tempHome });
+    expect(remaining.map((w) => w.waitId)).toEqual([reg2.waitId]);
+    expect(postMessage).toHaveBeenCalledWith({
+      type: "workSessionWaitersPatch",
+      waiters: [expect.objectContaining({ waitId: reg2.waitId, name: "Coder" })],
+    });
+
+    disposeListener?.();
   });
 });

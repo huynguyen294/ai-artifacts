@@ -13,7 +13,7 @@ vi.mock("../src/webview/vscode-api", () => ({
   },
 }));
 
-// UI behavior uses fixed fixtures so authored release notes and Tips can change freely.
+// UI behavior uses fixed fixtures so authored release notes and Guides can change freely.
 vi.mock("../src/webview/whats-new-content", () => ({
   whatsNewContent: {
     articles: [{
@@ -25,7 +25,20 @@ vi.mock("../src/webview/whats-new-content", () => ({
       preview: true,
       markdown: '# Fixture article heading\n\nFixture article body.\n\n[Docs](https://example.test/docs)\n\n![Screenshot](media/fixtures/article.png)\n\n![Animation](media/fixtures/article.gif)',
     }],
-    tipsMarkdown: '# Fixture Tips heading\n\nFixture Tips body.\n\n![Tip](media/fixtures/tip.gif)',
+    guides: [
+      {
+        id: "fixture-guide-one",
+        title: "Fixture Guide One",
+        description: "First fixture guide description.",
+        url: "https://dev.to/huynguyen294/fixture-guide-one",
+      },
+      {
+        id: "fixture-guide-two",
+        title: "Fixture Guide Two",
+        description: "Second fixture guide description.",
+        url: "https://dev.to/huynguyen294/fixture-guide-two",
+      },
+    ],
   },
 }));
 
@@ -49,8 +62,9 @@ describe("WhatsNewApp and WhatsNewDocument", () => {
     expect(mockPostMessage).not.toHaveBeenCalled();
     const previewArticle = whatsNewContent.articles[0]!;
 
+    expect(html).toContain(">What&#x27;s New &amp; Guides</h1>");
     expect(html).toContain(">What&#x27;s New</button>");
-    expect(html).toContain(">Tips</button>");
+    expect(html).toContain(">Guides</button>");
     expect(html).toContain('aria-pressed="true"');
     expect(html).toContain('aria-pressed="false"');
     expect(html).not.toContain('role="tab"');
@@ -82,7 +96,7 @@ describe("WhatsNewApp and WhatsNewDocument", () => {
     );
 
     expect(html).toContain('class="whats-new-tab-btn is-active" aria-pressed="true">What&#x27;s New</button>');
-    expect(html).toContain('class="whats-new-tab-btn" aria-pressed="false">Tips</button>');
+    expect(html).toContain('class="whats-new-tab-btn" aria-pressed="false">Guides</button>');
     expect(html).toContain(">← All updates</button>");
     expect(html).toContain("v1.2.0");
     expect(html).toContain("Preview content");
@@ -110,22 +124,25 @@ describe("WhatsNewApp and WhatsNewDocument", () => {
     expect(html).toContain("whats-new-image-placeholder");
   });
 
-  it("renders tips markdown and sample media without release cards when initialView is tips", () => {
+  it("renders guide cards without release cards or internal markdown when initialView is guides", () => {
     const html = renderToStaticMarkup(
-      <WhatsNewApp initialView={{ kind: "tips" }} mediaBaseUri={mediaBaseUri} />,
+      <WhatsNewApp initialView={{ kind: "guides" }} mediaBaseUri={mediaBaseUri} />,
     );
     const previewArticle = whatsNewContent.articles[0]!;
+    const firstGuide = whatsNewContent.guides[0]!;
+    const secondGuide = whatsNewContent.guides[1]!;
 
     expect(html).toContain('class="whats-new-tab-btn" aria-pressed="false">What&#x27;s New</button>');
-    expect(html).toContain('class="whats-new-tab-btn is-active" aria-pressed="true">Tips</button>');
-    expect(html).toContain("<h1>Fixture Tips heading</h1>");
-    expect(html).toContain("Fixture Tips body.");
-    expect(html).toContain("artifact-document whats-new-document");
-    expect(html).toContain(`src="${mediaBaseUri}/fixtures/tip.gif"`);
+    expect(html).toContain('class="whats-new-tab-btn is-active" aria-pressed="true">Guides</button>');
+    expect(html).toContain(firstGuide.title);
+    expect(html).toContain(firstGuide.description);
+    expect(html.indexOf(secondGuide.title)).toBeGreaterThan(html.indexOf(firstGuide.title));
+    expect(html).toContain("Read on dev.to ↗");
 
     expect(html).not.toContain(previewArticle.description);
     expect(html).not.toContain("View more details");
     expect(html).not.toContain("← All updates");
+    expect(html).not.toContain("whats-new-document");
     expect(html).not.toContain("data-block-id");
   });
 
@@ -159,7 +176,14 @@ describe("WhatsNewApp and WhatsNewDocument", () => {
           markdown: "# Release 2.0.0\n\n![Milestone demo](media/samples/ai-artifacts.png)\n\nTarget body 2.0.0.",
         },
       ],
-      tipsMarkdown: "# Sample Tips",
+      guides: [
+        {
+          id: "sample-guide",
+          title: "Sample Guide",
+          description: "Sample guide description.",
+          url: "https://dev.to/huynguyen294/sample-guide",
+        },
+      ],
     };
 
     vi.resetModules();
@@ -200,12 +224,19 @@ describe("WhatsNewApp and WhatsNewDocument", () => {
     expect(emptyBodyArticleHtml).toContain("Release notes for version 2.0.5 were not found.");
   });
 
-  it("renders safe empty list state with both tabs intact and still renders Tips when articles is empty", async () => {
+  it("renders safe empty list state with both tabs intact and still renders Guides when articles is empty", async () => {
     vi.resetModules();
     vi.doMock("../src/webview/whats-new-content", () => ({
       whatsNewContent: {
         articles: [],
-        tipsMarkdown: "# Sample Tips\n\nHelpful guide.",
+        guides: [
+          {
+            id: "empty-articles-guide",
+            title: "Sample Guide",
+            description: "Helpful guide.",
+            url: "https://dev.to/huynguyen294/sample-guide",
+          },
+        ],
       },
     }));
 
@@ -214,12 +245,31 @@ describe("WhatsNewApp and WhatsNewDocument", () => {
 
     expect(listHtml).toContain("No updates to show yet.");
     expect(listHtml).toContain(">What&#x27;s New</button>");
-    expect(listHtml).toContain(">Tips</button>");
+    expect(listHtml).toContain(">Guides</button>");
 
-    const tipsHtml = renderToStaticMarkup(
-      <EmptyWhatsNewApp initialView={{ kind: "tips" }} mediaBaseUri={mediaBaseUri} />,
+    const guidesHtml = renderToStaticMarkup(
+      <EmptyWhatsNewApp initialView={{ kind: "guides" }} mediaBaseUri={mediaBaseUri} />,
     );
-    expect(tipsHtml).toContain("Helpful guide.");
+    expect(guidesHtml).toContain("Sample Guide");
+    expect(guidesHtml).toContain("Helpful guide.");
+    expect(guidesHtml).toContain("Read on dev.to ↗");
+  });
+
+  it("renders safe empty state when guides is empty", async () => {
+    vi.resetModules();
+    vi.doMock("../src/webview/whats-new-content", () => ({
+      whatsNewContent: {
+        articles: [],
+        guides: [],
+      },
+    }));
+
+    const { WhatsNewApp: EmptyGuidesApp } = await import("../src/webview/WhatsNewApp");
+    const guidesHtml = renderToStaticMarkup(
+      <EmptyGuidesApp initialView={{ kind: "guides" }} mediaBaseUri={mediaBaseUri} />,
+    );
+
+    expect(guidesHtml).toContain("No guides to show yet.");
   });
 
   it("renders content markdown through WhatsNewDocument with resolved media and no raw HTML or review chrome", () => {

@@ -526,16 +526,25 @@ export const sessionCatalogSchema = z
 
 export type SessionCatalog = z.infer<typeof sessionCatalogSchema>;
 
-export const sessionContextSchema = z
+export const sessionHandleSchema = z
   .object({
     sessionId: artifactConversationIdSchema,
     title: sessionTitleSchema,
     typeId: sessionTypeIdSchema,
     typeLabel: z.string().min(1),
+    sessionDirectory: z.string().min(1),
+    instructionsPath: z.string().min(1),
+    layoutPath: z.string().min(1),
     createdAt: z.string().datetime(),
     updatedAt: z.string().datetime(),
+  })
+  .strict();
+
+export type SessionHandle = z.infer<typeof sessionHandleSchema>;
+
+export const sessionContextSchema = sessionHandleSchema
+  .extend({
     instructions: z.string(),
-    instructionsPath: z.string().min(1),
     catalog: sessionCatalogSchema,
   })
   .strict();
@@ -603,6 +612,26 @@ export const workSessionArtifactRowSchema = z
   .strict();
 export type WorkSessionArtifactRow = z.infer<typeof workSessionArtifactRowSchema>;
 
+export const workSessionWaiterArtifactSchema = z
+  .object({
+    artifactId: artifactIdSchema,
+    title: z.string().min(1),
+  })
+  .strict();
+export type WorkSessionWaiterArtifact = z.infer<typeof workSessionWaiterArtifactSchema>;
+
+export const workSessionWaiterItemSchema = z
+  .object({
+    waitId: z.string().uuid(),
+    name: z.string().trim().min(1),
+    waitingFor: z.string().trim().min(1),
+    createdAt: z.string().datetime(),
+    expiresAt: z.string().datetime(),
+    artifact: workSessionWaiterArtifactSchema.optional(),
+  })
+  .strict();
+export type WorkSessionWaiterItem = z.infer<typeof workSessionWaiterItemSchema>;
+
 export const workSessionViewDataSchema = z
   .object({
     sessionId: artifactConversationIdSchema,
@@ -615,6 +644,7 @@ export const workSessionViewDataSchema = z
     working: z.array(workSessionArtifactRowSchema),
     references: z.array(workSessionArtifactRowSchema),
     archived: z.array(workSessionArtifactRowSchema),
+    waiters: z.array(workSessionWaiterItemSchema).optional(),
     uiState: z
       .object({
         pinned: z.boolean(),
@@ -630,6 +660,7 @@ export type WorkSessionDataChange =
   | { kind: "instructions"; sessionId: string }
   | { kind: "membership"; sessionId: string; artifactId: string }
   | { kind: "layout"; sessionId: string }
+  | { kind: "waiters"; sessionId: string }
   | { kind: "artifact"; artifactId: string }
   | { kind: "artifactUiState"; artifactId: string }
   | { kind: "sessionUiState"; sessionId: string }
@@ -645,6 +676,7 @@ export type WorkSessionSummary = {
 
 export const sessionWebviewToExtensionMessageSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("ready") }),
+  z.object({ type: z.literal("setArtifactAutoOpen"), enabled: z.boolean() }).strict(),
   z.object({ type: z.literal("openArtifact"), artifactId: artifactIdSchema }).strict(),
   z.object({ type: z.literal("openExternal"), url: z.string().url() }).strict(),
   z.object({ type: z.literal("renameSession") }).strict(),
@@ -675,10 +707,17 @@ export const sessionWebviewToExtensionMessageSchema = z.discriminatedUnion("type
   z.object({ type: z.literal("archiveSession") }).strict(),
   z.object({ type: z.literal("deleteSession") }).strict(),
   z.object({ type: z.literal("exportSession") }).strict(),
+  z.object({ type: z.literal("stopSessionWaiter"), waitId: z.string().uuid() }).strict(),
 ]);
 export type SessionWebviewToExtensionMessage = z.infer<typeof sessionWebviewToExtensionMessageSchema>;
 
+export type ArtifactAutoOpenState = {
+  enabled: boolean;
+  configuredEnabled: boolean;
+};
+
 export type SessionExtensionToWebviewMessage =
+  | { type: "artifactAutoOpenState"; state: ArtifactAutoOpenState }
   | {
       type: "workSessionState";
       state: { status: "ready"; data: WorkSessionViewData } | { status: "error"; message: string };
@@ -694,6 +733,10 @@ export type SessionExtensionToWebviewMessage =
       references: WorkSessionArtifactRow[];
       archived: WorkSessionArtifactRow[];
       updatedAt: string;
+    }
+  | {
+      type: "workSessionWaitersPatch";
+      waiters: WorkSessionWaiterItem[];
     }
   | {
       type: "workSessionInstructionsPatch";
@@ -751,11 +794,38 @@ export type SessionArtifactHandleResult = {
   kind: string;
   artifactConversationId: string;
   conversationName?: string | undefined;
-  session: SessionContext;
+  session: SessionHandle;
   connection?: ArtifactConnection | undefined;
 };
 
-export type CreateArtifactReviewResult = StandaloneArtifactHandleResult | SessionArtifactHandleResult;
+export type ArtifactWaitReviewFields = {
+  schemaVersion: typeof ARTIFACT_SCHEMA_VERSION;
+  title?: string | undefined;
+  commentsSha256: string;
+  comments: CommentsDocument;
+  decision: ReviewDecision;
+  submittedAt: string;
+  commentsPath: string;
+  submissionSha256: string;
+  nextAction?:
+    | {
+        type: "process-review-feedback" | "execute-approved-plan" | "approved";
+        instruction: string;
+      }
+    | undefined;
+  roundToken?: string | undefined;
+  roundTokenSource?: "submitted-review" | undefined;
+};
+
+export type StandaloneArtifactCreateWaitResult = StandaloneArtifactHandleResult & ArtifactWaitReviewFields;
+
+export type SessionArtifactCreateWaitResult = SessionArtifactHandleResult & ArtifactWaitReviewFields;
+
+export type CreateArtifactReviewResult =
+  | StandaloneArtifactHandleResult
+  | SessionArtifactHandleResult
+  | StandaloneArtifactCreateWaitResult
+  | SessionArtifactCreateWaitResult;
 
 export type StandaloneArtifactInspectionResult = {
   artifactDirectory: string;
@@ -800,10 +870,20 @@ export type SessionArtifactInspectionResult = {
   roundToken?: string | undefined;
   roundTokenSource?: "chat-inspection" | "chat-update" | undefined;
   connection?: ArtifactConnection | undefined;
-  session: SessionContext;
+  session: SessionHandle;
 };
 
-export type InspectArtifactReviewResult = StandaloneArtifactInspectionResult | SessionArtifactInspectionResult;
+export type StandaloneArtifactInspectWaitResult = Omit<StandaloneArtifactInspectionResult, "roundTokenSource"> &
+  ArtifactWaitReviewFields;
+
+export type SessionArtifactInspectWaitResult = Omit<SessionArtifactInspectionResult, "roundTokenSource"> &
+  ArtifactWaitReviewFields;
+
+export type InspectArtifactReviewResult =
+  | StandaloneArtifactInspectionResult
+  | SessionArtifactInspectionResult
+  | StandaloneArtifactInspectWaitResult
+  | SessionArtifactInspectWaitResult;
 
 export type JoinSessionOnlyResult = {
   session: SessionContext;

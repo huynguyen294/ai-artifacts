@@ -1,7 +1,7 @@
 import path from "node:path";
 import * as vscode from "vscode";
 import { ArtifactReviewProvider } from "./artifact-review-provider";
-import { ArtifactReviewOpenCoordinator, setupGlobalArtifactConnectionWatcher } from "./artifact-review-open";
+import { ArtifactAutoOpenController, ArtifactReviewOpenCoordinator, setupGlobalArtifactConnectionWatcher } from "./artifact-review-open";
 import { discoverSearchableArtifacts } from "./artifact-search";
 import {
   aiArtifactsRoot,
@@ -90,6 +90,12 @@ import { WhatsNewPanelController } from "./whats-new-panel";
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
 // Initialize extension services
+  const artifactAutoOpenController = new ArtifactAutoOpenController(() =>
+    vscode.workspace.getConfiguration("agentPlus").get<boolean>("autoOpenArtifactReview", true),
+  );
+  context.subscriptions.push(vscode.workspace.onDidChangeConfiguration((event) => {
+    if (event.affectsConfiguration("agentPlus.autoOpenArtifactReview")) artifactAutoOpenController.refresh();
+  }));
   const workspaceRegistryPublisher = new WorkspaceRegistryPublisher();
   const artifactReviewOpenCoordinator = new ArtifactReviewOpenCoordinator<vscode.Uri>({
     uriFromFilePath: (filePath) => vscode.Uri.file(filePath),
@@ -119,6 +125,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     context,
     conversationArtifactService,
     artifactReviewOpenCoordinator,
+    artifactAutoOpenController,
   );
   const recentArtifactsProvider = new RecentArtifactsTreeDataProvider(conversationArtifactService);
   const workSessionsProvider = new WorkSessionsTreeDataProvider(
@@ -620,8 +627,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
           true,
         ),
       localWindowInstanceId: () => workspaceRegistryPublisher.currentInstanceId,
-      isAutoOpenEnabled: () =>
-        vscode.workspace.getConfiguration("agentPlus").get<boolean>("autoOpenArtifactReview", true),
+      isAutoOpenEnabled: () => artifactAutoOpenController.isEnabled(),
       artifactUriFromConnection: (connectionUri) => vscode.Uri.joinPath(connectionUri, "..", "artifact.md"),
       openArtifactReview: async (artifactUri) => {
         await artifactReviewOpenCoordinator.open(artifactUri);

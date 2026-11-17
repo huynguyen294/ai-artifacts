@@ -1,6 +1,7 @@
 import os from "node:os";
 import path from "node:path";
 import { artifactConversationIdSchema, artifactIdSchema } from "./contracts";
+import { sessionWaitIdSchema } from "./session-waiter-contracts";
 
 export const ARTIFACTS_DIRECTORY = ".ai-artifacts";
 export const ARTIFACT_COLLECTION_DIRECTORY = "artifacts";
@@ -9,6 +10,9 @@ export const CONVERSATION_REGISTERED_ARTIFACTS_DIRECTORY = "registered-artifacts
 export const CONVERSATION_METADATA_FILE = "conversation.json";
 export const WORK_SESSION_LAYOUT_FILE = "layout.json";
 export const WORK_SESSION_INSTRUCTIONS_FILE = "instructions.md";
+export const WORK_SESSION_WAITERS_DIRECTORY = "waiters";
+export const WORK_SESSION_WAITER_REQUESTS_DIRECTORY = "waiter-requests";
+export const WORK_SESSION_WAITERS_LOCK_FILE = ".coordination.lock";
 export const CONVERSATION_V1_BACKUP_FILE = "conversation.v1.backup.json";
 export const SESSION_TYPES_FILE = "session-types.json";
 export const MANAGED_ASSETS_DIRECTORY = "managed";
@@ -237,5 +241,59 @@ export function managedWorkspaceRegistryDirectory(options: GlobalArtifactsRootOp
  */
 export function managedCleanupDirectory(options: GlobalArtifactsRootOptions = {}): string {
   return path.join(managedAssetsRoot(options), MANAGED_CLEANUP_DIRECTORY);
+}
+
+/**
+ * Returns the active waiters directory for a specific work session.
+ */
+export function workSessionWaitersDirectory(
+  sessionId: string,
+  options: GlobalArtifactsRootOptions = {},
+): string {
+  return path.join(conversationDirectory(sessionId, options), WORK_SESSION_WAITERS_DIRECTORY);
+}
+
+/**
+ * Returns the waiter requests directory for a specific work session.
+ */
+export function workSessionWaiterRequestsDirectory(
+  sessionId: string,
+  options: GlobalArtifactsRootOptions = {},
+): string {
+  return path.join(conversationDirectory(sessionId, options), WORK_SESSION_WAITER_REQUESTS_DIRECTORY);
+}
+
+/**
+ * Returns the shared coordination lock path under a work session's waiters directory.
+ */
+export function workSessionWaitersLockPath(
+  sessionId: string,
+  options: GlobalArtifactsRootOptions = {},
+): string {
+  return path.join(workSessionWaitersDirectory(sessionId, options), WORK_SESSION_WAITERS_LOCK_FILE);
+}
+
+/**
+ * Returns the exact JSON path for an active Session waiter record.
+ */
+export function workSessionWaiterRecordPath(
+  sessionId: string,
+  waitId: string,
+  options: GlobalArtifactsRootOptions = {},
+): string {
+  const validatedWaitId = sessionWaitIdSchema.parse(waitId);
+  return path.join(workSessionWaitersDirectory(sessionId, options), `${validatedWaitId}.json`);
+}
+
+/**
+ * Returns the exact JSON path for a pending Session waiter request.
+ */
+export function workSessionWaiterRequestPath(
+  sessionId: string,
+  waitId: string,
+  options: GlobalArtifactsRootOptions = {},
+): string {
+  const validatedWaitId = sessionWaitIdSchema.parse(waitId);
+  return path.join(workSessionWaiterRequestsDirectory(sessionId, options), `${validatedWaitId}.json`);
 }
 

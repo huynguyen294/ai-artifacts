@@ -2,9 +2,11 @@ import { useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { formatArtifactKindLabel } from "../shared/artifact-kinds";
 import { normalizeArtifactTitleSearch } from "../shared/artifact-title-search";
 import type {
+  ArtifactAutoOpenState,
   SessionExtensionToWebviewMessage,
   WorkSessionArtifactRow,
   WorkSessionViewData,
+  WorkSessionWaiterItem,
 } from "../shared/contracts";
 import { vscode } from "./vscode-api";
 
@@ -16,15 +18,18 @@ export type SessionAppState =
 export interface SessionAppProps {
   initialState?: SessionAppState;
   initialPanelExpanded?: boolean;
+  initialWaitingRoomOpen?: boolean;
 }
 
 export interface SessionManagerState {
   state: SessionAppState;
+  artifactAutoOpen?: ArtifactAutoOpenState;
   panelExpanded: boolean;
   draftInstructions: string;
   hasInitializedDraft: boolean;
   savingInstructions: boolean;
   restoringSession: boolean;
+  stoppingWaitIds: string[];
   instructionsError?: string | undefined;
   actionError?: string | undefined;
   activeCardMenuId?: string | undefined;
@@ -36,6 +41,7 @@ export type SessionManagerAction =
   | { type: "setDraft"; draft: string }
   | { type: "startSaveInstructions" }
   | { type: "startRestoreSession" }
+  | { type: "startStopWaiter"; waitId: string }
   | { type: "togglePanel" }
   | { type: "setActiveCardMenu"; menuId: string | undefined }
   | { type: "dismissActionError" }
@@ -52,6 +58,7 @@ export function createInitialSessionManagerState(
     hasInitializedDraft: initialState && initialState.status === "ready" ? true : false,
     savingInstructions: false,
     restoringSession: false,
+    stoppingWaitIds: [],
     instructionsError: undefined,
     actionError: undefined,
     activeCardMenuId: undefined,
@@ -85,6 +92,15 @@ export function sessionManagerReducer(
         actionError: undefined,
       };
 
+    case "startStopWaiter":
+      return {
+        ...current,
+        stoppingWaitIds: current.stoppingWaitIds.includes(action.waitId)
+          ? current.stoppingWaitIds
+          : [...current.stoppingWaitIds, action.waitId],
+        actionError: undefined,
+      };
+
     case "togglePanel":
       return {
         ...current,
@@ -113,11 +129,16 @@ export function sessionManagerReducer(
       const msg = action.message;
       if (!msg) return current;
 
+      if (msg.type === "artifactAutoOpenState") {
+        return { ...current, artifactAutoOpen: msg.state };
+      }
+
       if (msg.type === "workSessionState") {
         if (msg.state.status === "ready") {
           const nextDraft = current.hasInitializedDraft
             ? current.draftInstructions
             : msg.state.data.instructions;
+          const activeWaitIds = new Set((msg.state.data.waiters ?? []).map((w) => w.waitId));
           return {
             ...current,
             state: { status: "ready", data: msg.state.data },
@@ -125,12 +146,14 @@ export function sessionManagerReducer(
             hasInitializedDraft: true,
             panelExpanded: msg.panelExpanded !== undefined ? msg.panelExpanded : current.panelExpanded,
             restoringSession: false,
+            stoppingWaitIds: current.stoppingWaitIds.filter((id) => activeWaitIds.has(id)),
           };
         }
         return {
           ...current,
           state: { status: "error", message: msg.state.message },
           restoringSession: false,
+          stoppingWaitIds: [],
         };
       }
 
@@ -163,6 +186,22 @@ export function sessionManagerReducer(
               references: msg.references,
               archived: msg.archived,
               updatedAt: msg.updatedAt,
+            },
+          },
+        };
+      }
+
+      if (msg.type === "workSessionWaitersPatch") {
+        if (current.state.status !== "ready") return current;
+        const activeWaitIds = new Set(msg.waiters.map((w) => w.waitId));
+        return {
+          ...current,
+          stoppingWaitIds: current.stoppingWaitIds.filter((id) => activeWaitIds.has(id)),
+          state: {
+            status: "ready",
+            data: {
+              ...current.state.data,
+              waiters: msg.waiters,
             },
           },
         };
@@ -244,6 +283,13 @@ export function sessionManagerReducer(
             instructionsError: msg.message,
           };
         }
+        if (msg.action === "stopSessionWaiter") {
+          return {
+            ...current,
+            stoppingWaitIds: [],
+            actionError: msg.message,
+          };
+        }
         return {
           ...current,
           restoringSession: false,
@@ -304,22 +350,56 @@ export function formatArtifactHoverInfo(artifact: WorkSessionArtifactRow): strin
   return parts.join("\n");
 }
 
-export function SessionApp({ initialState, initialPanelExpanded = true }: SessionAppProps = {}) {
+export function formatWaiterHoverInfo(waiter: WorkSessionWaiterItem): string {
+  const summary = `${waiter.name} waiting for ${waiter.waitingFor}`;
+  if (waiter.artifact) {
+    return `${summary}\nArtifact: ${waiter.artifact.title}`;
+  }
+  return summary;
+}
+
+export function computeWaitersPopoverPosition(
+  button: { getBoundingClientRect?: () => { left: number; bottom: number } } | null | undefined,
+  viewport?: { innerWidth: number; innerHeight: number },
+): { top: number; left: number } | undefined {
+  if (!button || typeof button.getBoundingClientRect !== "function") return undefined;
+  const vw = viewport?.innerWidth ?? (typeof window !== "undefined" ? window.innerWidth : 0);
+  const vh = viewport?.innerHeight ?? (typeof window !== "undefined" ? window.innerHeight : 0);
+  const rect = button.getBoundingClientRect();
+  const maxWidth = Math.min(450, Math.max(240, vw - 16));
+  const left = Math.max(8, Math.min(rect.left, vw - maxWidth - 8));
+  const top = Math.min(rect.bottom + 4, Math.max(8, vh - 120));
+  return { top: Math.round(top), left: Math.round(left) };
+}
+
+export function SessionApp({
+  initialState,
+  initialPanelExpanded = true,
+  initialWaitingRoomOpen = false,
+}: SessionAppProps = {}) {
   const [managerState, dispatch] = useReducer(
     sessionManagerReducer,
     createInitialSessionManagerState(initialState, initialPanelExpanded),
   );
   const [moreMenuOpen, setMoreMenuOpen] = useState(false);
+  const [waitingRoomOpen, setWaitingRoomOpen] = useState(initialWaitingRoomOpen);
+  const [popoverPosition, setPopoverPosition] = useState<{ top: number; left: number } | undefined>(
+    undefined,
+  );
   const moreMenuRef = useRef<HTMLDivElement>(null);
+  const waitingRoomRef = useRef<HTMLDivElement>(null);
+  const waitingRoomBtnRef = useRef<HTMLButtonElement>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [kindFilter, setKindFilter] = useState("all");
 
   const {
     state,
+    artifactAutoOpen,
     panelExpanded,
     draftInstructions,
     savingInstructions,
     restoringSession,
+    stoppingWaitIds,
     instructionsError,
     actionError,
     activeCardMenuId,
@@ -371,6 +451,44 @@ export function SessionApp({ initialState, initialPanelExpanded = true }: Sessio
     window.addEventListener("click", handleClick);
     return () => window.removeEventListener("click", handleClick);
   }, [moreMenuOpen]);
+
+  useEffect(() => {
+    if (!waitingRoomOpen) {
+      setPopoverPosition(undefined);
+      return;
+    }
+
+    const updatePosition = () => {
+      const nextPos = computeWaitersPopoverPosition(waitingRoomBtnRef.current);
+      if (nextPos) {
+        setPopoverPosition(nextPos);
+      }
+    };
+
+    const handleClick = (e: MouseEvent) => {
+      if (waitingRoomRef.current && !waitingRoomRef.current.contains(e.target as Node)) {
+        setWaitingRoomOpen(false);
+      }
+    };
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setWaitingRoomOpen(false);
+      }
+    };
+
+    updatePosition();
+    window.addEventListener("click", handleClick);
+    window.addEventListener("keydown", handleKeyDown);
+    window.addEventListener("resize", updatePosition);
+    window.addEventListener("scroll", updatePosition, true);
+    return () => {
+      window.removeEventListener("click", handleClick);
+      window.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("resize", updatePosition);
+      window.removeEventListener("scroll", updatePosition, true);
+    };
+  }, [waitingRoomOpen]);
 
   const distinctKinds = useMemo(() => {
     if (state.status !== "ready") return [];
@@ -489,8 +607,16 @@ export function SessionApp({ initialState, initialPanelExpanded = true }: Sessio
   };
 
   const handleAddArtifact = () => {
+    setWaitingRoomOpen(false);
     vscode.postMessage({ type: "addSessionArtifact" });
   };
+
+  const handleStopWaiter = (waitId: string) => {
+    dispatch({ type: "startStopWaiter", waitId });
+    vscode.postMessage({ type: "stopSessionWaiter", waitId });
+  };
+
+  const waiters = data.waiters ?? [];
 
   const handleSaveInstructions = () => {
     dispatch({ type: "startSaveInstructions" });
@@ -533,16 +659,117 @@ export function SessionApp({ initialState, initialPanelExpanded = true }: Sessio
               </span>
             </h4>
             {zoneKey === "working" && (
-              <button
-                type="button"
-                className="secondary session-add-artifact-btn"
-                title="Add Artifact"
-                aria-label="Add Artifact"
-                onClick={handleAddArtifact}
-              >
-                <span className="session-add-artifact-icon" aria-hidden="true">＋</span>
-                <span>Add Artifact</span>
-              </button>
+              <div className="session-zone-header-actions">
+                <button
+                  type="button"
+                  className="secondary session-add-artifact-btn"
+                  title="Add Artifact"
+                  aria-label="Add Artifact"
+                  onClick={handleAddArtifact}
+                >
+                  <span className="session-add-artifact-icon" aria-hidden="true">＋</span>
+                  <span>Add Artifact</span>
+                </button>
+                <div className="session-waiting-room-anchor" ref={waitingRoomRef}>
+                  <button
+                    ref={waitingRoomBtnRef}
+                    type="button"
+                    className={`secondary session-waiting-room-btn${waiters.length > 0 ? " has-waiters" : ""}`}
+                    title="View agents waiting in this session"
+                    aria-label={`Waiting room (${waiters.length})`}
+                    aria-expanded={waitingRoomOpen}
+                    aria-haspopup="dialog"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      dispatch({ type: "setActiveCardMenu", menuId: undefined });
+                      setMoreMenuOpen(false);
+                      if (!waitingRoomOpen) {
+                        setPopoverPosition(computeWaitersPopoverPosition(waitingRoomBtnRef.current));
+                        setWaitingRoomOpen(true);
+                      } else {
+                        setWaitingRoomOpen(false);
+                      }
+                    }}
+                  >
+                    <span>Waiting room ({waiters.length})</span>
+                  </button>
+                  {waitingRoomOpen && (
+                    <div
+                      className="session-waiters-popover"
+                      role="dialog"
+                      aria-label="Waiting room"
+                      style={
+                        popoverPosition
+                          ? { top: `${popoverPosition.top}px`, left: `${popoverPosition.left}px` }
+                          : undefined
+                      }
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      {waiters.length === 0 ? (
+                        <div className="session-waiters-empty">
+                          <div className="session-waiters-empty-title">Waiting Room</div>
+                          <p className="session-waiters-empty-desc">
+                            Let connected agents stay on standby in this session so another agent can hand off work to them across chats:
+                          </p>
+                          <ol className="session-waiters-empty-steps">
+                            <li>
+                              Ask an agent in this session to <strong>wait in the waiting room</strong> (for example:{" "}
+                              <em>&ldquo;Wait in this session for code review&rdquo;</em>).
+                            </li>
+                            <li>
+                              Later, ask another agent in this session to <strong>wake that waiting agent</strong> with a
+                              message to run the next task.
+                            </li>
+                          </ol>
+                        </div>
+                      ) : (
+                        <ul className="session-waiters-list">
+                          {waiters.map((waiter) => {
+                            const isStopping = stoppingWaitIds.includes(waiter.waitId);
+                            return (
+                              <li
+                                key={waiter.waitId}
+                                className="session-waiter-item"
+                                title={formatWaiterHoverInfo(waiter)}
+                              >
+                                <button
+                                  type="button"
+                                  className="secondary session-waiter-stop-btn"
+                                  disabled={isStopping}
+                                  title={isStopping ? "Stopping..." : "Stop waiting"}
+                                  aria-label={
+                                    isStopping
+                                      ? `Stopping wait for ${waiter.name}`
+                                      : `Stop waiting for ${waiter.name}`
+                                  }
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleStopWaiter(waiter.waitId);
+                                  }}
+                                >
+                                  <svg
+                                    aria-hidden="true"
+                                    width="8"
+                                    height="8"
+                                    viewBox="0 0 8 8"
+                                    fill="currentColor"
+                                    className="session-waiter-stop-icon"
+                                  >
+                                    <rect width="8" height="8" rx="1.5" />
+                                  </svg>
+                                </button>
+                                <span className="session-waiter-text">
+                                  <strong>{waiter.name}</strong> waiting for {waiter.waitingFor}
+                                </span>
+                              </li>
+                            );
+                          })}
+                        </ul>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
             )}
           </div>
           {ZONE_HELPERS[zoneKey] ? (
@@ -624,12 +851,13 @@ export function SessionApp({ initialState, initialPanelExpanded = true }: Sessio
                         type="button"
                         className="session-card-menu-btn"
                         title="Artifact options"
-                        onClick={() =>
+                        onClick={() => {
+                          setWaitingRoomOpen(false);
                           dispatch({
                             type: "setActiveCardMenu",
                             menuId: isMenuOpen ? undefined : artifact.artifactId,
-                          })
-                        }
+                          });
+                        }}
                         aria-expanded={isMenuOpen}
                       >
                         ⋯
@@ -833,15 +1061,37 @@ export function SessionApp({ initialState, initialPanelExpanded = true }: Sessio
                 <button
                   type="button"
                   className="session-icon-button session-more-btn"
-                  title="More options"
-                  aria-label="More options"
+                  title="Settings"
+                  aria-label="Settings"
                   aria-expanded={moreMenuOpen}
-                  onClick={() => setMoreMenuOpen(!moreMenuOpen)}
+                  onClick={() => {
+                    setWaitingRoomOpen(false);
+                    setMoreMenuOpen(!moreMenuOpen);
+                  }}
                 >
-                  ⋯
+                  <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round">
+                    <path d="m9.5 3-.6 2.1-1.8 1-2.1-.5-2.5 4.3 1.5 1.6v2l-1.5 1.6L5 19.4l2.1-.5 1.8 1 .6 2.1h5l.6-2.1 1.8-1 2.1.5 2.5-4.3-1.5-1.6v-2l1.5-1.6L19 5.6l-2.1.5-1.8-1-.6-2.1z" />
+                    <circle cx="12" cy="12.5" r="3" />
+                  </svg>
                 </button>
                 {moreMenuOpen && (
                   <div className="session-card-dropdown session-header-dropdown" onClick={(e) => e.stopPropagation()}>
+                    <button
+                      type="button"
+                      className="session-dropdown-item"
+                      disabled={!artifactAutoOpen?.configuredEnabled}
+                      title={artifactAutoOpen?.configuredEnabled === false
+                        ? "Auto-open is disabled in IDE settings"
+                        : artifactAutoOpen ? "Change auto-open temporarily for this window" : "Loading auto-open setting"}
+                      onClick={() => {
+                        if (!artifactAutoOpen) return;
+                        vscode.postMessage({ type: "setArtifactAutoOpen", enabled: !artifactAutoOpen.enabled });
+                        setMoreMenuOpen(false);
+                      }}
+                    >
+                      {artifactAutoOpen?.enabled ? "Turn off auto-open artifact" : "Turn on auto-open artifact"}
+                    </button>
+                    <div className="session-dropdown-divider" />
                     <button
                       type="button"
                       className="session-dropdown-item"

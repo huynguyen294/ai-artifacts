@@ -35,7 +35,7 @@ export class WhatsNewPanelController implements vscode.Disposable {
     try {
       panel = vscode.window.createWebviewPanel(
         WhatsNewPanelController.viewType,
-        "What's New & Tips",
+        "What's New & Guides",
         column,
         {
           enableScripts: true,
