@@ -4,7 +4,16 @@ All notable changes to the **AI Artifacts** (`agent-plus`) project will be docum
 
 Release history has been standardized and tracked starting from version **0.2.6**. Package builds prior to this version are not considered part of the official changelog.
 
-## [2.0.0] - Unreleased
+## [2.1.0] - Unreleased
+
+### MCP Metadata & Skill Guidance
+
+- Condensed `initialize.instructions` into 5 concise bullets and shortened tool and input-property descriptions across all 9 MCP tools (`src/integration/artifact-review-mcp.ts`) without changing tool names, schema defaults, validation, or runtime behavior.
+- Removed the stale instruction telling agents to attach a waiter on empty inspection, and fixed the `resolve_artifact_window` description to document `status` (`matched`, `selection-required`, `not-found`) and `window` instead of `focused` / `focusedWindow`.
+- Added an `Inspect an exact artifact only` row to `skills/create-review-artifact/SKILL.md` for explicit inspect-only prompts (`Inspect this exact AI Artifact`, `wait: false`, omitting `intent` and `takeover`).
+- Bumped numeric `MCP_VERSION` from `12` to `13` and `CREATE_REVIEW_ARTIFACT_SKILL_VERSION` (`SKILL_VERSION`) from `4` to `5` (`WORK_SESSION_SKILL_VERSION` remains `1`).
+
+## [2.0.0] - 2026-11-17
 
 Version 1.2.0 was not released; its planned changes are included in 2.0.0.
 

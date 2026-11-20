@@ -11,10 +11,10 @@ export const DEFAULT_SESSION_TYPE_ID = "conversation" as const;
 export const INTEGRATION_VERSION_SCHEMA_VERSION = 1 as const;
 export const INSTALLED_CLIENTS_SCHEMA_VERSION = 1 as const;
 export const UI_STATE_SCHEMA_VERSION = 1 as const;
-export const MCP_VERSION = 12 as const;
-export const CREATE_REVIEW_ARTIFACT_SKILL_VERSION = 4 as const;
+export const MCP_VERSION = 13 as const;
+export const CREATE_REVIEW_ARTIFACT_SKILL_VERSION = 5 as const;
 export const WORK_SESSION_SKILL_VERSION = 1 as const;
-export const SKILL_VERSION = 4 as const;
+export const SKILL_VERSION = 5 as const;
 export const MCP_CLIENT_IDS = [
   "copilot",
   "cursor",

@@ -140,6 +140,11 @@ describe("create-review-artifact skill contract", () => {
     expect(skill).toContain("Check only once per chat lifecycle");
     expect(skill).toContain("If a request such as “look at the artifact” does not distinguish");
     expect(skill).toContain("Never takeover speculatively");
+    const inspectOnlyRow = skill.split("\n").find((line) => /^\|\s*Inspect an exact artifact only\s*\|/.test(line));
+    expect(inspectOnlyRow).toBeDefined();
+    expect(inspectOnlyRow).toContain("Inspect this exact AI Artifact");
+    expect(inspectOnlyRow).toContain("`wait: false`");
+    expect(inspectOnlyRow).toContain("Omit `intent` and `takeover`");
   });
 
   it("separates chat update commits from review decisions without broadening creation or feedback", async () => {

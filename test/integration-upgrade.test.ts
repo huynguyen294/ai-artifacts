@@ -42,7 +42,10 @@ import {
   upgradeDetectedIntegrations,
   writeInstalledIntegrationVersion,
 } from "../src/extension/workspace-integration";
-import { resolveWorkSessionSupport } from "../src/extension/work-session-support";
+import {
+  WORK_SESSION_REQUIRED_MCP_VERSION,
+  resolveWorkSessionSupport,
+} from "../src/extension/work-session-support";
 import {
   managedInstalledClientsPath,
   managedIntegrationVersionPath,
@@ -996,7 +999,7 @@ describe("Workspace Integration Auto-Upgrade Coordinator & Selection Policy", ()
     await expect(resolveWorkSessionSupport({ userHome: tempHome })).resolves.toMatchObject({
       supported: true,
       installedMcpVersion: MCP_VERSION,
-      requiredMcpVersion: MCP_VERSION,
+      requiredMcpVersion: WORK_SESSION_REQUIRED_MCP_VERSION,
     });
     await expect(fs.readFile(agDriver.configPath, "utf8")).resolves.toBe(agConfigBefore);
     await expect(fs.readFile(geminiRules, "utf8")).resolves.toBe("# My GEMINI\n");
@@ -1194,7 +1197,7 @@ describe("Workspace Integration Auto-Upgrade Coordinator & Selection Policy", ()
     await expect(resolveWorkSessionSupport({ userHome: tempHome })).resolves.toMatchObject({
       supported: true,
       installedMcpVersion: MCP_VERSION,
-      requiredMcpVersion: MCP_VERSION,
+      requiredMcpVersion: WORK_SESSION_REQUIRED_MCP_VERSION,
     });
 
     // 3. Removing the unexpected key lets the next automatic upgrade succeed and commit codexMcpVersion=MCP_VERSION without re-copying MCP
@@ -1283,7 +1286,7 @@ describe("Workspace Integration Auto-Upgrade Coordinator & Selection Policy", ()
     await expect(resolveWorkSessionSupport({ userHome: tempHome })).resolves.toMatchObject({
       supported: true,
       installedMcpVersion: MCP_VERSION,
-      requiredMcpVersion: MCP_VERSION,
+      requiredMcpVersion: WORK_SESSION_REQUIRED_MCP_VERSION,
     });
 
     // Second run while still conflicted must skip redundant receipt rewrites

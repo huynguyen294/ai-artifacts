@@ -146,7 +146,7 @@ The skills must never directly create or edit artifact lifecycle files, includin
 
 **Responsibilities**
 
-- Expose one window resolver, five artifact lifecycle tools, and three Session tools (numeric MCP version 12):
+- Expose one window resolver, five artifact lifecycle tools, and three Session tools (numeric MCP version 13):
   - `resolve_artifact_window`
   - `create_artifact`
   - `wait_for_artifact_review`
