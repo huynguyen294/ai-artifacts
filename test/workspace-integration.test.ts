@@ -60,7 +60,10 @@ import {
   writeInstalledIntegrationVersion,
   type BaseIntegrationPaths,
 } from "../src/extension/workspace-integration";
-import { resolveWorkSessionSupport } from "../src/extension/work-session-support";
+import {
+  WORK_SESSION_REQUIRED_MCP_VERSION,
+  resolveWorkSessionSupport,
+} from "../src/extension/work-session-support";
 
 const ALL_CLIENT_IDS = ["copilot", "cursor", "codex", "claude", "windsurf", "cline", "antigravity"] as const;
 
@@ -2025,7 +2028,7 @@ describe("Workspace Integration Asset Verifiers", () => {
       await expect(resolveWorkSessionSupport({ userHome: targetDir })).resolves.toMatchObject({
         supported: true,
         installedMcpVersion: MCP_VERSION,
-        requiredMcpVersion: MCP_VERSION,
+        requiredMcpVersion: WORK_SESSION_REQUIRED_MCP_VERSION,
       });
 
       // Next activation continues detecting & reporting the unresolved Codex conflict
@@ -2080,7 +2083,7 @@ describe("Workspace Integration Asset Verifiers", () => {
       await expect(resolveWorkSessionSupport({ userHome: targetDir })).resolves.toMatchObject({
         supported: true,
         installedMcpVersion: MCP_VERSION,
-        requiredMcpVersion: MCP_VERSION,
+        requiredMcpVersion: WORK_SESSION_REQUIRED_MCP_VERSION,
       });
 
       if (afterUninstallReceipt.status === "valid") {

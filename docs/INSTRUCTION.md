@@ -82,7 +82,7 @@ If product intent, documentation, tests, and implementation disagree, call out t
 
 ## Ownership map
 
-- `src/integration/artifact-review-mcp.ts` & `src/integration/session-waiter-runtime.ts`: numeric MCP version 12/schema-v6 tools (nine tools total including `wait_in_session` and `request_waiter_in_session`), window resolution, Work Session creation/reuse with fail-closed v1 preflight, connection commits, artifact creation, waiter ownership/takeover, complete review feedback results, AI-authored general feedback writes (`write_artifact_feedback`), round grants, inspection, transactional round commits, and Session Waiters watch/poll/heartbeat/cleanup runtime.
+- `src/integration/artifact-review-mcp.ts` & `src/integration/session-waiter-runtime.ts`: numeric MCP version 13/schema-v6 tools (nine tools total including `wait_in_session` and `request_waiter_in_session`), window resolution, Work Session creation/reuse with fail-closed v1 preflight, connection commits, artifact creation, waiter ownership/takeover, complete review feedback results, AI-authored general feedback writes (`write_artifact_feedback`), round grants, inspection, transactional round commits, and Session Waiters watch/poll/heartbeat/cleanup runtime.
 - `src/shared/conversation-artifact-registry.ts`: schema-v2 Work Session persistence, layout reconciliation, dynamic `updatedAt`, single migration with backup, and retention pruning.
 - `src/shared/session-type-registry.ts`: global session types registry (`~/.ai-artifacts/session-types.json`).
 - `src/extension/work-session-sidebar.ts`: Activity Bar `AI Artifacts` TreeDataProviders for Recent Artifacts (cap 20 + View all) and Work Sessions v2 (including window-local type filtering).

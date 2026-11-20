@@ -259,8 +259,8 @@ describe("v2.0.0 release contract", () => {
     for (const document of [readme, architecture, components, instructions]) {
       expect(document).toContain("~/.ai-artifacts/conversation-registry/");
     }
-    expect(readme).toContain("MCP_VERSION = 12");
-    expect(readme).toContain("SKILL_VERSION = 4");
+    expect(readme).toContain("MCP_VERSION = 13");
+    expect(readme).toContain("SKILL_VERSION = 5");
     expect(readme).toContain("~/.ai-artifacts/managed/integration-version.json");
     expect(readme).toContain("USER CUSTOM RULES");
     expect(readme).toContain("It does not prove that custom rules remain semantically compatible");
@@ -274,7 +274,7 @@ describe("v2.0.0 release contract", () => {
     expect(philosophy).toContain("[Project instructions](INSTRUCTION.md)");
     expect(philosophy).toContain("../skills/create-review-artifact/SKILL.md");
     expect(philosophy).toContain("../skills/work-session/SKILL.md");
-    expect(instructions).toContain("numeric MCP version 12");
+    expect(instructions).toContain("numeric MCP version 13");
     expect(instructions).toContain("not SemVer");
     expect(architecture).toContain("Integration asset versioning and skill customization");
     expect(architecture).toContain("valid partial install");
@@ -302,8 +302,10 @@ describe("v2.0.0 release contract", () => {
     expect(changelog).toContain("## [1.0.0] - 2026-09-20");
     expect(changelog).toContain("MCP server 9.0.0");
     const { version } = JSON.parse(await read("package.json"));
-    const latestRelease = changelog.match(/^## \[([^\]]+)\] - (?:Unreleased|\d{4}-\d{2}-\d{2})$/m);
+    const latestRelease = changelog.match(/^## \[([^\]]+)\] - \d{4}-\d{2}-\d{2}$/m);
     expect(latestRelease?.[1]).toBe(version);
+    expect(changelog).toContain("## [2.1.0] - Unreleased");
+    expect(changelog).toContain("## [2.0.0] - 2026-11-17");
     expect(changelog).toContain("MCP server 10.0.0");
     expect(documentationChanges).toContain("Skill Customization & Independent Integration Asset Versioning");
     expect(documentationChanges).toContain("Automatic artifact retention cleanup and bounded lifetime model");
