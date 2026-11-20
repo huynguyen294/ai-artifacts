@@ -189,12 +189,16 @@ async function initialize(client: TestClient): Promise<void> {
   expect(initialized.instructions).toContain("resolve_artifact_window");
   expect(initialized.instructions).toContain("create_artifact");
   expect(initialized.instructions).toContain("inspect_artifact");
-  expect(initialized.instructions).toContain("Treat comments returned by a Review submission");
-  expect(initialized.instructions).toContain("Do not add Review responses to the artifact");
-  expect(initialized.instructions).toContain("execute the complete approved plan immediately");
-  expect(initialized.instructions).toContain("Pure reconnect uses inspect_artifact with intent=reconnect");
-  expect(initialized.instructions).toContain("After creation, use only the exact returned artifactDirectory");
-  expect(initialized.instructions).toContain("Never scan global artifact storage or a workspace");
+  expect(initialized.instructions).toContain("without waiting for pure inspection or reconnect");
+  expect(initialized.instructions).toContain("Wait only when review is intended");
+  expect(initialized.instructions).toContain("when the workflow calls for replacing an existing waiter");
+  expect(initialized.instructions).toContain("comments.comments");
+  expect(initialized.instructions).toContain("keep review responses in chat");
+  expect(initialized.instructions).toContain("question-only feedback");
+  expect(initialized.instructions).toContain("execute-approved-plan");
+  expect(initialized.instructions).toContain("saved inspection submission");
+  expect(initialized.instructions).toContain("Use exact artifactDirectory and sessionId values");
+  expect(initialized.instructions).toContain("Never scan storage or workspaces for artifacts");
   expect(initialized.instructions).not.toContain("resolve_artifact_workspace");
   expect(initialized.instructions).not.toContain("latest artifact from a workspace");
   client.notify("notifications/initialized");
@@ -467,7 +471,7 @@ describe("artifact review MCP server v8", () => {
     expect(await readFile(created.artifactPath, "utf8")).toBe(markdown);
   });
 
-  it("lists seven MCP tools and creates a detached schema-v6 global artifact immediately", async () => {
+  it("lists nine MCP tools and creates a detached schema-v6 global artifact immediately", async () => {
     const fixture = await workspaceFixture();
     const client = startClient(fixture.registry);
     await initialize(client);
@@ -483,6 +487,12 @@ describe("artifact review MCP server v8", () => {
       "wait_in_session",
       "request_waiter_in_session",
     ]);
+    const resolveTool = tools.tools.find((tool: any) => tool.name === "resolve_artifact_window");
+    expect(resolveTool.description).toContain("matched");
+    expect(resolveTool.description).toContain("selection-required");
+    expect(resolveTool.description).toContain("not-found");
+    expect(resolveTool.description).toContain("read window");
+    expect(resolveTool.description).not.toContain("focusedWindow");
     const createTool = tools.tools.find((tool: any) => tool.name === "create_artifact");
     expect(createTool.description).toContain("schema-v6");
     expect(createTool.description).toContain("global AI Artifacts storage");
@@ -499,6 +509,9 @@ describe("artifact review MCP server v8", () => {
     expect(createWindowTokenDescription).not.toContain("resolve_artifact_workspace");
     const inspectTool = tools.tools.find((tool: any) => tool.name === "inspect_artifact");
     expect(inspectTool.inputSchema.properties.wait).toMatchObject({ type: "boolean", default: false });
+    expect(inspectTool.inputSchema.properties.wait.description).toContain(
+      "Use false for inspection or reconnect alone",
+    );
     const connectionOneOf = inspectTool.inputSchema.properties.connection.oneOf;
     expect(connectionOneOf).toBeDefined();
     const explicitVariant = connectionOneOf.find(

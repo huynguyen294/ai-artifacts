@@ -1,0 +1,2 @@
+- Hiện tại đang trả về toàn bộ markdown và write toàn bộ markdown sẽ gây nghẽn cho agent nếu markdown lớn
+- Cần thêm tối ưu cơ chế read and write
