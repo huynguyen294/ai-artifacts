@@ -146,11 +146,12 @@ The skills must never directly create or edit artifact lifecycle files, includin
 
 **Responsibilities**
 
-- Expose one window resolver, five artifact lifecycle tools, and three Session tools (numeric MCP version 13):
+- Expose one window resolver, six artifact lifecycle/read tools, and three Session tools (numeric MCP version 13):
   - `resolve_artifact_window`
   - `create_artifact`
   - `wait_for_artifact_review`
   - `inspect_artifact`
+  - `read_artifact`
   - `update_artifact`
   - `write_artifact_feedback`
   - `join_session`
@@ -167,11 +168,11 @@ The skills must never directly create or edit artifact lifecycle files, includin
 - Validate that the submission belongs to the same schema, artifact, session, round, Markdown hash, and comments hash.
 - Return the complete validated comments document for every submitted decision from either waiting tool, identically in text JSON and `structuredContent`; `revise` also returns a `process-review-feedback` next action for any artifact kind.
 - Reserve at most one live waiter per canonical artifact directory and let cancellation/takeover detach it without touching lifecycle files.
-- Inspect validated Markdown, comments, and optional submission even when no Review submission exists.
+- Inspect validated artifact metadata (`lineCount`, `byteSize`, without `markdown`), comments, and optional submission even when no Review submission exists, and serve pure read-only `read_artifact` (`range`, `outline`, `search`) slices.
 - For explicit reconnect, re-evaluate target window routing and atomically commit a new revision/open-request ID without changing lifecycle state.
 - Grant in-memory, single-use, one-hour round tokens after submitted `revise` or a consumable chat inspection.
 - Bind tokens to artifact/session/round plus artifact, comments, and submission hashes/presence.
-- Transactionally preserve or replace Markdown, increment `reviewRound`, reset comments, remove the previous submission, and wait for the next decision.
+- Transactionally preserve or update Markdown (via atomic `edits[]`, full `markdown`, or one-time `sourcePath` copy, preserving `roundToken` on pre-commit validation/match errors), increment `reviewRound`, reset comments, remove the previous submission, and wait for the next decision.
 - Consume the token only after a successful commit; leave a newly committed round detached if its waiter is cancelled.
 - Roll back a failed round transition.
 - Return additive machine-readable recovery metadata for token, round, state, waiter, transaction, Session, and window-selection failures while preserving readable error text.
@@ -539,7 +540,7 @@ This layer is the protocol source of truth. A contract change must be propagated
 - Automatic upgrade controller (error-only) and shared stale-asset helpers: [`src/extension/upgrade-notification.ts`](../src/extension/upgrade-notification.ts)
 - Saved client selection store: [`src/extension/installed-client-state.ts`](../src/extension/installed-client-state.ts)
 - Client drivers: [`src/extension/mcp-clients/`](../src/extension/mcp-clients/)
-- MCP configuration: [`src/extension/mcp-config.ts`](../src/extension/mcp-config.ts) (canonical nine-tool Codex definitions including `wait_in_session` and `request_waiter_in_session`, plus strict unexpected-key inspection)
+- MCP configuration: [`src/extension/mcp-config.ts`](../src/extension/mcp-config.ts) (canonical ten-tool Codex definitions including `read_artifact`, `wait_in_session`, and `request_waiter_in_session`, plus strict unexpected-key inspection)
 - Status types (`IntegrationStatus`, `IntegrationCheck`): [`src/extension/global-integration-status.ts`](../src/extension/global-integration-status.ts)
 - Legacy-hook cleanup: [`src/extension/hook-config.ts`](../src/extension/hook-config.ts)
 
@@ -575,14 +576,14 @@ This layer is the protocol source of truth. A contract change must be propagated
 
 ### Default submission flow
 
-1. The skill writes complete Markdown and calls `create_artifact` with a suitable kind, title, markdown and `wait: false`. Default routing targets the focused or sole live window.
+1. The skill prepares complete `markdown` or an existing UTF-8 `sourcePath` (one-time copy) and calls `create_artifact` with a suitable kind, title, and `wait: false`. Default routing targets the focused or sole live window.
 2. If multiple windows exist and none or multiple are focused, `create_artifact` returns `WINDOW_SELECTION_REQUIRED` with candidates and opaque tokens. The skill selects the best candidate or prompts the user, then retries with `connection: { targetMode: "explicit-window", selectionToken }`.
 3. The MCP creates the schema-v6 files and connection state under the global artifact directory and returns the exact handle/link and applicable Session/connection metadata.
 4. The skill retains that result and sends the artifact link, then calls `wait_for_artifact_review` on the exact handle and returned round unless creation without review was requested. Explicit `create_artifact(wait: true)` instead waits internally and must not be followed by a second wait after its review result. Public wait also supports wait-only/resume.
 5. Every extension window observes the connection event, but only the matching `windowInstanceId` validates and opens the custom editor when enabled. The target may be unfocused; non-target windows remain silent. Provider, store, webview, and Markdown pipeline render and persist review comments as before.
 6. The user submits Review (`revise`), Proceed (`approve`), or Just save (`save`); the store creates `review-submission.json` exactly once.
 7. The waiting MCP validates and returns the exact handle/link, submission metadata and full comments document, including each comment's body and anchor. Submitted Review includes a round token and `nextAction.type: "process-review-feedback"`; this response contract is shared by waiting create/inspect/update and public wait, independently of client/model.
-8. For Review, the skill reads `comments.comments` directly and classifies feedback exactly as it does for chat escape: answer questions visibly, supply replacement Markdown only when changes are requested, then call `update_artifact`, which waits by default. Non-waiting mode requires explicit user or workflow direction. Question-only Review omits Markdown; feedback needing clarification is answered before consuming the token. Inspect remains available for explicit chat feedback and recovery.
+8. For Review, the skill reads `comments.comments` directly and classifies feedback exactly as it does for chat escape: answer questions visibly, supply `edits[]`, `sourcePath`, or replacement `markdown` only when changes are requested, then call `update_artifact`, which waits by default. Non-waiting mode requires explicit user or workflow direction. Question-only Review omits content fields; feedback needing clarification is answered before consuming the token. Inspect remains available for explicit chat feedback and recovery.
 9. Proceed and Just save end the round without automatically advancing. For `plan`/`implementation-plan`, Proceed returns `execute-approved-plan` for immediate in-scope execution. Other kinds return `approved` for acknowledgment and conclusion without automatic implementation. Just save returns no `nextAction`; the skill asks for a destination and copies Markdown without executing proposed work. The artifact remains persistent and reconnectable.
 
 ### Chat escape flow
@@ -591,7 +592,7 @@ This layer is the protocol source of truth. A contract change must be propagated
 2. The prior tool wait is cancelled. To read feedback and continue the review workflow, the skill calls `inspect_artifact` with the exact retained handle, `takeover: true` and `wait: true`. A read-only feedback request instead uses `wait: false`.
 3. The MCP aborts and drains any old waiter, validates persistent state, and returns comments plus a state-bound round token even if no submission exists.
 4. The skill applies the same classification and response policy used by Review submissions; only the feedback transport/token source differs.
-5. The skill calls `update_artifact`; omitting Markdown preserves its bytes/SHA for a question-only round.
+5. The skill calls `update_artifact`; omitting `edits`, `markdown`, and `sourcePath` preserves its bytes/SHA for a question-only round.
 6. The MCP advances, resets handled comments/submission, and waits on the new round. If the new wait is cancelled, the committed round remains valid but detached.
 7. If inspection finds no feedback, the `wait: true` call waits internally on the same round instead of advancing or starting a separate wait.
 
@@ -600,8 +601,8 @@ This layer is the protocol source of truth. A contract change must be propagated
 1. The user explicitly requests a concrete edit to an exact artifact in chat while its current round has no saved comments or submission.
 2. The skill calls `inspect_artifact` with `wait: false`, the exact handle/current expected round and `intent: "explicit-chat-update"`. Use takeover only when intentionally replacing a waiter for a waiting update; preserve it for `wait: false` update.
 3. The MCP validates the expected round and empty state, revalidating after takeover when requested, and returns a state-bound chat-update token.
-4. The skill supplies complete changed Markdown to `update_artifact` with the requested wait mode.
-5. The MCP rejects missing or unchanged Markdown, otherwise commits transactionally and waits by default. `wait: false` returns a commit result while preserving an existing waiter.
+4. The skill supplies changed content via `edits[]`, `sourcePath`, or complete `markdown` to `update_artifact` with the requested wait mode.
+5. The MCP rejects missing or unchanged content, otherwise commits transactionally and waits by default. `wait: false` returns a commit result while preserving an existing waiter.
 6. A pure reconnect never uses this intent and remains on the same round.
 
 ### Reconnect rules

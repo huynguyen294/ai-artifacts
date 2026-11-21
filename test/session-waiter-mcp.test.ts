@@ -760,7 +760,7 @@ describe("session-waiter MCP multi-process integration", () => {
     await Promise.all([initialize(waiterClient), initialize(senderClient)]);
 
     const catalog = await waiterClient.request("tools/list");
-    expect(catalog.tools).toHaveLength(9);
+    expect(catalog.tools).toHaveLength(10);
     expect(catalog.tools.map((tool: any) => tool.name)).toContain("wait_in_session");
     expect(catalog.tools.map((tool: any) => tool.name)).toContain("request_waiter_in_session");
 

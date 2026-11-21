@@ -11,7 +11,15 @@ Release history has been standardized and tracked starting from version **0.2.6*
 - Condensed `initialize.instructions` into 5 concise bullets and shortened tool and input-property descriptions across all 9 MCP tools (`src/integration/artifact-review-mcp.ts`) without changing tool names, schema defaults, validation, or runtime behavior.
 - Removed the stale instruction telling agents to attach a waiter on empty inspection, and fixed the `resolve_artifact_window` description to document `status` (`matched`, `selection-required`, `not-found`) and `window` instead of `focused` / `focusedWindow`.
 - Added an `Inspect an exact artifact only` row to `skills/create-review-artifact/SKILL.md` for explicit inspect-only prompts (`Inspect this exact AI Artifact`, `wait: false`, omitting `intent` and `takeover`).
-- Bumped numeric `MCP_VERSION` from `12` to `13` and `CREATE_REVIEW_ARTIFACT_SKILL_VERSION` (`SKILL_VERSION`) from `4` to `5` (`WORK_SESSION_SKILL_VERSION` remains `1`).
+- Bumped numeric `MCP_VERSION` from `12` to `13`, `CREATE_REVIEW_ARTIFACT_SKILL_VERSION` (`SKILL_VERSION`) from `4` to `5`, and `WORK_SESSION_SKILL_VERSION` from `1` to `2`.
+
+### Artifact Markdown Read & Write Optimization
+
+- Standardized compact `ArtifactHandle` metadata across `create_artifact`, `inspect_artifact`, `update_artifact`, `wait_for_artifact_review`, `join_session` (with `artifactId`), and `read_artifact`: removed `markdown` from `inspect_artifact` and `join_session.inspection` responses and added `lineCount` and `byteSize` computed from the active or submitted round snapshot (keeping `manifest.json` schema v6 unchanged).
+- Added the read-only `read_artifact` MCP tool (`readOnlyHint: true`, `idempotentHint: true`, bringing the catalog to 10 tools including Codex `REQUIRED_CODEX_ARTIFACTS_TOOLS`) with `"range"` (250 lines / 16 KiB serialized cap and UTF-8 `byteOffset` continuation), `"outline"` (200 headings / 12 KiB cap skipping YAML frontmatter and fenced code blocks), and literal `"search"` (1–50 matches / 16 KiB cap with merged context hunks and `matchedLines`), plus bounded `.artifact-update.lock` retry so concurrent round commits do not trigger false `ARTIFACT_NOT_FOUND` errors.
+- Added mutually exclusive `sourcePath` (one-time copy from an existing regular UTF-8 text file `<= 2 MiB`) to `create_artifact` and `update_artifact`, and atomic batch `edits[]` (`{ oldText, newText, startLine?, endLine?, replaceAll? }` on original-text coordinates with CRLF/LF-normalized matching that preserves untouched bytes and line endings) to `update_artifact`.
+- Preserved `roundToken` (`reuseRoundToken: true`) on pre-commit `update_artifact` errors (`SOURCE_FILE_UNREADABLE`, `EDIT_TARGET_NOT_FOUND`, `EDIT_TARGET_AMBIGUOUS` with `matchedLines`, `EDIT_TARGET_OVERLAP`, and pre-commit `INVALID_ARTIFACT_INPUT` including no-op `edits[]` batches).
+- Updated `create-review-artifact` (v5) and `work-session` (bumped `WORK_SESSION_SKILL_VERSION` from `1` to `2`) with Dual-path reading, `sourcePath` import, localized `edits[]` updates, and structured recovery rules.
 
 ## [2.0.0] - 2026-11-17
 

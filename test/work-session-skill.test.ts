@@ -162,5 +162,10 @@ describe("work-session skill contract", () => {
     expect(skill).toContain(
       "Do not clear an ID, auto-create a Session, retry as standalone, or replay a saved approval merely because a request failed",
     );
+    expect(skill).toContain("`read_artifact`");
+    expect(skill).toContain("do not pass `instructionsPath` to `read_artifact`");
+    expect(skill).toContain("use `join_session({ sessionId })` to retrieve `session.instructions`");
+    expect(skill).toContain("without `markdown`");
+    expect(skill).toContain("[Tool contract](../create-review-artifact/SKILL.md#tool-contract)");
   });
 });

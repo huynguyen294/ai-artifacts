@@ -14,6 +14,7 @@ export const REQUIRED_CODEX_ARTIFACTS_TOOLS = [
   "create_artifact",
   "wait_for_artifact_review",
   "inspect_artifact",
+  "read_artifact",
   "update_artifact",
   "join_session",
   "write_artifact_feedback",

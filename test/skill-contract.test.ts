@@ -121,6 +121,7 @@ describe("create-review-artifact skill contract", () => {
       "`create_artifact`",
       "`wait_for_artifact_review`",
       "`inspect_artifact`",
+      "`read_artifact`",
       "`update_artifact`",
       "`write_artifact_feedback`",
     ]) expect(skill).toContain(tool);
@@ -339,7 +340,42 @@ describe("create-review-artifact skill contract", () => {
     expect(skill).toContain("CONVERSATION_MIGRATION_REQUIRED");
     expect(skill).toContain("follow [work-session](../work-session/SKILL.md)");
 
+    expect(skill).toContain("without returning Markdown content");
+    expect(skill).toContain("### Reading artifact Markdown");
+    expect(skill).toContain("Prefer native file tools");
+    expect(skill).toContain("Fallback (`read_artifact`)");
+    expect(skill).toContain("`artifactSha256` and `reviewRound` match the submitted values");
+    expect(skill).toContain("`lineCount` and `byteSize`");
+    expect(skill).toContain("sourcePath");
+    expect(skill).toContain("edits");
+    expect(skill).toContain("reuseRoundToken: true");
+
     expect(skill).toContain("the ID takes precedence and the name does not rename or create a Session");
     expect(contract).not.toContain("## Optional Work Session arguments");
+  });
+
+  it("documents sourcePath import, atomic edits[], and token-preserving recovery codes in SKILL.md and recovery.md", async () => {
+    const [skill, recovery] = await Promise.all([
+      readFile(path.join(skillDirectory, "SKILL.md"), "utf8"),
+      readFile(path.join(skillDirectory, "references", "recovery.md"), "utf8"),
+    ]);
+
+    expect(skill).toContain("verified full `read_artifact` pagination");
+    expect(skill).toContain("size/lines match the submitted `byteSize` and `lineCount`");
+    expect(skill).toContain("fall back to `markdown` on `SOURCE_FILE_UNREADABLE` or `INVALID_ARTIFACT_INPUT`");
+    expect(skill).toContain("`SOURCE_FILE_UNREADABLE`, `EDIT_TARGET_*`, or `INVALID_ARTIFACT_INPUT` with `reuseRoundToken: true`");
+
+    expect(recovery).toContain("editIndex?: number");
+    expect(recovery).toContain("matchedLines?: number[]");
+    for (const code of [
+      "SOURCE_FILE_UNREADABLE",
+      "EDIT_TARGET_NOT_FOUND",
+      "EDIT_TARGET_AMBIGUOUS",
+      "EDIT_TARGET_OVERLAP",
+      "INVALID_ARTIFACT_INPUT",
+    ]) {
+      expect(recovery).toContain(code);
+    }
+    expect(recovery).toContain("using the same `roundToken`");
   });
 });

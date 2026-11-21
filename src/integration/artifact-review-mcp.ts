@@ -15,10 +15,32 @@ import {
   parseBoundReviewSubmission,
 } from "../shared/artifact-validation";
 import {
+  READ_ARTIFACT_OUTLINE_MAX_BYTES,
+  READ_ARTIFACT_OUTLINE_MAX_HEADINGS,
+  READ_ARTIFACT_RANGE_MAX_BYTES,
+  READ_ARTIFACT_RANGE_MAX_LINES,
+  READ_ARTIFACT_SEARCH_DEFAULT_CONTEXT_LINES,
+  READ_ARTIFACT_SEARCH_DEFAULT_MAX_MATCHES,
+  READ_ARTIFACT_SEARCH_MAX_BYTES,
+  READ_ARTIFACT_SEARCH_MAX_CONTEXT_LINES,
+  READ_ARTIFACT_SEARCH_MAX_MATCHES,
+  ReadArtifactInputError,
+  computeMarkdownMetrics,
+  readArtifactMarkdown,
+  type ReadArtifactOptions,
+} from "../shared/artifact-markdown-read";
+import {
+  ArtifactWriteError,
+  applyArtifactMarkdownEdits,
+  readValidatedArtifactSourceFile,
+  validateMarkdownContent,
+} from "../shared/artifact-markdown-write";
+import {
   ARTIFACT_ROOT_BLOCK_ID,
   ARTIFACT_ROOT_BLOCK_TYPE,
   ARTIFACT_ROOT_TEXT,
   ARTIFACT_SCHEMA_VERSION,
+  MAX_MARKDOWN_BYTES,
   MCP_VERSION,
   ArtifactConnectionInvalidError,
   ArtifactConnectionWriteError,
@@ -44,6 +66,7 @@ import {
   type ArtifactConnection,
   type ArtifactConversationMetadata,
   type ArtifactManifest,
+  type ArtifactMetadataFields,
   type CommentsDocument,
   type ExplicitWindowConnectionInput,
   type ReconnectConnectionInput,
@@ -117,13 +140,13 @@ const RESOLVE_WINDOW_TOOL_NAME = "resolve_artifact_window";
 const CREATE_TOOL_NAME = "create_artifact";
 const WAIT_TOOL_NAME = "wait_for_artifact_review";
 const INSPECT_TOOL_NAME = "inspect_artifact";
+const READ_TOOL_NAME = "read_artifact";
 const JOIN_SESSION_TOOL_NAME = "join_session";
 const UPDATE_TOOL_NAME = "update_artifact";
 const WRITE_FEEDBACK_TOOL_NAME = "write_artifact_feedback";
 const WAIT_IN_SESSION_TOOL_NAME = "wait_in_session";
 const REQUEST_WAITER_IN_SESSION_TOOL_NAME = "request_waiter_in_session";
 const ROUND_TOKEN_TTL_MS = 60 * 60 * 1000;
-const MAX_MARKDOWN_BYTES = 2 * 1024 * 1024;
 const LIFECYCLE_JSON_READ_ATTEMPTS = 21;
 const LIFECYCLE_JSON_READ_RETRY_MS = 50;
 const testArtifactIds =
@@ -133,32 +156,24 @@ const testArtifactIds =
 
 type JsonObject = Record<string, any>;
 
-type ArtifactContext = {
-  artifactDirectory: string;
-  artifactId: string;
+type ArtifactContext = ArtifactMetadataFields & {
   reviewSessionId: string;
-  reviewRound: number;
-  artifactSha256: string;
+  markdown: string;
   manifest: ArtifactManifest;
   manifestPath: string;
-  artifactPath: string;
   commentsPath: string;
   submissionPath: string;
 };
 
-type ReviewWaitResult = {
+type ReviewWaitResult = ArtifactMetadataFields & {
   schemaVersion: typeof ARTIFACT_SCHEMA_VERSION;
-  artifactId: string;
   kind: string;
   title?: string;
   reviewSessionId: string;
-  reviewRound: number;
-  artifactSha256: string;
   commentsSha256: string;
   comments: CommentsDocument;
   decision: ReviewDecision;
   submittedAt: string;
-  artifactPath: string;
   commentsPath: string;
   submissionSha256: string;
   artifactUrl?: string;
@@ -189,6 +204,11 @@ type ActiveArtifactWaiter = {
 };
 
 type ArtifactRecoveryCode =
+  | "INVALID_ARTIFACT_INPUT"
+  | "SOURCE_FILE_UNREADABLE"
+  | "EDIT_TARGET_NOT_FOUND"
+  | "EDIT_TARGET_AMBIGUOUS"
+  | "EDIT_TARGET_OVERLAP"
   | "ROUND_TOKEN_INVALID_OR_EXPIRED"
   | "ROUND_TOKEN_IN_USE"
   | "ROUND_TOKEN_ALREADY_CONSUMED"
@@ -224,6 +244,8 @@ type ArtifactRecoveryMetadata = {
   useSameArtifactHandle: boolean;
   currentReviewRound?: number;
   artifactConversationId?: string;
+  editIndex?: number;
+  matchedLines?: number[];
 };
 
 class ArtifactRecoveryError extends Error {
@@ -278,9 +300,16 @@ function recoveryError(
 
 type RecoveryContext = {
   isCreate?: boolean;
-  entryTool?: typeof CREATE_TOOL_NAME | typeof INSPECT_TOOL_NAME | typeof JOIN_SESSION_TOOL_NAME;
+  entryTool?: typeof CREATE_TOOL_NAME | typeof INSPECT_TOOL_NAME | typeof JOIN_SESSION_TOOL_NAME | typeof UPDATE_TOOL_NAME;
   hasArtifactHandle?: boolean;
+  reuseRoundToken?: boolean;
+  currentReviewRound?: number;
 };
+
+function stripRecoveryCodePrefix(code: string, message: string): string {
+  const prefix = `${code}:`;
+  return message.startsWith(prefix) ? message.slice(prefix.length).trimStart() : message;
+}
 
 function asLifecycleRecoveryError(error: unknown, context: RecoveryContext = {}): unknown {
   if (error instanceof McpWindowSelectionRequiredError || error instanceof WindowSelectionRequiredError) return error;
@@ -288,6 +317,28 @@ function asLifecycleRecoveryError(error: unknown, context: RecoveryContext = {})
   const message = error instanceof Error ? error.message : String(error);
   const defaultNextTool = context.entryTool ?? (context.isCreate ? CREATE_TOOL_NAME : INSPECT_TOOL_NAME);
   const useSameHandle = context.hasArtifactHandle ?? !context.isCreate;
+
+  if (error instanceof ArtifactWriteError) {
+    return recoveryError(error.code, stripRecoveryCodePrefix(error.code, error.message), {
+      retryable: true,
+      expectedNextTool: defaultNextTool,
+      reuseRoundToken: context.reuseRoundToken ?? false,
+      useSameArtifactHandle: useSameHandle,
+      ...(context.currentReviewRound !== undefined ? { currentReviewRound: context.currentReviewRound } : {}),
+      ...(error.editIndex !== undefined ? { editIndex: error.editIndex } : {}),
+      ...(error.matchedLines !== undefined ? { matchedLines: error.matchedLines } : {}),
+    });
+  }
+
+  if (error instanceof ReadArtifactInputError || message.startsWith("INVALID_ARTIFACT_INPUT:")) {
+    return recoveryError("INVALID_ARTIFACT_INPUT", stripRecoveryCodePrefix("INVALID_ARTIFACT_INPUT", message), {
+      retryable: true,
+      ...(context.entryTool !== undefined ? { expectedNextTool: context.entryTool } : {}),
+      reuseRoundToken: context.reuseRoundToken ?? false,
+      useSameArtifactHandle: useSameHandle,
+      ...(context.currentReviewRound !== undefined ? { currentReviewRound: context.currentReviewRound } : {}),
+    });
+  }
 
   if (error instanceof ConversationMigrationRequiredError || message.startsWith("CONVERSATION_MIGRATION_REQUIRED:")) {
     const text = message.startsWith("CONVERSATION_MIGRATION_REQUIRED:")
@@ -412,7 +463,7 @@ function reviewDecisionAction(kind: string, decision: ReviewDecision): ReviewWai
     return {
       type: "process-review-feedback",
       instruction:
-        `Process every comment in comments.comments. Answer all questions visibly in chat and include artifactLink before starting the next wait. For requested changes, supply complete replacement markdown; for question-only feedback, omit markdown to preserve the artifact bytes and SHA. If feedback needs clarification, ask the user and do not consume the round token or advance until clarified. Otherwise call ${UPDATE_TOOL_NAME} immediately in this same turn using the retained exact artifactDirectory, the returned reviewRound as expectedReviewRound, and the returned roundToken, then continue waiting for the next review. Never directly edit managed lifecycle files, including artifact.md, and never put conversational answers into the artifact Markdown.`,
+        `Process every comment in comments.comments. Answer all questions visibly in chat and include artifactLink before starting the next wait. For requested changes, update content via edits, sourcePath, or markdown; for question-only feedback, omit content to preserve the artifact bytes and SHA. If feedback needs clarification, ask the user and do not consume the round token or advance until clarified. Otherwise call ${UPDATE_TOOL_NAME} immediately in this same turn using the retained exact artifactDirectory, the returned reviewRound as expectedReviewRound, and the returned roundToken, then continue waiting for the next review. Never directly edit managed lifecycle files, including artifact.md, and never put conversational answers into the artifact Markdown.`,
     };
   }
   if (decision !== "approve") return undefined;
@@ -633,12 +684,22 @@ type CreateArtifactInput = OptionalConversationInput & {
   connection?: ExplicitWindowConnectionInput;
 };
 
-function parseCreateArguments(args: JsonObject | undefined): CreateArtifactInput {
+type CreateArtifactParsedArguments = OptionalConversationInput & {
+  title: string;
+  kind: string;
+  markdown?: string | undefined;
+  sourcePath?: string | undefined;
+  wait: boolean;
+  connection?: ExplicitWindowConnectionInput;
+};
+
+function parseCreateArguments(args: JsonObject | undefined): CreateArtifactParsedArguments {
   if (args && typeof args === "object") {
     const recognizedKeys = new Set([
       "title",
       "kind",
       "markdown",
+      "sourcePath",
       "wait",
       "connection",
       "artifactConversationId",
@@ -646,27 +707,42 @@ function parseCreateArguments(args: JsonObject | undefined): CreateArtifactInput
     ]);
     for (const key of Object.keys(args)) {
       if (!recognizedKeys.has(key)) {
-        throw new Error(`INVALID_ARTIFACT_INPUT: unrecognized key '${key}'.`);
+        throw new ArtifactWriteError("INVALID_ARTIFACT_INPUT", `unrecognized key '${key}'.`);
       }
     }
   }
 
   const title = args?.title;
   const kind = args?.kind;
-  const markdown = args?.markdown;
+  const markdownRaw = args?.markdown;
+  const sourcePathRaw = args?.sourcePath;
   const connectionRaw = args?.connection;
 
   if (typeof title !== "string" || !title.trim() || title.trim().length > 200) {
-    throw new Error("INVALID_ARTIFACT_INPUT: title must contain 1 to 200 characters.");
+    throw new ArtifactWriteError("INVALID_ARTIFACT_INPUT", "title must contain 1 to 200 characters.");
   }
   if (!artifactKindSchema.safeParse(kind).success) {
-    throw new Error("INVALID_ARTIFACT_INPUT: kind must be a lowercase slug.");
+    throw new ArtifactWriteError("INVALID_ARTIFACT_INPUT", "kind must be a lowercase slug.");
   }
-  if (typeof markdown !== "string" || !markdown.trim()) {
-    throw new Error("INVALID_ARTIFACT_INPUT: markdown must be non-empty.");
+
+  const hasMarkdown = markdownRaw !== undefined;
+  const hasSourcePath = sourcePathRaw !== undefined;
+  if (hasMarkdown && hasSourcePath) {
+    throw new ArtifactWriteError("INVALID_ARTIFACT_INPUT", "create_artifact accepts either markdown or sourcePath, not both.");
   }
-  if (Buffer.byteLength(markdown, "utf8") > MAX_MARKDOWN_BYTES) {
-    throw new Error(`INVALID_ARTIFACT_INPUT: markdown exceeds ${MAX_MARKDOWN_BYTES} bytes.`);
+  if (!hasMarkdown && !hasSourcePath) {
+    throw new ArtifactWriteError("INVALID_ARTIFACT_INPUT", "create_artifact requires either markdown or sourcePath.");
+  }
+
+  let markdown: string | undefined;
+  let sourcePath: string | undefined;
+  if (hasMarkdown) {
+    markdown = validateMarkdownContent(markdownRaw, "markdown");
+  } else {
+    if (typeof sourcePathRaw !== "string" || sourcePathRaw.length === 0 || !path.isAbsolute(sourcePathRaw)) {
+      throw new ArtifactWriteError("INVALID_ARTIFACT_INPUT", "sourcePath must be a non-empty absolute OS path.");
+    }
+    sourcePath = sourcePathRaw;
   }
 
   const wait = parseOptionalWaitArgument(args, false);
@@ -675,8 +751,9 @@ function parseCreateArguments(args: JsonObject | undefined): CreateArtifactInput
   if (connectionRaw !== undefined) {
     const parsed = explicitWindowConnectionInputSchema.safeParse(connectionRaw);
     if (!parsed.success) {
-      throw new Error(
-        "INVALID_ARTIFACT_INPUT: connection must be an object with targetMode: 'explicit-window' and a valid UUID selectionToken.",
+      throw new ArtifactWriteError(
+        "INVALID_ARTIFACT_INPUT",
+        "connection must be an object with targetMode: 'explicit-window' and a valid UUID selectionToken.",
       );
     }
     connection = parsed.data;
@@ -687,7 +764,8 @@ function parseCreateArguments(args: JsonObject | undefined): CreateArtifactInput
   return {
     title: title.trim(),
     kind,
-    markdown,
+    ...(markdown !== undefined ? { markdown } : {}),
+    ...(sourcePath !== undefined ? { sourcePath } : {}),
     wait,
     ...(connection ? { connection } : {}),
     ...conversationArgs,
@@ -882,12 +960,26 @@ async function preflightConversationVersion(
   }
 }
 
-async function createArtifact(input: CreateArtifactInput): Promise<{
+async function createArtifact(parsed: CreateArtifactParsedArguments): Promise<{
   context: ArtifactContext;
   connection: ArtifactConnection;
   conversation: WorkSessionSummary | undefined;
   session: SessionHandle | null;
 }> {
+  const markdown =
+    parsed.sourcePath !== undefined
+      ? await readValidatedArtifactSourceFile(parsed.sourcePath)
+      : parsed.markdown!;
+  const input: CreateArtifactInput = {
+    title: parsed.title,
+    kind: parsed.kind,
+    markdown,
+    wait: parsed.wait,
+    ...(parsed.connection ? { connection: parsed.connection } : {}),
+    ...(parsed.artifactConversationId ? { artifactConversationId: parsed.artifactConversationId } : {}),
+    ...(parsed.conversationName ? { conversationName: parsed.conversationName } : {}),
+  };
+
   if (input.artifactConversationId) {
     try {
       await preflightConversationVersion(input.artifactConversationId, globalRootOptions());
@@ -915,15 +1007,23 @@ async function retryTransientLifecycleJson<T>(read: () => Promise<T>): Promise<T
   throw new Error("Lifecycle JSON remained unreadable after the bounded retry window.");
 }
 
-async function loadArtifactContext(rawDirectory: unknown): Promise<ArtifactContext> {
+const READ_UPDATE_LOCK_WAIT_ATTEMPTS = 11;
+
+async function resolveExistingArtifactDirectory(rawDirectory: unknown): Promise<{
+  artifactDirectory: string;
+  candidateArtifactId: string;
+}> {
   if (typeof rawDirectory !== "string" || !path.isAbsolute(rawDirectory)) {
     throw new Error("artifactDirectory must be an absolute path.");
   }
-  const rootOptions = globalRootOptions();
   const candidateArtifactId = path.basename(path.resolve(rawDirectory));
-  let artifactDirectory: string;
   try {
-    artifactDirectory = await ensureSafeGlobalArtifactDirectory(candidateArtifactId, rawDirectory, rootOptions);
+    const artifactDirectory = await ensureSafeGlobalArtifactDirectory(
+      candidateArtifactId,
+      rawDirectory,
+      globalRootOptions(),
+    );
+    return { artifactDirectory, candidateArtifactId };
   } catch (error) {
     if (errorCode(error) === "ENOENT") {
       throw recoveryError("ARTIFACT_NOT_FOUND", "the artifact directory does not exist.", {
@@ -934,6 +1034,10 @@ async function loadArtifactContext(rawDirectory: unknown): Promise<ArtifactConte
     }
     throw error;
   }
+}
+
+async function loadArtifactContext(rawDirectory: unknown): Promise<ArtifactContext> {
+  const { artifactDirectory, candidateArtifactId } = await resolveExistingArtifactDirectory(rawDirectory);
   const files = artifactPaths(artifactDirectory);
   let manifest: ArtifactManifest;
   let markdown: string;
@@ -968,22 +1072,68 @@ async function loadArtifactContext(rawDirectory: unknown): Promise<ArtifactConte
     }
     throw error;
   }
-  const artifactSha256 = sha256(markdown);
+  const metrics = computeMarkdownMetrics(markdown);
   return {
     artifactDirectory,
     artifactId: manifest.artifactId,
     reviewSessionId: manifest.reviewSessionId,
     reviewRound: manifest.reviewRound,
-    artifactSha256,
+    artifactSha256: metrics.artifactSha256,
+    lineCount: metrics.lineCount,
+    byteSize: metrics.byteSize,
+    markdown,
     manifest,
     ...files,
   };
 }
 
+/**
+ * Wait briefly when a concurrent commit holds `.artifact-update.lock` so `read_artifact` does not
+ * mistake the transient rename window for `ARTIFACT_NOT_FOUND` or torn comment/markdown snapshots.
+ */
+async function loadArtifactContextForRead(rawDirectory: unknown): Promise<ArtifactContext> {
+  const { artifactDirectory } = await resolveExistingArtifactDirectory(rawDirectory);
+  const lockPath = path.join(artifactDirectory, ARTIFACT_UPDATE_LOCK_FILE);
+  let postErrorRetryWithoutLockUsed = false;
+
+  for (let attempt = 0; attempt < READ_UPDATE_LOCK_WAIT_ATTEMPTS; attempt++) {
+    if (await managedFileExists(artifactDirectory, lockPath)) {
+      if (attempt === READ_UPDATE_LOCK_WAIT_ATTEMPTS - 1) {
+        throw new Error(
+          `Artifact is temporarily unavailable while an update transaction holds ${ARTIFACT_UPDATE_LOCK_FILE}; retry reading.`,
+        );
+      }
+      await new Promise((resolve) => setTimeout(resolve, LIFECYCLE_JSON_READ_RETRY_MS));
+      continue;
+    }
+
+    try {
+      return await loadArtifactContext(rawDirectory);
+    } catch (error) {
+      if (attempt === READ_UPDATE_LOCK_WAIT_ATTEMPTS - 1) throw error;
+      // Fail immediately with ARTIFACT_NOT_FOUND if the directory itself vanished.
+      await resolveExistingArtifactDirectory(rawDirectory);
+      if (await managedFileExists(artifactDirectory, lockPath)) {
+        await new Promise((resolve) => setTimeout(resolve, LIFECYCLE_JSON_READ_RETRY_MS));
+        continue;
+      }
+      // Close the narrow TOCTOU gap where a concurrent update held and released the lock mid-read.
+      const isPossibleMidCommitError =
+        error instanceof ArtifactRecoveryError ? error.recovery.code === "ARTIFACT_NOT_FOUND" : error instanceof Error;
+      if (!postErrorRetryWithoutLockUsed && isPossibleMidCommitError) {
+        postErrorRetryWithoutLockUsed = true;
+        await new Promise((resolve) => setTimeout(resolve, LIFECYCLE_JSON_READ_RETRY_MS));
+        continue;
+      }
+      throw error;
+    }
+  }
+  return loadArtifactContext(rawDirectory);
+}
+
 type WaitSubmissionSnapshot = {
   result: ReviewWaitResult;
   manifest: ArtifactManifest;
-  markdown: string;
   submission: ReviewSubmission;
 };
 
@@ -1005,7 +1155,8 @@ async function readValidatedSubmissionOnce(context: ArtifactContext): Promise<Wa
   const effectiveKind = currentManifest.kind;
   const effectiveTitle = currentManifest.title;
 
-  const currentArtifactSha256 = sha256(currentMarkdown);
+  const metrics = computeMarkdownMetrics(currentMarkdown);
+  const currentArtifactSha256 = metrics.artifactSha256;
   const currentCommentsSha256 = sha256(currentCommentsRaw);
   const currentComments = parseBoundCommentsDocument(JSON.parse(currentCommentsRaw), {
     schemaVersion: ARTIFACT_SCHEMA_VERSION,
@@ -1028,12 +1179,15 @@ async function readValidatedSubmissionOnce(context: ArtifactContext): Promise<Wa
   return {
     result: {
       schemaVersion: ARTIFACT_SCHEMA_VERSION,
+      artifactDirectory: context.artifactDirectory,
       artifactId: context.artifactId,
       kind: effectiveKind,
       title: effectiveTitle,
       reviewSessionId: context.reviewSessionId,
       reviewRound: currentManifest.reviewRound,
       artifactSha256: currentArtifactSha256,
+      lineCount: metrics.lineCount,
+      byteSize: metrics.byteSize,
       commentsSha256: currentCommentsSha256,
       comments: currentComments,
       decision: submission.decision,
@@ -1044,7 +1198,6 @@ async function readValidatedSubmissionOnce(context: ArtifactContext): Promise<Wa
       ...(nextAction === undefined ? {} : { nextAction }),
     },
     manifest: currentManifest,
-    markdown: currentMarkdown,
     submission,
   };
 }
@@ -1084,6 +1237,8 @@ async function readArtifactInspection(context: ArtifactContext): Promise<{
   markdown: string;
   comments: ReturnType<typeof parseBoundCommentsDocument>;
   artifactSha256: string;
+  lineCount: number;
+  byteSize: number;
   commentsSha256: string;
   submission?: ReturnType<typeof parseBoundReviewSubmission>;
   submissionSha256?: string;
@@ -1092,7 +1247,8 @@ async function readArtifactInspection(context: ArtifactContext): Promise<{
     readManagedFile(context.artifactDirectory, context.artifactPath),
     readManagedFile(context.artifactDirectory, context.commentsPath),
   ]);
-  const artifactSha256 = sha256(markdown);
+  const metrics = computeMarkdownMetrics(markdown);
+  const artifactSha256 = metrics.artifactSha256;
   const commentsSha256 = sha256(commentsRaw);
   const comments = parseBoundCommentsDocument(JSON.parse(commentsRaw), {
     schemaVersion: ARTIFACT_SCHEMA_VERSION,
@@ -1102,7 +1258,16 @@ async function readArtifactInspection(context: ArtifactContext): Promise<{
   });
 
   const submissionRaw = await readOptionalManagedFile(context.artifactDirectory, context.submissionPath);
-  if (submissionRaw === undefined) return { markdown, comments, artifactSha256, commentsSha256 };
+  if (submissionRaw === undefined) {
+    return {
+      markdown,
+      comments,
+      artifactSha256,
+      lineCount: metrics.lineCount,
+      byteSize: metrics.byteSize,
+      commentsSha256,
+    };
+  }
 
   const submission = parseBoundReviewSubmission(JSON.parse(submissionRaw), {
     schemaVersion: ARTIFACT_SCHEMA_VERSION,
@@ -1116,6 +1281,8 @@ async function readArtifactInspection(context: ArtifactContext): Promise<{
     markdown,
     comments,
     artifactSha256,
+    lineCount: metrics.lineCount,
+    byteSize: metrics.byteSize,
     commentsSha256,
     submission,
     submissionSha256: sha256(submissionRaw),
@@ -1293,13 +1460,14 @@ function generatedTransactionId(): string {
 async function commitReviewRound(
   context: ArtifactContext,
   markdown: string,
-): Promise<{ manifest: ArtifactManifest; artifactSha256: string }> {
+): Promise<{ manifest: ArtifactManifest; artifactSha256: string; lineCount: number; byteSize: number }> {
   if (!markdown.trim()) throw new Error("markdown must be non-empty.");
-  if (Buffer.byteLength(markdown, "utf8") > MAX_MARKDOWN_BYTES) {
+  const metrics = computeMarkdownMetrics(markdown);
+  if (metrics.byteSize > MAX_MARKDOWN_BYTES) {
     throw new Error(`markdown exceeds ${MAX_MARKDOWN_BYTES} bytes.`);
   }
   const transactionId = generatedTransactionId();
-  const nextArtifactSha256 = sha256(markdown);
+  const nextArtifactSha256 = metrics.artifactSha256;
   const nextManifest = artifactManifestSchema.parse({
     ...context.manifest,
     updatedAt: new Date().toISOString(),
@@ -1369,7 +1537,12 @@ async function commitReviewRound(
     await Promise.all(
       backups.map((backup) => removeManagedFileIfExists(context.artifactDirectory, backup).catch(() => {})),
     );
-    return { manifest: nextManifest, artifactSha256: nextArtifactSha256 };
+    return {
+      manifest: nextManifest,
+      artifactSha256: nextArtifactSha256,
+      lineCount: metrics.lineCount,
+      byteSize: metrics.byteSize,
+    };
   } catch (error) {
     const rollbackErrors: unknown[] = [];
     for (const index of [...backupModes.keys()].reverse()) {
@@ -1607,15 +1780,10 @@ function toolError(error: unknown): JsonObject {
   };
 }
 
-type BaseArtifactHandle = {
-  artifactDirectory: string;
-  artifactId: string;
-  artifactPath: string;
+type BaseArtifactHandle = ArtifactMetadataFields & {
   artifactUrl: string;
   artifactLink: string;
   reviewSessionId: string;
-  reviewRound: number;
-  artifactSha256: string;
   kind: string;
   artifactConversationId?: string | undefined;
   conversationName?: string | undefined;
@@ -1648,6 +1816,8 @@ function artifactHandle(
     reviewSessionId: context.reviewSessionId,
     reviewRound: context.reviewRound,
     artifactSha256: context.artifactSha256,
+    lineCount: context.lineCount,
+    byteSize: context.byteSize,
     kind: context.manifest.kind,
     ...(convId
       ? {
@@ -1681,8 +1851,8 @@ function parseOptionalEchoConversationId(args: JsonObject | undefined): string |
 
 function parseExpectedReviewRound(args: JsonObject | undefined): number {
   const expectedReviewRound = args?.expectedReviewRound;
-  if (!Number.isInteger(expectedReviewRound) || expectedReviewRound < 1) {
-    throw new Error("expectedReviewRound must be a positive integer.");
+  if (typeof expectedReviewRound !== "number" || !Number.isInteger(expectedReviewRound) || expectedReviewRound < 1) {
+    throw new Error("INVALID_ARTIFACT_INPUT: expectedReviewRound must be a positive integer.");
   }
   return expectedReviewRound;
 }
@@ -1822,6 +1992,8 @@ const UPDATE_ALLOWED_KEYS: ReadonlySet<string> = new Set([
   "expectedReviewRound",
   "roundToken",
   "markdown",
+  "sourcePath",
+  "edits",
   "wait",
 ]);
 
@@ -2181,10 +2353,12 @@ async function handleInspectTool(id: unknown, args: JsonObject | undefined): Pro
       sessionHandle !== null && session !== undefined
         ? {
             ...baseHandle,
+            artifactSha256: inspection.artifactSha256,
+            lineCount: inspection.lineCount,
+            byteSize: inspection.byteSize,
             artifactConversationId: session.sessionId,
             ...(baseHandle.conversationName !== undefined ? { conversationName: baseHandle.conversationName } : {}),
             manifest: context.manifest,
-            markdown: inspection.markdown,
             comments: inspection.comments,
             commentsSha256: inspection.commentsSha256,
             ...(inspection.submission !== undefined ? { submission: inspection.submission } : {}),
@@ -2195,8 +2369,10 @@ async function handleInspectTool(id: unknown, args: JsonObject | undefined): Pro
           }
         : {
             ...baseHandle,
+            artifactSha256: inspection.artifactSha256,
+            lineCount: inspection.lineCount,
+            byteSize: inspection.byteSize,
             manifest: context.manifest,
-            markdown: inspection.markdown,
             comments: inspection.comments,
             commentsSha256: inspection.commentsSha256,
             ...(inspection.submission !== undefined ? { submission: inspection.submission } : {}),
@@ -2216,7 +2392,6 @@ async function handleInspectTool(id: unknown, args: JsonObject | undefined): Pro
       ...inspectionResult,
       ...grantSubmittedRound(context, waitOutcome.result),
       manifest: waitOutcome.manifest,
-      markdown: waitOutcome.markdown,
       submission: waitOutcome.submission,
     };
     respond(id, toolResult(result));
@@ -2327,10 +2502,12 @@ async function handleJoinSessionTool(id: unknown, args: JsonObject | undefined):
       session: sessionContext!,
       inspection: {
         ...baseHandle,
+        artifactSha256: inspection.artifactSha256,
+        lineCount: inspection.lineCount,
+        byteSize: inspection.byteSize,
         artifactConversationId: session!.sessionId,
         ...(baseHandle.conversationName !== undefined ? { conversationName: baseHandle.conversationName } : {}),
         manifest: context.manifest,
-        markdown: inspection.markdown,
         comments: inspection.comments,
         commentsSha256: inspection.commentsSha256,
         ...(inspection.submission !== undefined ? { submission: inspection.submission } : {}),
@@ -2353,23 +2530,182 @@ async function handleJoinSessionTool(id: unknown, args: JsonObject | undefined):
   }
 }
 
+const READ_ALLOWED_KEYS: ReadonlySet<string> = new Set([
+  "artifactDirectory",
+  "mode",
+  "startLine",
+  "endLine",
+  "byteOffset",
+  "maxDepth",
+  "query",
+  "caseSensitive",
+  "contextLines",
+  "maxMatches",
+]);
+
+function parseReadArtifactArguments(args: JsonObject | undefined): {
+  artifactDirectory: string;
+  options: ReadArtifactOptions;
+} {
+  if (!args || typeof args !== "object" || Array.isArray(args)) {
+    throw new ReadArtifactInputError(`${READ_TOOL_NAME} requires an arguments object.`);
+  }
+  assertAllowedToolKeys(READ_TOOL_NAME, args, READ_ALLOWED_KEYS);
+
+  const artifactDirectory = args.artifactDirectory;
+  if (typeof artifactDirectory !== "string" || !path.isAbsolute(artifactDirectory)) {
+    throw new ReadArtifactInputError("artifactDirectory must be an absolute path.");
+  }
+
+  const rawMode = args.mode === undefined ? "range" : args.mode;
+  if (rawMode !== "range" && rawMode !== "outline" && rawMode !== "search") {
+    throw new ReadArtifactInputError("mode must be 'range', 'outline', or 'search'.");
+  }
+
+  const modeSpecificKeys: Record<ReadArtifactOptions["mode"], readonly string[]> = {
+    range: ["startLine", "endLine", "byteOffset"],
+    outline: ["maxDepth"],
+    search: ["query", "caseSensitive", "contextLines", "maxMatches"],
+  };
+  for (const [otherMode, keys] of Object.entries(modeSpecificKeys)) {
+    if (otherMode === rawMode) continue;
+    for (const key of keys) {
+      if (args[key] !== undefined) {
+        throw new ReadArtifactInputError(`parameter '${key}' is not allowed when mode is '${rawMode}'.`);
+      }
+    }
+  }
+
+  if (rawMode === "range") {
+    const startLine = args.startLine;
+    const endLine = args.endLine;
+    const byteOffset = args.byteOffset;
+    if (startLine !== undefined && (typeof startLine !== "number" || !Number.isInteger(startLine) || startLine < 1)) {
+      throw new ReadArtifactInputError("startLine must be an integer >= 1.");
+    }
+    if (endLine !== undefined && (typeof endLine !== "number" || !Number.isInteger(endLine) || endLine < 1)) {
+      throw new ReadArtifactInputError("endLine must be an integer >= 1.");
+    }
+    if (byteOffset !== undefined && (typeof byteOffset !== "number" || !Number.isInteger(byteOffset) || byteOffset < 0)) {
+      throw new ReadArtifactInputError("byteOffset must be an integer >= 0.");
+    }
+    if (endLine !== undefined && endLine < (startLine ?? 1)) {
+      throw new ReadArtifactInputError("endLine must be >= startLine.");
+    }
+    return {
+      artifactDirectory,
+      options: {
+        mode: "range",
+        ...(startLine !== undefined ? { startLine } : {}),
+        ...(endLine !== undefined ? { endLine } : {}),
+        ...(byteOffset !== undefined ? { byteOffset } : {}),
+      },
+    };
+  }
+
+  if (rawMode === "outline") {
+    const maxDepth = args.maxDepth;
+    if (
+      maxDepth !== undefined &&
+      (typeof maxDepth !== "number" || !Number.isInteger(maxDepth) || maxDepth < 1 || maxDepth > 6)
+    ) {
+      throw new ReadArtifactInputError("maxDepth must be an integer between 1 and 6.");
+    }
+    return {
+      artifactDirectory,
+      options: {
+        mode: "outline",
+        ...(maxDepth !== undefined ? { maxDepth } : {}),
+      },
+    };
+  }
+
+  const query = args.query;
+  const caseSensitive = args.caseSensitive;
+  const contextLines = args.contextLines;
+  const maxMatches = args.maxMatches;
+  if (typeof query !== "string" || query.length < 1) {
+    throw new ReadArtifactInputError("query must be a non-empty string.");
+  }
+  if (caseSensitive !== undefined && typeof caseSensitive !== "boolean") {
+    throw new ReadArtifactInputError("caseSensitive must be a boolean.");
+  }
+  if (
+    contextLines !== undefined &&
+    (typeof contextLines !== "number" ||
+      !Number.isInteger(contextLines) ||
+      contextLines < 0 ||
+      contextLines > READ_ARTIFACT_SEARCH_MAX_CONTEXT_LINES)
+  ) {
+    throw new ReadArtifactInputError(
+      `contextLines must be an integer between 0 and ${READ_ARTIFACT_SEARCH_MAX_CONTEXT_LINES}.`,
+    );
+  }
+  if (
+    maxMatches !== undefined &&
+    (typeof maxMatches !== "number" ||
+      !Number.isInteger(maxMatches) ||
+      maxMatches < 1 ||
+      maxMatches > READ_ARTIFACT_SEARCH_MAX_MATCHES)
+  ) {
+    throw new ReadArtifactInputError(
+      `maxMatches must be an integer between 1 and ${READ_ARTIFACT_SEARCH_MAX_MATCHES}.`,
+    );
+  }
+  return {
+    artifactDirectory,
+    options: {
+      mode: "search",
+      query,
+      ...(caseSensitive !== undefined ? { caseSensitive } : {}),
+      ...(contextLines !== undefined ? { contextLines } : {}),
+      ...(maxMatches !== undefined ? { maxMatches } : {}),
+    },
+  };
+}
+
+async function handleReadArtifactTool(id: unknown, args: JsonObject | undefined): Promise<void> {
+  try {
+    const { artifactDirectory, options } = parseReadArtifactArguments(args);
+    const context = await loadArtifactContextForRead(artifactDirectory);
+    const result = readArtifactMarkdown(
+      context.markdown,
+      {
+        artifactDirectory: context.artifactDirectory,
+        artifactId: context.artifactId,
+        artifactPath: context.artifactPath,
+        artifactSha256: context.artifactSha256,
+        reviewRound: context.reviewRound,
+        lineCount: context.lineCount,
+        byteSize: context.byteSize,
+      },
+      options,
+    );
+    respond(id, toolResult(result));
+  } catch (error) {
+    respond(
+      id,
+      toolError(
+        asLifecycleRecoveryError(error, {
+          hasArtifactHandle: typeof args?.artifactDirectory === "string" && path.isAbsolute(args.artifactDirectory),
+        }),
+      ),
+    );
+  }
+}
+
 async function handleUpdateTool(id: unknown, args: JsonObject | undefined): Promise<void> {
   const controller = new AbortController();
   pending.set(requestKey(id), controller);
   let claimedToken: string | undefined;
   let committedReviewRound: number | undefined;
+  let validTokenContext: ArtifactContext | undefined;
   let noWait = false;
   try {
     pruneRoundGrants();
-    assertAllowedToolKeys(UPDATE_TOOL_NAME, args, UPDATE_ALLOWED_KEYS);
-    const expectedReviewRound = parseExpectedReviewRound(args);
-    const wait = parseOptionalWaitArgument(args, true);
-    noWait = !wait;
     const roundToken = args?.roundToken;
-    const markdown = args?.markdown;
-    if (typeof roundToken !== "string" || !roundToken) throw new Error("roundToken is required.");
-    if (markdown !== undefined && (typeof markdown !== "string" || !markdown.trim())) {
-      throw new Error("markdown must be non-empty when supplied.");
+    if (typeof roundToken !== "string" || !roundToken) {
+      throw new ArtifactWriteError("INVALID_ARTIFACT_INPUT", "roundToken is required.");
     }
     if (claimedRoundTokens.has(roundToken)) {
       throw recoveryError(
@@ -2412,8 +2748,7 @@ async function handleUpdateTool(id: unknown, args: JsonObject | undefined): Prom
       samePathKey(context.artifactDirectory) !== samePathKey(grant.artifactDirectory) ||
       context.artifactId !== grant.artifactId ||
       context.reviewSessionId !== grant.reviewSessionId ||
-      context.reviewRound !== grant.reviewRound ||
-      context.reviewRound !== expectedReviewRound
+      context.reviewRound !== grant.reviewRound
     ) {
       roundGrants.delete(roundToken);
       throw recoveryError(
@@ -2446,16 +2781,28 @@ async function handleUpdateTool(id: unknown, args: JsonObject | undefined): Prom
         },
       );
     }
-    if (grant.source === "chat-update") {
-      if (markdown === undefined) {
-        throw new Error("markdown is required when advancing with a chat-update token.");
-      }
-      if (sha256(markdown) === grant.artifactSha256) {
-        throw new Error("The updated markdown must differ from the current artifact content.");
-      }
-    }
     if (grant.source === "submitted-review" && inspection.submission?.decision !== "revise") {
       throw new Error("The current artifact round was not submitted for Review.");
+    }
+
+    // Token and current artifact state are verified: top-level key/type and content errors before commit keep the token reusable.
+    validTokenContext = context;
+    assertAllowedToolKeys(UPDATE_TOOL_NAME, args, UPDATE_ALLOWED_KEYS);
+    const expectedReviewRound = parseExpectedReviewRound(args);
+    const wait = parseOptionalWaitArgument(args, true);
+    noWait = !wait;
+    if (context.reviewRound !== expectedReviewRound) {
+      roundGrants.delete(roundToken);
+      throw recoveryError(
+        "ROUND_MISMATCH",
+        "the artifact round token does not match the current artifact, session, or review round.",
+        {
+          retryable: true,
+          expectedNextTool: INSPECT_TOOL_NAME,
+          reuseRoundToken: false,
+          currentReviewRound: context.reviewRound,
+        },
+      );
     }
     if (!noWait && activeArtifactWaiters.has(samePathKey(context.artifactDirectory))) {
       roundGrants.delete(roundToken);
@@ -2469,6 +2816,51 @@ async function handleUpdateTool(id: unknown, args: JsonObject | undefined): Prom
         },
       );
     }
+    const rawMarkdown = args?.markdown;
+    const rawSourcePath = args?.sourcePath;
+    const rawEdits = args?.edits;
+    const providedBranches =
+      (rawMarkdown !== undefined ? 1 : 0) +
+      (rawSourcePath !== undefined ? 1 : 0) +
+      (rawEdits !== undefined ? 1 : 0);
+    if (providedBranches > 1) {
+      throw new ArtifactWriteError(
+        "INVALID_ARTIFACT_INPUT",
+        "update_artifact accepts at most one of edits, markdown, or sourcePath.",
+      );
+    }
+
+    let nextMarkdown: string;
+    if (providedBranches === 0) {
+      if (grant.source === "chat-update") {
+        throw new ArtifactWriteError(
+          "INVALID_ARTIFACT_INPUT",
+          "markdown is required when advancing with a chat-update token (provide edits, sourcePath, or markdown).",
+        );
+      }
+      nextMarkdown = inspection.markdown;
+    } else if (rawMarkdown !== undefined) {
+      nextMarkdown = validateMarkdownContent(rawMarkdown, "markdown");
+    } else if (rawSourcePath !== undefined) {
+      nextMarkdown = await readValidatedArtifactSourceFile(rawSourcePath);
+    } else {
+      const edited = applyArtifactMarkdownEdits(inspection.markdown, rawEdits);
+      nextMarkdown = validateMarkdownContent(edited, "updated markdown");
+    }
+
+    if (rawEdits !== undefined && sha256(nextMarkdown) === grant.artifactSha256) {
+      throw new ArtifactWriteError(
+        "INVALID_ARTIFACT_INPUT",
+        "edits produced no change to artifact content (unchanged SHA-256).",
+      );
+    }
+    if (grant.source === "chat-update" && sha256(nextMarkdown) === grant.artifactSha256) {
+      throw new ArtifactWriteError(
+        "INVALID_ARTIFACT_INPUT",
+        "The updated markdown must differ from the current artifact content.",
+      );
+    }
+
     if (controller.signal.aborted) {
       throw recoveryError(
         "ADVANCE_CANCELLED_BEFORE_COMMIT",
@@ -2484,7 +2876,7 @@ async function handleUpdateTool(id: unknown, args: JsonObject | undefined): Prom
 
     let committed: Awaited<ReturnType<typeof commitReviewRound>>;
     try {
-      committed = await commitReviewRound(context, markdown ?? inspection.markdown);
+      committed = await commitReviewRound(context, nextMarkdown);
     } catch (commitError) {
       if (await roundStateMatchesGrant(grant)) {
         const detail = commitError instanceof Error ? commitError.message : String(commitError);
@@ -2530,6 +2922,8 @@ async function handleUpdateTool(id: unknown, args: JsonObject | undefined): Prom
         reviewSessionId: context.reviewSessionId,
         reviewRound: committed.manifest.reviewRound,
         artifactSha256: committed.artifactSha256,
+        lineCount: committed.lineCount,
+        byteSize: committed.byteSize,
         kind: committed.manifest.kind,
         title: committed.manifest.title,
         waited: false,
@@ -2562,7 +2956,25 @@ async function handleUpdateTool(id: unknown, args: JsonObject | undefined): Prom
         ),
       );
     } else {
-      respond(id, toolError(asLifecycleRecoveryError(error)));
+      respond(
+        id,
+        toolError(
+          asLifecycleRecoveryError(
+            error,
+            validTokenContext !== undefined
+              ? {
+                  entryTool: UPDATE_TOOL_NAME,
+                  hasArtifactHandle: true,
+                  reuseRoundToken: true,
+                  currentReviewRound: validTokenContext.reviewRound,
+                }
+              : {
+                  entryTool: UPDATE_TOOL_NAME,
+                  hasArtifactHandle: true,
+                },
+          ),
+        ),
+      );
     }
   } finally {
     if (claimedToken) claimedRoundTokens.delete(claimedToken);
@@ -2955,9 +3367,9 @@ async function handleRequest(message: JsonObject): Promise<void> {
       serverInfo: { name: SERVER_NAME, version: SERVER_VERSION },
       instructions: [
         "- Use the create-review-artifact skill for artifact lifecycle and feedback, and the work-session skill for Session context and handoffs. Create artifacts only on explicit request. Use exact artifactDirectory and sessionId values. Never scan storage or workspaces for artifacts, guess a handle from cwd, or edit managed lifecycle or Session registry files directly.",
-        "- Call create_artifact directly by default and use resolve_artifact_window for optional discovery. Share the returned artifact link before a separate review wait. Use inspect_artifact without waiting for pure inspection or reconnect. Wait only when review is intended. Do not add a second wait to a completed waiting call or automatically wait after a non-waiting commit. Use takeover only when the workflow calls for replacing an existing waiter.",
+        "- Call create_artifact directly by default and use resolve_artifact_window for optional discovery. Share the returned artifact link before a separate review wait. Use inspect_artifact without waiting for pure inspection or reconnect. Use read_artifact when native reading of artifactPath is unavailable or an outline is needed. Wait only when review is intended. Do not add a second wait to a completed waiting call or automatically wait after a non-waiting commit. Use takeover only when the workflow calls for replacing an existing waiter.",
         "- In an active Work Session, pass artifactConversationId to create or inspect unless standalone is requested. Use join_session for full Session context. A Session waiter request does not authorize plan execution.",
-        "- Read feedback at comments.comments. Answer questions in chat before updating and keep review responses in chat. Omit markdown for question-only feedback. Replace it only for requested edits and leave the round unchanged while clarifying.",
+        "- Read feedback at comments.comments. Answer questions in chat before updating and keep review responses in chat. Omit content for question-only feedback. Update via edits, sourcePath, or markdown only for requested changes and leave the round unchanged while clarifying.",
         "- Treat a successful top-level decision from a review call as the decision result. Follow nextAction. Execute an approved plan or implementation-plan in the same turn only on execute-approved-plan. Other approvals conclude review. Just save concludes review without execution. A saved inspection submission or a waited=false commit does not authorize execution. Follow recovery hints and never replay an uncertain commit.",
       ].join("\n"),
     });
@@ -2993,13 +3405,24 @@ async function handleRequest(message: JsonObject): Promise<void> {
           name: CREATE_TOOL_NAME,
           title: "Create artifact",
           description:
-            "Create a schema-v6 Markdown artifact in global AI Artifacts storage. Bind it to the focused or sole live VS Code window by default, or a selected window. Return its handle, connection, and nullable SessionHandle.",
+            "Create a schema-v6 Markdown artifact in global AI Artifacts storage from markdown or sourcePath (provide exactly one). Bind it to the focused or sole live VS Code window by default, or a selected window. Return its handle, connection, and nullable SessionHandle.",
           inputSchema: {
             type: "object",
             properties: {
               title: { type: "string", minLength: 1, maxLength: 200 },
               kind: { type: "string", pattern: "^[a-z][a-z0-9-]{0,63}$" },
-              markdown: { type: "string", minLength: 1, maxLength: MAX_MARKDOWN_BYTES },
+              markdown: {
+                type: "string",
+                minLength: 1,
+                maxLength: MAX_MARKDOWN_BYTES,
+                description: "Complete Markdown content. Mutually exclusive with sourcePath.",
+              },
+              sourcePath: {
+                type: "string",
+                minLength: 1,
+                description:
+                  "OS absolute path to an existing UTF-8 text file (<= 2 MiB) copied once into the artifact. Mutually exclusive with markdown.",
+              },
               wait: {
                 type: "boolean",
                 default: false,
@@ -3035,7 +3458,7 @@ async function handleRequest(message: JsonObject): Promise<void> {
                 additionalProperties: false,
               },
             },
-            required: ["title", "kind", "markdown"],
+            required: ["title", "kind"],
             additionalProperties: false,
           },
           annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
@@ -3069,7 +3492,7 @@ async function handleRequest(message: JsonObject): Promise<void> {
           name: INSPECT_TOOL_NAME,
           title: "Inspect artifact",
           description:
-            "Return the validated snapshot of an exact artifact immediately by default. Reconnect can rebind its VS Code window. Session-bound calls return a lightweight SessionHandle. Saved review state or an explicit chat update can return a round token. Takeover detaches the existing waiter.",
+            "Return validated artifact metadata and review state immediately by default without Markdown content. Reconnect can rebind its VS Code window. Session-bound calls return a lightweight SessionHandle. Saved review state or an explicit chat update can return a round token. Takeover detaches the existing waiter.",
           inputSchema: {
             type: "object",
             properties: {
@@ -3144,6 +3567,75 @@ async function handleRequest(message: JsonObject): Promise<void> {
             additionalProperties: false,
           },
           annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+        },
+        {
+          name: READ_TOOL_NAME,
+          title: "Read artifact",
+          description:
+            "Read artifact.md by line range, Markdown heading outline, or literal line search when native reading of artifactPath is unavailable or an outline is needed. Pure read-only with zero side effects.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              artifactDirectory: { type: "string" },
+              mode: {
+                type: "string",
+                enum: ["range", "outline", "search"],
+                default: "range",
+                description: "Read mode: range (bounded line/byte slice), outline (headings), or search (literal hunks).",
+              },
+              startLine: {
+                type: "integer",
+                minimum: 1,
+                default: 1,
+                description: "Range mode only: 1-based inclusive start line.",
+              },
+              endLine: {
+                type: "integer",
+                minimum: 1,
+                description: `Range mode only: optional 1-based inclusive end line (>= startLine, capped at ${READ_ARTIFACT_RANGE_MAX_LINES} lines or ${READ_ARTIFACT_RANGE_MAX_BYTES} bytes).`,
+              },
+              byteOffset: {
+                type: "integer",
+                minimum: 0,
+                default: 0,
+                description: "Range mode only: UTF-8 byte offset within startLine to resume a truncated single line.",
+              },
+              maxDepth: {
+                type: "integer",
+                minimum: 1,
+                maximum: 6,
+                default: 6,
+                description: `Outline mode only: maximum heading depth (1-6, capped at ${READ_ARTIFACT_OUTLINE_MAX_HEADINGS} headings or ${READ_ARTIFACT_OUTLINE_MAX_BYTES} bytes).`,
+              },
+              query: {
+                type: "string",
+                minLength: 1,
+                description: "Search mode only: required literal case-insensitive or case-sensitive substring.",
+              },
+              caseSensitive: {
+                type: "boolean",
+                default: false,
+                description: "Search mode only: match exact character case when true.",
+              },
+              contextLines: {
+                type: "integer",
+                minimum: 0,
+                maximum: READ_ARTIFACT_SEARCH_MAX_CONTEXT_LINES,
+                default: READ_ARTIFACT_SEARCH_DEFAULT_CONTEXT_LINES,
+                description: "Search mode only: lines of surrounding context per match (0-5).",
+              },
+              maxMatches: {
+                type: "integer",
+                minimum: 1,
+                maximum: READ_ARTIFACT_SEARCH_MAX_MATCHES,
+                default: READ_ARTIFACT_SEARCH_DEFAULT_MAX_MATCHES,
+                description: `Search mode only: maximum matches returned (1-${READ_ARTIFACT_SEARCH_MAX_MATCHES}, capped at ${READ_ARTIFACT_SEARCH_MAX_BYTES} bytes).`,
+              },
+            },
+            required: ["artifactDirectory"],
+            additionalProperties: false,
+          },
+          annotations: { readOnlyHint: true, idempotentHint: true, destructiveHint: false, openWorldHint: false },
         },
         {
           name: JOIN_SESSION_TOOL_NAME,
@@ -3222,14 +3714,59 @@ async function handleRequest(message: JsonObject): Promise<void> {
           name: UPDATE_TOOL_NAME,
           title: "Update artifact",
           description:
-            "Consume a one-time round token, advance the round, and optionally replace the full Markdown. Omitting markdown preserves its bytes and SHA. A waiting update returns a review result. A non-waiting update returns the committed round and hash with waited=false.",
+            "Consume a one-time round token, advance the round, and optionally update content via edits, markdown, or sourcePath (at most one; omit all to preserve bytes and SHA). A waiting update returns a review result. A non-waiting update returns the committed round and hash with waited=false.",
           inputSchema: {
             type: "object",
             properties: {
               artifactDirectory: { type: "string" },
               expectedReviewRound: { type: "integer", minimum: 1 },
               roundToken: { type: "string" },
-              markdown: { type: "string", minLength: 1, maxLength: MAX_MARKDOWN_BYTES },
+              markdown: {
+                type: "string",
+                minLength: 1,
+                maxLength: MAX_MARKDOWN_BYTES,
+                description: "Full replacement Markdown. Mutually exclusive with edits and sourcePath.",
+              },
+              sourcePath: {
+                type: "string",
+                minLength: 1,
+                description:
+                  "OS absolute path to an existing UTF-8 text file (<= 2 MiB) copied once. Mutually exclusive with edits and markdown.",
+              },
+              edits: {
+                type: "array",
+                minItems: 1,
+                description:
+                  "Atomic search-and-replace edits on original-text coordinates. Mutually exclusive with markdown and sourcePath.",
+                items: {
+                  type: "object",
+                  properties: {
+                    oldText: {
+                      type: "string",
+                      minLength: 1,
+                      description: "Exact text to match (CRLF/LF normalized for matching).",
+                    },
+                    newText: { type: "string", description: "Replacement text (empty string deletes oldText)." },
+                    startLine: {
+                      type: "integer",
+                      minimum: 1,
+                      description: "Optional 1-based inclusive start line on original text.",
+                    },
+                    endLine: {
+                      type: "integer",
+                      minimum: 1,
+                      description: "Optional 1-based inclusive end line (>= startLine).",
+                    },
+                    replaceAll: {
+                      type: "boolean",
+                      default: false,
+                      description: "False requires a unique match; true replaces all matches.",
+                    },
+                  },
+                  required: ["oldText", "newText"],
+                  additionalProperties: false,
+                },
+              },
               wait: {
                 type: "boolean",
                 default: true,
@@ -3361,6 +3898,10 @@ async function handleRequest(message: JsonObject): Promise<void> {
     }
     if (params?.name === INSPECT_TOOL_NAME) {
       await handleInspectTool(id, params?.arguments);
+      return;
+    }
+    if (params?.name === READ_TOOL_NAME) {
+      await handleReadArtifactTool(id, params?.arguments);
       return;
     }
     if (params?.name === JOIN_SESSION_TOOL_NAME) {

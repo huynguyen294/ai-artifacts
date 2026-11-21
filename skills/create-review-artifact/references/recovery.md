@@ -14,6 +14,8 @@ type ArtifactRecoveryError = {
   reuseRoundToken: boolean;
   useSameArtifactHandle: boolean;
   currentReviewRound?: number;
+  editIndex?: number;
+  matchedLines?: number[];
 };
 ```
 
@@ -35,5 +37,10 @@ Follow machine-readable recovery metadata returned by lifecycle errors. Keep the
 | `ARTIFACT_CONNECTION_INVALID` | Stored routing data is invalid or malformed and cannot be repaired by the skill. Stop automated recovery, retain the exact handle, report the corrupt `artifact-connection.json`, and ask the user to repair or remove that optional routing file before reconnecting. Do not retry inspect/reconnect or edit lifecycle files yourself. |
 | `ARTIFACT_CONNECTION_WRITE_FAILED` | Failed to update the connection state atomically. Retry `inspect_artifact` on the exact handle with `intent: "reconnect"`. |
 | `ARTIFACT_NOT_FOUND` | The exact artifact handle no longer exists. Non-retryable. Drop the stale handle mapping and inform the user that the artifact is permanently unavailable. Do not retry, scan for a replacement, or recreate the same artifact ID. |
+| `SOURCE_FILE_UNREADABLE` | The `sourcePath` file is missing, not a regular file, empty/whitespace-only, larger than 2 MiB, or not valid UTF-8 text. On `create_artifact`, fix the path or fall back to passing `markdown`. On `update_artifact` with `reuseRoundToken: true`, retry `update_artifact` using the same `roundToken` with a valid `sourcePath`, `edits`, or `markdown`. |
+| `EDIT_TARGET_NOT_FOUND` | An `edits[i].oldText` did not match the original document (or within `startLine..endLine`). When `reuseRoundToken: true`, read the target lines (natively or via `read_artifact`) to get exact text and retry `update_artifact` with the same `roundToken`. |
+| `EDIT_TARGET_AMBIGUOUS` | An `edits[i].oldText` matched multiple locations (`matchedLines` lists the 1-based line numbers) while `replaceAll` is `false`. When `reuseRoundToken: true`, read around `matchedLines` and retry `update_artifact` with the same `roundToken` using more surrounding context in `oldText`, `startLine`/`endLine` bounds, or `replaceAll: true`. |
+| `EDIT_TARGET_OVERLAP` | Two or more `edits` spans overlap on original-text coordinates. When `reuseRoundToken: true`, merge or separate the overlapping edits into non-overlapping spans and retry `update_artifact` with the same `roundToken`. |
+| `INVALID_ARTIFACT_INPUT` | Malformed tool arguments, mutually exclusive content fields, out-of-range line bounds, or a no-op/unchanged-SHA update. On `update_artifact` with `reuseRoundToken: true`, fix the arguments and retry `update_artifact` with the same `roundToken` without re-inspecting. |
 
 Except for explicit non-retryable errors such as `ARTIFACT_CONNECTION_INVALID`, inspect the exact handle before retrying any error that does not prove both “not committed” and `reuseRoundToken: true`.

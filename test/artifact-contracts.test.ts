@@ -201,7 +201,7 @@ describe("integration version receipt schema v1 contract", () => {
   it("locks numeric bundled versions and accepts complete or partial receipts", () => {
     expect(MCP_VERSION).toBe(13);
     expect(CREATE_REVIEW_ARTIFACT_SKILL_VERSION).toBe(5);
-    expect(WORK_SESSION_SKILL_VERSION).toBe(1);
+    expect(WORK_SESSION_SKILL_VERSION).toBe(2);
     expect(SKILL_VERSION).toBe(5);
     expect(INTEGRATION_VERSION_SCHEMA_VERSION).toBe(1);
 
@@ -673,6 +673,8 @@ describe("artifact conversation schema v1 contract", () => {
       reviewSessionId: "11111111-1111-4111-8111-111111111111",
       reviewRound: 1,
       artifactSha256: "a".repeat(64),
+      lineCount: 1,
+      byteSize: 7,
       kind: "plan",
       session: null,
     };
@@ -691,9 +693,10 @@ describe("artifact conversation schema v1 contract", () => {
       reviewSessionId: "11111111-1111-4111-8111-111111111111",
       reviewRound: 1,
       artifactSha256: "a".repeat(64),
+      lineCount: 1,
+      byteSize: 7,
       kind: "plan",
       manifest: manifest() as any,
-      markdown: "# Test\n",
       comments: comments() as any,
       commentsSha256: "b".repeat(64),
       roundToken: "token-123",
@@ -703,6 +706,7 @@ describe("artifact conversation schema v1 contract", () => {
 
     expect(inspectionResult.roundTokenSource).toBe("chat-inspection");
     expect(inspectionResult.session).toBeNull();
+    expect("markdown" in inspectionResult).toBe(false);
 
     const createWaitResult: contracts.CreateArtifactReviewResult = {
       ...standaloneResult,
