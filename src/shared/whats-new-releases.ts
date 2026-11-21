@@ -13,6 +13,26 @@ export type WhatsNewRelease = {
 
 export const whatsNewReleases: readonly WhatsNewRelease[] = [
   {
+    version: "2.1.0",
+    title: "Leaner MCP reads, atomic edits, and source-file artifact creation",
+    description:
+      "AI agents can now create, inspect, read slices of, and locally patch large Markdown artifacts without reloading the full document on every turn.",
+    features: [
+      "Compact ArtifactHandle metadata with lineCount and byteSize instead of repeating full Markdown on inspect and join calls.",
+      "Read-only read_artifact tool with bounded range pagination, heading outline, and literal search fallback when native file access is unavailable.",
+      "One-time sourcePath UTF-8 file import on create_artifact and update_artifact (with automatic leading BOM stripping).",
+      "Atomic batch edits[] on update_artifact using original-text coordinates with CRLF/LF preservation.",
+    ],
+    bugFixes: [
+      "Keep roundToken reusable (reuseRoundToken: true) across pre-commit input, sourcePath, and edits[] validation or match failures.",
+      "Avoid false ARTIFACT_NOT_FOUND errors when read_artifact runs during a concurrent update lock window.",
+      "Condense MCP instructions and add explicit Inspect an exact artifact only skill guidance.",
+    ],
+    icon: "sparkles",
+    publishedAt: "2026-11-21",
+    notify: false,
+  },
+  {
     version: "2.0.0",
     title: "AI Artifacts v2 is out — Work Sessions for multi-agent work",
     notificationTitle: "Work Sessions for multi-agent work",

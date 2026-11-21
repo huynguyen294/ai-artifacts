@@ -14,6 +14,11 @@ Minor typos, formatting fixes, or cosmetic wording adjustments that do not chang
 
 Each entry includes the date, category, summary of changes, rationale, and affected components or files.
 
+## 2026-11-21 - Prepare 2.1.0 release metadata and silent What's New entry
+
+- **Package & changelog (`package.json`, `package-lock.json`, `CHANGELOG.md`):** Bumped extension package and root lockfile version from `2.0.0` to `2.1.0` while keeping integration asset counters unchanged (`MCP_VERSION = 13`, `CREATE_REVIEW_ARTIFACT_SKILL_VERSION = 5`, `WORK_SESSION_SKILL_VERSION = 2`, `WORK_SESSION_REQUIRED_MCP_VERSION = 12`). Dated `## [2.1.0] - 2026-11-21` in `CHANGELOG.md`, clarified pre-`read_artifact` 9-tool wording, and recorded UTF-8 BOM stripping and structured `INVALID_ARTIFACT_INPUT` handling.
+- **What's New & docs (`src/shared/whats-new-releases.ts`, `src/content/whats-new/2.1.0.md`, `src/webview/whats-new-content.ts`, `README.md`, `docs/*`, `test/release-contract.test.ts`, `test/whats-new-notification.test.ts`):** Added the `2.1.0` What's New card and release article with `notify: false` (no upgrade toast popup, no preview badge) and aligned release contract and notification tests.
+
 ## 2026-11-21 - Optimize artifact Markdown reading and writing (`read_artifact`, `sourcePath`, `edits[]`, compact `ArtifactHandle`)
 
 - **Shared read/write engines & contracts (`src/shared/artifact-markdown-read.ts`, `src/shared/artifact-markdown-write.ts`, `src/shared/contracts.ts`):** Added `ArtifactMetadataFields` (`lineCount`, `byteSize`, `artifactSha256`, `reviewRound`, paths/IDs), removed `markdown` from inspection result types, implemented pure `readArtifactMarkdown` (`range` with UTF-8 `byteOffset` cursor and 250-line/16 KiB serialized cap, `outline` with 200-heading/12 KiB cap, literal `search` with 16 KiB cap), `readValidatedArtifactSourceFile` (OS absolute path, regular file `0 < size <= 2 MiB`, valid non-whitespace UTF-8 without null bytes), and `applyArtifactMarkdownEdits` (CRLF/LF-normalized matching mapped back to original-text offsets, non-overlapping batch atomic replacement, `startLine`/`endLine` bounds, and `replaceAll`). Bumped `WORK_SESSION_SKILL_VERSION` from `1` to `2` (`MCP_VERSION = 13`, `CREATE_REVIEW_ARTIFACT_SKILL_VERSION = 5`).

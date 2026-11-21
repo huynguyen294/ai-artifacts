@@ -472,7 +472,7 @@ Press `F5` to launch an Extension Development Host. Package and install locally:
 
 ```powershell
 npm run package
-code --install-extension releases/ai-artifacts-2.0.0.vsix
+code --install-extension releases/ai-artifacts-2.1.0.vsix
 ```
 
 ## Documentation

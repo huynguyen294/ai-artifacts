@@ -1,3 +1,4 @@
+import v2_1Markdown from "../content/whats-new/2.1.0.md?raw";
 import v2Markdown from "../content/whats-new/2.0.0.md?raw";
 import { whatsNewGuides, type WhatsNewGuide } from "../shared/whats-new-guides";
 import { whatsNewReleases, type WhatsNewRelease } from "../shared/whats-new-releases";
@@ -12,6 +13,7 @@ export type WhatsNewContent = {
 };
 
 const releaseMarkdownByVersion: Readonly<Record<string, string>> = {
+  "2.1.0": v2_1Markdown,
   "2.0.0": v2Markdown,
 };
 
