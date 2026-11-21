@@ -1,6 +1,35 @@
 import { z } from "zod";
 import { isLocalFileLink } from "./local-file-link";
+import type {
+  ArtifactMetadataFields,
+  ReadArtifactMode,
+  ReadArtifactOutlineHeading,
+  ReadArtifactOutlineResult,
+  ReadArtifactRangeResult,
+  ReadArtifactResult,
+  ReadArtifactSearchHunk,
+  ReadArtifactSearchResult,
+} from "./artifact-markdown-read";
 
+import type {
+  ArtifactMarkdownEdit,
+  ArtifactWriteErrorCode,
+} from "./artifact-markdown-write";
+
+export type {
+  ArtifactMarkdownEdit,
+  ArtifactMetadataFields,
+  ArtifactWriteErrorCode,
+  ReadArtifactMode,
+  ReadArtifactOutlineHeading,
+  ReadArtifactOutlineResult,
+  ReadArtifactRangeResult,
+  ReadArtifactResult,
+  ReadArtifactSearchHunk,
+  ReadArtifactSearchResult,
+};
+
+export const MAX_MARKDOWN_BYTES = 2 * 1024 * 1024;
 export const ARTIFACT_SCHEMA_VERSION = 6 as const;
 export const ARTIFACT_CONNECTION_SCHEMA_VERSION = 1 as const;
 export const ARTIFACT_CONVERSATION_SCHEMA_VERSION = 1 as const;
@@ -13,7 +42,7 @@ export const INSTALLED_CLIENTS_SCHEMA_VERSION = 1 as const;
 export const UI_STATE_SCHEMA_VERSION = 1 as const;
 export const MCP_VERSION = 13 as const;
 export const CREATE_REVIEW_ARTIFACT_SKILL_VERSION = 5 as const;
-export const WORK_SESSION_SKILL_VERSION = 1 as const;
+export const WORK_SESSION_SKILL_VERSION = 2 as const;
 export const SKILL_VERSION = 5 as const;
 export const MCP_CLIENT_IDS = [
   "copilot",
@@ -768,29 +797,19 @@ export type SessionExtensionToWebviewMessage =
     }
   | { type: "error"; message: string };
 
-export type StandaloneArtifactHandleResult = {
-  artifactDirectory: string;
-  artifactId: string;
-  artifactPath: string;
+export type StandaloneArtifactHandleResult = ArtifactMetadataFields & {
   artifactUrl: string;
   artifactLink: string;
   reviewSessionId: string;
-  reviewRound: number;
-  artifactSha256: string;
   kind: string;
   connection?: ArtifactConnection | undefined;
   session: null;
 };
 
-export type SessionArtifactHandleResult = {
-  artifactDirectory: string;
-  artifactId: string;
-  artifactPath: string;
+export type SessionArtifactHandleResult = ArtifactMetadataFields & {
   artifactUrl: string;
   artifactLink: string;
   reviewSessionId: string;
-  reviewRound: number;
-  artifactSha256: string;
   kind: string;
   artifactConversationId: string;
   conversationName?: string | undefined;
@@ -798,7 +817,7 @@ export type SessionArtifactHandleResult = {
   connection?: ArtifactConnection | undefined;
 };
 
-export type ArtifactWaitReviewFields = {
+export type ArtifactWaitReviewFields = ArtifactMetadataFields & {
   schemaVersion: typeof ARTIFACT_SCHEMA_VERSION;
   title?: string | undefined;
   commentsSha256: string;
@@ -827,18 +846,12 @@ export type CreateArtifactReviewResult =
   | StandaloneArtifactCreateWaitResult
   | SessionArtifactCreateWaitResult;
 
-export type StandaloneArtifactInspectionResult = {
-  artifactDirectory: string;
-  artifactId: string;
-  artifactPath: string;
+export type StandaloneArtifactInspectionResult = ArtifactMetadataFields & {
   artifactUrl: string;
   artifactLink: string;
   reviewSessionId: string;
-  reviewRound: number;
-  artifactSha256: string;
   kind: string;
   manifest: ArtifactManifest;
-  markdown: string;
   comments: CommentsDocument;
   commentsSha256: string;
   submission?: ReviewSubmission | undefined;
@@ -849,20 +862,14 @@ export type StandaloneArtifactInspectionResult = {
   session: null;
 };
 
-export type SessionArtifactInspectionResult = {
-  artifactDirectory: string;
-  artifactId: string;
-  artifactPath: string;
+export type SessionArtifactInspectionResult = ArtifactMetadataFields & {
   artifactUrl: string;
   artifactLink: string;
   reviewSessionId: string;
-  reviewRound: number;
-  artifactSha256: string;
   kind: string;
   artifactConversationId: string;
   conversationName?: string | undefined;
   manifest: ArtifactManifest;
-  markdown: string;
   comments: CommentsDocument;
   commentsSha256: string;
   submission?: ReviewSubmission | undefined;

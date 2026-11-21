@@ -84,19 +84,33 @@ describe("whats-new notification controller", () => {
     expect(otherActionDeps.openVersion).not.toHaveBeenCalled();
   });
 
-  it("uses notification copy for the v2 release without repeating its branded article headline", async () => {
-    const release = whatsNewReleases[0]!;
-    const deps = makeDeps({
-      getCurrentVersion: vi.fn(() => release.version),
+  it("uses notification copy for the v2 release without repeating its branded article headline, and keeps 2.1.0 silent", async () => {
+    const v2Release = whatsNewReleases.find((entry) => entry.version === "2.0.0")!;
+    const v2Deps = makeDeps({
+      getCurrentVersion: vi.fn(() => v2Release.version),
       releases: whatsNewReleases,
     });
 
-    await runWhatsNewNotification(deps);
+    await runWhatsNewNotification(v2Deps);
 
-    expect(deps.showInformationMessage).toHaveBeenCalledWith(
-      `AI Artifacts ${release.version} is out — Work Sessions for multi-agent work`,
+    expect(v2Deps.showInformationMessage).toHaveBeenCalledWith(
+      `AI Artifacts ${v2Release.version} is out — Work Sessions for multi-agent work`,
       VIEW_WHATS_NEW_ACTION,
     );
+
+    const v2_1Release = whatsNewReleases.find((entry) => entry.version === "2.1.0");
+    expect(v2_1Release?.notify).toBe(false);
+    const v2_1Record = vi.fn(async () => false);
+    const v2_1Deps = makeDeps({
+      getCurrentVersion: vi.fn(() => "2.1.0"),
+      releases: whatsNewReleases,
+      recordVersion: v2_1Record,
+    });
+
+    await runWhatsNewNotification(v2_1Deps);
+
+    expect(v2_1Record).toHaveBeenCalledWith("2.1.0", false);
+    expect(v2_1Deps.showInformationMessage).not.toHaveBeenCalled();
   });
 
   it("always observes runtime version with notifyEnabled=false for missing, false, omitted, or mismatched releases without catch-up", async () => {

@@ -225,7 +225,7 @@ describe("join_session MCP tool & proceed directives", () => {
     }
     temporaryDirectories.length = 0;
   });
-  it("tools/list exposes 9 tools including join_session, write_artifact_feedback, and session waiters with exact schema", async () => {
+  it("tools/list exposes 10 tools including read_artifact, join_session, write_artifact_feedback, and session waiters with exact schema", async () => {
     const fixture = await workspaceFixture();
     const client = startClient(fixture.registry);
     await initialize(client);
@@ -237,6 +237,7 @@ describe("join_session MCP tool & proceed directives", () => {
       "create_artifact",
       "wait_for_artifact_review",
       "inspect_artifact",
+      "read_artifact",
       "join_session",
       "update_artifact",
       "write_artifact_feedback",
@@ -375,15 +376,26 @@ describe("join_session MCP tool & proceed directives", () => {
     expect(joinResult.structuredContent.session.catalog.working.length).toBe(1);
     expect(joinResult.structuredContent.session.catalog.working[0].artifactId).toBe(artifact.artifactId);
 
-    // Inspection handle shape
+    // Inspection handle shape (omits markdown, includes lineCount and byteSize)
     const inspection = joinResult.structuredContent.inspection;
     expect(inspection).toBeDefined();
     expect(inspection.artifactId).toBe(artifact.artifactId);
     expect(inspection.artifactConversationId).toBe(session.sessionId);
     expect(inspection.manifest.title).toBe("Spec for Join");
     expect(inspection.manifest.kind).toBe("spec");
-    expect(inspection.markdown).toBe("# Spec\n\nTesting join with artifact.\n");
+    expect(inspection).not.toHaveProperty("markdown");
+    const joinDoc = "# Spec\n\nTesting join with artifact.\n";
+    expect(inspection.lineCount).toBe(3);
+    expect(inspection.byteSize).toBe(Buffer.byteLength(joinDoc, "utf8"));
     expect(inspection.comments).toBeDefined();
+
+    // Content can be read via read_artifact fallback
+    const readJoined = await callTool(client, "read_artifact", {
+      artifactDirectory: inspection.artifactDirectory,
+      mode: "range",
+    });
+    expect(readJoined.isError).toBeFalsy();
+    expect(readJoined.structuredContent.content).toBe(joinDoc);
   });
 
   it("wait_for_artifact_review returns approved nextAction for non-plan kinds (idea, checklist, workaround)", async () => {

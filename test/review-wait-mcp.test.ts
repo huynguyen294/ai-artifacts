@@ -195,6 +195,8 @@ async function initialize(client: TestClient): Promise<void> {
   expect(initialized.instructions).toContain("comments.comments");
   expect(initialized.instructions).toContain("keep review responses in chat");
   expect(initialized.instructions).toContain("question-only feedback");
+  expect(initialized.instructions).toContain("Omit content for question-only feedback");
+  expect(initialized.instructions).toContain("Update via edits, sourcePath, or markdown");
   expect(initialized.instructions).toContain("execute-approved-plan");
   expect(initialized.instructions).toContain("saved inspection submission");
   expect(initialized.instructions).toContain("Use exact artifactDirectory and sessionId values");
@@ -471,7 +473,7 @@ describe("artifact review MCP server v8", () => {
     expect(await readFile(created.artifactPath, "utf8")).toBe(markdown);
   });
 
-  it("lists nine MCP tools and creates a detached schema-v6 global artifact immediately", async () => {
+  it("lists ten MCP tools and creates a detached schema-v6 global artifact immediately", async () => {
     const fixture = await workspaceFixture();
     const client = startClient(fixture.registry);
     await initialize(client);
@@ -481,12 +483,22 @@ describe("artifact review MCP server v8", () => {
       "create_artifact",
       "wait_for_artifact_review",
       "inspect_artifact",
+      "read_artifact",
       "join_session",
       "update_artifact",
       "write_artifact_feedback",
       "wait_in_session",
       "request_waiter_in_session",
     ]);
+    const readTool = tools.tools.find((tool: any) => tool.name === "read_artifact");
+    expect(readTool?.annotations).toEqual({
+      readOnlyHint: true,
+      idempotentHint: true,
+      destructiveHint: false,
+      openWorldHint: false,
+    });
+    expect(readTool?.inputSchema?.required).toEqual(["artifactDirectory"]);
+    expect(readTool?.inputSchema?.additionalProperties).toBe(false);
     const resolveTool = tools.tools.find((tool: any) => tool.name === "resolve_artifact_window");
     expect(resolveTool.description).toContain("matched");
     expect(resolveTool.description).toContain("selection-required");
@@ -502,7 +514,9 @@ describe("artifact review MCP server v8", () => {
     expect(createTool.inputSchema.properties).not.toHaveProperty("workspaceEvidence");
     expect(createTool.inputSchema.properties.wait).toMatchObject({ type: "boolean", default: false });
     expect(createTool.inputSchema.properties).not.toHaveProperty("noWait");
-    expect(createTool.inputSchema.required).toEqual(expect.arrayContaining(["title", "kind", "markdown"]));
+    expect(createTool.inputSchema.required).toEqual(["title", "kind"]);
+    expect(createTool.inputSchema.properties).toHaveProperty("markdown");
+    expect(createTool.inputSchema.properties).toHaveProperty("sourcePath");
     const createWindowTokenDescription =
       createTool.inputSchema.properties.connection.properties.selectionToken.description;
     expect(createWindowTokenDescription).toContain("WINDOW_SELECTION_REQUIRED response");
@@ -529,6 +543,9 @@ describe("artifact review MCP server v8", () => {
 
     const updateTool = tools.tools.find((tool: any) => tool.name === "update_artifact");
     expect(updateTool.inputSchema.properties.wait).toMatchObject({ type: "boolean", default: true });
+    expect(updateTool.inputSchema.properties).toHaveProperty("markdown");
+    expect(updateTool.inputSchema.properties).toHaveProperty("sourcePath");
+    expect(updateTool.inputSchema.properties).toHaveProperty("edits");
     expect(updateTool.inputSchema.required).not.toContain("wait");
     expect(updateTool.inputSchema.properties).not.toHaveProperty("noWait");
     expect(updateTool.inputSchema.properties).not.toHaveProperty("artifactConversationId");
@@ -1289,9 +1306,13 @@ describe("artifact review MCP server v8", () => {
       await submitDecision(created.artifactDirectory, "revise", ["Feedback on the latest revision."]);
       const reviewed = await waiting.promise;
       expect(reviewed.isError, reviewed.content?.[0]?.text).not.toBe(true);
+      const submittedMarkdown = await readFile(created.artifactPath, "utf8");
       expect(reviewed.structuredContent).toMatchObject({
+        artifactDirectory: created.artifactDirectory,
         reviewRound: committed.reviewRound,
         artifactSha256: committed.artifactSha256,
+        lineCount: 3,
+        byteSize: Buffer.byteLength(submittedMarkdown, "utf8"),
         decision: "revise",
         comments: {
           reviewRound: committed.reviewRound,
@@ -1681,6 +1702,8 @@ describe("artifact review MCP server v8", () => {
         reviewSessionId: created.reviewSessionId,
         reviewRound: reviewRound + 1,
         artifactSha256: sha256(markdown),
+        lineCount: 3,
+        byteSize: Buffer.byteLength(markdown, "utf8"),
         kind: created.kind,
         title: "Session progress",
         waited: false,
@@ -1782,6 +1805,14 @@ describe("artifact review MCP server v8", () => {
     });
     expect(rejected.isError).toBe(true);
     expect(rejected.content[0].text).toContain(input.error);
+    expect(rejected.structuredContent).toMatchObject({
+      code: "INVALID_ARTIFACT_INPUT",
+      retryable: true,
+      expectedNextTool: "update_artifact",
+      reuseRoundToken: true,
+      useSameArtifactHandle: true,
+      currentReviewRound: 1,
+    });
     expect(
       await Promise.all(fileNames.map((name) => readFile(path.join(created.artifactDirectory, name), "utf8"))),
     ).toEqual(before);
@@ -1883,9 +1914,12 @@ describe("artifact review MCP server v8", () => {
       intent: "explicit-chat-update",
     });
     expect(recovered.isError).not.toBe(true);
+    expect(recovered.structuredContent).not.toHaveProperty("markdown");
     expect(recovered.structuredContent).toMatchObject({
       reviewRound: 2,
-      markdown: args.markdown,
+      artifactSha256: sha256(args.markdown),
+      lineCount: 1,
+      byteSize: Buffer.byteLength(args.markdown, "utf8"),
       roundToken: expect.any(String),
     });
     await submitDecision(created.artifactDirectory, "save");
@@ -4383,10 +4417,13 @@ describe("artifact review MCP server v8", () => {
       await submitDecision(created.artifactDirectory, "revise", ["Round 2 needs one more tweak"]);
       const inspected = await inspectWaiting.promise;
       expect(inspected.isError, inspected.content?.[0]?.text).not.toBe(true);
+      expect(inspected.structuredContent).not.toHaveProperty("markdown");
       expect(inspected.structuredContent).toMatchObject({
         artifactDirectory: created.artifactDirectory,
         reviewRound: 2,
-        markdown: round2Markdown,
+        artifactSha256: sha256(round2Markdown),
+        lineCount: 3,
+        byteSize: Buffer.byteLength(round2Markdown, "utf8"),
         manifest: { reviewRound: 2 },
         submission: { decision: "revise", reviewRound: 2 },
         decision: "revise",
@@ -4855,5 +4892,690 @@ describe("write_artifact_feedback MCP tool", () => {
     expect(loaded.comments?.comments.map((entry) => entry.body)).toEqual(["Saved before submit race"]);
     expect(loaded.submission).toBeUndefined();
     await expectNoTransactionResidue(created.artifactDirectory);
+  });
+});
+
+describe("read_artifact MCP tool", () => {
+  it("reconstructs exact bytes and SHA-256 across paginated range reads with >16 KiB single line, UTF-8, escapes, and mixed CRLF/LF", async () => {
+    const fixture = await workspaceFixture();
+    const client = startClient(fixture.registry);
+    await initialize(client);
+
+    const longLine = `${"🚀TiếngViệt_".repeat(1400)}${'\\"\\'.repeat(1200)}`;
+    const bodyLines = Array.from({ length: 40 }, (_, i) => `Line ${i + 1}: nội dung ${i}`).join("\r\n");
+    const doc = `${longLine}\r\n${bodyLines}\n`;
+
+    const created = await createArtifact(client, fixture.workspace, {
+      title: "Paginated Range Read",
+      markdown: doc,
+    });
+    expect(created.lineCount).toBe(41);
+    expect(created.byteSize).toBe(Buffer.byteLength(doc, "utf8"));
+
+    const inspected = await callTool(client, "inspect_artifact", {
+      artifactDirectory: created.artifactDirectory,
+    });
+    expect(inspected.isError).toBeFalsy();
+    expect(inspected.structuredContent).not.toHaveProperty("markdown");
+    expect(inspected.structuredContent.lineCount).toBe(41);
+    expect(inspected.structuredContent.byteSize).toBe(Buffer.byteLength(doc, "utf8"));
+
+    let startLine = 1;
+    let byteOffset = 0;
+    let assembled = "";
+    let pages = 0;
+
+    while (true) {
+      const pageRes = await callTool(client, "read_artifact", {
+        artifactDirectory: created.artifactDirectory,
+        mode: "range",
+        startLine,
+        byteOffset,
+      });
+      expect(pageRes.isError, pageRes.content?.[0]?.text).toBeFalsy();
+      const page = pageRes.structuredContent;
+      expect(JSON.parse(pageRes.content[0].text)).toEqual(page);
+      expect(Buffer.byteLength(JSON.stringify(page), "utf8")).toBeLessThanOrEqual(16 * 1024);
+      expect(page.artifactSha256).toBe(created.artifactSha256);
+      expect(page.reviewRound).toBe(1);
+      expect(page.lineCount).toBe(41);
+      expect(page.byteSize).toBe(Buffer.byteLength(doc, "utf8"));
+
+      assembled += page.content;
+      pages += 1;
+
+      if (!page.truncated) {
+        expect(page.nextStartLine).toBeNull();
+        expect(page.nextByteOffset).toBeNull();
+        break;
+      }
+      startLine = page.nextStartLine;
+      byteOffset = page.nextByteOffset;
+    }
+
+    expect(pages).toBeGreaterThan(1);
+    expect(assembled).toBe(doc);
+    expect(sha256(assembled)).toBe(created.artifactSha256);
+  });
+
+  it("supports outline (ignoring frontmatter & fences) and literal search with hard caps while preserving active waiters", async () => {
+    const fixture = await workspaceFixture();
+    const client = startClient(fixture.registry);
+    await initialize(client);
+
+    const doc = [
+      "---",
+      "title: Outline Doc",
+      "# YAML Comment",
+      "---",
+      "",
+      "# Overview",
+      "Intro [target].*",
+      "",
+      "````ts",
+      "# Not a heading",
+      "````",
+      "",
+      "~~~md",
+      "## Not a tilde heading",
+      "~~~",
+      "",
+      "## Details",
+      "Match one [TARGET].*",
+      "Context A",
+      "Context B",
+      "Context C",
+      "Match two [target].*",
+      "Tail",
+    ].join("\n");
+
+    const created = await createArtifact(client, fixture.workspace, {
+      title: "Outline & Search",
+      markdown: doc,
+    });
+
+    const waiting = callToolTracked(client, "wait_for_artifact_review", {
+      artifactDirectory: created.artifactDirectory,
+      expectedReviewRound: 1,
+    });
+    await waiting.sent;
+    await client.waitUntilWaiting(waiting.id);
+
+    const outlineRes = await callTool(client, "read_artifact", {
+      artifactDirectory: created.artifactDirectory,
+      mode: "outline",
+      maxDepth: 2,
+    });
+    expect(outlineRes.isError).toBeFalsy();
+    expect(outlineRes.structuredContent.headings).toEqual([
+      { level: 1, text: "Overview", startLine: 6, endLine: 23, lineCount: 18 },
+      { level: 2, text: "Details", startLine: 17, endLine: 23, lineCount: 7 },
+    ]);
+
+    const searchRes = await callTool(client, "read_artifact", {
+      artifactDirectory: created.artifactDirectory,
+      mode: "search",
+      query: "[target].*",
+      contextLines: 1,
+      maxMatches: 2,
+    });
+    expect(searchRes.isError).toBeFalsy();
+    expect(searchRes.structuredContent.totalMatches).toBe(3);
+    expect(searchRes.structuredContent.truncated).toBe(true);
+    expect(searchRes.structuredContent.hunks).toHaveLength(2);
+    expect(searchRes.structuredContent.hunks[0]!.matchedLines).toEqual([7]);
+    expect(searchRes.structuredContent.hunks[1]!.matchedLines).toEqual([18]);
+
+    // Active waiter is unaffected by read_artifact and receives subsequent Review decision
+    await submitDecision(created.artifactDirectory, "revise", ["Check details."]);
+    const reviewed = await waiting.promise;
+    expect(reviewed.isError).toBeFalsy();
+    expect(reviewed.structuredContent).toMatchObject({
+      decision: "revise",
+      reviewRound: 1,
+      lineCount: 23,
+      byteSize: Buffer.byteLength(doc, "utf8"),
+    });
+  });
+
+  it("rejects mismatched mode arguments with INVALID_ARTIFACT_INPUT and unsafe/missing handles", async () => {
+    const fixture = await workspaceFixture();
+    const client = startClient(fixture.registry);
+    await initialize(client);
+    const created = await createArtifact(client, fixture.workspace);
+
+    const wrongRangeArg = await callTool(client, "read_artifact", {
+      artifactDirectory: created.artifactDirectory,
+      mode: "outline",
+      startLine: 1,
+    });
+    expect(wrongRangeArg.isError).toBe(true);
+    expect(wrongRangeArg.content[0].text).toContain("INVALID_ARTIFACT_INPUT");
+    expect(wrongRangeArg.content[0].text).not.toContain("INVALID_ARTIFACT_INPUT: INVALID_ARTIFACT_INPUT:");
+    expect(wrongRangeArg.structuredContent).toMatchObject({
+      code: "INVALID_ARTIFACT_INPUT",
+      retryable: true,
+      reuseRoundToken: false,
+      useSameArtifactHandle: true,
+    });
+    expect(wrongRangeArg.structuredContent.expectedNextTool).toBeUndefined();
+
+    const wrongDefaultModeArg = await callTool(client, "read_artifact", {
+      artifactDirectory: created.artifactDirectory,
+      query: "Artifact",
+    });
+    expect(wrongDefaultModeArg.isError).toBe(true);
+    expect(wrongDefaultModeArg.content[0].text).toContain("INVALID_ARTIFACT_INPUT");
+
+    const outsidePath = await callTool(client, "read_artifact", {
+      artifactDirectory: fixture.workspace,
+      mode: "range",
+    });
+    expect(outsidePath.isError).toBe(true);
+    expect(outsidePath.content[0].text).toContain("direct child of the collection root");
+
+    const missingPath = await callTool(client, "read_artifact", {
+      artifactDirectory: path.join(fixture.globalRoot, "missing-artifact-id"),
+      mode: "range",
+    });
+    expect(missingPath.isError).toBe(true);
+    expect(missingPath.structuredContent).toMatchObject({
+      code: "ARTIFACT_NOT_FOUND",
+      retryable: false,
+      useSameArtifactHandle: false,
+    });
+  });
+
+  it("returns submitted-round lineCount, byteSize, and SHA on create(wait: true) and inspect(wait: true) when round advances mid-wait", async () => {
+    const fixture = await workspaceFixture();
+    const client = startClient(fixture.registry);
+    await initialize(client);
+
+    const round1Doc = "# Round 1\n";
+    const creating = callToolTracked(client, "create_artifact", {
+      title: "Wait Snapshot Metadata",
+      kind: "spec",
+      markdown: round1Doc,
+      wait: true,
+    });
+    await creating.sent;
+
+    const createdDir = await waitUntil(async () => {
+      const entries = await readdir(fixture.globalRoot).catch(() => []);
+      return entries.length === 1 ? path.join(fixture.globalRoot, entries[0]!) : undefined;
+    });
+    await waitForRound(createdDir, 1);
+
+    const round2Doc = "# Round 2\n\nUpdated before submit.\n";
+    const client2 = startClient(fixture.registry);
+    await initialize(client2);
+    const chatInspect = await callTool(client2, "inspect_artifact", {
+      artifactDirectory: createdDir,
+      expectedReviewRound: 1,
+      intent: "explicit-chat-update",
+    });
+    await callTool(client2, "update_artifact", {
+      artifactDirectory: createdDir,
+      expectedReviewRound: 1,
+      roundToken: chatInspect.structuredContent.roundToken,
+      markdown: round2Doc,
+      wait: false,
+    });
+    await waitForRound(createdDir, 2);
+
+    await submitDecision(createdDir, "revise", ["Round 2 feedback."]);
+    const createWaitRes = await creating.promise;
+    expect(createWaitRes.isError, createWaitRes.content?.[0]?.text).toBeFalsy();
+    expect(createWaitRes.structuredContent).toMatchObject({
+      artifactDirectory: createdDir,
+      reviewRound: 2,
+      artifactSha256: sha256(round2Doc),
+      lineCount: 3,
+      byteSize: Buffer.byteLength(round2Doc, "utf8"),
+      decision: "revise",
+    });
+
+    // Now test inspect_artifact(wait: true) advancing from round 2 -> round 3 mid-wait
+    const round3Doc = "# Round 3\n\nLine 2\nLine 3\nLine 4\n";
+    const round2Advance = await callTool(client, "update_artifact", {
+      artifactDirectory: createdDir,
+      expectedReviewRound: 2,
+      roundToken: createWaitRes.structuredContent.roundToken,
+      markdown: round3Doc,
+      wait: false,
+    });
+    expect(round2Advance.isError, round2Advance.content?.[0]?.text).toBeFalsy();
+    expect(round2Advance.structuredContent).toMatchObject({
+      reviewRound: 3,
+      lineCount: 5,
+      byteSize: Buffer.byteLength(round3Doc, "utf8"),
+      waited: false,
+    });
+
+    const inspectWaiting = callToolTracked(client, "inspect_artifact", {
+      artifactDirectory: createdDir,
+      wait: true,
+    });
+    await inspectWaiting.sent;
+    await client.waitUntilWaiting(inspectWaiting.id);
+
+    const round4Doc = "# Round 4 final\n";
+    const chatInspectR3 = await callTool(client2, "inspect_artifact", {
+      artifactDirectory: createdDir,
+      expectedReviewRound: 3,
+      intent: "explicit-chat-update",
+    });
+    await callTool(client2, "update_artifact", {
+      artifactDirectory: createdDir,
+      expectedReviewRound: 3,
+      roundToken: chatInspectR3.structuredContent.roundToken,
+      markdown: round4Doc,
+      wait: false,
+    });
+    await waitForRound(createdDir, 4);
+    await submitDecision(createdDir, "approve");
+
+    const inspectWaitRes = await inspectWaiting.promise;
+    expect(inspectWaitRes.isError).toBeFalsy();
+    expect(inspectWaitRes.structuredContent).not.toHaveProperty("markdown");
+    expect(inspectWaitRes.structuredContent).toMatchObject({
+      artifactDirectory: createdDir,
+      reviewRound: 4,
+      artifactSha256: sha256(round4Doc),
+      lineCount: 1,
+      byteSize: Buffer.byteLength(round4Doc, "utf8"),
+      decision: "approve",
+    });
+  });
+
+  it("waits through a transient .artifact-update.lock commit window and bounds stuck locks without false ARTIFACT_NOT_FOUND", async () => {
+    const fixture = await workspaceFixture();
+    const client = startClient(fixture.registry);
+    await initialize(client);
+
+    const created = await createArtifact(client, fixture.workspace, {
+      title: "Read During Update Lock",
+      markdown: "# Round 1\n",
+    });
+
+    const lockPath = path.join(created.artifactDirectory, ".artifact-update.lock");
+    const artifactFile = path.join(created.artifactDirectory, "artifact.md");
+    const manifestFile = path.join(created.artifactDirectory, "artifact.json");
+    const backupFile = `${artifactFile}.previous-test`;
+
+    // Simulate active commitReviewRound lock with temporarily absent artifact.md
+    await atomicWrite(lockPath, "{}\n");
+    await rename(artifactFile, backupFile);
+
+    const pendingRead = callTool(client, "read_artifact", {
+      artifactDirectory: created.artifactDirectory,
+      mode: "range",
+    });
+
+    const round2Doc = "# Round 2 committed\n";
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    const nextManifest = { ...JSON.parse(await readFile(manifestFile, "utf8")), reviewRound: 2 };
+    await atomicWrite(artifactFile, round2Doc);
+    await atomicWrite(manifestFile, `${JSON.stringify(nextManifest, null, 2)}\n`);
+    await writeComments(created.artifactDirectory, []);
+    await rm(backupFile);
+    await rm(lockPath);
+
+    const recovered = await pendingRead;
+    expect(recovered.isError, recovered.content?.[0]?.text).toBeFalsy();
+    expect(recovered.structuredContent).toMatchObject({
+      reviewRound: 2,
+      artifactSha256: sha256(round2Doc),
+      content: round2Doc,
+      lineCount: 1,
+      byteSize: Buffer.byteLength(round2Doc, "utf8"),
+    });
+
+    // Stuck lock beyond bounded wait fails with temporary error (not ARTIFACT_NOT_FOUND / broken handle)
+    await atomicWrite(lockPath, "{}\n");
+    const stuckRead = await callTool(client, "read_artifact", {
+      artifactDirectory: created.artifactDirectory,
+      mode: "range",
+    });
+    expect(stuckRead.isError).toBe(true);
+    expect(stuckRead.structuredContent?.code).not.toBe("ARTIFACT_NOT_FOUND");
+    await rm(lockPath);
+
+    const afterUnlock = await callTool(client, "read_artifact", {
+      artifactDirectory: created.artifactDirectory,
+      mode: "range",
+    });
+    expect(afterUnlock.isError).toBeFalsy();
+    expect(afterUnlock.structuredContent.reviewRound).toBe(2);
+  });
+});
+
+describe("Phase 2: sourcePath and atomic edits[] writes", () => {
+  it("creates independent artifacts from sourcePath and fails closed before consuming selectionToken or creating files", async () => {
+    const fixture = await workspaceFixture();
+    const client = startClient(fixture.registry);
+    await initialize(client);
+
+    const sourceContent = "# Kế hoạch Tiếng Việt 🚀\r\nBước 1\r\nBước 2\r\n";
+    const sourceFile = path.join(fixture.workspace, "plan-source.txt");
+    await writeFile(sourceFile, sourceContent, "utf8");
+
+    // Mutually exclusive / missing content errors return INVALID_ARTIFACT_INPUT without creating artifacts
+    const bothInputs = await callTool(client, "create_artifact", {
+      title: "Both Inputs",
+      kind: "plan",
+      markdown: "# Inline\n",
+      sourcePath: sourceFile,
+    });
+    expect(bothInputs.isError).toBe(true);
+    expect(bothInputs.structuredContent).toMatchObject({
+      code: "INVALID_ARTIFACT_INPUT",
+      useSameArtifactHandle: false,
+    });
+
+    const missingInputs = await callTool(client, "create_artifact", {
+      title: "No Content",
+      kind: "plan",
+    });
+    expect(missingInputs.isError).toBe(true);
+    expect(missingInputs.structuredContent).toMatchObject({
+      code: "INVALID_ARTIFACT_INPUT",
+      useSameArtifactHandle: false,
+    });
+
+    // Missing sourcePath fails with SOURCE_FILE_UNREADABLE before claiming selectionToken, Session, or artifact dir
+    const resolved = await callTool(client, "resolve_artifact_window", {});
+    const selectionToken = resolved.structuredContent.candidates[0].selectionToken as string;
+
+    const failedSource = await callTool(client, "create_artifact", {
+      title: "Missing Source",
+      kind: "implementation-plan",
+      sourcePath: path.join(fixture.workspace, "does-not-exist.md"),
+      conversationName: "Must Not Be Created",
+      connection: { targetMode: "explicit-window", selectionToken },
+    });
+    expect(failedSource.isError).toBe(true);
+    expect(failedSource.structuredContent).toMatchObject({
+      code: "SOURCE_FILE_UNREADABLE",
+      retryable: true,
+      expectedNextTool: "create_artifact",
+      reuseRoundToken: false,
+      useSameArtifactHandle: false,
+    });
+    expect(await readdir(fixture.globalRoot).catch(() => [])).toEqual([]);
+    expect(
+      await readdir(path.join(fixture.userHome, ".ai-artifacts", "conversation-registry")).catch(() => []),
+    ).toEqual([]);
+
+    // Same selectionToken remains unconsumed and succeeds with valid sourcePath
+    const createdRes = await callTool(client, "create_artifact", {
+      title: "Created From Source",
+      kind: "implementation-plan",
+      sourcePath: sourceFile,
+      connection: { targetMode: "explicit-window", selectionToken },
+    });
+    expect(createdRes.isError, createdRes.content?.[0]?.text).toBeFalsy();
+    const created = createdRes.structuredContent;
+    expect(created).toMatchObject({
+      reviewRound: 1,
+      artifactSha256: sha256(sourceContent),
+      lineCount: 3,
+      byteSize: Buffer.byteLength(sourceContent, "utf8"),
+    });
+
+    // One-time copy stays independent when original source file is mutated and deleted
+    await writeFile(sourceFile, "# Mutated externally\n", "utf8");
+    await rm(sourceFile, { force: true });
+    expect(await readFile(created.artifactPath, "utf8")).toBe(sourceContent);
+  });
+
+  it("supports edits[] and sourcePath in update_artifact and preserves roundToken across pre-commit errors", async () => {
+    const fixture = await workspaceFixture();
+    const client = startClient(fixture.registry);
+    await initialize(client);
+
+    const round1Doc = [
+      "# Phase 2 Doc",
+      "Line 2: target alpha",
+      "Line 3: duplicate line",
+      "Line 4: giữ nguyên CRLF",
+      "Line 5: duplicate line",
+    ].join("\r\n");
+
+    const created = await createArtifact(client, fixture.workspace, {
+      title: "Atomic Edits & Recovery",
+      kind: "implementation-plan",
+      markdown: round1Doc,
+    });
+
+    const waitingR1 = callToolTracked(client, "wait_for_artifact_review", {
+      artifactDirectory: created.artifactDirectory,
+      expectedReviewRound: 1,
+    });
+    await waitingR1.sent;
+    await client.waitUntilWaiting(waitingR1.id);
+    await submitDecision(created.artifactDirectory, "revise", ["Update Line 2 and Line 5."]);
+    const reviseRes = await waitingR1.promise;
+    expect(reviseRes.isError).toBeFalsy();
+    expect(reviseRes.structuredContent.nextAction.instruction).toContain("edits, sourcePath, or markdown");
+    const submittedToken = reviseRes.structuredContent.roundToken as string;
+
+    // 1. Multiple mutually exclusive content branches preserve token
+    const multiBranchErr = await callTool(client, "update_artifact", {
+      artifactDirectory: created.artifactDirectory,
+      expectedReviewRound: 1,
+      roundToken: submittedToken,
+      markdown: "# Replaced\n",
+      edits: [{ oldText: "target alpha", newText: "beta" }],
+      wait: false,
+    });
+    expect(multiBranchErr.isError).toBe(true);
+    expect(multiBranchErr.structuredContent).toMatchObject({
+      code: "INVALID_ARTIFACT_INPUT",
+      retryable: true,
+      expectedNextTool: "update_artifact",
+      reuseRoundToken: true,
+      useSameArtifactHandle: true,
+      currentReviewRound: 1,
+    });
+
+    // 2. No-op edits[] batch is rejected on any token type and preserves token
+    const noopErr = await callTool(client, "update_artifact", {
+      artifactDirectory: created.artifactDirectory,
+      expectedReviewRound: 1,
+      roundToken: submittedToken,
+      edits: [{ oldText: "target alpha", newText: "target alpha" }],
+      wait: false,
+    });
+    expect(noopErr.isError).toBe(true);
+    expect(noopErr.structuredContent).toMatchObject({
+      code: "INVALID_ARTIFACT_INPUT",
+      reuseRoundToken: true,
+      currentReviewRound: 1,
+    });
+
+    // 3. Unreadable sourcePath fails without consuming roundToken
+    const badSourceErr = await callTool(client, "update_artifact", {
+      artifactDirectory: created.artifactDirectory,
+      expectedReviewRound: 1,
+      roundToken: submittedToken,
+      sourcePath: path.join(fixture.workspace, "nonexistent.md"),
+      wait: false,
+    });
+    expect(badSourceErr.isError).toBe(true);
+    expect(badSourceErr.structuredContent).toMatchObject({
+      code: "SOURCE_FILE_UNREADABLE",
+      reuseRoundToken: true,
+      expectedNextTool: "update_artifact",
+      useSameArtifactHandle: true,
+    });
+
+    // 4. EDIT_TARGET_NOT_FOUND, EDIT_TARGET_AMBIGUOUS (with matchedLines), and EDIT_TARGET_OVERLAP all keep token valid
+    const notFoundErr = await callTool(client, "update_artifact", {
+      artifactDirectory: created.artifactDirectory,
+      expectedReviewRound: 1,
+      roundToken: submittedToken,
+      edits: [{ oldText: "missing phrase", newText: "x" }],
+      wait: false,
+    });
+    expect(notFoundErr.isError).toBe(true);
+    expect(notFoundErr.content[0].text).not.toContain("EDIT_TARGET_NOT_FOUND: EDIT_TARGET_NOT_FOUND:");
+    expect(notFoundErr.structuredContent).toMatchObject({
+      code: "EDIT_TARGET_NOT_FOUND",
+      reuseRoundToken: true,
+      editIndex: 0,
+    });
+
+    const ambiguousErr = await callTool(client, "update_artifact", {
+      artifactDirectory: created.artifactDirectory,
+      expectedReviewRound: 1,
+      roundToken: submittedToken,
+      edits: [{ oldText: "duplicate line", newText: "changed" }],
+      wait: false,
+    });
+    expect(ambiguousErr.isError).toBe(true);
+    expect(ambiguousErr.structuredContent).toMatchObject({
+      code: "EDIT_TARGET_AMBIGUOUS",
+      reuseRoundToken: true,
+      editIndex: 0,
+      matchedLines: [3, 5],
+    });
+
+    const overlapErr = await callTool(client, "update_artifact", {
+      artifactDirectory: created.artifactDirectory,
+      expectedReviewRound: 1,
+      roundToken: submittedToken,
+      edits: [
+        { oldText: "Line 2: target", newText: "A" },
+        { oldText: "target alpha", newText: "B" },
+      ],
+      wait: false,
+    });
+    expect(overlapErr.isError).toBe(true);
+    expect(overlapErr.structuredContent).toMatchObject({
+      code: "EDIT_TARGET_OVERLAP",
+      reuseRoundToken: true,
+      editIndex: 1,
+    });
+
+    // Retry with the exact preserved submittedToken and valid atomic edits[] + wait: false
+    const round2Commit = await callTool(client, "update_artifact", {
+      artifactDirectory: created.artifactDirectory,
+      expectedReviewRound: 1,
+      roundToken: submittedToken,
+      edits: [
+        { oldText: "target alpha", newText: "target beta" },
+        { oldText: "duplicate line", newText: "resolved line", startLine: 5, endLine: 5 },
+      ],
+      wait: false,
+    });
+    expect(round2Commit.isError, round2Commit.content?.[0]?.text).toBeFalsy();
+    const expectedRound2Doc = [
+      "# Phase 2 Doc",
+      "Line 2: target beta",
+      "Line 3: duplicate line",
+      "Line 4: giữ nguyên CRLF",
+      "Line 5: resolved line",
+    ].join("\r\n");
+    expect(round2Commit.structuredContent).toMatchObject({
+      reviewRound: 2,
+      artifactSha256: sha256(expectedRound2Doc),
+      lineCount: 5,
+      byteSize: Buffer.byteLength(expectedRound2Doc, "utf8"),
+      waited: false,
+    });
+    expect(await readFile(created.artifactPath, "utf8")).toBe(expectedRound2Doc);
+
+    // Next: chat-inspection token updating via sourcePath (wait: false)
+    await writeComments(created.artifactDirectory, ["Use sourcePath snapshot."]);
+    const inspectedR2 = await callTool(client, "inspect_artifact", {
+      artifactDirectory: created.artifactDirectory,
+      wait: false,
+    });
+    expect(inspectedR2.structuredContent.roundTokenSource).toBe("chat-inspection");
+    const r3SourceFile = path.join(fixture.workspace, "round3.md");
+    const expectedRound3Doc = "# Phase 2 Round 3\nLine two\nLine three\n";
+    await writeFile(r3SourceFile, expectedRound3Doc, "utf8");
+
+    const round3Commit = await callTool(client, "update_artifact", {
+      artifactDirectory: created.artifactDirectory,
+      expectedReviewRound: 2,
+      roundToken: inspectedR2.structuredContent.roundToken,
+      sourcePath: r3SourceFile,
+      wait: false,
+    });
+    expect(round3Commit.isError, round3Commit.content?.[0]?.text).toBeFalsy();
+    expect(round3Commit.structuredContent).toMatchObject({
+      reviewRound: 3,
+      artifactSha256: sha256(expectedRound3Doc),
+      lineCount: 3,
+      waited: false,
+    });
+
+    // Next: chat-update token with edits[], no-op rejection keeping token alive, then waiting update(wait: true)
+    // whose round advances mid-wait via another sourcePath update before submit
+    const chatInspectR3 = await callTool(client, "inspect_artifact", {
+      artifactDirectory: created.artifactDirectory,
+      expectedReviewRound: 3,
+      intent: "explicit-chat-update",
+      wait: false,
+    });
+    expect(chatInspectR3.structuredContent.roundTokenSource).toBe("chat-update");
+    const chatUpdateToken = chatInspectR3.structuredContent.roundToken as string;
+
+    const unchangedChatSource = await callTool(client, "update_artifact", {
+      artifactDirectory: created.artifactDirectory,
+      expectedReviewRound: 3,
+      roundToken: chatUpdateToken,
+      sourcePath: r3SourceFile,
+      wait: false,
+    });
+    expect(unchangedChatSource.isError).toBe(true);
+    expect(unchangedChatSource.structuredContent).toMatchObject({
+      code: "INVALID_ARTIFACT_INPUT",
+      reuseRoundToken: true,
+    });
+
+    const waitingUpdate = callToolTracked(client, "update_artifact", {
+      artifactDirectory: created.artifactDirectory,
+      expectedReviewRound: 3,
+      roundToken: chatUpdateToken,
+      edits: [{ oldText: "Line two", newText: "Line two edited" }],
+      wait: true,
+    });
+    await waitingUpdate.sent;
+    await waitForRound(created.artifactDirectory, 4);
+    await client.waitUntilWaiting(waitingUpdate.id);
+
+    // Advance mid-wait from round 4 -> round 5 using another client + sourcePath
+    const round5Doc = "# Phase 2 Round 5 final\nLast line\n";
+    await writeFile(r3SourceFile, round5Doc, "utf8");
+    const client2 = startClient(fixture.registry);
+    await initialize(client2);
+    const chatInspectR4 = await callTool(client2, "inspect_artifact", {
+      artifactDirectory: created.artifactDirectory,
+      expectedReviewRound: 4,
+      intent: "explicit-chat-update",
+      wait: false,
+    });
+    await callTool(client2, "update_artifact", {
+      artifactDirectory: created.artifactDirectory,
+      expectedReviewRound: 4,
+      roundToken: chatInspectR4.structuredContent.roundToken,
+      sourcePath: r3SourceFile,
+      wait: false,
+    });
+    await waitForRound(created.artifactDirectory, 5);
+    await submitDecision(created.artifactDirectory, "approve");
+
+    const waitUpdateRes = await waitingUpdate.promise;
+    expect(waitUpdateRes.isError, waitUpdateRes.content?.[0]?.text).toBeFalsy();
+    expect(waitUpdateRes.structuredContent).toMatchObject({
+      decision: "approve",
+      reviewRound: 5,
+      artifactSha256: sha256(round5Doc),
+      lineCount: 2,
+      byteSize: Buffer.byteLength(round5Doc, "utf8"),
+    });
   });
 });

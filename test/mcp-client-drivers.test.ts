@@ -572,6 +572,9 @@ describe("Client Drivers", () => {
         "[mcp_servers.ai_artifacts.tools.inspect_artifact]",
         'approval_mode = "approve"',
         "",
+        "[mcp_servers.ai_artifacts.tools.read_artifact]",
+        'approval_mode = "approve"',
+        "",
         "[mcp_servers.ai_artifacts.tools.update_artifact]",
         'approval_mode = "approve"',
         "",
@@ -1324,6 +1327,7 @@ describe("Client Driver Upgrade", () => {
       const upgradedContent = await fs.readFile(codexDriver.configPath, "utf8");
       expect(upgradedContent).toContain('[mcp_servers.ai_artifacts.tools.create_artifact]\napproval_mode = "approve"');
       expect(upgradedContent).toContain('[mcp_servers.ai_artifacts.tools.inspect_artifact]\napproval_mode = "approve"');
+      expect(upgradedContent).toContain('[mcp_servers.ai_artifacts.tools.read_artifact]\napproval_mode = "approve"');
       expect(upgradedContent).toContain('[mcp_servers.ai_artifacts.tools.update_artifact]\napproval_mode = "approve"');
       expect(upgradedContent).toContain('[mcp_servers.ai_artifacts.tools.join_session]\napproval_mode = "approve"');
       expect(upgradedContent).toContain('[mcp_servers.ai_artifacts.tools.write_artifact_feedback]\napproval_mode = "approve"');
